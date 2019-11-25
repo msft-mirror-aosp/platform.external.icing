@@ -14,7 +14,10 @@
 
 syntax = "proto2";
 
-package icing;
+package icing.lib;
+
+option java_package = "com.google.android.icing.proto";
+option java_multiple_files = true;
 
 // Next tag: 6
 message IcingSearchEngineOptions {
