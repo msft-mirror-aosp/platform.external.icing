@@ -14,9 +14,12 @@
 
 syntax = "proto2";
 
-package icing;
+package icing.lib;
 
 import "icing/proto/term.proto";
+
+option java_package = "com.google.android.icing.proto";
+option java_multiple_files = true;
 
 // Defines the schema that every Document of a specific "type" should adhere
 // to. These can be considered as definitions of rich structured types for

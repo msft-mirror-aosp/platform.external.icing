@@ -14,10 +14,13 @@
 
 syntax = "proto2";
 
-package icing;
+package icing.lib;
+
+option java_package = "com.google.android.icing.proto";
+option java_multiple_files = true;
 
 // Defines a unit of data understood by the IcingSearchEngine.
-// Next tag: 6
+// Next tag: 8
 message DocumentProto {
   // REQUIRED: Namespace that this Document resides in.
   // Namespaces can affect read/write permissions.
@@ -30,26 +33,40 @@ message DocumentProto {
 
   // REQUIRED: Type of the Document. This should match the 'schema_type' of
   // one of the types given to Icing as part of the overall schema.
-  // See icing.SchemaTypeConfigProto.schema_type for details.
+  // See icing.lib.SchemaTypeConfigProto.schema_type for details.
   optional string schema = 3;
 
-  // Milliseconds since epoch at which the Document was created. If not
-  // specified, it will default to when the Icing receives the Document.
-  optional uint64 creation_timestamp_ms = 4;
+  // OPTIONAL: Seconds since epoch at which the Document was created.
+  // Negative values are invalid for this field and may cause unexpected
+  // behaviors. If not specified, it will default to when the Icing receives the
+  // Document.
+  optional fixed64 creation_timestamp_secs = 4;
 
+  // REQUIRED: Properties that will be validated against the provided schema.
+  // The names of these properties should map to one of the properties
+  // already defined in the schema for this Document's schema_type.
   repeated PropertyProto properties = 5;
+
+  // OPTIONAL: Properties that will not be validated against the schema,
+  // indexed, or be searchable. The properties will be stored in the Documents,
+  // but never looked at by Icing.
+  repeated PropertyProto custom_properties = 6;
+
+  // OPTIONAL: Score of the document which could be used during search result
+  // ranking. Negative values will lead to validation errors. The default is the
+  // lowest score 0.
+  optional int32 score = 7 [default = 0];
 }
 
 // Holds a property field of the Document.
 // Next tag: 8
 message PropertyProto {
-  // Name of the property. This should be the same as one of the properties
-  // already defined in the schema for this Document's schema_type.
-  // See icing.PropertyConfigProto.property_name for details.
+  // Name of the property.
+  // See icing.lib.PropertyConfigProto.property_name for details.
   optional string name = 1;
 
   // Only the field corresponding to the DataType specified in
-  // icing.PropertyConfigProto.data_type should be set.
+  // icing.lib.PropertyConfigProto.data_type should be set.
   repeated string string_values = 2;
   repeated int64 int64_values = 3;
   repeated double double_values = 4;

@@ -14,13 +14,16 @@
 
 syntax = "proto2";
 
-package icing;
+package icing.lib;
 
 import "icing/proto/document.proto";
 import "icing/proto/term.proto";
 
+option java_package = "com.google.android.icing.proto";
+option java_multiple_files = true;
+
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 3
+// Next tag: 5
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -44,28 +47,117 @@ message SearchSpecProto {
   // "football".
   optional TermMatchType.Code term_match_type = 2;
 
-  // TODO(cassiewang): add namespace restricts
-  // TODO(cassiewang): add schema type restricts
+  // OPTIONAL: Only search for documents that have the specified namespaces. If
+  // unset, the query will search over all namespaces. Note that this applies to
+  // the entire 'query'. To issue different queries for different namespaces,
+  // separate Search()'s will need to be made.
+  repeated string namespace_filters = 3;
+
+  // OPTIONAL: Only search for documents that have the specified schema types.
+  // If unset, the query will search over all schema types. Note that this
+  // applies to the entire 'query'. To issue different queries for different
+  // schema types, separate Search()'s will need to be made.
+  repeated string schema_type_filters = 4;
 }
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 3
+// Next tag: 4
 message ResultSpecProto {
   // The maximum number of documents to return in SearchResultProto. Even if
   // more documents have matched the SearchSpecProto, this may be used to limit
   // the number to actually return to the client.
-  optional int32 limit = 1 [default = 10];
+  optional int32 num_to_retrieve = 1 [default = 10];
 
   // Whether to collect and return debug_info in the SearchResultProto.
   optional bool debug_info = 2;
+
+  // How to provide snippeting information in the SearchResultProto.
+  // Next tag: 5
+  message SnippetSpecProto {
+    // Only the first num_to_snippet documents will have snippet information
+    // provided. If set to 0, snippeting is disabled.
+    optional int32 num_to_snippet = 1;
+
+    // Only the first num_matches_per_property matches for a single section will
+    // have snippet information provided. If set to 0, snippeting is disabled.
+    optional int32 num_matches_per_property = 2;
+
+    // How large of a window to provide. Windows start at max_window_bytes / 2
+    // bytes before the middle of the matching token and end at max_window_bytes
+    // / 2 bytes after the middle of the matching token. Windowing respects
+    // token boundaries.
+    // Therefore, the returned window may be smaller than requested. Setting
+    // max_requested_window_length_bytes to 0 will disable windowing
+    // information. If matches enabled is also set to false, then snippeting is
+    // disabled.
+    // Ex. window_size = 16. "foo bar baz bat rat" with a query of "baz" will
+    // return a window of "bar baz bat" which is only 11 bytes long.
+    optional int32 max_window_bytes = 3;
+  }
+  optional SnippetSpecProto snippet_spec = 3;
+}
+
+// The representation of a single match within a DocumentProto property.
+// Next tag: 6
+message SnippetMatchProto {
+  // Properties may have multiple values. values_index indicates which of these
+  // multiple string values the match occurred in. For properties with only one
+  // value, the values_index will always be 0.
+  // Ex. "Recipients" [
+  //      { { "Name"         : "Daffy Duck" }
+  //        { "EmailAddress" : "daffduck@gmail.com" } },
+  //      { { "Name"         : "Donald Duck" }
+  //        { "EmailAddress" : "donduck@gmail.com" }  }
+  // "Daffy Duck" is the string value with a value_index of 0 for property
+  // "Recipients.Name". "Donald Duck" is the string value with a value_index of
+  // 1 for property "Recipients.Name".
+  optional int32 values_index = 1;
+
+  // The position and length within the matched string at which the exact
+  // match begins.
+  optional int32 exact_match_position = 2;
+
+  optional int32 exact_match_bytes = 3;
+
+  // The position and length of the suggested snippet window.
+  optional int32 window_position = 4;
+
+  optional int32 window_bytes = 5;
+}
+
+// A Proto representing all snippets for a single DocumentProto.
+// Next tag: 2
+message SnippetProto {
+  // A pair of property name and all snippet matches that correspond to the
+  // property values in the corresponding DocumentProto.
+  // Next tag: 3
+  message EntryProto {
+    // A '.'-delimited sequence of property names indicating which property in
+    // the DocumentProto these snippets correspond to.
+    // Example properties: 'body', 'sender.name', 'sender.emailaddress', etc.
+    optional string property_name = 1;
+
+    repeated SnippetMatchProto snippet_matches = 2;
+  }
+  // Properties that do not appear in entries do not contain any matches.
+  repeated EntryProto entries = 1;
 }
 
 // Icing lib-supplied results from a search results.
 // Next tag: 4
 message SearchResultProto {
-  // Documents that match the SearchSpecProto. Empty if there was an error.
-  repeated DocumentProto documents = 1;
+  // The Results that matched the query. Empty if there was an error.
+  // Next tag: 3
+  message ResultProto {
+    // Document that matches the SearchSpecProto.
+    optional DocumentProto document = 1;
+
+    // Snippeting information for the document if requested in the
+    // ResultSpecProto. A default instance, if not requested.
+    optional SnippetProto snippet = 2;
+  }
+  repeated ResultProto results = 1;
 
   // Details on what errors were encountered. Not populated if there were no
   // errors.

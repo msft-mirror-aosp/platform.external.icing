@@ -14,9 +14,12 @@
 
 syntax = "proto2";
 
-package icing;
+package icing.lib;
 
 import "icing/proto/document.proto";
+
+option java_package = "com.google.android.icing.proto";
+option java_multiple_files = true;
 
 // DocumentWrapper as a wrapper of the user-facing DocumentProto is meant to
 // be used by icing team internally. It stores the original document provided
