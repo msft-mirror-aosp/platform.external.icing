@@ -1,0 +1,65 @@
+// Copyright (C) 2019 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef ICING_SNIPPET_RETRIEVER_H_
+#define ICING_SNIPPET_RETRIEVER_H_
+
+#include "icing/proto/document.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/query/query-terms.h"
+#include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/tokenization/language-segmenter.h"
+
+namespace icing {
+namespace lib {
+
+// This class provides functions to retrieve snippets from documents. Snippets
+// are retrieved anywhere that content in the document matches query_terms
+// according to match_type. The behavior of snippet population is determined by
+// the SnippetSpecProto.
+//
+// This class does not take ownership of any of the provided pointers. The only
+// constraint for the lifecycle of this class is that it must be shorter than
+// that of the provided pointers.
+class SnippetRetriever {
+ public:
+  // Does not take any ownership, and all pointers must refer to valid objects
+  // that outlive the one constructed.
+  explicit SnippetRetriever(const SchemaStore* schema_store,
+                            const LanguageSegmenter* language_segmenter)
+      : schema_store_(*schema_store),
+        language_segmenter_(*language_segmenter) {}
+
+  // Retrieve the snippet information for content in document. terms in
+  // query_terms are matched to content in document according to match_type.
+  // Only sections identified in section_id_mask are considered.
+  //
+  // Returns an empty SnippetProto if no snippets were found.
+  SnippetProto RetrieveSnippet(
+      const SectionRestrictQueryTermsMap& query_terms,
+      TermMatchType::Code match_type,
+      const ResultSpecProto::SnippetSpecProto& snippet_spec,
+      const DocumentProto& document, SectionIdMask section_id_mask) const;
+
+ private:
+  const SchemaStore& schema_store_;
+  const LanguageSegmenter& language_segmenter_;
+};
+
+}  // namespace lib
+}  // namespace icing
+
+#endif  // ICING_SNIPPET_RETRIEVER_H_

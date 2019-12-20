@@ -20,7 +20,7 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
 // Defines a unit of data understood by the IcingSearchEngine.
-// Next tag: 8
+// Next tag: 9
 message DocumentProto {
   // REQUIRED: Namespace that this Document resides in.
   // Namespaces can affect read/write permissions.
@@ -37,10 +37,9 @@ message DocumentProto {
   optional string schema = 3;
 
   // OPTIONAL: Seconds since epoch at which the Document was created.
-  // Negative values are invalid for this field and may cause unexpected
-  // behaviors. If not specified, it will default to when the Icing receives the
-  // Document.
-  optional fixed64 creation_timestamp_secs = 4;
+  // Negative values will lead to validation errors. If not specified, it will
+  // default to when the Icing receives the Document.
+  optional int64 creation_timestamp_secs = 4;
 
   // REQUIRED: Properties that will be validated against the provided schema.
   // The names of these properties should map to one of the properties
@@ -56,6 +55,16 @@ message DocumentProto {
   // ranking. Negative values will lead to validation errors. The default is the
   // lowest score 0.
   optional int32 score = 7 [default = 0];
+
+  // The time-to-live that should be enforced on this Document. Documents get
+  // garbage-collected once the current time exceeds the ttl_secs after the
+  // creation_timestamp_secs. Negative values will lead to validation errors.
+  //
+  // Default value of 0 keeps the Documents till they're explicitly deleted.
+  //
+  // TODO(cassiewang): Benchmark if fixed64 or some other proto type is better
+  // in terms of space/time efficiency. Both for ttl_secs and timestamp fields
+  optional int64 ttl_secs = 8 [default = 0];
 }
 
 // Holds a property field of the Document.
