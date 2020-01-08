@@ -71,6 +71,11 @@ class SchemaStoreTest : public ::testing::Test {
   SchemaProto schema_;
 };
 
+TEST_F(SchemaStoreTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(SchemaStore::Create(/*filesystem=*/nullptr, test_dir_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
 TEST_F(SchemaStoreTest, CorruptSchemaError) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,

@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <memory>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 
 // Encodes/decodes TermIds into different TviTypes. A "tvi" is a
 // term_value_index into some space, essentially a unique id within that space.
@@ -30,7 +30,7 @@
 // MAIN tvi and the max LITE tvi.
 //
 // Example use:
-//   ICING_ASSIGN_OR_RETURN(auto term_id_codec,
+//   TC3_ASSIGN_OR_RETURN(auto term_id_codec,
 //       TermIdCodec::Create(/*max_main_tvi=*/5, /*max_lite_tvi=*/5);
 //
 //   term_id_codec->tvi_type(0); // TviType::Main

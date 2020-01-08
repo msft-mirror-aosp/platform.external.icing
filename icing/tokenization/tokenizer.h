@@ -17,7 +17,7 @@
 
 #include <cstdint>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/token.h"
 namespace icing {
 namespace lib {
@@ -27,9 +27,9 @@ namespace lib {
 // iterator or a list of tokens. Example usage:
 //
 // std::unique_ptr<Tokenizer> tokenizer = GetTokenizer();
-// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iter,
+// TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iter,
 //                  tokenizer->Tokenize(text));
-// ICING_ASSIGN_OR_RETURN(std::vector<Token> tokens,
+// TC3_ASSIGN_OR_RETURN(std::vector<Token> tokens,
 // tokenizer->TokenizeAll(text));
 class Tokenizer {
  public:

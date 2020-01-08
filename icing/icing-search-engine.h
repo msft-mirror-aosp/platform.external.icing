@@ -20,8 +20,8 @@
 #include <string>
 #include <string_view>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
@@ -68,13 +68,21 @@ class IcingSearchEngine {
   // to bring the index to a consistent state. If the data on disk is not
   // consistent, it restores the state when PersistToDisk() was last called.
   //
-  // Returns OK on success, ie, Icing was initialized and all data verified.
-  // Returns DATA_LOSS on partial success, when Icing encountered
-  // data-inconsistency and had to restore its state back to the last call
-  // to PersistToDisk().
-  // Returns any other error encountered due to which the call couldn't be
-  // completed. The instance of IcingSearchEngine is not usable if this
-  // happens.
+  // TODO(cassiewang): We shouldn't return NOT_FOUND here, this is a symptom
+  // of some other error. We should return a broader error group, i.e. data
+  // inconsistency or something
+  //
+  // Returns:
+  //   OK on success
+  //   DATA_LOSS if encountered any inconsistencies in data and had to restore
+  //     its state back to the last time PersistToDisk was called. Or if any
+  //     persisted data was lost and could not be recovered.
+  //   INTERNAL if any internal state was left in an inconsistent. The instance
+  //     of IcingSearchEngine is unusable if this happens. It's recommended to
+  //     clear the underlying directory provided in
+  //     IcingSearchEngineOptions.base_dir and reinitialize.
+  //   RESOURCE_EXHAUSTED if not enough storage space
+  //   NOT_FOUND if missing some internal data
   libtextclassifier3::Status Initialize() LOCKS_EXCLUDED(mutex_);
 
   // Specifies the schema to be applied on all Documents that are already
@@ -264,9 +272,55 @@ class IcingSearchEngine {
   libtextclassifier3::Status InternalPersistToDisk()
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Helper method to initialize member variables.
+  //
+  // Returns:
+  //   OK on success
+  //   RESOURCE_EXHAUSTED if the index runs out of storage
+  //   NOT_FOUND if some Document's schema type is not in the SchemaStore
+  //   INTERNAL on any I/O errors
+  libtextclassifier3::Status InitializeMembers()
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Do any validation/setup required for the given IcingSearchEngineOptions
+  //
+  // Returns:
+  //   OK on success
+  //   INVALID_ARGUMENT if options has invalid values
+  //   INTERNAL on I/O error
+  libtextclassifier3::Status InitializeOptions()
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Do any initialization/recovery necessary to create a SchemaStore instance.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::Status InitializeSchemaStore()
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Do any initialization/recovery necessary to create a DocumentStore
+  // instance.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::Status InitializeDocumentStore()
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Do any initialization/recovery necessary to create a DocumentStore
+  // instance.
+  //
+  // Returns:
+  //   OK on success
+  //   RESOURCE_EXHAUSTED if the index runs out of storage
+  //   NOT_FOUND if some Document's schema type is not in the SchemaStore
+  //   INTERNAL on I/O error
+  libtextclassifier3::Status InitializeIndex() EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Many of the internal components rely on other components' derived data.
-  // Check that everything is consistent with each other so that we're not using
-  // outdated derived data in some parts of our system.
+  // Check that everything is consistent with each other so that we're not
+  // using outdated derived data in some parts of our system.
   //
   // Returns:
   //   OK on success
@@ -281,6 +335,18 @@ class IcingSearchEngine {
   //   OK on success
   //   INTERNAL_ERROR on any IO errors
   libtextclassifier3::Status RegenerateDerivedFiles()
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Optimizes the DocumentStore by removing any unneeded documents (i.e.
+  // deleted, expired, etc.) from the filesystem storage.
+  //
+  // NOTE: This may leave the DocumentStore in an invalid/uncreated state. Users
+  // would need call Initialize() to reinitialize everything into a valid state.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any IO errors
+  libtextclassifier3::Status OptimizeDocumentStore()
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to restore missing document data in index_. All documents
@@ -310,6 +376,18 @@ class IcingSearchEngine {
   // Update and replace the header file. Creates the header file if it doesn't
   // exist.
   libtextclassifier3::Status UpdateHeader(const Crc32& checksum)
+      EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // If we lost the schema during a previous failure, it may "look" the same as
+  // not having a schema set before: we don't have a schema proto file. So do
+  // some extra checks to differentiate between having-lost the schema, and
+  // never having a schema before. This may determine if we need to do extra
+  // recovery steps.
+  //
+  // Returns:
+  //   bool indicating if we had a schema and unintentionally lost it
+  //   INTERNAL_ERROR on I/O error
+  libtextclassifier3::StatusOr<bool> LostPreviousSchema()
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

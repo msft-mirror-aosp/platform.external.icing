@@ -62,7 +62,7 @@ class Hit {
   explicit Hit(Value value = kInvalidValue, Score score = kMaxHitScore)
       : value_(value), score_(score) {}
   Hit(SectionId section_id, DocumentId document_id, Score score,
-      bool in_prefix_section = false, bool is_prefix_hit = false);
+      bool is_in_prefix_section = false, bool is_prefix_hit = false);
 
   bool is_valid() const { return value() != kInvalidValue; }
   Value value() const { return value_; }

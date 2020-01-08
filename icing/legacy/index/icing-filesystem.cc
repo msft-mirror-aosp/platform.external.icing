@@ -88,14 +88,16 @@ void LogOpenFileDescriptors() {
   }
 
   // Now read each link individually.
-  char path[1024];
-  char target[1024];
+  const int path_size = 1024;
+  char path[path_size];
+  const int target_size = 1024;
+  char target[target_size];
   for (int fd = 0; fd < fd_lim; ++fd) {
-    snprintf(path, arraysize(path), "/proc/self/fd/%d", fd);
-    ssize_t len = readlink(path, target, arraysize(target));
+    snprintf(path, path_size, "/proc/self/fd/%d", fd);
+    ssize_t len = readlink(path, target, target_size);
     if (len >= 0) {
       // Zero-terminate the buffer, because readlink() won't.
-      target[len < arraysize(target) ? len : arraysize(target) - 1] = '\0';
+      target[len < target_size ? len : target_size - 1] = '\0';
       ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("fd %d -> \"%s\"", fd,
                                                         target);
     } else if (errno != ENOENT) {

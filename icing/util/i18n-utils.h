@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "unicode/umachine.h"
 #include "unicode/unorm2.h"
 

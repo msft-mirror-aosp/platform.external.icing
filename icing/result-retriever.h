@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
@@ -35,15 +35,17 @@ namespace lib {
 
 class ResultRetriever {
  public:
-  // Does not take any ownership, and all pointers must refer to valid objects
-  // that outlive the one constructed.
-  explicit ResultRetriever(const DocumentStore* doc_store,
-                           const SchemaStore* schema_store,
-                           const LanguageSegmenter* language_segmenter,
-                           bool ignore_bad_document_ids = true)
-      : doc_store_(*doc_store),
-        snippet_retriever_(schema_store, language_segmenter),
-        ignore_bad_document_ids_(ignore_bad_document_ids) {}
+  // Factory function to create a ResultRetriever which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created ResultRetriever instance.
+  //
+  // Returns:
+  //   A ResultRetriever on success
+  //   FAILED_PRECONDITION on any null pointer input
+  static libtextclassifier3::StatusOr<std::unique_ptr<ResultRetriever>> Create(
+      const DocumentStore* doc_store, const SchemaStore* schema_store,
+      const LanguageSegmenter* language_segmenter,
+      bool ignore_bad_document_ids = true);
 
   // Gets results (pairs of DocumentProtos and SnippetProtos) with the given
   // document ids from the given document store. The
@@ -71,8 +73,15 @@ class ResultRetriever {
       const std::vector<ScoredDocumentHit>& scored_document_hits) const;
 
  private:
+  explicit ResultRetriever(const DocumentStore* doc_store,
+                           std::unique_ptr<SnippetRetriever> snippet_retriever,
+                           bool ignore_bad_document_ids)
+      : doc_store_(*doc_store),
+        snippet_retriever_(std::move(snippet_retriever)),
+        ignore_bad_document_ids_(ignore_bad_document_ids) {}
+
   const DocumentStore& doc_store_;
-  const SnippetRetriever snippet_retriever_;
+  std::unique_ptr<SnippetRetriever> snippet_retriever_;
   const bool ignore_bad_document_ids_;
 };
 

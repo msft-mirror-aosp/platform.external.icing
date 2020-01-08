@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <string_view>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 
 namespace icing {
 namespace lib {

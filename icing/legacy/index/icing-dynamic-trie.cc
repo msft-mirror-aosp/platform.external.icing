@@ -1869,7 +1869,7 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
   // a continuation byte.
   if (!IcingStringUtil::IsAsciiChar(cur_[cur_len_ - 1])) {
     while (!node->is_leaf()) {
-      if (ABSL_PREDICT_FALSE(cur_len_ >= UTFmax)) break;
+      if (cur_len_ >= UTFmax) break;
 
       InitBranch(branch_end_, node, 0);
       // When we are looking to complete a utf8 char, skip 0s.
@@ -1914,8 +1914,8 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 void IcingDynamicTrie::Utf8Iterator::GoIntoSuffix(const Node *node) {
   const char *suffix = trie_.storage_->GetSuffix(node->next_index());
   const char *cur_suffix;
-  for (cur_suffix = suffix; ABSL_PREDICT_TRUE(cur_len_ < UTFmax) &&
-                            IcingStringUtil::IsContinuationByte(*cur_suffix);
+  for (cur_suffix = suffix;
+       cur_len_ < UTFmax && IcingStringUtil::IsContinuationByte(*cur_suffix);
        cur_suffix++) {
     cur_[cur_len_++] = *cur_suffix;
   }

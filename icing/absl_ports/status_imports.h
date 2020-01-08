@@ -15,7 +15,7 @@
 #ifndef ICING_ABSL_PORTS_STATUS_IMPORTS_H_
 #define ICING_ABSL_PORTS_STATUS_IMPORTS_H_
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 
 namespace icing {
 namespace lib {

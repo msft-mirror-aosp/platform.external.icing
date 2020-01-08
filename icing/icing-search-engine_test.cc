@@ -21,7 +21,7 @@
 #include <string>
 #include <utility>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -89,9 +89,9 @@ constexpr int kMaxSupportedDocumentSize = (1u << 24) - 1;
 // Non-zero value so we don't override it to be the current time
 constexpr std::time_t kDefaultCreationTimestampSecs = 1575492852;
 
-std::string GetDocumentIndexDir() {
-  return GetTestBaseDir() + "/document_index_dir";
-}
+std::string GetDocumentDir() { return GetTestBaseDir() + "/document_dir"; }
+
+std::string GetIndexDir() { return GetTestBaseDir() + "/index_dir"; }
 
 std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 
@@ -102,7 +102,6 @@ std::string GetHeaderFilename() {
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
-  icing_options.set_lang_model_path(GetLangIdModelPath());
   return icing_options;
 }
 
@@ -145,6 +144,21 @@ TEST_F(IcingSearchEngineTest, SimpleInitialization) {
   DocumentProto document = GetDefaultDocument();
   ICING_ASSERT_OK(icing.Put(document));
   ICING_ASSERT_OK(icing.Put(DocumentProto(document)));
+}
+
+TEST_F(IcingSearchEngineTest, InitializingAgainSavesNonPersistedData) {
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ICING_ASSERT_OK(icing.Initialize());
+  ICING_ASSERT_OK(icing.SetSchema(GetDefaultSchema()));
+
+  DocumentProto document = GetDefaultDocument();
+  ICING_ASSERT_OK(icing.Put(document));
+  ASSERT_THAT(icing.Get("namespace", "uri"),
+              IsOkAndHolds(EqualsProto(document)));
+
+  ICING_EXPECT_OK(icing.Initialize());
+  EXPECT_THAT(icing.Get("namespace", "uri"),
+              IsOkAndHolds(EqualsProto(document)));
 }
 
 TEST_F(IcingSearchEngineTest, MaxIndexMergeSizeReturnsInvalidArgument) {
@@ -316,16 +330,6 @@ TEST_F(IcingSearchEngineTest, FailToCreateDocStore) {
   ASSERT_THAT(icing.Initialize(),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL,
                        HasSubstr("Could not create directory")));
-}
-
-TEST_F(IcingSearchEngineTest,
-       InvalidFileCreateLangSegmenterReturnsInvalidArgument) {
-  IcingSearchEngineOptions options(GetDefaultIcingOptions());
-  options.set_lang_model_path("notarealfile");
-  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                              std::make_unique<FakeClock>());
-  EXPECT_THAT(icing.Initialize(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -867,7 +871,7 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldRemoveDeletedDocs) {
     // Deletes document1
     ICING_ASSERT_OK(icing.Delete("namespace", "uri1"));
     const std::string document_log_path =
-        icing_options.base_dir() + "/document_index_dir/document_log";
+        icing_options.base_dir() + "/document_dir/document_log";
     int64_t document_log_size_before =
         filesystem()->GetFileSize(document_log_path.c_str());
     ICING_ASSERT_OK(icing.Optimize());
@@ -896,14 +900,16 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldDeleteTemporaryDirectory) {
   // Create a tmp dir that will be used in Optimize() to swap files,
   // this validates that any tmp dirs will be deleted before using.
   const std::string tmp_dir =
-      icing_options.base_dir() + "/document_index_dir" + "_optimize_tmp";
+      icing_options.base_dir() + "/document_dir_optimize_tmp";
+
   const std::string tmp_file = tmp_dir + "/file";
   ASSERT_TRUE(filesystem()->CreateDirectory(tmp_dir.c_str()));
   ScopedFd fd(filesystem()->OpenForWrite(tmp_file.c_str()));
   ASSERT_TRUE(fd.is_valid());
   ASSERT_TRUE(filesystem()->Write(fd.get(), "1234", 4));
   fd.reset();
-  ICING_ASSERT_OK(icing.Optimize());
+
+  ICING_EXPECT_OK(icing.Optimize());
 
   EXPECT_FALSE(filesystem()->DirectoryExists(tmp_dir.c_str()));
   EXPECT_FALSE(filesystem()->FileExists(tmp_file.c_str()));
@@ -1404,7 +1410,7 @@ TEST_F(IcingSearchEngineTest, UnableToRecoverFromCorruptDocumentLog) {
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   const std::string document_log_file =
-      absl_ports::StrCat(GetDocumentIndexDir(), "/document_log");
+      absl_ports::StrCat(GetDocumentDir(), "/document_log");
   const std::string corrupt_data = "1234";
   EXPECT_TRUE(filesystem()->Write(document_log_file.c_str(),
                                   corrupt_data.data(), corrupt_data.size()));
@@ -1561,7 +1567,7 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentDocumentStore) {
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocumentStore> document_store,
-        DocumentStore::Create(filesystem(), GetDocumentIndexDir(), &fake_clock,
+        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
                               schema_store.get()));
     ICING_EXPECT_OK(document_store->Put(document2));
   }
@@ -1614,7 +1620,42 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentIndex) {
 
   // Pretend we lost the entire index
   EXPECT_TRUE(filesystem()->DeleteDirectoryRecursively(
-      absl_ports::StrCat(GetDocumentIndexDir(), "/idx/lite.").c_str()));
+      absl_ports::StrCat(GetIndexDir(), "/idx/lite.").c_str()));
+
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ICING_EXPECT_OK(icing.Initialize());
+
+  // Check that our index is ok by searching over the restored index
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              IsOkAndHolds(EqualsProto(expected_result)));
+}
+
+TEST_F(IcingSearchEngineTest, RecoverFromCorruptIndex) {
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_result;
+  (*expected_result.mutable_results()->Add()->mutable_document()) =
+      GetDefaultDocument();
+
+  {
+    // Initializes folder and schema, index one document
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ICING_EXPECT_OK(icing.Initialize());
+    ICING_EXPECT_OK(icing.SetSchema(GetDefaultSchema()));
+    ICING_EXPECT_OK(icing.Put(GetDefaultDocument()));
+    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                             ResultSpecProto::default_instance()),
+                IsOkAndHolds(EqualsProto(expected_result)));
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  // Pretend index is corrupted
+  const std::string index_hit_buffer_file = GetIndexDir() + "/idx/lite.hb";
+  ScopedFd fd(filesystem()->OpenForWrite(index_hit_buffer_file.c_str()));
+  ASSERT_TRUE(fd.is_valid());
+  ASSERT_TRUE(filesystem()->Write(fd.get(), "1234", 4));
 
   IcingSearchEngine icing(GetDefaultIcingOptions());
   ICING_EXPECT_OK(icing.Initialize());
@@ -1841,6 +1882,98 @@ TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedAscendingly) {
   EXPECT_THAT(icing.Search(search_spec, scoring_spec,
                            ResultSpecProto::default_instance()),
               IsOkAndHolds(EqualsProto(exp_result)));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SetSchemaCanNotDetectPreviousSchemaWasLostWithoutDocuments) {
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("Message");
+
+  auto body = type->add_properties();
+  body->set_property_name("body");
+  body->set_data_type(PropertyConfigProto::DataType::STRING);
+  body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  // Make an incompatible schema, a previously OPTIONAL field is REQUIRED
+  SchemaProto incompatible_schema = schema;
+  incompatible_schema.mutable_types(0)->mutable_properties(0)->set_cardinality(
+      PropertyConfigProto::Cardinality::REQUIRED);
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ICING_ASSERT_OK(icing.Initialize());
+    ICING_ASSERT_OK(icing.SetSchema(schema));
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(GetSchemaDir().c_str()));
+
+  // Since we don't have any documents yet, we can't detect this edge-case. But
+  // it should be fine since there aren't any documents to be invalidated.
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ICING_EXPECT_OK(icing.Initialize());
+  ICING_EXPECT_OK(icing.SetSchema(incompatible_schema));
+}
+
+TEST_F(IcingSearchEngineTest, SetSchemaCanDetectPreviousSchemaWasLost) {
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("Message");
+
+  auto body = type->add_properties();
+  body->set_property_name("body");
+  body->set_data_type(PropertyConfigProto::DataType::STRING);
+  body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
+  body->mutable_indexing_config()->set_tokenizer_type(
+      IndexingConfig::TokenizerType::PLAIN);
+
+  // Make an incompatible schema, a previously OPTIONAL field is REQUIRED
+  SchemaProto incompatible_schema = schema;
+  incompatible_schema.mutable_types(0)->mutable_properties(0)->set_cardinality(
+      PropertyConfigProto::Cardinality::REQUIRED);
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ICING_ASSERT_OK(icing.Initialize());
+    ICING_ASSERT_OK(icing.SetSchema(schema));
+
+    DocumentProto document = GetDefaultDocument();
+    ICING_ASSERT_OK(icing.Put(document));
+
+    // Can retrieve by namespace/uri
+    ASSERT_THAT(icing.Get("namespace", "uri"),
+                IsOkAndHolds(EqualsProto(document)));
+
+    // Can search for it
+    SearchResultProto expected_result;
+    (*expected_result.mutable_results()->Add()->mutable_document()) =
+        GetDefaultDocument();
+    ASSERT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                             ResultSpecProto::default_instance()),
+                IsOkAndHolds(EqualsProto(expected_result)));
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(GetSchemaDir().c_str()));
+
+  // Setting the new, different schema will remove incompatible documents
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ICING_EXPECT_OK(icing.Initialize());
+  ICING_EXPECT_OK(icing.SetSchema(incompatible_schema));
+
+  // Can't retrieve by namespace/uri
+  EXPECT_THAT(icing.Get("namespace", "uri"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Can't search for it
+  SearchResultProto empty_result;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              IsOkAndHolds(EqualsProto(empty_result)));
 }
 
 }  // namespace

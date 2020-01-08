@@ -65,8 +65,8 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -515,8 +515,7 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
     return libtextclassifier3::Status::OK;
   }
 
-  // TODO(cassiewang): Benchmark to see if having ABSL_PREDICT_TRUE is impactful
-  if (ABSL_PREDICT_TRUE(num_elements <= header_->num_elements)) {
+  if (num_elements <= header_->num_elements) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -671,7 +670,7 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
 template <typename T>
 libtextclassifier3::Status FileBackedVector<T>::PersistToDisk() {
   // Update and write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   header_->vector_checksum = checksum.Get();
   header_->header_checksum = header_->CalculateHeaderChecksum();
 

@@ -14,8 +14,8 @@
 
 #include "icing/tokenization/raw-query-tokenizer.h"
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/tokenization/tokenizer.h"
@@ -536,13 +536,13 @@ class RawQueryTokenIterator : public Tokenizer::Iterator {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>>
 RawQueryTokenizer::Tokenize(std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(std::vector<Token> tokens, TokenizeAll(text));
+  TC3_ASSIGN_OR_RETURN(std::vector<Token> tokens, TokenizeAll(text));
   return std::make_unique<RawQueryTokenIterator>(std::move(tokens));
 }
 
 libtextclassifier3::StatusOr<std::vector<Token>> RawQueryTokenizer::TokenizeAll(
     std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       std::unique_ptr<LanguageSegmenter::Iterator> base_iterator,
       language_segmenter_.Segment(text));
   return ProcessTerms(std::move(base_iterator));

@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -61,8 +61,8 @@ libtextclassifier3::Status DocHitInfoIteratorTerm::Advance() {
 
 libtextclassifier3::Status DocHitInfoIteratorTermExact::RetrieveMoreHits() {
   // Exact match only. All hits in lite lexicon are exact.
-  ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->FindTerm(term_));
-  ICING_ASSIGN_OR_RETURN(uint32_t term_id,
+  TC3_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->FindTerm(term_));
+  TC3_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   lite_index_->AppendHits(term_id, section_restrict_mask_,
                           /*only_from_prefix_sections=*/false, &cached_hits_);
@@ -82,7 +82,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermPrefix::RetrieveMoreHits() {
   for (LiteIndex::PrefixIterator it = lite_index_->FindTermPrefixes(term_);
        it.IsValid(); it.Advance()) {
     bool exact_match = strlen(it.GetKey()) == term_len;
-    ICING_ASSIGN_OR_RETURN(
+    TC3_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
     lite_index_->AppendHits(term_id, section_restrict_mask_,

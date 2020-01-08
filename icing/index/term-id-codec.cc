@@ -18,7 +18,7 @@
 #include <limits>
 #include <memory>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -82,7 +82,7 @@ libtextclassifier3::StatusOr<TviType> TermIdCodec::DecodeTviType(
 libtextclassifier3::StatusOr<TermIdCodec::DecodedTermInfo>
 TermIdCodec::DecodeTermInfo(uint32_t term_id) const {
   DecodedTermInfo result;
-  ICING_ASSIGN_OR_RETURN(result.tvi_type, DecodeTviType(term_id));
+  TC3_ASSIGN_OR_RETURN(result.tvi_type, DecodeTviType(term_id));
   switch (result.tvi_type) {
     case TviType::MAIN:
       result.tvi = term_id;

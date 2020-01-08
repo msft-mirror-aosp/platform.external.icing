@@ -16,13 +16,14 @@
 
 #include <memory>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -34,7 +35,7 @@ class DocumentScoreScorer : public Scorer {
       : document_store_(*document_store), default_score_(default_score) {}
 
   float GetScore(DocumentId document_id) override {
-    ICING_ASSIGN_OR_RETURN_VAL(
+    TC3_ASSIGN_OR_RETURN(
         DocumentAssociatedScoreData score_data,
         document_store_.GetDocumentAssociatedScoreData(document_id),
         default_score_);
@@ -54,7 +55,7 @@ class DocumentCreationTimestampScorer : public Scorer {
       : document_store_(*document_store), default_score_(default_score) {}
 
   float GetScore(DocumentId document_id) override {
-    ICING_ASSIGN_OR_RETURN_VAL(
+    TC3_ASSIGN_OR_RETURN(
         DocumentAssociatedScoreData score_data,
         document_store_.GetDocumentAssociatedScoreData(document_id),
         default_score_);
@@ -70,6 +71,8 @@ class DocumentCreationTimestampScorer : public Scorer {
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     ScoringSpecProto::RankingStrategy::Code rank_by, float default_score,
     const DocumentStore* document_store) {
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+
   switch (rank_by) {
     case ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE:
       return std::make_unique<DocumentScoreScorer>(document_store,

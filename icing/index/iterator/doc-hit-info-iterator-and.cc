@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -92,16 +92,16 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
   DocumentId short_doc_id = short_->doc_hit_info().document_id();
 
   // Then AdvanceTo on long
-  ICING_ASSIGN_OR_RETURN(DocumentId long_doc_id,
+  TC3_ASSIGN_OR_RETURN(DocumentId long_doc_id,
                          AdvanceTo(long_.get(), short_doc_id));
 
   // Now try to align DocHitInfos by moving one or the other.
   while (short_doc_id != long_doc_id) {
     if (short_doc_id > long_doc_id) {
-      ICING_ASSIGN_OR_RETURN(short_doc_id,
+      TC3_ASSIGN_OR_RETURN(short_doc_id,
                              AdvanceTo(short_.get(), long_doc_id));
     } else {
-      ICING_ASSIGN_OR_RETURN(long_doc_id, AdvanceTo(long_.get(), short_doc_id));
+      TC3_ASSIGN_OR_RETURN(long_doc_id, AdvanceTo(long_.get(), short_doc_id));
     }
   }
 
@@ -162,7 +162,7 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
         // Advance the current iterator until it's equal to or smaller than the
         // potential hit doc id
         DocumentId unused;
-        ICING_ASSIGN_OR_RETURN(
+        TC3_ASSIGN_OR_RETURN(
             unused, AdvanceTo(iterator.get(), potential_document_id));
       }
 

@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite-index.h"

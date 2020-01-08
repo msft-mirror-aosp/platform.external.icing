@@ -21,11 +21,10 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
-#include "icing/tokenization/language-detector.h"
 #include "icing/util/i18n-utils.h"
 #include "unicode/ubrk.h"
 #include "unicode/uchar.h"
@@ -36,40 +35,37 @@ namespace lib {
 
 namespace {
 constexpr char kASCIISpace = ' ';
+constexpr char kLocaleAmericanEnglishComputer[] = "en_US_POSIX";
 }  // namespace
 
-LanguageSegmenter::LanguageSegmenter(
-    std::unique_ptr<LanguageDetector> language_detector,
-    const std::string default_locale)
-    : language_detector_(std::move(language_detector)),
-      default_locale_(std::move(default_locale)) {}
+LanguageSegmenter::LanguageSegmenter(std::string locale)
+    : locale_(std::move(locale)) {}
 
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>>
-LanguageSegmenter::Create(const std::string& lang_id_model_path,
-                          const std::string& default_locale) {
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<LanguageDetector> language_detector,
-      LanguageDetector::CreateWithLangId(lang_id_model_path));
-  return std::unique_ptr<LanguageSegmenter>(
-      new LanguageSegmenter(std::move(language_detector), default_locale));
+LanguageSegmenter::Create(const std::string& locale) {
+  // TODO(samzheng): Figure out if we want to verify locale strings and notify
+  // users. Right now illegal locale strings will be ignored by ICU. ICU
+  // components will be created with its default locale.\
+
+  // Word connector rules for "en_US_POSIX" (American English (Computer)) are
+  // different from other locales. E.g. "email.subject" will be split into 3
+  // terms in "en_US_POSIX": "email", ".", and "subject", while it's just one
+  // term in other locales. Our current LanguageSegmenter doesn't handle this
+  // special rule, so we replace it with "en_US".
+  if (locale == kLocaleAmericanEnglishComputer) {
+    return std::unique_ptr<LanguageSegmenter>(new LanguageSegmenter(ULOC_US));
+  }
+  return std::unique_ptr<LanguageSegmenter>(new LanguageSegmenter(locale));
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter::Iterator>>
 LanguageSegmenter::Segment(const std::string_view text) const {
-  // TODO(b/143769125): Remove LangId for now.
-  libtextclassifier3::StatusOr<std::string> language_or =
-      language_detector_->DetectLanguage(text);
-
-  if (language_or.ok()) {
-    return LanguageSegmenter::Iterator::Create(text, language_or.ValueOrDie());
-  } else {
-    return LanguageSegmenter::Iterator::Create(text, default_locale_);
-  }
+  return LanguageSegmenter::Iterator::Create(text, locale_);
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string_view>>
 LanguageSegmenter::GetAllTerms(const std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Iterator> iterator, Segment(text));
+  TC3_ASSIGN_OR_RETURN(std::unique_ptr<Iterator> iterator, Segment(text));
   std::vector<std::string_view> terms;
   while (iterator->Advance()) {
     terms.push_back(iterator->GetTerm());

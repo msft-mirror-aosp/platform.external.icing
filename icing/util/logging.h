@@ -15,14 +15,14 @@
 #ifndef ICING_UTIL_LOGGING_H_
 #define ICING_UTIL_LOGGING_H_
 
-#include "base/logging.h"
+#include "icing/text_classifier/lib3/utils/base/logging.h"
 
 namespace icing {
 namespace lib {
 
-// TODO(samzheng): Change to TC3_VLOG and TC3_LOG
-#define ICING_VLOG(severity) VLOG(severity)
-#define ICING_LOG(severity) LOG(severity)
+// TODO(b/146903474) Add verbose level control
+#define ICING_VLOG(verbose_level) TC3_VLOG(verbose_level)
+#define ICING_LOG(severity) TC3_LOG(severity)
 
 }  // namespace lib
 }  // namespace icing

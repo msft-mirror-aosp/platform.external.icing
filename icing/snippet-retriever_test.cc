@@ -57,7 +57,7 @@ class SnippetRetrieverTest : public testing::Test {
         // File generated via icu_data_file rule in //icing/BUILD.
         SetUpICUDataFile("icing/icu.dat"));
     ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               LanguageSegmenter::Create(GetLangIdModelPath()));
+                               LanguageSegmenter::Create());
 
     // Setup the schema
     ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
@@ -83,8 +83,10 @@ class SnippetRetrieverTest : public testing::Test {
         IndexingConfig::TokenizerType::PLAIN);
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
-    snippet_retriever_ = std::make_unique<SnippetRetriever>(
-        schema_store_.get(), language_segmenter_.get());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        snippet_retriever_,
+        SnippetRetriever::Create(schema_store_.get(),
+                                 language_segmenter_.get()));
 
     // Set limits to max - effectively no limit. Enable matching and request a
     // window of 64 bytes.
@@ -105,6 +107,15 @@ class SnippetRetrieverTest : public testing::Test {
   ResultSpecProto::SnippetSpecProto snippet_spec_;
   std::string test_dir_;
 };
+
+TEST_F(SnippetRetrieverTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(SnippetRetriever::Create(/*schema_store=*/nullptr,
+                                       language_segmenter_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(SnippetRetriever::Create(schema_store_.get(),
+                                       /*language_segmenter=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeSmallerThanMatch) {
   DocumentProto document =

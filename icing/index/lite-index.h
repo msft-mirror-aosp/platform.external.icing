@@ -25,8 +25,8 @@
 #include <string>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
@@ -102,7 +102,11 @@ class LiteIndex {
 
   // Creates lite index from storage. The files will be created if they do not
   // already exist.
-  // If Create() fails, a non-ok Status will be returned.
+  //
+  // Returns:
+  //  OK on success
+  //  DATA_LOSS if the index was corrupted and cleared
+  //  INTERNAL on I/O error
   static libtextclassifier3::StatusOr<std::unique_ptr<LiteIndex>> Create(
       const Options& options, const IcingFilesystem* filesystem);
 
@@ -192,7 +196,12 @@ class LiteIndex {
   LiteIndex(const Options& options, const IcingFilesystem* filesystem);
 
   // Initializes lite index from storage. Must be called exactly once after
-  // object construction. If init fails, returns a non-ok Status.
+  // object construction.
+  //
+  // Returns:
+  //  OK on success
+  //  DATA_LOSS if the index was corrupted and cleared
+  //  INTERNAL on I/O error
   libtextclassifier3::Status Initialize();
 
   bool initialized() const { return header_ != nullptr; }

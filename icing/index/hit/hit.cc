@@ -52,20 +52,22 @@ inline DocumentId InvertDocumentId(DocumentId document_id) {
 }  // namespace
 
 Hit::Hit(SectionId section_id, DocumentId document_id, Hit::Score score,
-         bool in_prefix_section, bool is_prefix_hit)
+         bool is_in_prefix_section, bool is_prefix_hit)
     : score_(score) {
   // Values are stored so that when sorted, they appear in document_id
   // descending, section_id ascending, order. Also, all else being
   // equal, non-prefix hits sort before prefix hits. So inverted
   // document_id appears in the most significant bits, followed by
   // (uninverted) section_id.
-  value_ = 0;
+  Value temp_value = 0;
   bit_util::BitfieldSet(InvertDocumentId(document_id),
-                        kSectionIdBits + kNumFlags, kDocumentIdBits, &value_);
-  bit_util::BitfieldSet(section_id, kNumFlags, kSectionIdBits, &value_);
-  bit_util::BitfieldSet(score != kMaxHitScore, kHasScore, 1, &value_);
-  bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, 1, &value_);
-  bit_util::BitfieldSet(in_prefix_section, kInPrefixSection, 1, &value_);
+                        kSectionIdBits + kNumFlags, kDocumentIdBits,
+                        &temp_value);
+  bit_util::BitfieldSet(section_id, kNumFlags, kSectionIdBits, &temp_value);
+  bit_util::BitfieldSet(score != kMaxHitScore, kHasScore, 1, &temp_value);
+  bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, 1, &temp_value);
+  bit_util::BitfieldSet(is_in_prefix_section, kInPrefixSection, 1, &temp_value);
+  value_ = temp_value;
 }
 
 DocumentId Hit::document_id() const {

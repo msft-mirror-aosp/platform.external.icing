@@ -22,8 +22,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
@@ -99,11 +99,14 @@ class SchemaStore {
     std::unordered_set<SchemaTypeId> schema_types_incompatible_by_id;
   };
 
-  // Create a SchemaStore instance. The base_dir must already exist. There does
-  // not need to be an existing schema already.
+  // Factory function to create a SchemaStore which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created SchemaStore instance. The base_dir must already exist.
+  // There does not need to be an existing schema already.
   //
   // Returns:
-  //   unique_ptr to SchemaStore on success
+  //   A SchemaStore on success
+  //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir);

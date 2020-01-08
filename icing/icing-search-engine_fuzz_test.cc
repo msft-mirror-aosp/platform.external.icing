@@ -15,8 +15,8 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/document-builder.h"
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
@@ -34,7 +34,6 @@ IcingSearchEngineOptions Setup() {
   libtextclassifier3::Status status =
       SetUpICUDataFile("icing/icu.dat");
   icing_options.set_base_dir(GetTestTempDir() + "/icing");
-  icing_options.set_lang_model_path(GetLangIdModelPath());
   return icing_options;
 }
 

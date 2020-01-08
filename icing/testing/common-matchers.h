@@ -15,8 +15,8 @@
 #ifndef ICING_TESTING_COMMON_MATCHERS_H_
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/status_macros.h"

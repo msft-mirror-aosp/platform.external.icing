@@ -21,8 +21,8 @@
 #include <unordered_set>
 #include <utility>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite-index.h"
@@ -42,7 +42,7 @@ namespace lib {
 // hits (calling Editor::AddHit with the same arguments will only result in the
 // creation of a single hit).
 // Ex.
-// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
+// TC3_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
 // .                Index::Create(MakeIndexOptions()));
 // Index::Editor editor = index->Edit(document_id, section_id,
 //     TermMatchType::EXACT_ONLY); ICING_RETURN_IF_ERROR(editor.AddHit("foo"));
@@ -50,9 +50,9 @@ namespace lib {
 //
 // Content is retrieved from the index through the Iterator class.
 // Ex.
-// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
+// TC3_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
 // .                Index::Create(MakeIndexOptions()));
-// ICING_ASSIGN_OR_RETURN(Index::Iterator iterator =
+// TC3_ASSIGN_OR_RETURN(Index::Iterator iterator =
 //     index->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
 // while(iterator->Advance().ok())
 //   ProcessResult(iterator->value());
@@ -65,7 +65,14 @@ class Index {
     std::string base_dir;
     int32_t index_merge_size;
   };
+
   // Creates an instance of Index in the directory pointed by file_dir.
+  //
+  // Returns:
+  //   Valid Index on success
+  //   DATA_LOSS if the index was corrupt and had to be cleared
+  //   INVALID_ARGUMENT if options have invalid values
+  //   INTERNAL on I/O error
   static libtextclassifier3::StatusOr<std::unique_ptr<Index>> Create(
       const Options& options, const IcingFilesystem* filesystem);
 

@@ -27,8 +27,8 @@
 #include <string>
 #include <string_view>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"

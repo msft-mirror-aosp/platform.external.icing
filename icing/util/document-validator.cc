@@ -17,7 +17,7 @@
 #include <cstdint>
 #include <unordered_set>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/schema/schema-util.h"
@@ -61,7 +61,7 @@ libtextclassifier3::Status DocumentValidator::Validate(
   }
 
   // TODO(b/144458732): Implement a more robust version of
-  // ICING_ASSIGN_OR_RETURN that can support error logging.
+  // TC3_ASSIGN_OR_RETURN that can support error logging.
   auto type_config_or = schema_store_->GetSchemaTypeConfig(document.schema());
   if (!type_config_or.ok()) {
     ICING_LOG(ERROR) << type_config_or.status().error_message()

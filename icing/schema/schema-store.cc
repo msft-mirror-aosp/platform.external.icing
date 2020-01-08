@@ -23,8 +23,8 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -39,6 +39,7 @@
 #include "icing/store/key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -104,6 +105,8 @@ std::unordered_set<SchemaTypeId> SchemaTypeIdsChanged(
 
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     const Filesystem* filesystem, const std::string& base_dir) {
+  ICING_RETURN_ERROR_IF_NULL(filesystem);
+
   std::unique_ptr<SchemaStore> schema_store =
       std::unique_ptr<SchemaStore>(new SchemaStore(filesystem, base_dir));
   ICING_RETURN_IF_ERROR(schema_store->Initialize());
@@ -164,13 +167,13 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
         "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
 
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       schema_type_mapper_,
       KeyMapper<SchemaTypeId>::Create(filesystem_,
                                       MakeSchemaTypeMapperFilename(base_dir_),
                                       kSchemaTypeMapperMaxSize));
 
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   if (checksum.Get() != header.checksum) {
     return absl_ports::InternalError(
         "Combined checksum of SchemaStore was inconsistent");
@@ -178,12 +181,12 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
 
   // Update our in-memory data structures
   type_config_map_.clear();
-  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
+  TC3_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
   for (const SchemaTypeConfigProto& type_config : schema_proto->types()) {
     // Update our type_config_map_
     type_config_map_.emplace(type_config.schema_type(), type_config);
   }
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       section_manager_,
       SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
@@ -191,7 +194,7 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
 }
 
 libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles() {
-  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
+  TC3_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
 
   ICING_RETURN_IF_ERROR(ResetSchemaTypeMapper());
   type_config_map_.clear();
@@ -205,12 +208,12 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles() {
         type_config.schema_type(), schema_type_mapper_->num_keys()));
   }
 
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       section_manager_,
       SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
 
   return libtextclassifier3::Status::OK;
@@ -238,7 +241,7 @@ libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
   if (!filesystem_.Write(MakeHeaderFilename(base_dir_).c_str(), &header,
                          sizeof(header))) {
     return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to write DocStore header: ", MakeHeaderFilename(base_dir_)));
+        "Failed to write SchemaStore header: ", MakeHeaderFilename(base_dir_)));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -255,7 +258,7 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
                      << "Failed to delete old schema_type mapper";
     return status;
   }
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       schema_type_mapper_,
       KeyMapper<SchemaTypeId>::Create(filesystem_,
                                       MakeSchemaTypeMapperFilename(base_dir_),
@@ -342,7 +345,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
       result.schema_types_deleted_by_name.emplace(schema_type);
 
-      ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+      TC3_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                              GetSchemaTypeId(schema_type));
       result.schema_types_deleted_by_id.emplace(schema_type_id);
     }
@@ -354,7 +357,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
       result.schema_types_incompatible_by_name.emplace(schema_type);
 
-      ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+      TC3_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                              GetSchemaTypeId(schema_type));
       result.schema_types_incompatible_by_id.emplace(schema_type_id);
     }
@@ -424,7 +427,7 @@ libtextclassifier3::Status SchemaStore::PersistToDisk() {
   }
 
   // Write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
 
   return libtextclassifier3::Status::OK;

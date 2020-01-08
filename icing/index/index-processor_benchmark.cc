@@ -43,11 +43,6 @@
 //    Make target //icing/transform:normalizer depend on
 //    //third_party/icu
 //
-//    Download LangId model file from
-//    //nlp/saft/components/lang_id/mobile/fb_model:models/latest_model.smfb and
-//    put it into your device:
-//    $ adb push [your model path] /data/local/tmp/
-//
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
 //    //icing/index:index-processor_benchmark
@@ -140,15 +135,6 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
   return Index::Create(options, &filesystem).ValueOrDie();
 }
 
-std::unique_ptr<LanguageSegmenter> CreateLanguageSegmenter() {
-  if (absl::GetFlag(FLAGS_adb)) {
-    return LanguageSegmenter::Create("/data/local/tmp/latest_model.smfb")
-        .ValueOrDie();
-  } else {
-    return LanguageSegmenter::Create(GetLangIdModelPath()).ValueOrDie();
-  }
-}
-
 std::unique_ptr<Normalizer> CreateNormalizer() {
   return Normalizer::Create(
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
@@ -184,8 +170,9 @@ std::unique_ptr<IndexProcessor> CreateIndexProcessor(
   processor_options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
-  return std::make_unique<IndexProcessor>(schema_store, language_segmenter,
-                                          normalizer, index, processor_options);
+  return IndexProcessor::Create(schema_store, language_segmenter, normalizer,
+                                index, processor_options)
+      .ValueOrDie();
 }
 
 void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
@@ -201,7 +188,7 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -247,7 +234,7 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -294,7 +281,7 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -341,7 +328,7 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =

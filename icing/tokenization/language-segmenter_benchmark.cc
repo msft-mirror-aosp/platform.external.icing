@@ -30,11 +30,6 @@
 //    Make target //icing/tokenization:language-segmenter depend on
 //    //third_party/icu
 //
-//    Download LangId model file from
-//    //nlp/saft/components/lang_id/mobile/fb_model:models/latest_model.smfb and
-//    put it into your device:
-//    $ adb push [your model path] /data/local/tmp/
-//
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
 //    //icing/tokenization:language-segmenter_benchmark
@@ -55,15 +50,6 @@ namespace lib {
 
 namespace {
 
-std::unique_ptr<LanguageSegmenter> CreateLanguageSegmenter() {
-  if (absl::GetFlag(FLAGS_adb)) {
-    return LanguageSegmenter::Create("/data/local/tmp/latest_model.smfb")
-        .ValueOrDie();
-  } else {
-    return LanguageSegmenter::Create(GetLangIdModelPath()).ValueOrDie();
-  }
-}
-
 void BM_SegmentNoSpace(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
@@ -71,7 +57,7 @@ void BM_SegmentNoSpace(benchmark::State& state) {
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
 
@@ -106,7 +92,7 @@ void BM_SegmentWithSpaces(benchmark::State& state) {
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
   for (int i = 1; i < input_string.length(); i += 2) {
@@ -144,7 +130,7 @@ void BM_SegmentCJK(benchmark::State& state) {
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {

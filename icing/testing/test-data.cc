@@ -19,7 +19,7 @@
 #include <cstdint>
 
 #include "devtools/build/runtime/get_runfiles_dir.h"
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
@@ -28,22 +28,23 @@
 
 namespace icing {
 namespace lib {
-namespace {
-constexpr char kGoogle3LangIdModelPath[] =
-    "nlp/saft/components/lang_id/mobile/fb_model/models/latest_model.smfb";
-}  // namespace
 
 std::string GetTestFilePath(const std::string& google3_relative_file_path) {
   return absl_ports::StrCat(devtools_build::testonly::GetTestSrcdir(),
                             "/google3/", google3_relative_file_path);
 }
 
-std::string GetLangIdModelPath() {
-  return GetTestFilePath(kGoogle3LangIdModelPath);
-}
+// ICU data file needs to be set up only once every test run, it can be shared
+// between different test cases. Setting up the file too many times may cause
+// out-of-memory / segmentation fault errors in Android emulator.
+bool has_set_up_icu_data_file = false;
 
 libtextclassifier3::Status SetUpICUDataFile(
     const std::string& icu_data_file_relative_path) {
+  if (has_set_up_icu_data_file) {
+    return libtextclassifier3::Status::OK;
+  }
+
   const std::string& file_path = GetTestFilePath(icu_data_file_relative_path);
 
   Filesystem filesystem;
@@ -63,6 +64,9 @@ libtextclassifier3::Status SetUpICUDataFile(
         "Failed to set up ICU data, please check if you have the data file at "
         "the given path.");
   }
+
+  has_set_up_icu_data_file = true;
+
   return libtextclassifier3::Status::OK;
 }
 

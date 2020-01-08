@@ -20,7 +20,7 @@
 #include <string>
 #include <string_view>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"

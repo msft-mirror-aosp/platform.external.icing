@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <string>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/index.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema/schema-store.h"
@@ -50,18 +50,16 @@ class IndexProcessor {
     TokenLimitBehavior token_limit_behavior;
   };
 
-  // Does not take any ownership, and all pointers must refer to valid objects
-  // that outlive the one constructed.
-  // TODO(b/141180665): Add nullptr checks for the raw pointers
-  IndexProcessor(const SchemaStore* schema_store,
-                 const LanguageSegmenter* lang_segmenter,
-                 const Normalizer* normalizer, Index* index,
-                 const Options& options)
-      : schema_store_(*schema_store),
-        lang_segmenter_(*lang_segmenter),
-        normalizer_(*normalizer),
-        index_(index),
-        options_(options) {}
+  // Factory function to create an IndexProcessor which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created IndexProcessor instance.
+  //
+  // Returns:
+  //   An IndexProcessor on success
+  //   FAILED_PRECONDITION if any of the pointers is null.
+  static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
+      const SchemaStore* schema_store, const LanguageSegmenter* lang_segmenter,
+      const Normalizer* normalizer, Index* index, const Options& options);
 
   // Add document to the index, associated with document_id. If the number of
   // tokens in the document exceeds max_tokens_per_document, then only the first
@@ -79,6 +77,16 @@ class IndexProcessor {
                                            DocumentId document_id);
 
  private:
+  IndexProcessor(const SchemaStore* schema_store,
+                 const LanguageSegmenter* lang_segmenter,
+                 const Normalizer* normalizer, Index* index,
+                 const Options& options)
+      : schema_store_(*schema_store),
+        lang_segmenter_(*lang_segmenter),
+        normalizer_(*normalizer),
+        index_(index),
+        options_(options) {}
+
   std::string NormalizeToken(const Token& token);
 
   const SchemaStore& schema_store_;

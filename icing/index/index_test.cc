@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
@@ -92,6 +92,12 @@ MATCHER_P2(EqualsDocHitInfo, document_id, sections, "") {
                    << ", section_mask=" << section_mask << "}.";
   return actual.document_id() == document_id &&
          actual.hit_section_ids_mask() == section_mask;
+}
+
+TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  EXPECT_THAT(Index::Create(options, /*filesystem=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(IndexTest, EmptyIndex) {

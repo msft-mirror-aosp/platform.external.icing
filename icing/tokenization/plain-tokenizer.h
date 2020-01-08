@@ -15,7 +15,7 @@
 #ifndef ICING_TOKENIZATION_PLAIN_TOKENIZER_H_
 #define ICING_TOKENIZATION_PLAIN_TOKENIZER_H_
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer.h"
 

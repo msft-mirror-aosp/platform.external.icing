@@ -17,7 +17,7 @@
 
 #include <string_view>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 
 namespace icing {
 namespace lib {

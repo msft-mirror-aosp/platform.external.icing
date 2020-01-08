@@ -16,8 +16,8 @@
 
 #include <cstdint>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -216,7 +216,7 @@ libtextclassifier3::Status FileBackedBitmap::Set(int bit_index,
   const int word_index = bit_index / kNumWordBits;
   const int word_mask = 1u << (bit_index % kNumWordBits);
 
-  ICING_ASSIGN_OR_RETURN(Word old_word, GetWord(word_index));
+  TC3_ASSIGN_OR_RETURN(Word old_word, GetWord(word_index));
   Word new_word = bit_value ? (old_word | word_mask) : old_word & ~word_mask;
   if (new_word != old_word) {
     ICING_RETURN_IF_ERROR(SetWord(word_index, new_word));
@@ -236,7 +236,7 @@ libtextclassifier3::StatusOr<bool> FileBackedBitmap::Get(int bit_index) const {
   const Word word_index = bit_index / kNumWordBits;
   const Word word_mask = 1u << (bit_index % kNumWordBits);
 
-  ICING_ASSIGN_OR_RETURN(Word word, GetWord(word_index));
+  TC3_ASSIGN_OR_RETURN(Word word, GetWord(word_index));
   return word & word_mask;
 }
 
@@ -298,7 +298,7 @@ libtextclassifier3::Status FileBackedBitmap::TruncateTo(int new_num_bits) {
   // Mask to only keep bits <= new_num_bits and clear everything else.
   const Word word_mask = (1u << (new_num_bits % kNumWordBits)) - 1;
 
-  ICING_ASSIGN_OR_RETURN(Word old_word, GetWord(word_index));
+  TC3_ASSIGN_OR_RETURN(Word old_word, GetWord(word_index));
   Word new_word = old_word & word_mask;
   ICING_RETURN_IF_ERROR(SetWord(word_index, new_word));
 

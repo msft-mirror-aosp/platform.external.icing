@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -32,11 +32,13 @@ namespace lib {
 // ScoringProcessor is the top-level class that handles scoring.
 class ScoringProcessor {
  public:
-  // Factory function to create a Scorer with its subcomponents according to the
-  // scoring spec.
+  // Factory function to create a ScoringProcessor which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created ScoringProcessor instance.
   //
   // Returns:
-  //   A Scorer on success
+  //   A ScoringProcessor on success
+  //   FAILED_PRECONDITION on any null pointer input
   //   INVALID_ARGUMENT if unable to create what the spec specifies
   static libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>> Create(
       const ScoringSpecProto& scoring_spec,

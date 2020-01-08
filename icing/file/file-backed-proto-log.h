@@ -61,8 +61,8 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include <google/protobuf/io/gzip_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
@@ -526,7 +526,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
   header->max_proto_size = options.max_proto_size;
 
   bool data_loss = false;
-  ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
+  TC3_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
                          ComputeChecksum(filesystem, file_path, Crc32(),
                                          sizeof(Header), file_size));
   // Double check that the log checksum is the same as the one that was
@@ -541,7 +541,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
     // offset point. This will be valid if we just appended contents to the log
     // without updating the checksum, and we can rewind back to this point
     // safely.
-    ICING_ASSIGN_OR_RETURN(
+    TC3_ASSIGN_OR_RETURN(
         calculated_log_checksum,
         ComputeChecksum(filesystem, file_path, Crc32(), sizeof(Header),
                         header->rewind_offset));
@@ -632,14 +632,14 @@ libtextclassifier3::StatusOr<int64_t> FileBackedProtoLog<ProtoT>::WriteProto(
   int final_size = 0;
 
   std::string proto_str;
-  google3_proto_compat::io::StringOutputStream proto_stream(&proto_str);
+  google::protobuf::io::StringOutputStream proto_stream(&proto_str);
 
   if (header_->compress) {
-    google3_proto_compat::io::GzipOutputStream::Options options;
-    options.format = google3_proto_compat::io::GzipOutputStream::ZLIB;
+    google::protobuf::io::GzipOutputStream::Options options;
+    options.format = google::protobuf::io::GzipOutputStream::ZLIB;
     options.compression_level = kDeflateCompressionLevel;
 
-    google3_proto_compat::io::GzipOutputStream compressing_stream(&proto_stream,
+    google::protobuf::io::GzipOutputStream compressing_stream(&proto_stream,
                                                                   options);
 
     bool success = proto.SerializeToZeroCopyStream(&compressing_stream) &&
@@ -702,7 +702,7 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   }
 
   // Read out the metadata
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       int metadata, ReadProtoMetadata(&mmapped_file, file_offset, file_size));
 
   // Copy out however many bytes it says the proto is
@@ -710,13 +710,13 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
 
   ICING_RETURN_IF_ERROR(
       mmapped_file.Remap(file_offset + sizeof(metadata), stored_size));
-  google3_proto_compat::io::ArrayInputStream proto_stream(
+  google::protobuf::io::ArrayInputStream proto_stream(
       mmapped_file.mutable_region(), stored_size);
 
   // Deserialize proto
   ProtoT proto;
   if (header_->compress) {
-    google3_proto_compat::io::GzipInputStream decompress_stream(&proto_stream);
+    google::protobuf::io::GzipInputStream decompress_stream(&proto_stream);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);
@@ -757,7 +757,7 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::Iterator::Advance() {
     current_offset_ = initial_offset_;
   } else {
     // Jumps to the next proto position
-    ICING_ASSIGN_OR_RETURN(
+    TC3_ASSIGN_OR_RETURN(
         int metadata,
         ReadProtoMetadata(&mmapped_file_, current_offset_, file_size_));
     int proto_size = metadata & 0x00FFFFFF;
@@ -829,12 +829,12 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::PersistToDisk() {
   Crc32 crc;
   if (new_content_size < 0) {
     // File shrunk, recalculate the entire checksum.
-    ICING_ASSIGN_OR_RETURN(
+    TC3_ASSIGN_OR_RETURN(
         crc, ComputeChecksum(filesystem_, file_path_, Crc32(), sizeof(Header),
                              file_size));
   } else {
     // Append new changes to the existing checksum.
-    ICING_ASSIGN_OR_RETURN(
+    TC3_ASSIGN_OR_RETURN(
         crc,
         ComputeChecksum(filesystem_, file_path_, Crc32(header_->log_checksum),
                         header_->rewind_offset, file_size));

@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
@@ -164,8 +164,7 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
     if (iterator->doc_hit_info().document_id() > next_document_id_max) {
       // Advance the iterator until its value is equal to or smaller than
       // next_document_id_max
-      if (ABSL_PREDICT_FALSE(
-              !AdvanceTo(iterator.get(), next_document_id_max).ok())) {
+      if (!AdvanceTo(iterator.get(), next_document_id_max).ok()) {
         continue;
       }
     }

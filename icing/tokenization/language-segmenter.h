@@ -21,9 +21,8 @@
 #include <string_view>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
-#include "icing/tokenization/language-detector.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "unicode/ubrk.h"
 #include "unicode/uloc.h"
 
@@ -47,15 +46,13 @@ class LanguageSegmenter {
   LanguageSegmenter(const LanguageSegmenter&) = delete;
   LanguageSegmenter& operator=(const LanguageSegmenter&) = delete;
 
-  // Creates a language segmenter that uses the given LangId model. Default
-  // locale is used when language can't be detected.
+  // Creates a language segmenter with the given locale.
   //
   // Returns:
   //   A LanguageSegmenter on success
-  //   INVALID_ARGUMENT if fails to load model
+  //   INVALID_ARGUMENT if locale string is invalid
   static libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>>
-  Create(const std::string& lang_id_model_path,
-         const std::string& default_locale = ULOC_US);
+  Create(const std::string& locale = ULOC_US);
 
   // An iterator helping to find terms in the input text.
   // Example usage:
@@ -176,14 +173,10 @@ class LanguageSegmenter {
       std::string_view text) const;
 
  private:
-  LanguageSegmenter(std::unique_ptr<LanguageDetector> language_detector,
-                    const std::string default_locale);
+  explicit LanguageSegmenter(std::string locale);
 
-  // Used to detect languages in text
-  const std::unique_ptr<LanguageDetector> language_detector_;
-
-  // Used as default locale when language can't be detected in text
-  const std::string default_locale_;
+  // Used to help segment text
+  const std::string locale_;
 };
 
 }  // namespace lib

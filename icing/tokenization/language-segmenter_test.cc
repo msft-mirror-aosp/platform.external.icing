@@ -20,6 +20,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/i18n-test-utils.h"
 #include "icing/testing/test-data.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -28,36 +29,34 @@ using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 
-class LanguageSegmenterTest : public ::testing::Test {
+class LanguageSegmenterAllLocalesTest
+    : public testing::TestWithParam<const char*> {
  protected:
   void SetUp() override {
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
         SetUpICUDataFile("icing/icu.dat"));
   }
+
+  static std::string GetLocale() { return GetParam(); }
 };
 
-TEST_F(LanguageSegmenterTest, BadModelPath) {
-  EXPECT_THAT(LanguageSegmenter::Create("Bad Model Path"),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(LanguageSegmenterTest, EmptyText) {
+TEST_P(LanguageSegmenterAllLocalesTest, EmptyText) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   EXPECT_THAT(language_segmenter->GetAllTerms(""), IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(LanguageSegmenterTest, SimpleText) {
+TEST_P(LanguageSegmenterAllLocalesTest, SimpleText) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   EXPECT_THAT(language_segmenter->GetAllTerms("Hello World"),
               IsOkAndHolds(ElementsAre("Hello", " ", "World")));
 }
 
-TEST_F(LanguageSegmenterTest, ASCII_Punctuation) {
+TEST_P(LanguageSegmenterAllLocalesTest, ASCII_Punctuation) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // ASCII punctuation marks are kept
   EXPECT_THAT(
       language_segmenter->GetAllTerms("Hello, World!!!"),
@@ -70,9 +69,9 @@ TEST_F(LanguageSegmenterTest, ASCII_Punctuation) {
               IsOkAndHolds(ElementsAre("A", "&", "B")));
 }
 
-TEST_F(LanguageSegmenterTest, ASCII_SpecialCharacter) {
+TEST_P(LanguageSegmenterAllLocalesTest, ASCII_SpecialCharacter) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // ASCII special characters are kept
   EXPECT_THAT(language_segmenter->GetAllTerms("Pay $1000"),
               IsOkAndHolds(ElementsAre("Pay", " ", "$", "1000")));
@@ -86,18 +85,18 @@ TEST_F(LanguageSegmenterTest, ASCII_SpecialCharacter) {
                                        UcharToString(0x0009), "World")));
 }
 
-TEST_F(LanguageSegmenterTest, Non_ASCII_Non_Alphabetic) {
+TEST_P(LanguageSegmenterAllLocalesTest, Non_ASCII_Non_Alphabetic) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // Full-width (non-ASCII) punctuation marks and special characters are left
   // out.
   EXPECT_THAT(language_segmenter->GetAllTerms("。？·Hello！×"),
               IsOkAndHolds(ElementsAre("Hello")));
 }
 
-TEST_F(LanguageSegmenterTest, Acronym) {
+TEST_P(LanguageSegmenterAllLocalesTest, Acronym) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   EXPECT_THAT(language_segmenter->GetAllTerms("U.S. Bank"),
               IsOkAndHolds(ElementsAre("U.S", ".", " ", "Bank")));
   EXPECT_THAT(language_segmenter->GetAllTerms("I.B.M."),
@@ -108,9 +107,9 @@ TEST_F(LanguageSegmenterTest, Acronym) {
               IsOkAndHolds(ElementsAre("I", " ", "B", " ", "M")));
 }
 
-TEST_F(LanguageSegmenterTest, WordConnector) {
+TEST_P(LanguageSegmenterAllLocalesTest, WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // According to unicode word break rules
   // WB6(https://unicode.org/reports/tr29/#WB6),
   // WB7(https://unicode.org/reports/tr29/#WB7), and a few others, some
@@ -161,9 +160,9 @@ TEST_F(LanguageSegmenterTest, WordConnector) {
       IsOkAndHolds(ElementsAre("com", "\"", "google", "\"", "android")));
 }
 
-TEST_F(LanguageSegmenterTest, Apostrophes) {
+TEST_P(LanguageSegmenterAllLocalesTest, Apostrophes) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   EXPECT_THAT(language_segmenter->GetAllTerms("It's ok."),
               IsOkAndHolds(ElementsAre("It's", " ", "ok", ".")));
   EXPECT_THAT(language_segmenter->GetAllTerms("He'll be back."),
@@ -182,9 +181,9 @@ TEST_F(LanguageSegmenterTest, Apostrophes) {
       IsOkAndHolds(ElementsAre(token_with_quote, " ", "be", " ", "back", ".")));
 }
 
-TEST_F(LanguageSegmenterTest, Parentheses) {
+TEST_P(LanguageSegmenterAllLocalesTest, Parentheses) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
 
   EXPECT_THAT(language_segmenter->GetAllTerms("(Hello)"),
               IsOkAndHolds(ElementsAre("(", "Hello", ")")));
@@ -193,9 +192,9 @@ TEST_F(LanguageSegmenterTest, Parentheses) {
               IsOkAndHolds(ElementsAre(")", "Hello", "(")));
 }
 
-TEST_F(LanguageSegmenterTest, Quotes) {
+TEST_P(LanguageSegmenterAllLocalesTest, Quotes) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
 
   EXPECT_THAT(language_segmenter->GetAllTerms("\"Hello\""),
               IsOkAndHolds(ElementsAre("\"", "Hello", "\"")));
@@ -204,18 +203,18 @@ TEST_F(LanguageSegmenterTest, Quotes) {
               IsOkAndHolds(ElementsAre("'", "Hello", "'")));
 }
 
-TEST_F(LanguageSegmenterTest, Alphanumeric) {
+TEST_P(LanguageSegmenterAllLocalesTest, Alphanumeric) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
 
   // Alphanumeric terms are allowed
   EXPECT_THAT(language_segmenter->GetAllTerms("Se7en A4 3a"),
               IsOkAndHolds(ElementsAre("Se7en", " ", "A4", " ", "3a")));
 }
 
-TEST_F(LanguageSegmenterTest, Number) {
+TEST_P(LanguageSegmenterAllLocalesTest, Number) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
 
   // Alphanumeric terms are allowed
   EXPECT_THAT(
@@ -229,9 +228,9 @@ TEST_F(LanguageSegmenterTest, Number) {
               IsOkAndHolds(ElementsAre("-", "123")));
 }
 
-TEST_F(LanguageSegmenterTest, ContinuousWhitespaces) {
+TEST_P(LanguageSegmenterAllLocalesTest, ContinuousWhitespaces) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // Multiple continuous whitespaces are treated as one.
   const int kNumSeparators = 256;
   const std::string text_with_spaces =
@@ -240,9 +239,9 @@ TEST_F(LanguageSegmenterTest, ContinuousWhitespaces) {
               IsOkAndHolds(ElementsAre("Hello", " ", "World")));
 }
 
-TEST_F(LanguageSegmenterTest, CJKT) {
+TEST_P(LanguageSegmenterAllLocalesTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // CJKT (Chinese, Japanese, Khmer, Thai) are the 4 main languages that don't
   // have whitespaces as word delimiter.
 
@@ -262,17 +261,17 @@ TEST_F(LanguageSegmenterTest, CJKT) {
       IsOkAndHolds(ElementsAre("ฉัน", "เดิน", "ไป", "ทำงาน", "ทุก", "วัน")));
 }
 
-TEST_F(LanguageSegmenterTest, LatinLettersWithAccents) {
+TEST_P(LanguageSegmenterAllLocalesTest, LatinLettersWithAccents) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   EXPECT_THAT(language_segmenter->GetAllTerms("āăąḃḅḇčćç"),
               IsOkAndHolds(ElementsAre("āăąḃḅḇčćç")));
 }
 
 // TODO(samzheng): test cases for more languages (e.g. top 20 in the world)
-TEST_F(LanguageSegmenterTest, WhitespaceSplitLanguages) {
+TEST_P(LanguageSegmenterAllLocalesTest, WhitespaceSplitLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // Turkish
   EXPECT_THAT(language_segmenter->GetAllTerms("merhaba dünya"),
               IsOkAndHolds(ElementsAre("merhaba", " ", "dünya")));
@@ -283,17 +282,21 @@ TEST_F(LanguageSegmenterTest, WhitespaceSplitLanguages) {
 }
 
 // TODO(samzheng): more mixed languages test cases
-TEST_F(LanguageSegmenterTest, MixedLanguages) {
+TEST_P(LanguageSegmenterAllLocalesTest, MixedLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   EXPECT_THAT(language_segmenter->GetAllTerms("How are you你好吗お元気ですか"),
               IsOkAndHolds(ElementsAre("How", " ", "are", " ", "you", "你好",
                                        "吗", "お", "元気", "です", "か")));
+
+  EXPECT_THAT(
+      language_segmenter->GetAllTerms("나는 California에 산다"),
+      IsOkAndHolds(ElementsAre("나는", " ", "California", "에", " ", "산다")));
 }
 
-TEST_F(LanguageSegmenterTest, NotCopyStrings) {
+TEST_P(LanguageSegmenterAllLocalesTest, NotCopyStrings) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
+                             LanguageSegmenter::Create(GetLocale()));
   // Validates that the input strings are not copied
   const std::string text = "Hello World";
   const char* word1_address = text.c_str();
@@ -308,6 +311,25 @@ TEST_F(LanguageSegmenterTest, NotCopyStrings) {
   EXPECT_THAT(word1_address, Eq(word1_result_address));
   EXPECT_THAT(word2_address, Eq(word2_result_address));
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    LocaleName, LanguageSegmenterAllLocalesTest,
+    testing::Values(ULOC_US, ULOC_UK, ULOC_CANADA, ULOC_CANADA_FRENCH,
+                    ULOC_FRANCE, ULOC_GERMANY, ULOC_ITALY, ULOC_JAPAN,
+                    ULOC_KOREA, ULOC_SIMPLIFIED_CHINESE,
+                    ULOC_TRADITIONAL_CHINESE,
+                    "es_ES",        // Spanish
+                    "hi_IN",        // Hindi
+                    "th_TH",        // Thai
+                    "lo_LA",        // Lao
+                    "km_KH",        // Khmer
+                    "ar_DZ",        // Arabic
+                    "ru_RU",        // Russian
+                    "pt_PT",        // Portuguese
+                    "en_US_POSIX"   // American English (Computer)
+                    "wrong_locale"  // Will fall back to ICU default locale
+                    ""              // Will fall back to ICU default locale
+                    ));
 
 }  // namespace
 }  // namespace lib

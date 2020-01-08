@@ -21,7 +21,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/proto/schema.pb.h"
 
 namespace icing {

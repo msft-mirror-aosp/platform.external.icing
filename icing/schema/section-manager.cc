@@ -27,8 +27,8 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -40,6 +40,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -66,7 +67,7 @@ struct SectionAssigningState {
 // Provides a hash value of this struct so that it can be stored in a hash
 // set.
 struct SectionAssigningStateHasher {
-  size_t operator()(const SectionAssigningState& state) {
+  size_t operator()(const SectionAssigningState& state) const {
     size_t str_hash = std::hash<std::string>()(state.current_schema_name);
     size_t int_hash = std::hash<size_t>()(state.num_sections_assigned);
     // Combine the two hashes by taking the upper 16-bits of the string hash and
@@ -189,7 +190,7 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
                        type_config_map, &visited_states, &metadata_list));
 
     // Insert the section metadata list at the index of the type's SchemaTypeId
-    ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+    TC3_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                            schema_type_mapper.Get(type_config_name));
     section_metadata_cache[schema_type_id] = std::move(metadata_list);
   }
@@ -223,7 +224,7 @@ libtextclassifier3::StatusOr<std::vector<SectionMetadata>> GetMetadataList(
     const KeyMapper<SchemaTypeId>& schema_type_mapper,
     const std::vector<std::vector<SectionMetadata>>& section_metadata_cache,
     const std::string& type_config_name) {
-  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+  TC3_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                          schema_type_mapper.Get(type_config_name));
   return section_metadata_cache.at(schema_type_id);
 }
@@ -239,7 +240,9 @@ SectionManager::SectionManager(
 libtextclassifier3::StatusOr<std::unique_ptr<SectionManager>>
 SectionManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
                        const KeyMapper<SchemaTypeId>* schema_type_mapper) {
-  ICING_ASSIGN_OR_RETURN(
+  ICING_RETURN_ERROR_IF_NULL(schema_type_mapper);
+
+  TC3_ASSIGN_OR_RETURN(
       std::vector<std::vector<SectionMetadata>> section_metadata_cache,
       BuildSectionMetadataCache(type_config_map, *schema_type_mapper));
   return std::unique_ptr<SectionManager>(new SectionManager(
@@ -313,7 +316,7 @@ SectionManager::GetSectionContent(const DocumentProto& document,
         "Section id %d is greater than the max value %d", section_id,
         kMaxSectionId));
   }
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       const std::vector<SectionMetadata>& metadata_list,
       GetMetadataList(schema_type_mapper_, section_metadata_cache_,
                       document.schema()));
@@ -350,7 +353,7 @@ SectionManager::GetSectionMetadata(SchemaTypeId schema_type_id,
 
 libtextclassifier3::StatusOr<std::vector<Section>>
 SectionManager::ExtractSections(const DocumentProto& document) const {
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       const std::vector<SectionMetadata>& metadata_list,
       GetMetadataList(schema_type_mapper_, section_metadata_cache_,
                       document.schema()));

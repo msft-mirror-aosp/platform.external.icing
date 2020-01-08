@@ -96,7 +96,13 @@ class ScorerTest : public Test {
   FakeClock fake_clock2_;
 };
 
-TEST_F(ScorerTest, ShouldFailToCreate) {
+TEST_F(ScorerTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
+                             /*default_score=*/0, /*document_store=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(ScorerTest, CreationWithInvalidRankingStrategyShouldFail) {
   EXPECT_THAT(Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
                              /*default_score=*/0, document_store()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));

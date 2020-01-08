@@ -19,7 +19,7 @@
 #include <string>
 #include <string_view>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "unicode/unorm2.h"
 #include "unicode/utrans.h"
 
@@ -38,7 +38,7 @@ namespace lib {
 // details.
 //
 // Example use:
-//   ICING_ASSIGN_OR_RETURN(auto normalizer,
+//   TC3_ASSIGN_OR_RETURN(auto normalizer,
 //       Normalizer::Create(/*max_term_byte_size=*/5);
 //
 //   std::string normalized_text = normalizer->NormalizeText("HELLO!");

@@ -27,8 +27,8 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -47,6 +47,7 @@
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -69,6 +70,8 @@ const LiteIndex::Element::Value LiteIndex::Element::kInvalidValue =
 
 libtextclassifier3::StatusOr<std::unique_ptr<LiteIndex>> LiteIndex::Create(
     const LiteIndex::Options& options, const IcingFilesystem* filesystem) {
+  ICING_RETURN_ERROR_IF_NULL(filesystem);
+
   std::unique_ptr<LiteIndex> lite_index =
       std::unique_ptr<LiteIndex>(new LiteIndex(options, filesystem));
   ICING_RETURN_IF_ERROR(lite_index->Initialize());

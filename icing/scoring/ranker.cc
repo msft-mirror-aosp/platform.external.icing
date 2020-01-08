@@ -17,8 +17,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "base/logging.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-id.h"

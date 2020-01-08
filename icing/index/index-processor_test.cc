@@ -87,8 +87,7 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
-    ICING_ASSERT_OK_AND_ASSIGN(lang_segmenter_,
-                               LanguageSegmenter::Create(GetLangIdModelPath()));
+    ICING_ASSERT_OK_AND_ASSIGN(lang_segmenter_, LanguageSegmenter::Create());
 
     ICING_ASSERT_OK_AND_ASSIGN(
         normalizer_,
@@ -105,9 +104,12 @@ class IndexProcessorTest : public Test {
     processor_options.max_tokens_per_document = 1000;
     processor_options.token_limit_behavior =
         IndexProcessor::Options::TokenLimitBehavior::kReturnError;
-    index_processor_ = std::make_unique<IndexProcessor>(
-        schema_store_.get(), lang_segmenter_.get(), normalizer_.get(),
-        index_.get(), processor_options);
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        index_processor_,
+        IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                               normalizer_.get(), index_.get(),
+                               processor_options));
   }
 
   void TearDown() override {
@@ -175,6 +177,33 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
     infos.push_back(iterator->doc_hit_info());
   }
   return infos;
+}
+
+TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  EXPECT_THAT(IndexProcessor::Create(/*schema_store=*/nullptr,
+                                     lang_segmenter_.get(), normalizer_.get(),
+                                     index_.get(), processor_options),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(IndexProcessor::Create(
+                  schema_store_.get(), /*lang_segmenter=*/nullptr,
+                  normalizer_.get(), index_.get(), processor_options),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                                     /*normalizer=*/nullptr, index_.get(),
+                                     processor_options),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                                     normalizer_.get(), /*index=*/nullptr,
+                                     processor_options),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(IndexProcessorTest, NoTermMatchTypeContent) {
@@ -303,9 +332,12 @@ TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
   options.max_tokens_per_document = 4;
   options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
-  index_processor_ = std::make_unique<IndexProcessor>(
-      schema_store_.get(), lang_segmenter_.get(), normalizer_.get(),
-      index_.get(), options);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(), options));
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -339,9 +371,12 @@ TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
   options.max_tokens_per_document = 4;
   options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kSuppressError;
-  index_processor_ = std::make_unique<IndexProcessor>(
-      schema_store_.get(), lang_segmenter_.get(), normalizer_.get(),
-      index_.get(), options);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(), options));
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -376,9 +411,11 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
                              Normalizer::Create(/*max_token_length=*/4));
 
-  index_processor_ = std::make_unique<IndexProcessor>(
-      schema_store_.get(), lang_segmenter_.get(), normalizer.get(),
-      index_.get(), options);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer.get(), index_.get(), options));
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -517,18 +554,18 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
                   kDocumentId0, std::vector<SectionId>{kExactSectionId})));
 }
 
-// TODO(b/142508211) Renable this test once a proper limit on max content length
-// has been determined.
-/*
 TEST_F(IndexProcessorTest,
        LexiconFullIndexesSmallerTokensReturnsResourceExhausted) {
   IndexProcessor::Options processor_options;
   processor_options.max_tokens_per_document = 1000;
   processor_options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
-  index_processor_ = std::make_unique<IndexProcessor>(
-      section_manager_.get(), lang_segmenter_.get(), normalizer_.get(),
-      index_.get(), processor_options);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(),
+                             processor_options));
 
   // This is the maximum token length that an empty lexicon constructed for a
   // lite index with merge size of 1MiB can support.
@@ -539,7 +576,7 @@ TEST_F(IndexProcessorTest,
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
-          .SetSchema(kFakeType)
+          .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty),
                              absl_ports::StrCat(enormous_string, " foo"))
           .AddStringProperty(std::string(kPrefixedProperty), "bar baz")
@@ -555,13 +592,13 @@ TEST_F(IndexProcessorTest,
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kExactSectionId})));
 
-  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("baz", kSectionIdMaskAll,
-                                                TermMatchType::EXACT_ONLY));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
 }
-*/
 
 }  // namespace
 

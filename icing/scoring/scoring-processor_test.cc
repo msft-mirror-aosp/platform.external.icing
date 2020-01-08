@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -109,7 +109,7 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
   std::vector<DocHitInfo> doc_hit_infos;
   std::vector<ScoredDocumentHit> scored_document_hits;
   for (int i = 0; i < scores.size(); i++) {
-    ICING_ASSIGN_OR_RETURN(DocumentId document_id,
+    TC3_ASSIGN_OR_RETURN(DocumentId document_id,
                            document_store->Put(CreateDocument(
                                "icing", "email/" + std::to_string(i),
                                scores.at(i), kDefaultCreationTimestampSecs)));
@@ -120,7 +120,13 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
   return std::pair(doc_hit_infos, scored_document_hits);
 }
 
-TEST_F(ScoringProcessorTest, FailToCreateOnInvalidRankingStrategy) {
+TEST_F(ScoringProcessorTest, CreationWithNullPointerShouldFail) {
+  ScoringSpecProto spec_proto;
+  EXPECT_THAT(ScoringProcessor::Create(spec_proto, /*document_store=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(ScoringProcessorTest, CreationWithInvalidRankingStrategyShouldFail) {
   ScoringSpecProto spec_proto;
   EXPECT_THAT(ScoringProcessor::Create(spec_proto, document_store()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));

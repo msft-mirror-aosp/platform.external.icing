@@ -22,9 +22,9 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
-#include "utils/hash/farmhash.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/hash/farmhash.h"
 #include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
@@ -44,6 +44,7 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -195,6 +196,10 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>>
 DocumentStore::Create(const Filesystem* filesystem, const std::string& base_dir,
                       const Clock* clock, const SchemaStore* schema_store) {
+  ICING_RETURN_ERROR_IF_NULL(filesystem);
+  ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
+
   auto document_store = std::unique_ptr<DocumentStore>(
       new DocumentStore(filesystem, base_dir, clock, schema_store));
   ICING_RETURN_IF_ERROR(document_store->Initialize());
@@ -288,23 +293,23 @@ libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
   }
   document_id_mapper_ = std::move(document_id_mapper_or).ValueOrDie();
 
-  ICING_ASSIGN_OR_RETURN(score_cache_,
+  TC3_ASSIGN_OR_RETURN(score_cache_,
                          FileBackedVector<DocumentAssociatedScoreData>::Create(
                              *filesystem_, MakeScoreCacheFilename(base_dir_),
                              MemoryMappedFile::READ_WRITE_AUTO_SYNC));
 
-  ICING_ASSIGN_OR_RETURN(filter_cache_,
+  TC3_ASSIGN_OR_RETURN(filter_cache_,
                          FileBackedVector<DocumentFilterData>::Create(
                              *filesystem_, MakeFilterCacheFilename(base_dir_),
                              MemoryMappedFile::READ_WRITE_AUTO_SYNC));
 
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       namespace_mapper_,
       KeyMapper<NamespaceId>::Create(*filesystem_,
                                      MakeNamespaceMapperFilename(base_dir_),
                                      kNamespaceMapperMaxSize));
 
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   if (checksum.Get() != header.checksum) {
     return absl_ports::InternalError(
         "Combined checksum of DocStore was inconsistent");
@@ -324,7 +329,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
   auto iterator = document_log_->GetIterator();
   auto iterator_status = iterator.Advance();
   while (iterator_status.ok()) {
-    ICING_ASSIGN_OR_RETURN(DocumentWrapper document_wrapper,
+    TC3_ASSIGN_OR_RETURN(DocumentWrapper document_wrapper,
                            document_log_->ReadProto(iterator.GetOffset()));
     if (document_wrapper.deleted()) {
       if (!document_wrapper.document().uri().empty()) {
@@ -431,7 +436,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
         schema_type_id = schema_type_id_or.ValueOrDie();
       }
 
-      ICING_ASSIGN_OR_RETURN(
+      TC3_ASSIGN_OR_RETURN(
           NamespaceId namespace_id,
           namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
                                       namespace_mapper_->num_keys()));
@@ -456,7 +461,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
   }
 
   // Write the header
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
 
   return libtextclassifier3::Status::OK;
@@ -519,7 +524,7 @@ libtextclassifier3::Status DocumentStore::ResetDocumentAssociatedScoreCache() {
   score_cache_.reset();
   ICING_RETURN_IF_ERROR(FileBackedVector<DocumentAssociatedScoreData>::Delete(
       *filesystem_, MakeScoreCacheFilename(base_dir_)));
-  ICING_ASSIGN_OR_RETURN(score_cache_,
+  TC3_ASSIGN_OR_RETURN(score_cache_,
                          FileBackedVector<DocumentAssociatedScoreData>::Create(
                              *filesystem_, MakeScoreCacheFilename(base_dir_),
                              MemoryMappedFile::READ_WRITE_AUTO_SYNC));
@@ -531,7 +536,7 @@ libtextclassifier3::Status DocumentStore::ResetFilterCache() {
   filter_cache_.reset();
   ICING_RETURN_IF_ERROR(FileBackedVector<DocumentFilterData>::Delete(
       *filesystem_, MakeFilterCacheFilename(base_dir_)));
-  ICING_ASSIGN_OR_RETURN(filter_cache_,
+  TC3_ASSIGN_OR_RETURN(filter_cache_,
                          FileBackedVector<DocumentFilterData>::Create(
                              *filesystem_, MakeFilterCacheFilename(base_dir_),
                              MemoryMappedFile::READ_WRITE_AUTO_SYNC));
@@ -550,7 +555,7 @@ libtextclassifier3::Status DocumentStore::ResetNamespaceMapper() {
                      << "Failed to delete old namespace_id mapper";
     return status;
   }
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       namespace_mapper_,
       KeyMapper<NamespaceId>::Create(*filesystem_,
                                      MakeNamespaceMapperFilename(base_dir_),
@@ -692,11 +697,11 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
       DocumentAssociatedScoreData(document_score, creation_timestamp_secs)));
 
   // Update namespace maps
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       NamespaceId namespace_id,
       namespace_mapper_->GetOrPut(name_space, namespace_mapper_->num_keys()));
 
-  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+  TC3_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                          schema_store_->GetSchemaTypeId(schema));
 
   ICING_RETURN_IF_ERROR(UpdateFilterCache(
@@ -714,14 +719,14 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     const std::string_view name_space, const std::string_view uri) const {
-  ICING_ASSIGN_OR_RETURN(DocumentId document_id,
+  TC3_ASSIGN_OR_RETURN(DocumentId document_id,
                          GetDocumentId(name_space, uri));
   return Get(document_id);
 }
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     DocumentId document_id) const {
-  ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
+  TC3_ASSIGN_OR_RETURN(int64_t document_log_offset,
                          DoesDocumentExistAndGetFileOffset(document_id));
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
@@ -770,7 +775,7 @@ DocumentStore::DoesDocumentExistAndGetFileOffset(DocumentId document_id) const {
         IcingStringUtil::StringPrintf("Document %d not found", document_id));
   }
 
-  ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
+  TC3_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
                          filter_cache_->Get(document_id));
   if (clock_.GetCurrentSeconds() >= filter_data->expiration_timestamp_secs()) {
     // Past the expiration time, so also return NOT FOUND since it *shouldn't*
@@ -913,7 +918,7 @@ libtextclassifier3::Status DocumentStore::UpdateDerivedFilesNamespaceDeleted(
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
     // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
-    ICING_ASSIGN_OR_RETURN(const DocumentFilterData* data,
+    TC3_ASSIGN_OR_RETURN(const DocumentFilterData* data,
                            filter_cache_->Get(document_id));
     if (data->namespace_id() == namespace_id) {
       // docid_mapper_->Set can only fail if document_id is < 0
@@ -969,7 +974,7 @@ libtextclassifier3::Status DocumentStore::UpdateDerivedFilesSchemaTypeDeleted(
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
     // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
-    ICING_ASSIGN_OR_RETURN(const DocumentFilterData* data,
+    TC3_ASSIGN_OR_RETURN(const DocumentFilterData* data,
                            filter_cache_->Get(document_id));
     if (data->schema_type_id() == schema_type_id) {
       // docid_mapper_->Set can only fail if document_id is < 0
@@ -993,24 +998,24 @@ libtextclassifier3::Status DocumentStore::PersistToDisk() {
   ICING_RETURN_IF_ERROR(namespace_mapper_->PersistToDisk());
 
   // Update the combined checksum and write to header file.
-  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
 
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<int64_t> DocumentStore::GetDiskUsage() const {
-  ICING_ASSIGN_OR_RETURN(const int64_t document_log_disk_usage,
+  TC3_ASSIGN_OR_RETURN(const int64_t document_log_disk_usage,
                          document_log_->GetDiskUsage());
-  ICING_ASSIGN_OR_RETURN(const int64_t document_key_mapper_disk_usage,
+  TC3_ASSIGN_OR_RETURN(const int64_t document_key_mapper_disk_usage,
                          document_key_mapper_->GetDiskUsage());
-  ICING_ASSIGN_OR_RETURN(const int64_t document_id_mapper_disk_usage,
+  TC3_ASSIGN_OR_RETURN(const int64_t document_id_mapper_disk_usage,
                          document_id_mapper_->GetDiskUsage());
-  ICING_ASSIGN_OR_RETURN(const int64_t score_cache_disk_usage,
+  TC3_ASSIGN_OR_RETURN(const int64_t score_cache_disk_usage,
                          score_cache_->GetDiskUsage());
-  ICING_ASSIGN_OR_RETURN(const int64_t filter_cache_disk_usage,
+  TC3_ASSIGN_OR_RETURN(const int64_t filter_cache_disk_usage,
                          filter_cache_->GetDiskUsage());
-  ICING_ASSIGN_OR_RETURN(const int64_t namespace_mapper_disk_usage,
+  TC3_ASSIGN_OR_RETURN(const int64_t namespace_mapper_disk_usage,
                          namespace_mapper_->GetDiskUsage());
 
   return document_log_disk_usage + document_key_mapper_disk_usage +
@@ -1044,7 +1049,7 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
     // Revalidate that this document is still compatible
     if (document_validator_.Validate(document).ok()) {
       // Update the SchemaTypeId for this entry
-      ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+      TC3_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                              schema_store_->GetSchemaTypeId(document.schema()));
       filter_cache_->mutable_array()[document_id].set_schema_type_id(
           schema_type_id);
@@ -1103,7 +1108,7 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
     }
 
     // Guaranteed that the document exists now.
-    ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
+    TC3_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
                            filter_cache_->Get(document_id));
 
     if (set_schema_result.schema_types_deleted_by_id.count(
@@ -1128,10 +1133,10 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
             filter_data->schema_type_id()) != 0;
 
     if (update_filter_cache || revalidate_document) {
-      ICING_ASSIGN_OR_RETURN(DocumentProto document, Get(document_id));
+      TC3_ASSIGN_OR_RETURN(DocumentProto document, Get(document_id));
 
       if (update_filter_cache) {
-        ICING_ASSIGN_OR_RETURN(
+        TC3_ASSIGN_OR_RETURN(
             SchemaTypeId schema_type_id,
             schema_store_->GetSchemaTypeId(document.schema()));
         filter_cache_->mutable_array()[document_id].set_schema_type_id(
@@ -1164,7 +1169,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
         "New directory is the same as the current one.");
   }
 
-  ICING_ASSIGN_OR_RETURN(auto new_doc_store,
+  TC3_ASSIGN_OR_RETURN(auto new_doc_store,
                          DocumentStore::Create(filesystem_, new_directory,
                                                &clock_, schema_store_));
 

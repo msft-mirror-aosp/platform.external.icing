@@ -14,10 +14,10 @@
 
 #include "icing/index/hit/hit.h"
 
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -50,11 +50,11 @@ TEST(HitTest, IsPrefixHitFlag) {
   EXPECT_THAT(h1.is_prefix_hit(), IsFalse());
 
   Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
-         /*in_prefix_section=*/false, /*is_prefix_hit=*/false);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   EXPECT_THAT(h2.is_prefix_hit(), IsFalse());
 
   Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
-         /*in_prefix_section=*/false, /*is_prefix_hit=*/true);
+         /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true);
   EXPECT_THAT(h3.is_prefix_hit(), IsTrue());
 }
 
@@ -63,11 +63,11 @@ TEST(HitTest, IsInPrefixSectionFlag) {
   EXPECT_THAT(h1.is_in_prefix_section(), IsFalse());
 
   Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
-         /*in_prefix_section=*/false);
+         /*is_in_prefix_section=*/false);
   EXPECT_THAT(h2.is_in_prefix_section(), IsFalse());
 
   Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
-         /*in_prefix_section=*/true);
+         /*is_in_prefix_section=*/true);
   EXPECT_THAT(h3.is_in_prefix_section(), IsTrue());
 }
 
@@ -111,10 +111,10 @@ TEST(HitTest, Comparison) {
   // Whether or not a hit score was set is considered, but the score itself is
   // not.
   Hit hitscore_hit(1, 243, 12);
-  Hit prefix_hit(1, 243, Hit::kMaxHitScore, /*in_prefix_section=*/false,
+  Hit prefix_hit(1, 243, Hit::kMaxHitScore, /*is_in_prefix_section=*/false,
                  /*is_prefix_hit=*/true);
   Hit hit_in_prefix_section(1, 243, Hit::kMaxHitScore,
-                            /*in_prefix_section=*/true,
+                            /*is_in_prefix_section=*/true,
                             /*is_prefix_hit=*/false);
 
   std::vector<Hit> hits{

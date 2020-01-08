@@ -139,7 +139,21 @@ class DocumentStoreTest : public ::testing::Test {
   const int64_t document2_expiration_timestamp_ = 3;  // creation + ttl
 };
 
-TEST_F(DocumentStoreTest, InitializationFailure) {
+TEST_F(DocumentStoreTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(DocumentStore::Create(/*filesystem=*/nullptr, document_store_dir_,
+                                    &fake_clock_, schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(DocumentStore::Create(&filesystem_, document_store_dir_,
+                                    /*clock=*/nullptr, schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(DocumentStore::Create(&filesystem_, document_store_dir_,
+                                    &fake_clock_, /*schema_store=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_F(DocumentStoreTest, CreationWithBadFilesystemShouldFail) {
   MockFilesystem mock_filesystem;
   ON_CALL(mock_filesystem, OpenForWrite(_)).WillByDefault(Return(false));
 

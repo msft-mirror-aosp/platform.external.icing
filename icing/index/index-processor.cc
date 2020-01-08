@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -37,9 +37,24 @@
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
+libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>>
+IndexProcessor::Create(const SchemaStore* schema_store,
+                       const LanguageSegmenter* lang_segmenter,
+                       const Normalizer* normalizer, Index* index,
+                       const IndexProcessor::Options& options) {
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
+  ICING_RETURN_ERROR_IF_NULL(normalizer);
+  ICING_RETURN_ERROR_IF_NULL(index);
+
+  return std::unique_ptr<IndexProcessor>(new IndexProcessor(
+      schema_store, lang_segmenter, normalizer, index, options));
+}
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const DocumentProto& document, DocumentId document_id) {
@@ -49,7 +64,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
         "DocumentId %d must be greater than last added document_id %d",
         document_id, index_->last_added_document_id()));
   }
-  ICING_ASSIGN_OR_RETURN(std::vector<Section> sections,
+  TC3_ASSIGN_OR_RETURN(std::vector<Section> sections,
                          schema_store_.ExtractSections(document));
   uint32_t num_tokens = 0;
   libtextclassifier3::Status overall_status;
@@ -57,10 +72,10 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
     Index::Editor editor = index_->Edit(document_id, section.metadata.id,
                                         section.metadata.term_match_type);
     for (std::string_view subcontent : section.content) {
-      ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
+      TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
                              tokenizer_factory::CreateIndexingTokenizer(
                                  section.metadata.tokenizer, &lang_segmenter_));
-      ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> itr,
+      TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> itr,
                              tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
         if (++num_tokens > options_.max_tokens_per_document) {

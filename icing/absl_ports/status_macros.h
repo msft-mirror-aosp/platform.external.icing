@@ -15,8 +15,8 @@
 #ifndef ICING_ABSL_PORTS_STATUS_MACROS_H_
 #define ICING_ABSL_PORTS_STATUS_MACROS_H_
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 
 namespace icing {
 namespace lib {
@@ -80,38 +80,5 @@ class StatusAdapter {
   switch (0)                                   \
   case 0:                                      \
   default:  // NOLINT
-
-#define ICING_STATUS_MACROS_CONCAT_NAME(x, y) \
-  ICING_STATUS_MACROS_CONCAT_IMPL(x, y)
-#define ICING_STATUS_MACROS_CONCAT_IMPL(x, y) x##y
-
-// Macros that help consume libtextclassifier3::StatusOr<...> return values and
-// propagate errors. TC_STRIP These macros are inspired by the nice practice
-// from Google3:
-// https://g3doc.corp.google.com/devtools/library_club/g3doc/totw/121.md?cl=head
-// TC_END_STRIP
-#define ICING_ASSIGN_OR_RETURN(lhs, rexpr)                                 \
-  ICING_ASSIGN_OR_RETURN_IMPL(                                             \
-      ICING_STATUS_MACROS_CONCAT_NAME(_status_or_value, __COUNTER__), lhs, \
-      rexpr)
-
-#define ICING_ASSIGN_OR_RETURN_IMPL(statusor, lhs, rexpr) \
-  auto statusor = (rexpr);                                \
-  if (!statusor.ok()) {                                   \
-    return statusor.status();                             \
-  }                                                       \
-  lhs = std::move(statusor.ValueOrDie())
-
-#define ICING_ASSIGN_OR_RETURN_VAL(lhs, rexpr, val)                        \
-  ICING_ASSIGN_OR_RETURN_VAL_IMPL(                                         \
-      ICING_STATUS_MACROS_CONCAT_NAME(_status_or_value, __COUNTER__), lhs, \
-      rexpr, val)
-
-#define ICING_ASSIGN_OR_RETURN_VAL_IMPL(statusor, lhs, rexpr, val) \
-  auto statusor = (rexpr);                                         \
-  if (!statusor.ok()) {                                            \
-    return val;                                                    \
-  }                                                                \
-  lhs = std::move(statusor.ValueOrDie())
 
 #endif  // ICING_ABSL_PORTS_STATUS_MACROS_H_

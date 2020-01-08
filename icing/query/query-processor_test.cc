@@ -17,7 +17,7 @@
 #include <memory>
 #include <string>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -74,7 +74,7 @@ class QueryProcessorTest : public Test {
                                Index::Create(options, &icing_filesystem_));
 
     ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               LanguageSegmenter::Create(GetLangIdModelPath()));
+                               LanguageSegmenter::Create());
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
                                Normalizer::Create(/*max_term_byte_size=*/1000));
@@ -174,6 +174,37 @@ class QueryProcessorTest : public Test {
   const std::string store_dir_;
 };
 
+TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(
+      QueryProcessor::Create(/*index=*/nullptr, language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      QueryProcessor::Create(index_.get(), /*language_segmenter=*/nullptr,
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             /*normalizer=*/nullptr, document_store_.get(),
+                             schema_store_.get(), &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), /*document_store=*/nullptr,
+                             schema_store_.get(), &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                                     normalizer_.get(), document_store_.get(),
+                                     /*schema_store=*/nullptr, &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                                     normalizer_.get(), document_store_.get(),
+                                     schema_store_.get(), /*clock=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
 TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   // We don't need to insert anything in the index since the empty query will
   // match all DocumentIds from the DocumentStore
@@ -189,14 +220,17 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
                                                       .SetSchema("email")
                                                       .Build()));
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("()");
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
@@ -219,14 +253,17 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
                                                       .SetSchema("email")
                                                       .Build()));
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("");
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
@@ -255,15 +292,18 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hElLo WORLD");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -290,15 +330,18 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("he");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -325,15 +368,18 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -363,15 +409,18 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello world");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -401,15 +450,18 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("he wo");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -438,15 +490,18 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
       AddTokenToIndex(document_id, section_id, TermMatchType::PREFIX, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello wo");
   search_spec.set_term_match_type(TermMatchType::PREFIX);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -481,15 +536,18 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR world");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -525,15 +583,18 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("he OR wo");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -568,15 +629,18 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
       AddTokenToIndex(document_id2, section_id, TermMatchType::PREFIX, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR wo");
   search_spec.set_term_match_type(TermMatchType::PREFIX);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -625,9 +689,11 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
 
   {
     // OR gets precedence over AND, this is parsed as ((puppy OR kitten) AND
@@ -637,7 +703,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // Only Document 1 matches since it has puppy AND dog
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -655,7 +721,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // Both Document 1 and 2 match since Document 1 has puppy AND dog, and
     // Document 2 has kitten
@@ -676,7 +742,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // Only Document 2 matches since it has both kitten and cat
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -720,9 +786,11 @@ TEST_F(QueryProcessorTest, OneGroup) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
 
   // Without grouping, this would be parsed as ((puppy OR kitten) AND foo) and
   // no documents would match. But with grouping, Document 1 matches puppy
@@ -731,7 +799,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -774,9 +842,11 @@ TEST_F(QueryProcessorTest, TwoGroups) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
 
   // Without grouping, this would be parsed as (puppy AND (dog OR kitten) AND
   // cat) and wouldn't match any documents. But with grouping, Document 1
@@ -786,7 +856,7 @@ TEST_F(QueryProcessorTest, TwoGroups) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -830,9 +900,11 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
 
   // Without grouping, this would be parsed as ((puppy OR kitten) AND foo) and
   // no documents would match. But with grouping, Document 1 matches puppy
@@ -841,7 +913,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -884,16 +956,19 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   // Document 1 will match puppy and Document 2 matches (kitten AND (cat))
   SearchSpecProto search_spec;
   search_spec.set_query("puppy OR (kitten(cat))");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -929,15 +1004,18 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("-hello");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // We don't know have the section mask to indicate what section "world" came.
   // It doesn't matter which section it was in since the query doesn't care.  It
@@ -972,15 +1050,18 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("-foo");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1021,16 +1102,19 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   {
     SearchSpecProto search_spec;
     search_spec.set_query("-dog -cat");
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // The query is interpreted as "exclude all documents that have animal, and
     // exclude all documents that have cat". Since both documents contain
@@ -1045,7 +1129,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // The query is interpreted as "exclude all documents that have animal, and
     // include all documents that have cat". Since both documents contain
@@ -1089,16 +1173,19 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   {
     SearchSpecProto search_spec;
     search_spec.set_query("-animal OR -cat");
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // We don't have a section mask indicating which sections in this document
     // matched the query since it's not based on section-term matching. It's
@@ -1114,7 +1201,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
     search_spec.set_term_match_type(term_match_type);
 
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                               query_processor.ParseSearch(search_spec));
+                               query_processor->ParseSearch(search_spec));
 
     // Descending order of valid DocumentIds
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1159,15 +1246,18 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1209,16 +1299,19 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
   search_spec.add_namespace_filters("namespace1");
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1256,16 +1349,19 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "animal"),
       IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
   search_spec.add_schema_type_filters("email");
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1292,16 +1388,19 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query(indexed_property_ + ":animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1340,16 +1439,19 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query(indexed_property_ + ":animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Ordered by descending DocumentId, so message comes first since it was
   // inserted last
@@ -1390,9 +1492,12 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
@@ -1401,7 +1506,7 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Shouldn't include the message document since we're only looking at email
   // types
@@ -1443,9 +1548,12 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
@@ -1453,7 +1561,7 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -1482,9 +1590,12 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
@@ -1492,7 +1603,7 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -1519,9 +1630,12 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
@@ -1529,7 +1643,7 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -1571,16 +1685,19 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
                               term_match_type, "animal"),
               IsOk());
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock_);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("cat OR " + indexed_property_ + ":animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   // Ordered by descending DocumentId, so message comes first since it was
   // inserted last
@@ -1614,15 +1731,18 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   FakeClock fake_clock;
   fake_clock.SetSeconds(50);
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock_));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   SectionIdMask section_id_mask = 1U << indexed_email_section_id_;
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1649,15 +1769,18 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   FakeClock fake_clock;
   fake_clock.SetSeconds(200);
 
-  QueryProcessor query_processor(index_.get(), language_segmenter_.get(),
-                                 normalizer_.get(), document_store_.get(),
-                                 schema_store_.get(), &fake_clock);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get(), &fake_clock));
+
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
-                             query_processor.ParseSearch(search_spec));
+                             query_processor->ParseSearch(search_spec));
 
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 }

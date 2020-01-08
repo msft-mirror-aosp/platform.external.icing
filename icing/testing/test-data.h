@@ -17,7 +17,7 @@
 
 #include <string>
 
-#include "utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 
 // This file provides functions for getting / setting up absolute test file
 // paths. They are specific to Blaze and Google3 and should be changed when used
@@ -30,9 +30,6 @@ namespace lib {
 // function, please make sure the test file is added in "data" attribute in
 // portable_cc_test or any other test build rules.
 std::string GetTestFilePath(const std::string& google3_relative_file_path);
-
-// Returns the latest LangId model in Google3.
-std::string GetLangIdModelPath();
 
 // This is for unit testing in Google3. The library binary doesn't contain any
 // ICU data files, so we generate a .dat file at compile time and here make ICU

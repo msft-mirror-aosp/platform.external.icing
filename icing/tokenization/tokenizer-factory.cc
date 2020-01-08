@@ -14,9 +14,11 @@
 
 #include "icing/tokenization/tokenizer-factory.h"
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/tokenization/plain-tokenizer.h"
+#include "icing/tokenization/raw-query-tokenizer.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -26,6 +28,8 @@ namespace tokenizer_factory {
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>>
 CreateIndexingTokenizer(IndexingConfig::TokenizerType::Code type,
                         const LanguageSegmenter* lang_segmenter) {
+  ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
+
   switch (type) {
     case IndexingConfig::TokenizerType::PLAIN:
       return std::make_unique<PlainTokenizer>(lang_segmenter);
@@ -35,6 +39,21 @@ CreateIndexingTokenizer(IndexingConfig::TokenizerType::Code type,
       // This should never happen.
       return absl_ports::InvalidArgumentError(
           "Invalid tokenizer type for an indexed section");
+  }
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>> CreateQueryTokenizer(
+    QueryTokenizerType query_tokenizer_type,
+    const LanguageSegmenter* lang_segmenter) {
+  ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
+
+  switch (query_tokenizer_type) {
+    case RAW_QUERY:
+      return std::make_unique<RawQueryTokenizer>(lang_segmenter);
+    default:
+      // This should never happen.
+      return absl_ports::InvalidArgumentError(
+          "Invalid tokenizer type for query");
   }
 }
 

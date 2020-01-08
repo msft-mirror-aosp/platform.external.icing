@@ -77,7 +77,7 @@ class ResultRetrieverTest : public testing::Test {
         // File generated via icu_data_file rule in //icing/BUILD.
         SetUpICUDataFile("icing/icu.dat"));
     ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               LanguageSegmenter::Create(GetLangIdModelPath()));
+                               LanguageSegmenter::Create());
 
     ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
                                SchemaStore::Create(&filesystem_, test_dir_));
@@ -128,6 +128,25 @@ class ResultRetrieverTest : public testing::Test {
   FakeClock fake_clock_;
 };
 
+TEST_F(ResultRetrieverTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(
+      ResultRetriever::Create(/*doc_store=*/nullptr, schema_store_.get(),
+                              language_segmenter_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  EXPECT_THAT(ResultRetriever::Create(doc_store.get(), /*schema_store=*/nullptr,
+                                      language_segmenter_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                                      /*language_segmenter=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
 TEST_F(ResultRetrieverTest, Simple) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
@@ -144,8 +163,10 @@ TEST_F(ResultRetrieverTest, Simple) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = std::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = test_document1_;
@@ -181,8 +202,10 @@ TEST_F(ResultRetrieverTest, OnlyOneResultRequested) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = std::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = test_document1_;
@@ -209,9 +232,11 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {invalid_document_id, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = std::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get(),
-      /*ignore_bad_document_ids=*/true);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get(),
+                              /*ignore_bad_document_ids=*/true));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = test_document1_;
@@ -241,9 +266,11 @@ TEST_F(ResultRetrieverTest, NotIgnoreErrors) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {invalid_document_id, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = std::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get(),
-      /*ignore_bad_document_ids=*/false);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get(),
+                              /*ignore_bad_document_ids=*/false));
 
   SectionRestrictQueryTermsMap query_terms{};
   EXPECT_THAT(result_retriever->RetrieveResults(
@@ -281,9 +308,11 @@ TEST_F(ResultRetrieverTest, IOError) {
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
 
   SectionRestrictQueryTermsMap query_terms{};
-  auto result_retriever = std::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get(),
-      /*ignore_bad_document_ids=*/true);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get(),
+                              /*ignore_bad_document_ids=*/true));
   EXPECT_THAT(result_retriever->RetrieveResults(
                   result_spec_no_snippet_, query_terms,
                   TermMatchType::EXACT_ONLY, scored_document_hits),
@@ -306,8 +335,10 @@ TEST_F(ResultRetrieverTest, SnippetingDisabled) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = std::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get()));
 
   SectionRestrictQueryTermsMap query_terms{};
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -340,8 +371,10 @@ TEST_F(ResultRetrieverTest, SimpleSnippeted) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = absl::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get()));
 
   SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -402,8 +435,10 @@ TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  auto result_retriever = absl::make_unique<ResultRetriever>(
-      doc_store.get(), schema_store_.get(), language_segmenter_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get()));
 
   SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
   ICING_ASSERT_OK_AND_ASSIGN(

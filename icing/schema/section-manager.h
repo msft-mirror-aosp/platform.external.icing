@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
@@ -39,11 +39,13 @@ class SectionManager {
   SectionManager(const SectionManager&) = delete;
   SectionManager& operator=(const SectionManager&) = delete;
 
-  // Creates a SectionManager from a type config map (type config name -> type
-  // config)
+  // Factory function to create a SectionManager which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created SectionManager instance.
   //
   // Returns:
   //   A SectionManager on success
+  //   FAILED_PRECONDITION on any null pointer input
   //   INVALID_ARGUMENT if infinite loop detected in the type configs
   //   OUT_OF_RANGE if number of properties need indexing exceeds the max number
   //   NOT_FOUND if any type config name not found in the map

@@ -14,12 +14,29 @@
 
 #include "icing/result-retriever.h"
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+libtextclassifier3::StatusOr<std::unique_ptr<ResultRetriever>>
+ResultRetriever::Create(const DocumentStore* doc_store,
+                        const SchemaStore* schema_store,
+                        const LanguageSegmenter* language_segmenter,
+                        bool ignore_bad_document_ids) {
+  ICING_RETURN_ERROR_IF_NULL(doc_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
+  ICING_RETURN_ERROR_IF_NULL(language_segmenter);
+
+  TC3_ASSIGN_OR_RETURN(
+      std::unique_ptr<SnippetRetriever> snippet_retriever,
+      SnippetRetriever::Create(schema_store, language_segmenter));
+
+  return std::unique_ptr<ResultRetriever>(new ResultRetriever(
+      doc_store, std::move(snippet_retriever), ignore_bad_document_ids));
+}
 
 libtextclassifier3::StatusOr<std::vector<SearchResultProto::ResultProto>>
 ResultRetriever::RetrieveResults(
@@ -56,7 +73,7 @@ ResultRetriever::RetrieveResults(
     // Add the snippet if requested.
     if (result_spec.snippet_spec().num_matches_per_property() > 0 &&
         result_spec.snippet_spec().num_to_snippet() > search_results.size()) {
-      SnippetProto snippet_proto = snippet_retriever_.RetrieveSnippet(
+      SnippetProto snippet_proto = snippet_retriever_->RetrieveSnippet(
           query_terms, match_type, result_spec.snippet_spec(),
           document_or.ValueOrDie(), scored_document_hit.hit_section_id_mask());
       *result.mutable_snippet() = std::move(snippet_proto);

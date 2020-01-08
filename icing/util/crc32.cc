@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/zlib.h"

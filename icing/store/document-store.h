@@ -21,8 +21,8 @@
 #include <string_view>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
@@ -72,7 +72,8 @@ class DocumentStore {
   // were regenerated. This may be helpful in logs.
   //
   // Returns:
-  //   A valid document store on success
+  //   A DocumentStore on success
+  //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,

@@ -17,7 +17,7 @@
 
 #include <memory>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
@@ -30,12 +30,15 @@ class Scorer {
  public:
   virtual ~Scorer() = default;
 
-  // Factory function to create a Scorer according to the ranking strategy and
-  // default score. The default score will be returned only if the scorer fails
-  // to find or calculate a score for the document.
+  // Factory function to create a Scorer which does not take ownership of any
+  // input components (DocumentStore), and all pointers must refer to valid
+  // objects that outlive the created Scorer instance. The default score will be
+  // returned only when the scorer fails to find or calculate a score for the
+  // document.
   //
   // Returns:
   //   A Scorer on success
+  //   FAILED_PRECONDITION on any null pointer input
   //   INVALID_ARGUMENT if fails to create an instance
   static libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
       ScoringSpecProto::RankingStrategy::Code rank_by, float default_score,

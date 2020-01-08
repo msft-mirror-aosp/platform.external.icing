@@ -20,7 +20,7 @@
 #include <string_view>
 #include <utility>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -70,7 +70,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Normalizer::Create(
         "max_term_byte_size must be greater than zero.");
   }
 
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       std::unique_ptr<Normalizer::TermTransformer> term_transformer,
       Normalizer::TermTransformer::Create());
 

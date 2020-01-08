@@ -36,12 +36,16 @@ namespace lib {
 // that of the provided pointers.
 class SnippetRetriever {
  public:
-  // Does not take any ownership, and all pointers must refer to valid objects
-  // that outlive the one constructed.
-  explicit SnippetRetriever(const SchemaStore* schema_store,
-                            const LanguageSegmenter* language_segmenter)
-      : schema_store_(*schema_store),
-        language_segmenter_(*language_segmenter) {}
+  // Factory function to create a SnippetRetriever which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created SnippetRetriever instance.
+  //
+  // Returns:
+  //   A SnippetRetriever on success
+  //   FAILED_PRECONDITION on any null pointer input
+  static libtextclassifier3::StatusOr<std::unique_ptr<SnippetRetriever>> Create(
+      const SchemaStore* schema_store,
+      const LanguageSegmenter* language_segmenter);
 
   // Retrieve the snippet information for content in document. terms in
   // query_terms are matched to content in document according to match_type.
@@ -55,6 +59,11 @@ class SnippetRetriever {
       const DocumentProto& document, SectionIdMask section_id_mask) const;
 
  private:
+  explicit SnippetRetriever(const SchemaStore* schema_store,
+                            const LanguageSegmenter* language_segmenter)
+      : schema_store_(*schema_store),
+        language_segmenter_(*language_segmenter) {}
+
   const SchemaStore& schema_store_;
   const LanguageSegmenter& language_segmenter_;
 };

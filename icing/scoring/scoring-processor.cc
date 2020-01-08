@@ -18,8 +18,8 @@
 #include <utility>
 #include <vector>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -27,6 +27,7 @@
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer.h"
 #include "icing/store/document-store.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -40,10 +41,12 @@ constexpr float kDefaultScoreInAscendingOrder =
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
                          const DocumentStore* document_store) {
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+
   bool is_descending_order =
       scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
 
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
       Scorer::Create(scoring_spec.rank_by(),
                      is_descending_order ? kDefaultScoreInDescendingOrder

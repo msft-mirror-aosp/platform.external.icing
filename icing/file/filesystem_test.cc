@@ -216,12 +216,14 @@ TEST_F(FilesystemTest, GetMatchingFiles) {
 
   // With some files
   matches.clear();
-  const char* files[] = {"p_1_q", "p_2_q", "p_3", "4_q"};
-  for (size_t i = 0; i < ABSL_ARRAYSIZE(files); ++i) {
+  const int files_size = 4;
+  const char* files[files_size] = {"p_1_q", "p_2_q", "p_3", "4_q"};
+  for (size_t i = 0; i < files_size; ++i) {
     ScopedFd file(filesystem.OpenForWrite((foo_dir + "/" + files[i]).c_str()));
   }
-  const std::string good[] = {foo_dir + "/p_1_q", foo_dir + "/p_2_q"};
-  vector<std::string> expected(good, good + ABSL_ARRAYSIZE(good));
+  const int good_size = 2;
+  const std::string good[good_size] = {foo_dir + "/p_1_q", foo_dir + "/p_2_q"};
+  vector<std::string> expected(good, good + good_size);
   EXPECT_TRUE(filesystem.GetMatchingFiles(glob.c_str(), &matches));
   sort(matches.begin(), matches.end());
   EXPECT_THAT(matches, Eq(expected));

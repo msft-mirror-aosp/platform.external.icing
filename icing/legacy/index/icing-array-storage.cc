@@ -150,7 +150,7 @@ void *IcingArrayStorage::GetMutableMemInternal(uint32_t elt_idx,
   uint32_t start_byte = elt_idx * elt_size_;
   uint32_t len_bytes = elt_len * elt_size_;
 
-  if (ABSL_PREDICT_FALSE(!GrowIfNecessary(elt_idx + elt_len))) {
+  if (!GrowIfNecessary(elt_idx + elt_len)) {
     return nullptr;
   }
 
@@ -197,7 +197,7 @@ void *IcingArrayStorage::GetMutableMemInternal(uint32_t elt_idx,
 }
 
 bool IcingArrayStorage::GrowIfNecessary(uint32_t num_elts) {
-  if (ABSL_PREDICT_TRUE(num_elts <= capacity_num_)) return true;
+  if (num_elts <= capacity_num_) return true;
   if (num_elts > max_num_) return false;
 
   // Need to grow.

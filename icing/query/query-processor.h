@@ -17,7 +17,7 @@
 
 #include <memory>
 
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
@@ -36,14 +36,17 @@ namespace lib {
 // and returns matched documents in a descending DocumentId order.
 class QueryProcessor {
  public:
-  // Does not take any ownership, and all pointers must refer to valid objects
-  // that outlive the one constructed.
-  // TODO(b/141180665): Add nullptr checks for the raw pointers
-  explicit QueryProcessor(Index* index,
-                          const LanguageSegmenter* language_segmenter,
-                          const Normalizer* normalizer,
-                          const DocumentStore* document_store,
-                          const SchemaStore* schema_store, const Clock* clock);
+  // Factory function to create a QueryProcessor which does not take ownership
+  // of any input components, and all pointers must refer to valid objects that
+  // outlive the created QueryProcessor instance.
+  //
+  // Returns:
+  //   An QueryProcessor on success
+  //   FAILED_PRECONDITION if any of the pointers is null.
+  static libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>> Create(
+      Index* index, const LanguageSegmenter* language_segmenter,
+      const Normalizer* normalizer, const DocumentStore* document_store,
+      const SchemaStore* schema_store, const Clock* clock);
 
   struct QueryResults {
     std::unique_ptr<DocHitInfoIterator> root_iterator;
@@ -64,6 +67,12 @@ class QueryProcessor {
       const SearchSpecProto& search_spec);
 
  private:
+  explicit QueryProcessor(Index* index,
+                          const LanguageSegmenter* language_segmenter,
+                          const Normalizer* normalizer,
+                          const DocumentStore* document_store,
+                          const SchemaStore* schema_store, const Clock* clock);
+
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.
   //

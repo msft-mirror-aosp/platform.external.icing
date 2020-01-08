@@ -14,11 +14,12 @@
 
 #include "icing/tokenization/raw-query-tokenizer.h"
 
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/test-data.h"
-#include "icing/tokenization/tokenizer.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/test-data.h"
+#include "icing/tokenization/tokenizer-factory.h"
+#include "icing/tokenization/tokenizer.h"
 
 namespace icing {
 namespace lib {
@@ -35,11 +36,19 @@ class RawQueryTokenizerTest : public ::testing::Test {
   }
 };
 
+TEST_F(RawQueryTokenizerTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(tokenizer_factory::CreateQueryTokenizer(
+                  tokenizer_factory::RAW_QUERY, /*lang_segmenter=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
 TEST_F(RawQueryTokenizerTest, Simple) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("Hello World!"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
@@ -48,9 +57,11 @@ TEST_F(RawQueryTokenizerTest, Simple) {
 
 TEST_F(RawQueryTokenizerTest, Parentheses) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("()"),
               IsOkAndHolds(ElementsAre(
@@ -146,9 +157,11 @@ TEST_F(RawQueryTokenizerTest, Parentheses) {
 
 TEST_F(RawQueryTokenizerTest, Exclustion) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-term1"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
@@ -211,9 +224,11 @@ TEST_F(RawQueryTokenizerTest, Exclustion) {
 
 TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("property1:term1"),
@@ -297,9 +312,11 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
 
 TEST_F(RawQueryTokenizerTest, OR) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1 OR term2"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"),
@@ -416,9 +433,11 @@ TEST_F(RawQueryTokenizerTest, OR) {
 // here we test Chinese and Japanese to represent CJKT.
 TEST_F(RawQueryTokenizerTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   // Exclusion only applies to the term right after it.
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-今天天气很好"),
@@ -467,9 +486,11 @@ TEST_F(RawQueryTokenizerTest, CJKT) {
 // so we can choose comma "," to represent all OTHER characters.
 TEST_F(RawQueryTokenizerTest, OtherChars) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   // Comma is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll(",term1, ,"),
@@ -510,9 +531,11 @@ TEST_F(RawQueryTokenizerTest, OtherChars) {
 
 TEST_F(RawQueryTokenizerTest, Mix) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create(GetLangIdModelPath()));
-  std::unique_ptr<Tokenizer> raw_query_tokenizer =
-      std::make_unique<RawQueryTokenizer>(language_segmenter.get());
+                             LanguageSegmenter::Create());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll(

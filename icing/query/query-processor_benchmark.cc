@@ -42,11 +42,6 @@
 //    Make target //icing/transform:normalizer depend on
 //    //third_party/icu
 //
-//    Download LangId model file from
-//    //nlp/saft/components/lang_id/mobile/fb_model:models/latest_model.smfb and
-//    put it into your device:
-//    $ adb push [your model path] /data/local/tmp/
-//
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
 //    //icing/query:query-processor_benchmark
@@ -77,15 +72,6 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
                                    const std::string& index_dir) {
   Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
   return Index::Create(options, &filesystem).ValueOrDie();
-}
-
-std::unique_ptr<LanguageSegmenter> CreateLanguageSegmenter() {
-  if (absl::GetFlag(FLAGS_adb)) {
-    return LanguageSegmenter::Create("/data/local/tmp/latest_model.smfb")
-        .ValueOrDie();
-  } else {
-    return LanguageSegmenter::Create(GetLangIdModelPath()).ValueOrDie();
-  }
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
@@ -120,7 +106,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -147,16 +133,19 @@ void BM_QueryOneTerm(benchmark::State& state) {
   AddTokenToIndex(index.get(), document_id, /*section_id=*/0,
                   TermMatchType::EXACT_ONLY, input_string);
 
-  QueryProcessor query_processor(index.get(), language_segmenter.get(),
-                                 normalizer.get(), document_store.get(),
-                                 schema_store.get(), &fake_clock);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &fake_clock));
+
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor.ParseSearch(search_spec).ValueOrDie();
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -205,7 +194,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -246,9 +235,11 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   AddTokenToIndex(index.get(), document_id, /*section_id=*/4,
                   TermMatchType::EXACT_ONLY, input_string_e);
 
-  QueryProcessor query_processor(index.get(), language_segmenter.get(),
-                                 normalizer.get(), document_store.get(),
-                                 schema_store.get(), &fake_clock);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &fake_clock));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -260,7 +251,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor.ParseSearch(search_spec).ValueOrDie();
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -309,7 +300,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -339,16 +330,19 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   AddTokenToIndex(index.get(), document_id, /*section_id=*/0,
                   TermMatchType::EXACT_ONLY, input_string);
 
-  QueryProcessor query_processor(index.get(), language_segmenter.get(),
-                                 normalizer.get(), document_store.get(),
-                                 schema_store.get(), &fake_clock);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &fake_clock));
+
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor.ParseSearch(search_spec).ValueOrDie();
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -397,7 +391,7 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      CreateLanguageSegmenter();
+      LanguageSegmenter::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -427,9 +421,11 @@ void BM_QueryHiragana(benchmark::State& state) {
   AddTokenToIndex(index.get(), document_id, /*section_id=*/0,
                   TermMatchType::EXACT_ONLY, input_string);
 
-  QueryProcessor query_processor(index.get(), language_segmenter.get(),
-                                 normalizer.get(), document_store.get(),
-                                 schema_store.get(), &fake_clock);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get(), &fake_clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -437,7 +433,7 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor.ParseSearch(search_spec).ValueOrDie();
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }

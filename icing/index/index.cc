@@ -19,8 +19,8 @@
 #include <string>
 #include <utility>
 
-#include "utils/base/status.h"
-#include "utils/base/statusor.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
@@ -35,6 +35,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -65,15 +66,17 @@ IcingDynamicTrie::Options GetMainLexiconOptions() {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
     const Options& options, const IcingFilesystem* filesystem) {
-  ICING_ASSIGN_OR_RETURN(LiteIndex::Options lite_index_options,
+  ICING_RETURN_ERROR_IF_NULL(filesystem);
+
+  TC3_ASSIGN_OR_RETURN(LiteIndex::Options lite_index_options,
                          CreateLiteIndexOptions(options));
-  ICING_ASSIGN_OR_RETURN(
+  TC3_ASSIGN_OR_RETURN(
       std::unique_ptr<TermIdCodec> term_id_codec,
       TermIdCodec::Create(
           IcingDynamicTrie::max_value_index(GetMainLexiconOptions()),
           IcingDynamicTrie::max_value_index(
               lite_index_options.lexicon_options)));
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<LiteIndex> lite_index,
+  TC3_ASSIGN_OR_RETURN(std::unique_ptr<LiteIndex> lite_index,
                          LiteIndex::Create(lite_index_options, filesystem));
   return std::unique_ptr<Index>(
       new Index(options, std::move(term_id_codec), std::move(lite_index)));
@@ -112,14 +115,14 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
   } else {
     ICING_VLOG(1) << "Term " << term << " is not in lexicon. Inserting.";
     // Haven't seen this term before. Add it to the lexicon.
-    ICING_ASSIGN_OR_RETURN(tvi,
+    TC3_ASSIGN_OR_RETURN(tvi,
                            lite_index_->InsertTerm(term, term_match_type_));
   }
 
   // Step 3: Add the hit itself
   Hit hit(section_id_, document_id_, score,
           term_match_type_ == TermMatchType::PREFIX);
-  ICING_ASSIGN_OR_RETURN(uint32_t term_id,
+  TC3_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   return lite_index_->AddHit(term_id, hit);
 }
