@@ -41,13 +41,6 @@ message SchemaTypeConfigProto {
   // in http://schema.org. Eg: DigitalDocument, Message, Person, etc.
   optional string schema_type = 1;
 
-  // The time-to-live that should be enforced on every Document of this type.
-  // Documents get garbage-collected based on their creation-timestamp and the
-  // TTL of the schema they belong to.
-  //
-  // Default value of 0 keeps the Documents till they're explicitly deleted.
-  optional int64 ttl_secs = 3;
-
   // List of all properties that are supported by Documents of this type.
   // An Document should never have properties that are not listed here.
   //
@@ -56,7 +49,7 @@ message SchemaTypeConfigProto {
   // easier.
   repeated PropertyConfigProto properties = 4;
 
-  reserved 2;
+  reserved 2, 3;
 }
 
 // Describes how a single property should be indexed.
@@ -65,26 +58,26 @@ message IndexingConfig {
   // Indicates how the content of this property should be matched in the index.
   //
   // TermMatchType.Code=UNKNOWN
-  // Content in this section will not be tokenized or indexed. Useful if the
+  // Content in this property will not be tokenized or indexed. Useful if the
   // data type is not made up of terms (e.g. DOCUMENT or BYTES type). All the
   // properties inside the nested property won't be indexed regardless of the
   // value of the term_match_type field for the nested properties.
   //
   // TermMatchType.Code=EXACT_ONLY
-  // Content in this section should only be returned for queries matching the
-  // exact tokens appearing in this section.
-  // Ex. A section with "fool" should NOT match a query for "foo".
+  // Content in this property should only be returned for queries matching the
+  // exact tokens appearing in this property.
+  // Ex. A property with "fool" should NOT match a query for "foo".
   //
   // TermMatchType.Code=PREFIX
-  // Content in this section should be returned for queries that are either
-  // exact matches or query matches of the tokens appearing in this section.
-  // Ex. A section with "fool" *should* match a query for "foo".
+  // Content in this property should be returned for queries that are either
+  // exact matches or query matches of the tokens appearing in this property.
+  // Ex. A property with "fool" *should* match a query for "foo".
   optional TermMatchType.Code term_match_type = 1;
 
   message TokenizerType {
     enum Code {
-      // It is only valid for tokenizer_type to be 'NONE' if either indexed is
-      // also 'NONE' or the data type is DOCUMENT.
+      // It is only valid for tokenizer_type to be 'NONE' if the data type is
+      // DOCUMENT.
       NONE = 0;
 
       // Tokenization for plain text.

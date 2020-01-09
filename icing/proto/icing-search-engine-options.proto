@@ -19,16 +19,12 @@ package icing.lib;
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
-// Next tag: 6
+// Next tag: 5
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
   // the index saved by the last instance.
   optional string base_dir = 1;
-
-  // File path to the LangId language segmentation model for the library to use.
-  // Required.
-  optional string lang_model_path = 2;
 
   // The maximum number of tokens to be allowed per document. If a document
   // exceeds this number of tokens, then only the first max_tokens_per_doc
@@ -41,7 +37,7 @@ message IcingSearchEngineOptions {
   // Valid values: [1, INT_MAX], Current default is 1/5 of the default of
   // max_document_size.
   // Optional.
-  optional int32 max_tokens_per_doc = 3 [default = 13107];
+  optional int32 max_tokens_per_doc = 2 [default = 13107];
 
   // The maximum allowable token length. All tokens in excess of this size
   // will be truncated to max_token_length before being indexed.
@@ -54,7 +50,7 @@ message IcingSearchEngineOptions {
   //
   // Valid values: [1, INT_MAX]
   // Optional.
-  optional int32 max_token_length = 4 [default = 30];
+  optional int32 max_token_length = 3 [default = 30];
 
   // The size (measured in bytes) at which Icing's internal indices should be
   // merged. Icing buffers changes together before merging them into a more
@@ -69,5 +65,5 @@ message IcingSearchEngineOptions {
   // index_merge_size leads to larger resource usage and higher query latency.
   // Valid values: [1, INT_MAX]
   // Optional.
-  optional int32 index_merge_size = 5 [default = 1048576];  // 1 MiB
+  optional int32 index_merge_size = 4 [default = 1048576];  // 1 MiB
 }
