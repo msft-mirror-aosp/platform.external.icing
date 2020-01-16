@@ -20,7 +20,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/scoring/ranker.h"
@@ -33,9 +32,9 @@ namespace icing {
 namespace lib {
 
 namespace {
-constexpr float kDefaultScoreInDescendingOrder = 0;
-constexpr float kDefaultScoreInAscendingOrder =
-    std::numeric_limits<float>::max();
+constexpr double kDefaultScoreInDescendingOrder = 0;
+constexpr double kDefaultScoreInAscendingOrder =
+    std::numeric_limits<double>::max();
 }  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
@@ -46,7 +45,7 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
   bool is_descending_order =
       scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
 
-  TC3_ASSIGN_OR_RETURN(
+  ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
       Scorer::Create(scoring_spec.rank_by(),
                      is_descending_order ? kDefaultScoreInDescendingOrder
@@ -72,10 +71,10 @@ std::vector<ScoredDocumentHit> ScoringProcessor::ScoreAndRank(
   while (doc_hit_info_iterator->Advance().ok()) {
     const DocHitInfo& doc_hit_info = doc_hit_info_iterator->doc_hit_info();
     // TODO(b/144955274) Calculate hit demotion factor from HitScore
-    float hit_demotion_factor = 1.0;
+    double hit_demotion_factor = 1.0;
     // The final score of the doc_hit_info = score of doc * demotion factor of
     // hit.
-    float score =
+    double score =
         scorer_->GetScore(doc_hit_info.document_id()) * hit_demotion_factor;
     scored_document_hits.emplace_back(
         doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);

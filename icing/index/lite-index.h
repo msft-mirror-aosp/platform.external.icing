@@ -118,8 +118,11 @@ class LiteIndex {
   // query soon.
   void Warm();
 
-  // Syncs all modified files in the index to disk. Returns non-OK status if any
-  // file fails to sync properly.
+  // Syncs all modified files in the index to disk.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
   // Calculate the checksum of all sub-components of the LiteIndex

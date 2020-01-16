@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result-retriever.h"
+#include "icing/result/result-retriever.h"
 
 #include <limits>
 #include <memory>
@@ -50,25 +50,25 @@ class ResultRetrieverTest : public testing::Test {
   ResultRetrieverTest() : test_dir_(GetTestTempDir() + "/icing") {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     test_document1_ = DocumentBuilder()
-                          .SetKey("icing", "email/1")
-                          .SetSchema("email")
-                          .AddStringProperty("subject", "subject foo")
-                          .AddStringProperty("body", "body bar")
-                          .SetCreationTimestampSecs(1574365086)
+        .SetKey("icing", "email/1")
+        .SetSchema("email")
+        .AddStringProperty("subject", "subject foo")
+        .AddStringProperty("body", "body bar")
+        .SetCreationTimestampMs(1574365086666)
                           .Build();
     test_document2_ = DocumentBuilder()
-                          .SetKey("icing", "email/2")
-                          .SetSchema("email")
-                          .AddStringProperty("subject", "subject foo 2")
-                          .AddStringProperty("body", "body bar 2")
-                          .SetCreationTimestampSecs(1574365087)
+        .SetKey("icing", "email/2")
+        .SetSchema("email")
+        .AddStringProperty("subject", "subject foo 2")
+        .AddStringProperty("body", "body bar 2")
+        .SetCreationTimestampMs(1574365087777)
                           .Build();
     test_document3_ = DocumentBuilder()
-                          .SetKey("icing", "email/3")
-                          .SetSchema("email")
-                          .AddStringProperty("subject", "subject foo 3")
-                          .AddStringProperty("body", "body bar 3")
-                          .SetCreationTimestampSecs(1574365088)
+        .SetKey("icing", "email/3")
+        .SetSchema("email")
+        .AddStringProperty("subject", "subject foo 3")
+        .AddStringProperty("body", "body bar 3")
+        .SetCreationTimestampMs(1574365088888)
                           .Build();
   }
 

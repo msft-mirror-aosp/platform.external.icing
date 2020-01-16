@@ -66,7 +66,6 @@
 #include <google/protobuf/io/gzip_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -74,6 +73,7 @@
 #include "icing/portable/zlib.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -526,7 +526,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
   header->max_proto_size = options.max_proto_size;
 
   bool data_loss = false;
-  TC3_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
+  ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
                          ComputeChecksum(filesystem, file_path, Crc32(),
                                          sizeof(Header), file_size));
   // Double check that the log checksum is the same as the one that was
@@ -541,7 +541,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
     // offset point. This will be valid if we just appended contents to the log
     // without updating the checksum, and we can rewind back to this point
     // safely.
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         calculated_log_checksum,
         ComputeChecksum(filesystem, file_path, Crc32(), sizeof(Header),
                         header->rewind_offset));
@@ -702,7 +702,7 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   }
 
   // Read out the metadata
-  TC3_ASSIGN_OR_RETURN(
+  ICING_ASSIGN_OR_RETURN(
       int metadata, ReadProtoMetadata(&mmapped_file, file_offset, file_size));
 
   // Copy out however many bytes it says the proto is
@@ -757,7 +757,7 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::Iterator::Advance() {
     current_offset_ = initial_offset_;
   } else {
     // Jumps to the next proto position
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         int metadata,
         ReadProtoMetadata(&mmapped_file_, current_offset_, file_size_));
     int proto_size = metadata & 0x00FFFFFF;
@@ -829,12 +829,12 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::PersistToDisk() {
   Crc32 crc;
   if (new_content_size < 0) {
     // File shrunk, recalculate the entire checksum.
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         crc, ComputeChecksum(filesystem_, file_path_, Crc32(), sizeof(Header),
                              file_size));
   } else {
     // Append new changes to the existing checksum.
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         crc,
         ComputeChecksum(filesystem_, file_path_, Crc32(header_->log_checksum),
                         header_->rewind_offset, file_size));

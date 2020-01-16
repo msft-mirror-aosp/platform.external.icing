@@ -41,7 +41,7 @@ class Scorer {
   //   FAILED_PRECONDITION on any null pointer input
   //   INVALID_ARGUMENT if fails to create an instance
   static libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
-      ScoringSpecProto::RankingStrategy::Code rank_by, float default_score,
+      ScoringSpecProto::RankingStrategy::Code rank_by, double default_score,
       const DocumentStore* document_store);
 
   // Returns a non-negative score of a document. The score can be a
@@ -55,9 +55,9 @@ class Scorer {
   // 3. Inferred scores: a score calculated by a machine learning model.
   //
   // NOTE: This method is performance-sensitive as it's called for every
-  // potential result document. We're trying to avoid returning StatusOr<float>
+  // potential result document. We're trying to avoid returning StatusOr<double>
   // to save a little more time and memory.
-  virtual float GetScore(DocumentId document_id) = 0;
+  virtual double GetScore(DocumentId document_id) = 0;
 };
 
 }  // namespace lib

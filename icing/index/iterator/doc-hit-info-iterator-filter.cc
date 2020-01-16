@@ -44,7 +44,7 @@ DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
       document_store_(*document_store),
       schema_store_(*schema_store),
       options_(options),
-      current_seconds_(clock->GetCurrentSeconds()) {
+      current_time_milliseconds_(clock->GetSystemTimeMilliseconds()) {
   // Precompute all the NamespaceIds
   for (std::string_view name_space : options_.namespaces) {
     auto namespace_id_or = document_store_.GetNamespaceId(name_space);
@@ -75,9 +75,9 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
         "No more DocHitInfos in iterator");
   }
 
-  if (current_seconds_ == -1) {
-    // We couldn't get the current time, meaning we can't tell which documents
-    // are expired or not. So just don't return anything.
+  if (current_time_milliseconds_ < 0) {
+    // This shouldn't happen, but we add a sanity check here for any unknown
+    // errors.
     return absl_ports::InternalError(
         "Couldn't get current time. Try again in a bit");
   }
@@ -115,7 +115,7 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
     return Advance();
   }
 
-  if (current_seconds_ >= data.expiration_timestamp_secs()) {
+  if (current_time_milliseconds_ >= data.expiration_timestamp_ms()) {
     // Current time has exceeded the document's expiration time
     return Advance();
   }

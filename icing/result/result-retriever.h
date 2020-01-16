@@ -25,7 +25,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/snippet-retriever.h"
+#include "icing/result/snippet-retriever.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"

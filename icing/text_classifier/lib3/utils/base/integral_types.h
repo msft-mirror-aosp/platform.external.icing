@@ -64,9 +64,15 @@ static_assert(sizeof(int64) == 8, "wrong size");
 // casts, and C doesn't know how to read braced-initialization for
 // integers.
 #if defined(__cplusplus)
+const uint16 kuint16max{0xFFFF};
+const int16 kint16max{0x7FFF};
+const int16 kint16min{~0x7FFF};
 const uint32 kuint32max{0xFFFFFFFF};
 const int32 kint32max{0x7FFFFFFF};
 #else   // not __cplusplus, this branch exists only for C-compat
+static const uint16 kuint16max = ((uint16)0xFFFF);
+static const int16 kint16min = ((int16)~0x7FFF);
+static const int16 kint16max = ((int16)0x7FFF);
 static const uint32 kuint32max = ((uint32)0xFFFFFFFF);
 static const int32 kint32max = ((int32)0x7FFFFFFF);
 #endif  // __cplusplus

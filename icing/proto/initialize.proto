@@ -16,6 +16,8 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/status.proto";
+
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
@@ -66,4 +68,24 @@ message IcingSearchEngineOptions {
   // Valid values: [1, INT_MAX]
   // Optional.
   optional int32 index_merge_size = 4 [default = 1048576];  // 1 MiB
+}
+
+// Result of a call to IcingSearchEngine.Initialize
+// Next tag: 2
+message InitializeResultProto {
+  // Status code can be one of:
+  //   OK
+  //   WARNING_DATA_LOSS
+  //   INVALID_ARGUMENT
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED, -NOT_FOUND.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
+  // go/icing-library-apis.
 }

@@ -192,7 +192,10 @@ class DocumentStore {
   libtextclassifier3::Status DeleteBySchemaType(std::string_view schema_type);
 
   // Syncs all the data and metadata changes to disk.
-  // Returns any encountered IO errors.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
   // Calculates and returns the disk usage in bytes.
@@ -377,6 +380,10 @@ class DocumentStore {
 
   // Update and replace the header file. Creates the header file if it doesn't
   // exist.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
   libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
 
   // Update derived files that `name_space` has been deleted. This is primarily

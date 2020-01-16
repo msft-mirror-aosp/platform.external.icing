@@ -38,7 +38,7 @@ namespace lib {
 // details.
 //
 // Example use:
-//   TC3_ASSIGN_OR_RETURN(auto normalizer,
+//   ICING_ASSIGN_OR_RETURN(auto normalizer,
 //       Normalizer::Create(/*max_term_byte_size=*/5);
 //
 //   std::string normalized_text = normalizer->NormalizeText("HELLO!");

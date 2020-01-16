@@ -16,15 +16,16 @@
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -224,7 +225,7 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
 }
 
 MATCHER(IsOk, "") {
-  absl_ports::StatusAdapter adapter(arg);
+  libtextclassifier3::StatusAdapter adapter(arg);
   if (adapter.status().ok()) {
     return true;
   }
@@ -247,7 +248,7 @@ MATCHER_P(IsOkAndHolds, matcher, "") {
 }
 
 MATCHER_P(StatusIs, status_code, "") {
-  absl_ports::StatusAdapter adapter(arg);
+  libtextclassifier3::StatusAdapter adapter(arg);
   if (adapter.status().CanonicalCode() == status_code) {
     return true;
   }
@@ -260,7 +261,7 @@ MATCHER_P(StatusIs, status_code, "") {
 }
 
 MATCHER_P2(StatusIs, status_code, error_matcher, "") {
-  absl_ports::StatusAdapter adapter(arg);
+  libtextclassifier3::StatusAdapter adapter(arg);
   if (adapter.status().CanonicalCode() != status_code) {
     *result_listener << IcingStringUtil::StringPrintf(
         "Expected (%s:), actual was (%s:%s)",

@@ -18,7 +18,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-id.h"
@@ -31,45 +30,45 @@ namespace lib {
 class DocumentScoreScorer : public Scorer {
  public:
   explicit DocumentScoreScorer(const DocumentStore* document_store,
-                               float default_score)
+                               double default_score)
       : document_store_(*document_store), default_score_(default_score) {}
 
-  float GetScore(DocumentId document_id) override {
-    TC3_ASSIGN_OR_RETURN(
+  double GetScore(DocumentId document_id) override {
+    ICING_ASSIGN_OR_RETURN(
         DocumentAssociatedScoreData score_data,
         document_store_.GetDocumentAssociatedScoreData(document_id),
         default_score_);
 
-    return static_cast<float>(score_data.document_score());
+    return static_cast<double>(score_data.document_score());
   }
 
  private:
   const DocumentStore& document_store_;
-  float default_score_;
+  double default_score_;
 };
 
 class DocumentCreationTimestampScorer : public Scorer {
  public:
   explicit DocumentCreationTimestampScorer(const DocumentStore* document_store,
-                                           float default_score)
+                                           double default_score)
       : document_store_(*document_store), default_score_(default_score) {}
 
-  float GetScore(DocumentId document_id) override {
-    TC3_ASSIGN_OR_RETURN(
+  double GetScore(DocumentId document_id) override {
+    ICING_ASSIGN_OR_RETURN(
         DocumentAssociatedScoreData score_data,
         document_store_.GetDocumentAssociatedScoreData(document_id),
         default_score_);
 
-    return score_data.creation_timestamp_secs();
+    return static_cast<double>(score_data.creation_timestamp_ms());
   }
 
  private:
   const DocumentStore& document_store_;
-  float default_score_;
+  double default_score_;
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
-    ScoringSpecProto::RankingStrategy::Code rank_by, float default_score,
+    ScoringSpecProto::RankingStrategy::Code rank_by, double default_score,
     const DocumentStore* document_store) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
 

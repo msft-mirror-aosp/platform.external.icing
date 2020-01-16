@@ -24,8 +24,8 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/util/i18n-utils.h"
+#include "icing/util/status-macros.h"
 #include "unicode/ubrk.h"
 #include "unicode/uchar.h"
 #include "unicode/umachine.h"
@@ -65,7 +65,7 @@ LanguageSegmenter::Segment(const std::string_view text) const {
 
 libtextclassifier3::StatusOr<std::vector<std::string_view>>
 LanguageSegmenter::GetAllTerms(const std::string_view text) const {
-  TC3_ASSIGN_OR_RETURN(std::unique_ptr<Iterator> iterator, Segment(text));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Iterator> iterator, Segment(text));
   std::vector<std::string_view> terms;
   while (iterator->Advance()) {
     terms.push_back(iterator->GetTerm());

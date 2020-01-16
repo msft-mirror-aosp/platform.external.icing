@@ -22,7 +22,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -64,7 +63,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
         "DocumentId %d must be greater than last added document_id %d",
         document_id, index_->last_added_document_id()));
   }
-  TC3_ASSIGN_OR_RETURN(std::vector<Section> sections,
+  ICING_ASSIGN_OR_RETURN(std::vector<Section> sections,
                          schema_store_.ExtractSections(document));
   uint32_t num_tokens = 0;
   libtextclassifier3::Status overall_status;
@@ -72,10 +71,10 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
     Index::Editor editor = index_->Edit(document_id, section.metadata.id,
                                         section.metadata.term_match_type);
     for (std::string_view subcontent : section.content) {
-      TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
+      ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
                              tokenizer_factory::CreateIndexingTokenizer(
                                  section.metadata.tokenizer, &lang_segmenter_));
-      TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> itr,
+      ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> itr,
                              tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
         if (++num_tokens > options_.max_tokens_per_document) {

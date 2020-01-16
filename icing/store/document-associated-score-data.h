@@ -33,22 +33,22 @@ namespace lib {
 class DocumentAssociatedScoreData {
  public:
   explicit DocumentAssociatedScoreData(int document_score,
-                                       int64_t creation_timestamp_secs)
+                                       int64_t creation_timestamp_ms)
       : document_score_(document_score),
-        creation_timestamp_secs_(creation_timestamp_secs) {}
+        creation_timestamp_ms_(creation_timestamp_ms) {}
 
   bool operator==(const DocumentAssociatedScoreData& other) const {
     return document_score_ == other.document_score() &&
-           creation_timestamp_secs_ == other.creation_timestamp_secs();
+           creation_timestamp_ms_ == other.creation_timestamp_ms();
   }
 
   int document_score() const { return document_score_; }
 
-  int64_t creation_timestamp_secs() const { return creation_timestamp_secs_; }
+  int64_t creation_timestamp_ms() const { return creation_timestamp_ms_; }
 
  private:
   int document_score_;
-  int64_t creation_timestamp_secs_;
+  int64_t creation_timestamp_ms_;
 } __attribute__((packed));
 
 static_assert(sizeof(DocumentAssociatedScoreData) == 12,

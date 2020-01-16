@@ -15,8 +15,6 @@
 #ifndef ICING_TESTING_FAKE_CLOCK_H_
 #define ICING_TESTING_FAKE_CLOCK_H_
 
-#include <ctime>
-
 #include "icing/util/clock.h"
 
 namespace icing {
@@ -26,12 +24,14 @@ namespace lib {
 // tests can override this clock and inject it into the class under test.
 class FakeClock : public Clock {
  public:
-  std::time_t GetCurrentSeconds() const override { return seconds_; }
+  int64_t GetSystemTimeMilliseconds() const override { return milliseconds_; }
 
-  void SetSeconds(std::time_t seconds) { seconds_ = seconds; }
+  void SetSystemTimeMilliseconds(int64_t milliseconds) {
+    milliseconds_ = milliseconds;
+  }
 
  private:
-  std::time_t seconds_ = 0;
+  int64_t milliseconds_ = 0;
 };
 
 }  // namespace lib

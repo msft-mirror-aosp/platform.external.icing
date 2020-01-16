@@ -89,16 +89,16 @@ class ScoringProcessorTest : public Test {
 };
 
 constexpr int kDefaultScore = 0;
-constexpr int64_t kDefaultCreationTimestampSecs = 1571100001;
+constexpr int64_t kDefaultCreationTimestampMs = 1571100001111;
 
 DocumentProto CreateDocument(const std::string& name_space,
                              const std::string& uri, int score,
-                             int64_t creation_timestamp_secs) {
+                             int64_t creation_timestamp_ms) {
   return DocumentBuilder()
       .SetKey(name_space, uri)
       .SetSchema("email")
       .SetScore(score)
-      .SetCreationTimestampSecs(creation_timestamp_secs)
+      .SetCreationTimestampMs(creation_timestamp_ms)
       .Build();
 }
 
@@ -109,10 +109,10 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
   std::vector<DocHitInfo> doc_hit_infos;
   std::vector<ScoredDocumentHit> scored_document_hits;
   for (int i = 0; i < scores.size(); i++) {
-    TC3_ASSIGN_OR_RETURN(DocumentId document_id,
+    ICING_ASSIGN_OR_RETURN(DocumentId document_id,
                            document_store->Put(CreateDocument(
                                "icing", "email/" + std::to_string(i),
-                               scores.at(i), kDefaultCreationTimestampSecs)));
+                               scores.at(i), kDefaultCreationTimestampMs)));
     doc_hit_infos.emplace_back(document_id);
     scored_document_hits.emplace_back(document_id, kSectionIdMaskNone,
                                       scores.at(i));
@@ -165,7 +165,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToReturn) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id1,
       document_store()->Put(CreateDocument("icing", "email/1", /*score=*/1,
-                                           kDefaultCreationTimestampSecs)));
+                                           kDefaultCreationTimestampMs)));
   DocHitInfo doc_hit_info1(document_id1);
 
   // Creates a dummy DocHitInfoIterator
@@ -229,12 +229,17 @@ TEST_F(ScoringProcessorTest, ShouldRankByDocumentScoreDesc) {
 
   // Sets up documents, guaranteed relationship:
   // document1 < document2 < document3
+  // Intentionally inserts documents in a different order
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
-      CreateAndInsertsDocumentsWithScores(document_store(), {1, 2, 3}));
+      CreateAndInsertsDocumentsWithScores(document_store(), {1, 3, 2}));
   std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
   std::vector<ScoredDocumentHit> scored_document_hits =
       std::move(doc_hit_result_pair.second);
+
+  // Rearranges scored_document_hits so that it's in a document score increasing
+  // order.
+  std::swap(scored_document_hits.at(1), scored_document_hits.at(2));
 
   // Disarrays doc_hit_infos
   std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
@@ -263,12 +268,17 @@ TEST_F(ScoringProcessorTest, ShouldRankByDocumentScoreAsc) {
 
   // Sets up documents, guaranteed relationship:
   // document1 < document2 < document3
+  // Intentionally inserts documents in a different order
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
-      CreateAndInsertsDocumentsWithScores(document_store(), {1, 2, 3}));
+      CreateAndInsertsDocumentsWithScores(document_store(), {1, 3, 2}));
   std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
   std::vector<ScoredDocumentHit> scored_document_hits =
       std::move(doc_hit_result_pair.second);
+
+  // Rearranges scored_document_hits so that it's in a document score increasing
+  // order.
+  std::swap(scored_document_hits.at(1), scored_document_hits.at(2));
 
   // Disarrays doc_hit_infos
   std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
@@ -298,28 +308,29 @@ TEST_F(ScoringProcessorTest, ShouldRankByCreationTimestampDesc) {
   // document1 < document2 < document3
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_secs=*/1571100001);
+                     /*creation_timestamp_ms=*/1571100001111);
   DocumentProto document2 =
       CreateDocument("icing", "email/2", kDefaultScore,
-                     /*creation_timestamp_secs=*/1571100002);
+                     /*creation_timestamp_ms=*/1571100002222);
   DocumentProto document3 =
       CreateDocument("icing", "email/3", kDefaultScore,
-                     /*creation_timestamp_secs=*/1571100003);
+                     /*creation_timestamp_ms=*/1571100003333);
+  // Intentionally inserts documents in a different order
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store()->Put(document2));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
                              document_store()->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
   DocHitInfo doc_hit_info1(document_id1);
   DocHitInfo doc_hit_info2(document_id2);
   DocHitInfo doc_hit_info3(document_id3);
   ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
-                                         document1.creation_timestamp_secs());
+                                         document1.creation_timestamp_ms());
   ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
-                                         document2.creation_timestamp_secs());
+                                         document2.creation_timestamp_ms());
   ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
-                                         document3.creation_timestamp_secs());
+                                         document3.creation_timestamp_ms());
 
   // Creates a dummy DocHitInfoIterator with 3 results
   std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info2, doc_hit_info3,
@@ -348,28 +359,29 @@ TEST_F(ScoringProcessorTest, ShouldRankByCreationTimestampAsc) {
   // document1 < document2 < document3
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_secs=*/1571100001);
+                     /*creation_timestamp_ms=*/1571100001000);
   DocumentProto document2 =
       CreateDocument("icing", "email/2", kDefaultScore,
-                     /*creation_timestamp_secs=*/1571100002);
+                     /*creation_timestamp_ms=*/1571100002000);
   DocumentProto document3 =
       CreateDocument("icing", "email/3", kDefaultScore,
-                     /*creation_timestamp_secs=*/1571100003);
+                     /*creation_timestamp_ms=*/1571100003000);
+  // Intentionally inserts documents in a different order
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store()->Put(document2));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
                              document_store()->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
   DocHitInfo doc_hit_info1(document_id1);
   DocHitInfo doc_hit_info2(document_id2);
   DocHitInfo doc_hit_info3(document_id3);
   ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
-                                         document1.creation_timestamp_secs());
+                                         document1.creation_timestamp_ms());
   ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
-                                         document2.creation_timestamp_secs());
+                                         document2.creation_timestamp_ms());
   ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
-                                         document3.creation_timestamp_secs());
+                                         document3.creation_timestamp_ms());
 
   // Creates a dummy DocHitInfoIterator with 3 results
   std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info2, doc_hit_info3,
@@ -524,9 +536,9 @@ TEST_F(ScoringProcessorTest, ShouldHandleNoScoresAsc) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   // The document hit without a score will be be assigned the default score
-  // max of float in an ascending order.
+  // max of double in an ascending order.
   ScoredDocumentHit scored_document_hit_default_asc = ScoredDocumentHit(
-      4, kSectionIdMaskNone, /*score=*/std::numeric_limits<float>::max());
+      4, kSectionIdMaskNone, /*score=*/std::numeric_limits<double>::max());
 
   // Creates a ScoringProcessor which ranks in ascending order
   ICING_ASSERT_OK_AND_ASSIGN(

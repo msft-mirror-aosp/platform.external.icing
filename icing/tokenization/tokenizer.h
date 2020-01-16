@@ -27,9 +27,9 @@ namespace lib {
 // iterator or a list of tokens. Example usage:
 //
 // std::unique_ptr<Tokenizer> tokenizer = GetTokenizer();
-// TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iter,
+// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iter,
 //                  tokenizer->Tokenize(text));
-// TC3_ASSIGN_OR_RETURN(std::vector<Token> tokens,
+// ICING_ASSIGN_OR_RETURN(std::vector<Token> tokens,
 // tokenizer->TokenizeAll(text));
 class Tokenizer {
  public:

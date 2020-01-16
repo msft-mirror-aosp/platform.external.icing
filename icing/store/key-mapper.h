@@ -25,12 +25,12 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -93,6 +93,10 @@ class KeyMapper {
   // NOTE: To control disk-churn, Put() doesn't automatically persist every
   // change to disk. The caller should explicitly call PersistToDisk() to make
   // sure that the data is durable.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
   // Calculates and returns the disk usage in bytes.

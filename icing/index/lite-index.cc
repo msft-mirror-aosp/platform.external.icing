@@ -30,7 +30,6 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"

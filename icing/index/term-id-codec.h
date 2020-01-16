@@ -30,7 +30,7 @@
 // MAIN tvi and the max LITE tvi.
 //
 // Example use:
-//   TC3_ASSIGN_OR_RETURN(auto term_id_codec,
+//   ICING_ASSIGN_OR_RETURN(auto term_id_codec,
 //       TermIdCodec::Create(/*max_main_tvi=*/5, /*max_lite_tvi=*/5);
 //
 //   term_id_codec->tvi_type(0); // TviType::Main

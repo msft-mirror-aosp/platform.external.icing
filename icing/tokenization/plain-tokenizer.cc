@@ -17,9 +17,9 @@
 #include <cstdint>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/i18n-utils.h"
+#include "icing/util/status-macros.h"
 #include "unicode/umachine.h"
 
 namespace icing {
@@ -84,13 +84,13 @@ class PlainTokenIterator : public Tokenizer::Iterator {
   }
 
   bool ResetToTokenBefore(int32_t offset) override {
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         offset, base_iterator_->ResetToTermEndingBefore(offset), false);
     current_term_ = base_iterator_->GetTerm();
     while (!IsValidTerm(current_term_)) {
       // Haven't found a valid term yet. Retrieve the term prior to this one
       // from the segmenter.
-      TC3_ASSIGN_OR_RETURN(
+      ICING_ASSIGN_OR_RETURN(
           offset, base_iterator_->ResetToTermEndingBefore(offset), false);
       current_term_ = base_iterator_->GetTerm();
     }
@@ -104,7 +104,7 @@ class PlainTokenIterator : public Tokenizer::Iterator {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>>
 PlainTokenizer::Tokenize(std::string_view text) const {
-  TC3_ASSIGN_OR_RETURN(
+  ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<LanguageSegmenter::Iterator> base_iterator,
       language_segmenter_.Segment(text));
   return std::make_unique<PlainTokenIterator>(std::move(base_iterator));
@@ -112,7 +112,7 @@ PlainTokenizer::Tokenize(std::string_view text) const {
 
 libtextclassifier3::StatusOr<std::vector<Token>> PlainTokenizer::TokenizeAll(
     std::string_view text) const {
-  TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
                          Tokenize(text));
   std::vector<Token> tokens;
   while (iterator->Advance()) {

@@ -16,7 +16,6 @@
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_FILTER_H_
 
 #include <cstdint>
-#include <ctime>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -79,7 +78,7 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   const Options options_;
   std::unordered_set<NamespaceId> target_namespace_ids_;
   std::unordered_set<SchemaTypeId> target_schema_type_ids_;
-  const std::time_t current_seconds_;
+  const int64_t current_time_milliseconds_;
 };
 
 }  // namespace lib

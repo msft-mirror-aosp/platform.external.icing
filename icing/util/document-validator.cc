@@ -19,8 +19,8 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/schema/schema-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -51,17 +51,17 @@ libtextclassifier3::Status DocumentValidator::Validate(
     return absl_ports::InvalidArgumentError("Field 'score' is negative.");
   }
 
-  if (document.creation_timestamp_secs() < 0) {
+  if (document.creation_timestamp_ms() < 0) {
     return absl_ports::InvalidArgumentError(
-        "Field 'creation_timestamp_secs' is negative.");
+        "Field 'creation_timestamp_ms' is negative.");
   }
 
-  if (document.ttl_secs() < 0) {
-    return absl_ports::InvalidArgumentError("Field 'ttl_secs' is negative.");
+  if (document.ttl_ms() < 0) {
+    return absl_ports::InvalidArgumentError("Field 'ttl_ms' is negative.");
   }
 
   // TODO(b/144458732): Implement a more robust version of
-  // TC3_ASSIGN_OR_RETURN that can support error logging.
+  // ICING_ASSIGN_OR_RETURN that can support error logging.
   auto type_config_or = schema_store_->GetSchemaTypeConfig(document.schema());
   if (!type_config_or.ok()) {
     ICING_LOG(ERROR) << type_config_or.status().error_message()

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/snippet-retriever.h"
+#include "icing/result/snippet-retriever.h"
 
 #include <cstdint>
 #include <limits>

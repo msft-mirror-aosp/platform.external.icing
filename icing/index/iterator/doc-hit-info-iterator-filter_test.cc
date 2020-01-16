@@ -580,8 +580,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema(email_schema_)
-                               .SetCreationTimestampSecs(0)
-                               .SetTtlSecs(0)
+                               .SetCreationTimestampMs(0)
+                               .SetTtlMs(0)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(document));
@@ -591,7 +591,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   // Arbitrary value
-  fake_clock_.SetSeconds(100);
+  fake_clock_.SetSystemTimeMilliseconds(100);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -605,8 +605,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema(email_schema_)
-                               .SetCreationTimestampSecs(1)
-                               .SetTtlSecs(100)
+                               .SetCreationTimestampMs(1)
+                               .SetTtlMs(100)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(document));
@@ -616,7 +616,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   // Arbitrary value, but must be less than document's creation_timestamp + ttl
-  fake_clock_.SetSeconds(50);
+  fake_clock_.SetSystemTimeMilliseconds(50);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -630,8 +630,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema(email_schema_)
-                               .SetCreationTimestampSecs(0)
-                               .SetTtlSecs(100)
+                               .SetCreationTimestampMs(0)
+                               .SetTtlMs(100)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(document));
@@ -641,7 +641,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   // Current time is exactly the document's creation_timestamp + ttl
-  fake_clock_.SetSeconds(100);
+  fake_clock_.SetSystemTimeMilliseconds(100);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -655,8 +655,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema(email_schema_)
-                               .SetCreationTimestampSecs(0)
-                               .SetTtlSecs(100)
+                               .SetCreationTimestampMs(0)
+                               .SetTtlMs(100)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(document));
@@ -667,7 +667,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
 
   // Arbitrary value, but must be greater than the document's
   // creation_timestamp + ttl
-  fake_clock_.SetSeconds(101);
+  fake_clock_.SetSystemTimeMilliseconds(101);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -684,8 +684,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest,
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // -1 is the value returned on std::time() error
-  fake_clock_.SetSeconds(-1);
+  // -1 is an invalid timestamp
+  fake_clock_.SetSystemTimeMilliseconds(-1);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
@@ -704,32 +704,32 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
     document1_namespace1_schema1_ = DocumentBuilder()
                                         .SetKey(namespace1_, "1")
                                         .SetSchema(schema1_)
-                                        .SetCreationTimestampSecs(100)
-                                        .SetTtlSecs(100)
+                                        .SetCreationTimestampMs(100)
+                                        .SetTtlMs(100)
                                         .Build();
     document2_namespace1_schema1_ = DocumentBuilder()
                                         .SetKey(namespace1_, "2")
                                         .SetSchema(schema1_)
-                                        .SetCreationTimestampSecs(100)
-                                        .SetTtlSecs(100)
+                                        .SetCreationTimestampMs(100)
+                                        .SetTtlMs(100)
                                         .Build();
     document3_namespace2_schema1_ = DocumentBuilder()
                                         .SetKey(namespace2_, "3")
                                         .SetSchema(schema1_)
-                                        .SetCreationTimestampSecs(100)
-                                        .SetTtlSecs(100)
+                                        .SetCreationTimestampMs(100)
+                                        .SetTtlMs(100)
                                         .Build();
     document4_namespace1_schema2_ = DocumentBuilder()
                                         .SetKey(namespace1_, "4")
                                         .SetSchema(schema2_)
-                                        .SetCreationTimestampSecs(100)
-                                        .SetTtlSecs(100)
+                                        .SetCreationTimestampMs(100)
+                                        .SetTtlMs(100)
                                         .Build();
     document5_namespace1_schema1_ = DocumentBuilder()
                                         .SetKey(namespace1_, "5")
                                         .SetSchema(schema1_)
-                                        .SetCreationTimestampSecs(0)
-                                        .SetTtlSecs(100)
+                                        .SetCreationTimestampMs(0)
+                                        .SetTtlMs(100)
                                         .Build();
 
     SchemaProto schema;
@@ -812,7 +812,7 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
 
   // Filters out document5 since it's expired
   FakeClock fake_clock;
-  fake_clock.SetSeconds(199);
+  fake_clock.SetSystemTimeMilliseconds(199);
 
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),

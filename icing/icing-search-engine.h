@@ -28,7 +28,9 @@
 #include "icing/index/index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/document.pb.h"
-#include "icing/proto/icing-search-engine-options.pb.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
@@ -83,7 +85,7 @@ class IcingSearchEngine {
   //     IcingSearchEngineOptions.base_dir and reinitialize.
   //   RESOURCE_EXHAUSTED if not enough storage space
   //   NOT_FOUND if missing some internal data
-  libtextclassifier3::Status Initialize() LOCKS_EXCLUDED(mutex_);
+  InitializeResultProto Initialize() LOCKS_EXCLUDED(mutex_);
 
   // Specifies the schema to be applied on all Documents that are already
   // stored as well as future documents. A schema can be 'invalid' and/or
@@ -125,7 +127,7 @@ class IcingSearchEngine {
   // way ordering of calls between Initialize() and SetSchema(), both when
   // the caller is creating an instance of IcingSearchEngine for the first
   // time and when the caller is reinitializing an existing index on disk.
-  libtextclassifier3::Status SetSchema(
+  SetSchemaResultProto SetSchema(
       SchemaProto&& new_schema, bool ignore_errors_and_delete_documents = false)
       LOCKS_EXCLUDED(mutex_);
 
@@ -135,7 +137,7 @@ class IcingSearchEngine {
   // NOTE: It's recommended to call SetSchema(SchemaProto&& new_schema, bool
   // ignore_errors_and_delete_documents) directly to avoid a copy if the caller
   // can make an rvalue SchemaProto.
-  libtextclassifier3::Status SetSchema(
+  SetSchemaResultProto SetSchema(
       const SchemaProto& new_schema,
       bool ignore_errors_and_delete_documents = false) LOCKS_EXCLUDED(mutex_);
 
@@ -145,7 +147,7 @@ class IcingSearchEngine {
   //   SchemaProto on success
   //   NOT_FOUND if a schema has not been set yet
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<SchemaProto> GetSchema() LOCKS_EXCLUDED(mutex_);
+  GetSchemaResultProto GetSchema() LOCKS_EXCLUDED(mutex_);
 
   // Get Icing's copy of the SchemaTypeConfigProto of name schema_type
   //
@@ -154,8 +156,8 @@ class IcingSearchEngine {
   //   NOT_FOUND if a schema has not been set yet or if there is no
   //     SchemaTypeConfig of schema_type in the SchemaProto
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<SchemaTypeConfigProto> GetSchemaType(
-      std::string schema_type) LOCKS_EXCLUDED(mutex_);
+  GetSchemaTypeResultProto GetSchemaType(std::string_view schema_type)
+      LOCKS_EXCLUDED(mutex_);
 
   // Puts the document into icing search engine so that it's stored and
   // indexed. Documents are automatically written to disk, callers can also
@@ -164,16 +166,14 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status Put(DocumentProto&& document)
-      LOCKS_EXCLUDED(mutex_);
+  PutResultProto Put(DocumentProto&& document) LOCKS_EXCLUDED(mutex_);
 
   // This function makes a copy of document and calls Put(DocumentProto&&
   // document).
   //
   // NOTE: It's recommended to call Put(DocumentProto&& document) directly to
   // avoid a copy if the caller can make an rvalue DocumentProto.
-  libtextclassifier3::Status Put(const DocumentProto& document)
-      LOCKS_EXCLUDED(mutex_);
+  PutResultProto Put(const DocumentProto& document) LOCKS_EXCLUDED(mutex_);
 
   // Finds and returns the document identified by the given key (namespace +
   // uri)
@@ -182,8 +182,7 @@ class IcingSearchEngine {
   //   The document found on success
   //   NOT_FOUND if the key doesn't exist or doc has been deleted
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentProto> Get(std::string_view name_space,
-                                                  std::string_view uri);
+  GetResultProto Get(std::string_view name_space, std::string_view uri);
 
   // Deletes the Document specified by the given namespace / uri pair from the
   // search engine. Delete changes are automatically applied to disk, callers
@@ -192,8 +191,27 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status Delete(std::string_view name_space,
-                                    std::string_view uri)
+  DeleteResultProto Delete(std::string_view name_space, std::string_view uri)
+      LOCKS_EXCLUDED(mutex_);
+
+  // Deletes all Documents belonging to the specified namespace from the search
+  // engine. Delete changes are automatically applied to disk, callers can also
+  // call PersistToDisk() to flush changes immediately.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  DeleteByNamespaceResultProto DeleteByNamespace(std::string_view name_space)
+      LOCKS_EXCLUDED(mutex_);
+
+  // Deletes all Documents belonging to the specified type from the search
+  // engine. Delete changes are automatically applied to disk, callers can also
+  // call PersistToDisk() to flush changes immediately.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  DeleteBySchemaTypeResultProto DeleteBySchemaType(std::string_view schema_type)
       LOCKS_EXCLUDED(mutex_);
 
   // Retrieves, scores, ranks, and returns the results according to the specs.
@@ -203,9 +221,10 @@ class IcingSearchEngine {
   //   A SearchResultProto on success
   //   INVALID_ARGUMENT if any of specs is invalid
   //   INTERNAL_ERROR on any other errors
-  libtextclassifier3::StatusOr<SearchResultProto> Search(
-      const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
-      const ResultSpecProto& result_spec) LOCKS_EXCLUDED(mutex_);
+  SearchResultProto Search(const SearchSpecProto& search_spec,
+                           const ScoringSpecProto& scoring_spec,
+                           const ResultSpecProto& result_spec)
+      LOCKS_EXCLUDED(mutex_);
 
   // Makes sure that every update/delete received till this point is flushed
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
@@ -214,7 +233,11 @@ class IcingSearchEngine {
   // NOTE: It is not necessary to call PersistToDisk() to read back data
   // that was recently written. All read APIs will include the most recent
   // updates/deletes regardless of the data being flushed to disk.
-  libtextclassifier3::Status PersistToDisk() LOCKS_EXCLUDED(mutex_);
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  PersistToDiskResultProto PersistToDisk() LOCKS_EXCLUDED(mutex_);
 
   // Allows Icing to run tasks that are too expensive and/or unnecessary to be
   // executed in real-time, but are useful to keep it fast and be
@@ -228,7 +251,17 @@ class IcingSearchEngine {
   // WARNING: This method is CPU and IO intensive and depending on the
   // contents stored, it can take from a few seconds to a few minutes.
   // This call also blocks all read/write operations on Icing.
-  libtextclassifier3::Status Optimize() LOCKS_EXCLUDED(mutex_);
+  //
+  // Returns:
+  //   OK on success
+  //   ABORTED_ERROR if optimization is aborted due to non-fatal errors before
+  //                 actual modifications are made.
+  //   DATA_LOSS_ERROR on errors that could potentially cause data loss,
+  //                   IcingSearchEngine is still functioning.
+  //   INTERNAL_ERROR on any IO errors or other unrecoverable errors. Icing
+  //                  could be in an inconsistent state and might not be usable.
+  //                  Clients could clear and reinitialize IcingSearchEngine.
+  OptimizeResultProto Optimize() LOCKS_EXCLUDED(mutex_);
 
   // Disallow copy and move.
   IcingSearchEngine(const IcingSearchEngine&) = delete;
@@ -322,6 +355,10 @@ class IcingSearchEngine {
   // Check that everything is consistent with each other so that we're not
   // using outdated derived data in some parts of our system.
   //
+  // NOTE: this method can be called only at startup time or after
+  // PersistToDisk(), otherwise the check could fail due to any changes that are
+  // not persisted.
+  //
   // Returns:
   //   OK on success
   //   NOT_FOUND if missing header file
@@ -345,7 +382,12 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
-  //   INTERNAL_ERROR on any IO errors
+  //   ABORTED_ERROR if any error happens before the actual optimization, the
+  //                 original document store should be still available
+  //   DATA_LOSS_ERROR on errors that could potentially cause data loss,
+  //                   document store is still available
+  //   INTERNAL_ERROR on any IO errors or other errors that we can't recover
+  //                  from
   libtextclassifier3::Status OptimizeDocumentStore()
       EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 

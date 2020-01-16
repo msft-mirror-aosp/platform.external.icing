@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/status.proto";
 import "icing/proto/term.proto";
 
 option java_package = "com.google.android.icing.proto";
@@ -169,4 +170,70 @@ message PropertyConfigProto {
 // Next tag: 2
 message SchemaProto {
   repeated SchemaTypeConfigProto types = 1;
+}
+
+// Result of a call to IcingSearchEngine.SetSchema
+// Next tag: 4
+message SetSchemaResultProto {
+  // Status code can be one of:
+  //   OK
+  //   INVALID_ARGUMENT
+  //   FAILED_PRECONDITION
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED, +WARNING_DATA_LOSS,
+  // -INTERNAL. go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Schema types that existed in the previous schema, but were deleted from the
+  // new schema. If ignore_errors_and_delete_documents=true, then all documents
+  // of these types were also deleted.
+  repeated string deleted_schema_types = 2;
+
+  // Schema types that existed in the previous schema and were incompatible with
+  // the new schema type. If ignore_errors_and_delete_documents=true, then any
+  // documents that fail validation against the new schema types would also be
+  // deleted.
+  repeated string incompatible_schema_types = 3;
+}
+
+// Result of a call to IcingSearchEngine.GetSchema
+// Next tag: 3
+message GetSchemaResultProto {
+  // Status code can be one of:
+  //   OK
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED, -INTERNAL
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Copy of the Schema proto. Modifying this does not affect the Schema that
+  // IcingSearchEngine holds.
+  optional SchemaProto schema = 2;
+}
+
+// Result of a call to IcingSearchEngine.GetSchemaType
+// Next tag: 3
+message GetSchemaTypeResultProto {
+  // Status code can be one of:
+  //   OK
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED, +FAILED_PRECONDITION,
+  // -INTERNAL go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Copy of the SchemaTypeConfig proto with the specified schema_type.
+  // Modifying this does not affect the SchemaTypeConfig that IcingSearchEngine
+  // holds.
+  optional SchemaTypeConfigProto schema_type_config = 2;
 }

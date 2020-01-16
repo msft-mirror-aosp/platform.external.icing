@@ -30,15 +30,15 @@ class DocumentFilterData {
  public:
   explicit DocumentFilterData(NamespaceId namespace_id,
                               SchemaTypeId schema_type_id,
-                              int64_t expiration_timestamp_secs)
-      : expiration_timestamp_secs_(expiration_timestamp_secs),
+                              int64_t expiration_timestamp_ms)
+      : expiration_timestamp_ms_(expiration_timestamp_ms),
         namespace_id_(namespace_id),
         schema_type_id_(schema_type_id) {}
 
   bool operator==(const DocumentFilterData& other) const {
     return namespace_id_ == other.namespace_id() &&
            schema_type_id_ == other.schema_type_id() &&
-           expiration_timestamp_secs_ == other.expiration_timestamp_secs();
+           expiration_timestamp_ms_ == other.expiration_timestamp_ms();
   }
 
   NamespaceId namespace_id() const { return namespace_id_; }
@@ -48,12 +48,10 @@ class DocumentFilterData {
     schema_type_id_ = schema_type_id;
   }
 
-  int64_t expiration_timestamp_secs() const {
-    return expiration_timestamp_secs_;
-  }
+  int64_t expiration_timestamp_ms() const { return expiration_timestamp_ms_; }
 
  private:
-  int64_t expiration_timestamp_secs_;
+  int64_t expiration_timestamp_ms_;
   NamespaceId namespace_id_;
   SchemaTypeId schema_type_id_;
 } __attribute__((packed));

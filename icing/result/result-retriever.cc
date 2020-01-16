@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/result-retriever.h"
+#include "icing/result/result-retriever.h"
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
@@ -30,7 +30,7 @@ ResultRetriever::Create(const DocumentStore* doc_store,
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
 
-  TC3_ASSIGN_OR_RETURN(
+  ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<SnippetRetriever> snippet_retriever,
       SnippetRetriever::Create(schema_store, language_segmenter));
 
