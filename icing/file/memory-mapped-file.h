@@ -95,6 +95,11 @@ class MemoryMappedFile {
   // Explicitly persist any changes made to the currently mapped region to disk.
   //
   // NOTE: This is only valid if Strategy=READ_WRITE was used.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
+  //   FAILED_PRECONDITION if Strategy is not implemented
   libtextclassifier3::Status PersistToDisk();
 
   // Advise the system to help it optimize the memory-mapped region for

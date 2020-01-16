@@ -50,8 +50,8 @@ class ScorerTest : public Test {
     filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
-    fake_clock1_.SetSeconds(1571100000);
-    fake_clock2_.SetSeconds(1572200000);
+    fake_clock1_.SetSystemTimeMilliseconds(1571100000000);
+    fake_clock2_.SetSystemTimeMilliseconds(1572200000000);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_));
@@ -126,7 +126,7 @@ TEST_F(ScorerTest, ShouldGetDefaultDocumentScore) {
           .SetKey("icing", "email/1")
           .SetSchema("email")
           .AddStringProperty("subject", "subject foo")
-          .SetCreationTimestampSecs(fake_clock1().GetCurrentSeconds())
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
@@ -147,7 +147,7 @@ TEST_F(ScorerTest, ShouldGetCorrectDocumentScore) {
           .SetKey("icing", "email/1")
           .SetSchema("email")
           .AddStringProperty("subject", "subject foo")
-          .SetCreationTimestampSecs(fake_clock2().GetCurrentSeconds())
+          .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
@@ -167,7 +167,7 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
           .SetKey("icing", "email/1")
           .SetSchema("email")
           .AddStringProperty("subject", "subject foo")
-          .SetCreationTimestampSecs(fake_clock1().GetCurrentSeconds())
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
           .Build();
   // Creates test_document2 with fake timestamp2
   DocumentProto test_document2 =
@@ -175,7 +175,7 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
           .SetKey("icing", "email/2")
           .SetSchema("email")
           .AddStringProperty("subject", "subject foo 2")
-          .SetCreationTimestampSecs(fake_clock2().GetCurrentSeconds())
+          .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
@@ -188,9 +188,9 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
                      /*default_score=*/0, document_store()));
 
   EXPECT_THAT(scorer->GetScore(document_id1),
-              Eq(fake_clock1().GetCurrentSeconds()));
+              Eq(fake_clock1().GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(document_id2),
-              Eq(fake_clock2().GetCurrentSeconds()));
+              Eq(fake_clock2().GetSystemTimeMilliseconds()));
 }
 
 }  // namespace

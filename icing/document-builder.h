@@ -50,8 +50,8 @@ class DocumentBuilder {
     return *this;
   }
 
-  DocumentBuilder& SetCreationTimestampSecs(uint64_t creation_timestamp_secs) {
-    document_.set_creation_timestamp_secs(creation_timestamp_secs);
+  DocumentBuilder& SetCreationTimestampMs(uint64_t creation_timestamp_ms) {
+    document_.set_creation_timestamp_ms(creation_timestamp_ms);
     return *this;
   }
 
@@ -60,8 +60,8 @@ class DocumentBuilder {
     return *this;
   }
 
-  DocumentBuilder& SetTtlSecs(uint64_t ttl_secs) {
-    document_.set_ttl_secs(ttl_secs);
+  DocumentBuilder& SetTtlMs(uint64_t ttl_ms) {
+    document_.set_ttl_ms(ttl_ms);
     return *this;
   }
 

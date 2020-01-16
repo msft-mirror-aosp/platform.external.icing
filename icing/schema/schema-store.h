@@ -153,7 +153,7 @@ class SchemaStore {
   //   SchemaTypeConfigProto on success
   //   NOT_FOUND if schema type name doesn't exist
   libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
-  GetSchemaTypeConfig(const std::string& schema_type) const;
+  GetSchemaTypeConfig(std::string_view schema_type) const;
 
   // Returns the SchemaTypeId of the passed in schema type
   //
@@ -205,7 +205,9 @@ class SchemaStore {
 
   // Syncs all the data changes to disk.
   //
-  // Returns any encountered IO errors.
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O errors.
   libtextclassifier3::Status PersistToDisk();
 
   // Computes the combined checksum of the schema store - includes the ground
@@ -248,6 +250,10 @@ class SchemaStore {
 
   // Update and replace the header file. Creates the header file if it doesn't
   // exist.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
   libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
 
   // Resets the unique_ptr to the schema_type_mapper_, deletes the underlying

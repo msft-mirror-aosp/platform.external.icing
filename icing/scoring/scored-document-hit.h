@@ -30,7 +30,7 @@ namespace lib {
 class ScoredDocumentHit {
  public:
   ScoredDocumentHit(DocumentId document_id, SectionIdMask hit_section_id_mask,
-                    float score)
+                    double score)
       : document_id_(document_id),
         hit_section_id_mask_(hit_section_id_mask),
         score_(score) {}
@@ -45,16 +45,16 @@ class ScoredDocumentHit {
 
   SectionIdMask hit_section_id_mask() const { return hit_section_id_mask_; }
 
-  float score() const { return score_; }
+  double score() const { return score_; }
 
  private:
   DocumentId document_id_;
   SectionIdMask hit_section_id_mask_;
-  float score_;
+  double score_;
 } __attribute__((packed));
 
-static_assert(sizeof(ScoredDocumentHit) == 10,
-              "Size of ScoredDocHit should be 10");
+static_assert(sizeof(ScoredDocumentHit) == 14,
+              "Size of ScoredDocHit should be 14");
 static_assert(icing_is_packed_pod<ScoredDocumentHit>::value, "go/icing-ubsan");
 
 // A custom comparator for ScoredDocumentHit that determines which

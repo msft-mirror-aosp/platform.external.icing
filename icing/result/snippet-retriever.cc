@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/snippet-retriever.h"
+#include "icing/result/snippet-retriever.h"
 
 #include <algorithm>
 #include <cctype>
@@ -22,7 +22,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/tokenizer-factory.h"
@@ -200,14 +199,14 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
 
   if (snippet_spec.max_window_bytes() > match.text.length()) {
     // Find the beginning of the window.
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         int window_start,
         DetermineWindowStart(snippet_spec, value.section_subcontent, match_mid,
                              iterator));
     snippet_match.set_window_position(window_start);
 
     // Find the end of the window.
-    TC3_ASSIGN_OR_RETURN(
+    ICING_ASSIGN_OR_RETURN(
         int window_end_exclusive,
         DetermineWindowEnd(snippet_spec, value.section_subcontent, match_mid,
                            iterator));
@@ -233,7 +232,7 @@ libtextclassifier3::StatusOr<SnippetProto::EntryProto> RetrieveMatches(
     const SectionData& value, const Tokenizer* tokenizer) {
   SnippetProto::EntryProto snippet_entry;
   snippet_entry.set_property_name(std::string(value.section_name));
-  TC3_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
                          tokenizer->Tokenize(value.section_subcontent));
   while (iterator->Advance()) {
     if (snippet_entry.snippet_matches_size() >=
@@ -245,7 +244,7 @@ libtextclassifier3::StatusOr<SnippetProto::EntryProto> RetrieveMatches(
       // If there was an error while retrieving the match, the tokenizer
       // iterator is probably in an invalid state. There's nothing we can do
       // here, so just return.
-      TC3_ASSIGN_OR_RETURN(
+      ICING_ASSIGN_OR_RETURN(
           SnippetMatchProto match,
           RetrieveMatch(match_options.snippet_spec, value, iterator.get()));
       snippet_entry.mutable_snippet_matches()->Add(std::move(match));
@@ -275,7 +274,7 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     const DocumentProto& document, SectionIdMask section_id_mask) const {
   SnippetProto snippet_proto;
-  TC3_ASSIGN_OR_RETURN(SchemaTypeId type_id,
+  ICING_ASSIGN_OR_RETURN(SchemaTypeId type_id,
                              schema_store_.GetSchemaTypeId(document.schema()),
                              snippet_proto);
   const std::unordered_set<std::string> empty_set;

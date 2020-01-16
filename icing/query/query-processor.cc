@@ -25,7 +25,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
@@ -134,7 +133,7 @@ QueryProcessor::QueryProcessor(Index* index,
 
 libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
 QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
-  TC3_ASSIGN_OR_RETURN(QueryResults results, ParseRawQuery(search_spec));
+  ICING_ASSIGN_OR_RETURN(QueryResults results, ParseRawQuery(search_spec));
 
   DocHitInfoIteratorFilter::Options options;
 
@@ -164,12 +163,12 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
   // TODO(cassiewang): Consider caching/creating a tokenizer factory that will
   // cache the n most recently used tokenizers. So we don't have to recreate
   // this on every new query, if they'll all be raw queries.
-  TC3_ASSIGN_OR_RETURN(
+  ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               &language_segmenter_));
 
-  TC3_ASSIGN_OR_RETURN(std::vector<Token> tokens,
+  ICING_ASSIGN_OR_RETURN(std::vector<Token> tokens,
                          raw_query_tokenizer->TokenizeAll(search_spec.query()));
 
   std::stack<ParserStateFrame> frames;
@@ -254,7 +253,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
         // big the schema is and/or how popular schema type filtering and
         // section filtering is.
 
-        TC3_ASSIGN_OR_RETURN(
+        ICING_ASSIGN_OR_RETURN(
             result_iterator,
             index_.GetIterator(normalized_text, kSectionIdMaskAll,
                                search_spec.term_match_type()));

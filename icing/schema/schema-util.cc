@@ -23,13 +23,13 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {

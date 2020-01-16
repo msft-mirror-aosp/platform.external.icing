@@ -45,7 +45,7 @@ void BM_GetTopN(benchmark::State& state) {
   int num_to_return = state.range(1);
 
   std::vector<ScoredDocumentHit> scored_document_hits;
-  uint seed = Clock().GetCurrentSeconds();
+  uint seed = Clock().GetSystemTimeMilliseconds();
   for (int i = 0; i < num_to_score; i++) {
     int score = rand_r(&seed);
     scored_document_hits.emplace_back(/*document_id=*/0,

@@ -26,13 +26,13 @@ using ::testing::Eq;
 
 TEST(FakeClockTest, GetSetOk) {
   FakeClock fake_clock;
-  EXPECT_THAT(fake_clock.GetCurrentSeconds(), Eq(0));
+  EXPECT_THAT(fake_clock.GetSystemTimeMilliseconds(), Eq(0));
 
-  fake_clock.SetSeconds(10);
-  EXPECT_THAT(fake_clock.GetCurrentSeconds(), Eq(10));
+  fake_clock.SetSystemTimeMilliseconds(10);
+  EXPECT_THAT(fake_clock.GetSystemTimeMilliseconds(), Eq(10));
 
-  fake_clock.SetSeconds(-1);
-  EXPECT_THAT(fake_clock.GetCurrentSeconds(), Eq(-1));
+  fake_clock.SetSystemTimeMilliseconds(-1);
+  EXPECT_THAT(fake_clock.GetSystemTimeMilliseconds(), Eq(-1));
 }
 
 }  // namespace

@@ -50,8 +50,8 @@ class DocumentValidator {
   // 10. All PropertyProto with REQUIRED cardinality in the corresponding
   //     PropertyConfigProto present in the DocumentProto
   // 11. DocumentProto.score is not negative
-  // 12. DocumentProto.creation_timestamp_secs is not negative
-  // 13. DocumentProto.ttl_secs is not negative
+  // 12. DocumentProto.creation_timestamp_ms is not negative
+  // 13. DocumentProto.ttl_ms is not negative
   //
   // In addition, all nested DocumentProto will also be validated towards the
   // requirements above.

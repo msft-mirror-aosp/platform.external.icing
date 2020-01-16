@@ -15,32 +15,25 @@
 #ifndef ICING_UTIL_CLOCK_H_
 #define ICING_UTIL_CLOCK_H_
 
-#include <ctime>
+#include <chrono>  // NOLINT. Abseil library is not available in AOSP so we have
+                   // to use chrono to get current time in milliseconds.
 
 namespace icing {
 namespace lib {
 
 // Wrapper around real-time clock functions. This is separated primarily so
 // tests can override this clock and inject it into the class under test.
-//
-// A few things to note about std::time_t :
-// From cppreference:
-//   "Although not defined, this is almost always an integral value holding the
-//   number of seconds (not counting leap seconds) since 00:00, Jan 1 1970 UTC,
-//   corresponding to POSIX time"
-//
-// From Wikipedia:
-//   "ISO C defines time_t as an arithmetic type, but does not specify any
-//   particular type, range, resolution, or encoding for it. Also unspecified
-//   are the meanings of arithmetic operations applied to time values."
 class Clock {
  public:
-  virtual ~Clock() {}
+  virtual ~Clock() = default;
 
-  // Returns:
-  //   The current time defined by the clock on success
-  //   std::time_t(-1) on error
-  virtual std::time_t GetCurrentSeconds() const { return std::time(nullptr); }
+  // Returns the current time in milliseconds, it's guaranteed that the return
+  // value is non-negative.
+  virtual int64_t GetSystemTimeMilliseconds() const {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+  }
 };
 
 }  // namespace lib

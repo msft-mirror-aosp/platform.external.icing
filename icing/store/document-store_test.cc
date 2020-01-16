@@ -67,9 +67,9 @@ class DocumentStoreTest : public ::testing::Test {
             .AddStringProperty("subject", "subject foo")
             .AddStringProperty("body", "body bar")
             .SetScore(document1_score_)
-            .SetCreationTimestampSecs(
+            .SetCreationTimestampMs(
                 document1_creation_timestamp_)  // A random timestamp
-            .SetTtlSecs(document1_ttl_)
+            .SetTtlMs(document1_ttl_)
             .Build();
     test_document2_ =
         DocumentBuilder()
@@ -78,9 +78,9 @@ class DocumentStoreTest : public ::testing::Test {
             .AddStringProperty("subject", "subject foo 2")
             .AddStringProperty("body", "body bar 2")
             .SetScore(document2_score_)
-            .SetCreationTimestampSecs(
+            .SetCreationTimestampMs(
                 document2_creation_timestamp_)  // A random timestamp
-            .SetTtlSecs(document2_ttl_)
+            .SetTtlMs(document2_ttl_)
             .Build();
   }
 
@@ -190,12 +190,12 @@ TEST_F(DocumentStoreTest, PutAndGetAcrossNamespacesOk) {
   DocumentProto foo_document = DocumentBuilder()
                                    .SetKey("foo", "1")
                                    .SetSchema("email")
-                                   .SetCreationTimestampSecs(0)
+                                   .SetCreationTimestampMs(0)
                                    .Build();
   DocumentProto bar_document = DocumentBuilder()
                                    .SetKey("bar", "1")
                                    .SetSchema("email")
-                                   .SetCreationTimestampSecs(0)
+                                   .SetCreationTimestampMs(0)
                                    .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
@@ -288,8 +288,8 @@ TEST_F(DocumentStoreTest, GetExpiredDocumentNotFound) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "uri")
                                .SetSchema("email")
-                               .SetCreationTimestampSecs(10)
-                               .SetTtlSecs(100)
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(100)
                                .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -301,17 +301,17 @@ TEST_F(DocumentStoreTest, GetExpiredDocumentNotFound) {
               IsOkAndHolds(EqualsProto(document)));
 
   // Some arbitrary time before the document's creation time (10) + ttl (100)
-  fake_clock_.SetSeconds(109);
+  fake_clock_.SetSystemTimeMilliseconds(109);
   EXPECT_THAT(document_store->Get("namespace", "uri"),
               IsOkAndHolds(EqualsProto(document)));
 
   // Some arbitrary time equal to the document's creation time (10) + ttl (100)
-  fake_clock_.SetSeconds(110);
+  fake_clock_.SetSystemTimeMilliseconds(110);
   EXPECT_THAT(document_store->Get("namespace", "uri"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // Some arbitrary time past the document's creation time (10) + ttl (100)
-  fake_clock_.SetSeconds(200);
+  fake_clock_.SetSystemTimeMilliseconds(200);
   EXPECT_THAT(document_store->Get("namespace", "uri"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
@@ -515,7 +515,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
   DocumentProto email_document_1 = DocumentBuilder()
                                        .SetKey("namespace1", "1")
                                        .SetSchema("email")
-                                       .SetCreationTimestampSecs(1)
+                                       .SetCreationTimestampMs(1)
                                        .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_1_document_id,
                              document_store->Put(email_document_1));
@@ -523,7 +523,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
   DocumentProto email_document_2 = DocumentBuilder()
                                        .SetKey("namespace2", "2")
                                        .SetSchema("email")
-                                       .SetCreationTimestampSecs(1)
+                                       .SetCreationTimestampMs(1)
                                        .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_2_document_id,
                              document_store->Put(email_document_2));
@@ -531,7 +531,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
   DocumentProto message_document = DocumentBuilder()
                                        .SetKey("namespace", "3")
                                        .SetSchema("message")
-                                       .SetCreationTimestampSecs(1)
+                                       .SetCreationTimestampMs(1)
                                        .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
@@ -539,7 +539,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
   DocumentProto person_document = DocumentBuilder()
                                       .SetKey("namespace", "4")
                                       .SetSchema("person")
-                                      .SetCreationTimestampSecs(1)
+                                      .SetCreationTimestampMs(1)
                                       .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id,
                              document_store->Put(person_document));
@@ -609,13 +609,13 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
   DocumentProto email_document = DocumentBuilder()
                                      .SetKey("namespace", "1")
                                      .SetSchema("email")
-                                     .SetCreationTimestampSecs(1)
+                                     .SetCreationTimestampMs(1)
                                      .Build();
 
   DocumentProto message_document = DocumentBuilder()
                                        .SetKey("namespace", "2")
                                        .SetSchema("message")
-                                       .SetCreationTimestampSecs(1)
+                                       .SetCreationTimestampMs(1)
                                        .Build();
   int64_t ground_truth_size_before;
   {
@@ -686,13 +686,13 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
   DocumentProto email_document = DocumentBuilder()
                                      .SetKey("namespace", "email")
                                      .SetSchema("email")
-                                     .SetCreationTimestampSecs(1)
+                                     .SetCreationTimestampMs(1)
                                      .Build();
 
   DocumentProto message_document = DocumentBuilder()
                                        .SetKey("namespace", "message")
                                        .SetSchema("message")
-                                       .SetCreationTimestampSecs(1)
+                                       .SetCreationTimestampMs(1)
                                        .Build();
   int64_t ground_truth_size_before;
   {
@@ -762,26 +762,26 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   DocumentProto document1 = DocumentBuilder()
                                 .SetKey("namespace", "uri1")
                                 .SetSchema("email")
-                                .SetCreationTimestampSecs(100)
-                                .SetTtlSecs(1000)
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
                                 .Build();
 
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("namespace", "uri2")
                                 .SetSchema("email")
-                                .SetCreationTimestampSecs(100)
-                                .SetTtlSecs(1000)
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
                                 .Build();
 
   DocumentProto document3 = DocumentBuilder()
                                 .SetKey("namespace", "uri3")
                                 .SetSchema("email")
-                                .SetCreationTimestampSecs(100)
-                                .SetTtlSecs(100)
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(100)
                                 .Build();
 
   // Nothing should have expired yet.
-  fake_clock_.SetSeconds(100);
+  fake_clock_.SetSystemTimeMilliseconds(100);
 
   ICING_ASSERT_OK(doc_store->Put(document1));
   ICING_ASSERT_OK(doc_store->Put(document2));
@@ -820,7 +820,7 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
 
   // Document3 has expired since this is past its creation (100) + ttl (100).
   // But document1 and document2 should be fine since their ttl's were 1000.
-  fake_clock_.SetSeconds(300);
+  fake_clock_.SetSystemTimeMilliseconds(300);
 
   // Validates that the optimized document log has a smaller size if something
   // expired
@@ -1119,7 +1119,7 @@ TEST_F(DocumentStoreTest, FilterCacheHoldsDeletedDocumentData) {
       IsOkAndHolds(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
-          /*expiration_timestamp_secs=*/document1_expiration_timestamp_)));
+          /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
 
   // FilterCache doesn't care if the document has been deleted
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
@@ -1128,7 +1128,7 @@ TEST_F(DocumentStoreTest, FilterCacheHoldsDeletedDocumentData) {
       IsOkAndHolds(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
-          /*expiration_timestamp_secs=*/document1_expiration_timestamp_)));
+          /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
 }
 
 TEST_F(DocumentStoreTest,
@@ -1136,8 +1136,8 @@ TEST_F(DocumentStoreTest,
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace1", "1")
                                .SetSchema("email")
-                               .SetCreationTimestampSecs(100)
-                               .SetTtlSecs(1000)
+                               .SetCreationTimestampMs(100)
+                               .SetTtlMs(1000)
                                .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1151,15 +1151,15 @@ TEST_F(DocumentStoreTest,
       doc_store->GetDocumentFilterData(document_id),
       IsOkAndHolds(DocumentFilterData(/*namespace_id=*/0,
                                       /*schema_type_id=*/0,
-                                      /*expiration_timestamp_secs=*/1100)));
+                                      /*expiration_timestamp_ms=*/1100)));
 }
 
 TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace1", "1")
                                .SetSchema("email")
-                               .SetCreationTimestampSecs(100)
-                               .SetTtlSecs(0)
+                               .SetCreationTimestampMs(100)
+                               .SetTtlMs(0)
                                .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1174,7 +1174,7 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
       IsOkAndHolds(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
-          /*expiration_timestamp_secs=*/std::numeric_limits<int64_t>::max())));
+          /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
 }
 
 TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
@@ -1182,8 +1182,8 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
       DocumentBuilder()
           .SetKey("namespace1", "1")
           .SetSchema("email")
-          .SetCreationTimestampSecs(std::numeric_limits<int64_t>::max() - 1)
-          .SetTtlSecs(std::numeric_limits<int64_t>::max() - 1)
+          .SetCreationTimestampMs(std::numeric_limits<int64_t>::max() - 1)
+          .SetTtlMs(std::numeric_limits<int64_t>::max() - 1)
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1198,7 +1198,7 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
       IsOkAndHolds(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
-          /*expiration_timestamp_secs=*/std::numeric_limits<int64_t>::max())));
+          /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
 }
 
 TEST_F(DocumentStoreTest, CreationTimestampShouldBePopulated) {
@@ -1211,8 +1211,8 @@ TEST_F(DocumentStoreTest, CreationTimestampShouldBePopulated) {
           .AddStringProperty("body", "body bar")
           .Build();
 
-  std::time_t fake_real_time = 100;
-  fake_clock_.SetSeconds(fake_real_time);
+  int64_t fake_real_time = 100;
+  fake_clock_.SetSystemTimeMilliseconds(fake_real_time);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1226,7 +1226,7 @@ TEST_F(DocumentStoreTest, CreationTimestampShouldBePopulated) {
                              doc_store->Get(document_id));
 
   // Now the creation timestamp should be set by document store.
-  EXPECT_THAT(document_with_creation_timestamp.creation_timestamp_secs(),
+  EXPECT_THAT(document_with_creation_timestamp.creation_timestamp_ms(),
               Eq(fake_real_time));
 }
 
@@ -1256,11 +1256,11 @@ TEST_F(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id1),
               IsOkAndHolds(DocumentAssociatedScoreData(
-                  /*document_score=*/0, /*creation_timestamp_secs=*/0)));
+                  /*document_score=*/0, /*creation_timestamp_ms=*/0)));
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
               IsOkAndHolds(DocumentAssociatedScoreData(
-                  /*document_score=*/5, /*creation_timestamp_secs=*/0)));
+                  /*document_score=*/5, /*creation_timestamp_ms=*/0)));
 }
 
 TEST_F(DocumentStoreTest, ComputeChecksumSameBetweenCalls) {
@@ -1317,7 +1317,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   DocumentProto email_document = DocumentBuilder()
                                      .SetKey("namespace", "email_uri")
                                      .SetSchema("email")
-                                     .SetCreationTimestampSecs(0)
+                                     .SetCreationTimestampMs(0)
                                      .Build();
 
   DocumentId message_document_id;
@@ -1326,7 +1326,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   DocumentProto message_document = DocumentBuilder()
                                        .SetKey("namespace", "message_uri")
                                        .SetSchema("message")
-                                       .SetCreationTimestampSecs(0)
+                                       .SetCreationTimestampMs(0)
                                        .Build();
 
   {
@@ -1363,7 +1363,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         document_store->GetDocumentFilterData(email_document_id));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
-    email_expiration_timestamp = email_data.expiration_timestamp_secs();
+    email_expiration_timestamp = email_data.expiration_timestamp_ms();
 
     // Insert and verify a "message" document
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -1376,7 +1376,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         document_store->GetDocumentFilterData(message_document_id));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
-    message_expiration_timestamp = message_data.expiration_timestamp_secs();
+    message_expiration_timestamp = message_data.expiration_timestamp_ms();
   }  // Everything destructs and commits changes to file
 
   // Change the DocumentStore's header combined checksum so that it won't match
@@ -1423,7 +1423,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
-  EXPECT_THAT(email_data.expiration_timestamp_secs(),
+  EXPECT_THAT(email_data.expiration_timestamp_ms(),
               Eq(email_expiration_timestamp));
 
   // "message" document has an invalid SchemaTypeId
@@ -1435,7 +1435,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
-  EXPECT_THAT(message_data.expiration_timestamp_secs(),
+  EXPECT_THAT(message_data.expiration_timestamp_ms(),
               Eq(message_expiration_timestamp));
 }
 
@@ -1552,7 +1552,7 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
                                             .SetNamespace("namespace")
                                             .SetUri("email_uri_without_subject")
                                             .SetSchema("email")
-                                            .SetCreationTimestampSecs(0)
+                                            .SetCreationTimestampMs(0)
                                             .Build();
 
   DocumentProto email_with_subject = DocumentBuilder()
@@ -1560,7 +1560,7 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
                                          .SetUri("email_uri_with_subject")
                                          .SetSchema("email")
                                          .AddStringProperty("subject", "foo")
-                                         .SetCreationTimestampSecs(0)
+                                         .SetCreationTimestampMs(0)
                                          .Build();
 
   // Insert documents and check they're ok
@@ -1620,14 +1620,14 @@ TEST_F(DocumentStoreTest,
                                      .SetNamespace("namespace")
                                      .SetUri("email_uri")
                                      .SetSchema("email")
-                                     .SetCreationTimestampSecs(0)
+                                     .SetCreationTimestampMs(0)
                                      .Build();
 
   DocumentProto message_document = DocumentBuilder()
                                        .SetNamespace("namespace")
                                        .SetUri("message_uri")
                                        .SetSchema("message")
-                                       .SetCreationTimestampSecs(0)
+                                       .SetCreationTimestampMs(0)
                                        .Build();
 
   // Insert documents and check they're ok
@@ -1779,7 +1779,7 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
                                             .SetNamespace("namespace")
                                             .SetUri("email_uri_without_subject")
                                             .SetSchema("email")
-                                            .SetCreationTimestampSecs(0)
+                                            .SetCreationTimestampMs(0)
                                             .Build();
 
   DocumentProto email_with_subject = DocumentBuilder()
@@ -1787,7 +1787,7 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
                                          .SetUri("email_uri_with_subject")
                                          .SetSchema("email")
                                          .AddStringProperty("subject", "foo")
-                                         .SetCreationTimestampSecs(0)
+                                         .SetCreationTimestampMs(0)
                                          .Build();
 
   // Insert documents and check they're ok
@@ -1850,14 +1850,14 @@ TEST_F(DocumentStoreTest,
                                      .SetNamespace("namespace")
                                      .SetUri("email_uri")
                                      .SetSchema("email")
-                                     .SetCreationTimestampSecs(0)
+                                     .SetCreationTimestampMs(0)
                                      .Build();
 
   DocumentProto message_document = DocumentBuilder()
                                        .SetNamespace("namespace")
                                        .SetUri("message_uri")
                                        .SetSchema("message")
-                                       .SetCreationTimestampSecs(0)
+                                       .SetCreationTimestampMs(0)
                                        .Build();
 
   // Insert documents and check they're ok

@@ -16,6 +16,8 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/status.proto";
+
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
@@ -39,7 +41,7 @@ message DocumentProto {
   // OPTIONAL: Seconds since epoch at which the Document was created.
   // Negative values will lead to validation errors. If not specified, it will
   // default to when the Icing receives the Document.
-  optional int64 creation_timestamp_secs = 4;
+  optional int64 creation_timestamp_ms = 4;
 
   // REQUIRED: Properties that will be validated against the provided schema.
   // The names of these properties should map to one of the properties
@@ -57,14 +59,14 @@ message DocumentProto {
   optional int32 score = 7 [default = 0];
 
   // The time-to-live that should be enforced on this Document. Documents get
-  // garbage-collected once the current time exceeds the ttl_secs after the
-  // creation_timestamp_secs. Negative values will lead to validation errors.
+  // garbage-collected once the current time exceeds the ttl_ms after the
+  // creation_timestamp_ms. Negative values will lead to validation errors.
   //
   // Default value of 0 keeps the Documents till they're explicitly deleted.
   //
   // TODO(cassiewang): Benchmark if fixed64 or some other proto type is better
-  // in terms of space/time efficiency. Both for ttl_secs and timestamp fields
-  optional int64 ttl_secs = 8 [default = 0];
+  // in terms of space/time efficiency. Both for ttl_ms and timestamp fields
+  optional int64 ttl_ms = 8 [default = 0];
 }
 
 // Holds a property field of the Document.
@@ -82,4 +84,80 @@ message PropertyProto {
   repeated bool boolean_values = 5;
   repeated bytes bytes_values = 6;
   repeated DocumentProto document_values = 7;
+}
+
+// Result of a call to IcingSearchEngine.Put
+// Next tag: 2
+message PutResultProto {
+  // Status code can be one of:
+  //   OK
+  //   INTERNAL
+  //   OUT_OF_SPACE
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED, +FAILED_PRECONDITION.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+}
+
+// Result of a call to IcingSearchEngine.Get
+// Next tag: 3
+message GetResultProto {
+  // Status code can be one of:
+  //   OK
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED, -INTERNAL.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Copy of the Document proto with the specified name_space, uri. Modifying
+  // this does not affect the Document in IcingSearchEngine.
+  optional DocumentProto document = 2;
+}
+
+// Result of a call to IcingSearchEngine.Delete
+// Next tag: 2
+message DeleteResultProto {
+  // Status code can be one of:
+  //   OK
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+}
+
+// Result of a call to IcingSearchEngine.DeleteByNamespace
+// Next tag: 2
+message DeleteByNamespaceResultProto {
+  // Status code can be one of:
+  //   OK
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+}
+
+// Result of a call to IcingSearchEngine.DeleteBySchemaType
+// Next tag: 2
+message DeleteBySchemaTypeResultProto {
+  // Status code can be one of:
+  //   OK
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
 }

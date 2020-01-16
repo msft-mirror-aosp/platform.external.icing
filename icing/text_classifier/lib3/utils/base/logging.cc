@@ -55,7 +55,7 @@ LogMessage::LogMessage(LogSeverity severity, const char *file_name,
 }
 
 LogMessage::~LogMessage() {
-  LowLevelLogging(severity_, /* tag = */ "txtClsf", stream_.message);
+  LowLevelLogging(severity_, /* tag = */ "icing", stream_.message);
   if (severity_ == FATAL) {
     std::terminate();  // Will print a stacktrace (stdout or logcat).
   }

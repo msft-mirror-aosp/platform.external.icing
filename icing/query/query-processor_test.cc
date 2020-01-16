@@ -1718,8 +1718,8 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema("email")
-                               .SetCreationTimestampSecs(0)
-                               .SetTtlSecs(100)
+                               .SetCreationTimestampMs(0)
+                               .SetTtlMs(100)
                                .Build()));
 
   EXPECT_THAT(AddTokenToIndex(document_id, indexed_email_section_id_,
@@ -1729,7 +1729,7 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   // Arbitrary value, just has to be less than the document's creation
   // timestamp + ttl
   FakeClock fake_clock;
-  fake_clock.SetSeconds(50);
+  fake_clock.SetSystemTimeMilliseconds(50);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
@@ -1756,8 +1756,8 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
       document_store_->Put(DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema("email")
-                               .SetCreationTimestampSecs(0)
-                               .SetTtlSecs(100)
+                               .SetCreationTimestampMs(0)
+                               .SetTtlMs(100)
                                .Build()));
 
   EXPECT_THAT(AddTokenToIndex(document_id, indexed_email_section_id_,
@@ -1767,7 +1767,7 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   // Arbitrary value, just has to be greater than the document's creation
   // timestamp + ttl
   FakeClock fake_clock;
-  fake_clock.SetSeconds(200);
+  fake_clock.SetSystemTimeMilliseconds(200);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,

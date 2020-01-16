@@ -382,61 +382,58 @@ TEST_F(DocumentValidatorTest, NegativeDocumentScoreInvalid) {
                        HasSubstr("is negative")));
 }
 
-TEST_F(DocumentValidatorTest, PositiveDocumentCreationTimestampSecsOk) {
-  DocumentProto email =
-      SimpleEmailBuilder().SetCreationTimestampSecs(1).Build();
+TEST_F(DocumentValidatorTest, PositiveDocumentCreationTimestampMsOk) {
+  DocumentProto email = SimpleEmailBuilder().SetCreationTimestampMs(1).Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
 
   email = SimpleEmailBuilder()
-              .SetCreationTimestampSecs(std::numeric_limits<int32_t>::max())
+              .SetCreationTimestampMs(std::numeric_limits<int32_t>::max())
               .Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
 }
 
-TEST_F(DocumentValidatorTest, ZeroDocumentCreationTimestampSecssOk) {
-  DocumentProto email =
-      SimpleEmailBuilder().SetCreationTimestampSecs(0).Build();
+TEST_F(DocumentValidatorTest, ZeroDocumentCreationTimestampMsOk) {
+  DocumentProto email = SimpleEmailBuilder().SetCreationTimestampMs(0).Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
 }
 
-TEST_F(DocumentValidatorTest, NegativeDocumentCreationTimestampSecsInvalid) {
-  DocumentProto email =
-      SimpleEmailBuilder().SetCreationTimestampSecs(-1).Build();
+TEST_F(DocumentValidatorTest, NegativeDocumentCreationTimestampMsInvalid) {
+  DocumentProto email = SimpleEmailBuilder().SetCreationTimestampMs(-1).Build();
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("is negative")));
 
   email = SimpleEmailBuilder()
-              .SetCreationTimestampSecs(std::numeric_limits<int32_t>::min())
+              .SetCreationTimestampMs(std::numeric_limits<int32_t>::min())
               .Build();
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("is negative")));
 }
 
-TEST_F(DocumentValidatorTest, PositiveDocumentTtlSecsOk) {
-  DocumentProto email = SimpleEmailBuilder().SetTtlSecs(1).Build();
+TEST_F(DocumentValidatorTest, PositiveDocumentTtlMsOk) {
+  DocumentProto email = SimpleEmailBuilder().SetTtlMs(1).Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
 
   email = SimpleEmailBuilder()
-              .SetTtlSecs(std::numeric_limits<int32_t>::max())
+              .SetTtlMs(std::numeric_limits<int32_t>::max())
               .Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
 }
 
-TEST_F(DocumentValidatorTest, ZeroDocumentTtlSecsOk) {
-  DocumentProto email = SimpleEmailBuilder().SetTtlSecs(0).Build();
+TEST_F(DocumentValidatorTest, ZeroDocumentTtlMsOk) {
+  DocumentProto email = SimpleEmailBuilder().SetTtlMs(0).Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
 }
 
-TEST_F(DocumentValidatorTest, NegativeDocumentTtlSecsInvalid) {
-  DocumentProto email = SimpleEmailBuilder().SetTtlSecs(-1).Build();
+TEST_F(DocumentValidatorTest, NegativeDocumentTtlMsInvalid) {
+  DocumentProto email = SimpleEmailBuilder().SetTtlMs(-1).Build();
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("is negative")));
 
   email = SimpleEmailBuilder()
-              .SetTtlSecs(std::numeric_limits<int32_t>::min())
+              .SetTtlMs(std::numeric_limits<int32_t>::min())
               .Build();
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,

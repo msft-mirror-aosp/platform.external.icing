@@ -20,7 +20,7 @@
 #include "icing/document-builder.h"
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
-#include "icing/proto/icing-search-engine-options.pb.h"
+#include "icing/proto/initialize.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -78,13 +78,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const Filesystem filesystem_;
   // TODO (b/145758378): Deleting directory should not be required.
   filesystem_.DeleteDirectoryRecursively(icing_options.base_dir().c_str());
-  libtextclassifier3::Status status = icing.Initialize();
+  icing.Initialize();
   SchemaProto schema_proto = SetTypes();
-  status = icing.SetSchema(schema_proto);
+  icing.SetSchema(schema_proto);
 
   // Index
   DocumentProto document = MakeDocument(data, size);
-  status = icing.Put(document);
+  icing.Put(document);
 
   // Query
   SearchSpecProto search_spec = SetSearchSpec(data, size);

@@ -42,7 +42,7 @@ namespace lib {
 // hits (calling Editor::AddHit with the same arguments will only result in the
 // creation of a single hit).
 // Ex.
-// TC3_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
+// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
 // .                Index::Create(MakeIndexOptions()));
 // Index::Editor editor = index->Edit(document_id, section_id,
 //     TermMatchType::EXACT_ONLY); ICING_RETURN_IF_ERROR(editor.AddHit("foo"));
@@ -50,9 +50,9 @@ namespace lib {
 //
 // Content is retrieved from the index through the Iterator class.
 // Ex.
-// TC3_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
+// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Index> index,
 // .                Index::Create(MakeIndexOptions()));
-// TC3_ASSIGN_OR_RETURN(Index::Iterator iterator =
+// ICING_ASSIGN_OR_RETURN(Index::Iterator iterator =
 //     index->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
 // while(iterator->Advance().ok())
 //   ProcessResult(iterator->value());
@@ -85,7 +85,10 @@ class Index {
   void Warm() { lite_index_->Warm(); }
 
   // Syncs all the data and metadata changes to disk.
-  // Returns any encountered IO errors.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O errors
   libtextclassifier3::Status PersistToDisk() {
     return lite_index_->PersistToDisk();
   }

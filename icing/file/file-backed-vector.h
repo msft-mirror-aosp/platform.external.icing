@@ -68,7 +68,6 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/status_macros.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
@@ -76,6 +75,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -188,6 +188,10 @@ class FileBackedVector {
   libtextclassifier3::Status TruncateTo(int32_t len);
 
   // Flushes content to underlying file.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
   // Calculates and returns the disk usage in bytes.
@@ -670,7 +674,7 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
 template <typename T>
 libtextclassifier3::Status FileBackedVector<T>::PersistToDisk() {
   // Update and write the header
-  TC3_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   header_->vector_checksum = checksum.Get();
   header_->header_checksum = header_->CalculateHeaderChecksum();
 
