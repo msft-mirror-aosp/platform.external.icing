@@ -1,4 +1,9 @@
 {
+  "presubmit": [
+    {
+      "name": "IcingSearchEngineTest"
+    }
+  ],
   "imports": [
     {
       "path": "frameworks/base/apex/appsearch/service/java/com/android/server/appsearch"
