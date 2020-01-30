@@ -15,14 +15,11 @@
 java_library {
     name: "icing-java-proto-lite",
     proto: {
-        // If you change the proto type, also update jarjar-rules.txt to match
-        // the corresponding proto lib's package path.
         type: "lite",
         include_dirs: ["external/protobuf/src"],
         canonical_path_from_root: false,
     },
     srcs: ["icing/proto/*.proto"],
-    jarjar_rules: "jarjar-rules.txt",
     sdk_version: "core_current",
 }
 

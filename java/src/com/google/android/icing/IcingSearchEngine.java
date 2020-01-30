@@ -38,7 +38,7 @@ import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StatusProto;
-import com.google.android.icing.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.InvalidProtocolBufferException;
 
 /** Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h */
 public final class IcingSearchEngine {
