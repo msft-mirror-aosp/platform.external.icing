@@ -39,26 +39,27 @@ class ScoringProcessor {
   // Returns:
   //   A ScoringProcessor on success
   //   FAILED_PRECONDITION on any null pointer input
-  //   INVALID_ARGUMENT if unable to create what the spec specifies
   static libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>> Create(
       const ScoringSpecProto& scoring_spec,
       const DocumentStore* document_store);
 
-  // Returns a vector of ScoredDocHit sorted by their scores. The size of it is
-  // no more than num_to_return.
-  std::vector<ScoredDocumentHit> ScoreAndRank(
+  // Assigns scores to DocHitInfos from the given DocHitInfoIterator and returns
+  // a vector of ScoredDocumentHits. The size of results is no more than
+  // num_to_score. The order of results is the same as DocHitInfos from
+  // DocHitInfoIterator.
+  //
+  // NOTE: if the scoring spec doesn't require a scoring strategy, all
+  // ScoredDocumentHits will be assigned a default score 0.
+  std::vector<ScoredDocumentHit> Score(
       std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator,
-      int num_to_return);
+      int num_to_score);
 
  private:
-  explicit ScoringProcessor(std::unique_ptr<Scorer> scorer, bool is_descending)
-      : scorer_(std::move(scorer)), is_descending_(is_descending) {}
+  explicit ScoringProcessor(std::unique_ptr<Scorer> scorer)
+      : scorer_(std::move(scorer)) {}
 
+  // The component that assigns scores to documents.
   std::unique_ptr<Scorer> scorer_;
-
-  // If true, the final result will be sorted in a descending order, otherwise
-  // ascending.
-  bool is_descending_;
 };
 
 }  // namespace lib

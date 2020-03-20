@@ -23,13 +23,21 @@
 namespace icing {
 namespace lib {
 
-// Returns the top num_result results from scored_document_hits. The returned
-// vector will be sorted and contain no more than num_result elements.
-// is_descending indicates whether the result is in a descending score order
-// or an ascending score order.
-std::vector<ScoredDocumentHit> GetTopNFromScoredDocumentHits(
-    std::vector<ScoredDocumentHit> scored_document_hits, int num_result,
-    bool is_descending);
+// Builds a heap of scored document hits. The same vector is used to store the
+// heap structure.
+//
+// REQUIRED: scored_document_hits is not null.
+void BuildHeapInPlace(
+    std::vector<ScoredDocumentHit>* scored_document_hits,
+    const ScoredDocumentHitComparator& scored_document_hit_comparator);
+
+// Returns the top num_results results from the given heap and remove those
+// results from the heap. An empty vector will be returned if heap is empty.
+//
+// REQUIRED: scored_document_hits_heap is not null.
+std::vector<ScoredDocumentHit> PopTopResultsFromHeap(
+    std::vector<ScoredDocumentHit>* scored_document_hits_heap, int num_results,
+    const ScoredDocumentHitComparator& scored_document_hit_comparator);
 
 }  // namespace lib
 }  // namespace icing

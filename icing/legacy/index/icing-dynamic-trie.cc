@@ -84,6 +84,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 
@@ -1867,18 +1868,18 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 
   // If we start with non-ascii, take all left branches while there is
   // a continuation byte.
-  if (!IcingStringUtil::IsAsciiChar(cur_[cur_len_ - 1])) {
+  if (!i18n_utils::IsAscii(cur_[cur_len_ - 1])) {
     while (!node->is_leaf()) {
-      if (cur_len_ >= UTFmax) break;
+      if (cur_len_ >= U8_MAX_LENGTH) break;
 
       InitBranch(branch_end_, node, 0);
       // When we are looking to complete a utf8 char, skip 0s.
       if (branch_end_->child->val() == 0) {
         // Check if we already have a valid cur_.
         cur_[cur_len_] = 0;
-        Rune rune;
-        chartorune(&rune, cur_);
-        if (rune == Runeerror && node->log2_num_children() > 0) {
+        UChar32 uchar32 = i18n_utils::GetUChar32At(cur_, cur_len_, 0);
+        if (uchar32 == i18n_utils::kInvalidUchar32 &&
+            node->log2_num_children() > 0) {
           branch_end_->child++;
         } else {
           // Good termination. Just break.
@@ -1914,8 +1915,8 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 void IcingDynamicTrie::Utf8Iterator::GoIntoSuffix(const Node *node) {
   const char *suffix = trie_.storage_->GetSuffix(node->next_index());
   const char *cur_suffix;
-  for (cur_suffix = suffix;
-       cur_len_ < UTFmax && IcingStringUtil::IsContinuationByte(*cur_suffix);
+  for (cur_suffix = suffix; cur_len_ < U8_MAX_LENGTH &&
+                            IcingStringUtil::IsContinuationByte(*cur_suffix);
        cur_suffix++) {
     cur_[cur_len_++] = *cur_suffix;
   }

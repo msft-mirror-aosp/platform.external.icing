@@ -15,8 +15,7 @@
 #ifndef ICING_UTIL_CLOCK_H_
 #define ICING_UTIL_CLOCK_H_
 
-#include <chrono>  // NOLINT. Abseil library is not available in AOSP so we have
-                   // to use chrono to get current time in milliseconds.
+#include <cstdint>
 
 namespace icing {
 namespace lib {
@@ -29,12 +28,13 @@ class Clock {
 
   // Returns the current time in milliseconds, it's guaranteed that the return
   // value is non-negative.
-  virtual int64_t GetSystemTimeMilliseconds() const {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch())
-        .count();
-  }
+  virtual int64_t GetSystemTimeMilliseconds() const;
 };
+
+// Returns the current steady time in nanoseconds. The steady clock is different
+// from the system clock. It's monotonic and never returns a lower value than a
+// previous call, while a system clock can be occasionally adjusted.
+uint64_t GetSteadyTimeNanoseconds();
 
 }  // namespace lib
 }  // namespace icing
