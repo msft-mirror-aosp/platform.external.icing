@@ -54,7 +54,7 @@ cc_defaults {
 }
 
 cc_library_static {
-    name: "libicing_proto_lite",
+    name: "icing-c-proto",
     defaults: ["libicing_defaults"],
     proto: {
         type: "lite",
@@ -67,7 +67,7 @@ cc_library_static {
 }
 
 cc_library_shared {
-    name: "libicing",
+    name: "libicing_jni",
     defaults: ["libicing_defaults"],
     srcs: [
         "icing/**/*.cc",
@@ -83,7 +83,7 @@ cc_library_shared {
         "icing/tools/**/*",
     ],
     static_libs: [
-        "libicing_proto_lite",
+        "icing-c-proto",
         "libutf",
     ],
     shared_libs: [
@@ -94,6 +94,8 @@ cc_library_shared {
         "libprotobuf-cpp-full",
         "libz",
     ],
+
+    version_script: "icing/jni.lds",
 }
 
 // TODO(cassiewang): Add build rules and a TEST_MAPPING for cc_tests
