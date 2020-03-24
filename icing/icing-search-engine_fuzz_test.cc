@@ -54,7 +54,7 @@ SchemaProto SetTypes() {
 DocumentProto MakeDocument(const uint8_t* data, size_t size) {
   // TODO (sidchhabra): Added more optimized fuzzing techniques.
   DocumentProto document;
-  string string_prop(reinterpret_cast<const char*>(data), size);
+  std::string string_prop(reinterpret_cast<const char*>(data), size);
   return DocumentBuilder()
       .SetKey("namespace", "uri1")
       .SetSchema("Message")
@@ -66,7 +66,7 @@ SearchSpecProto SetSearchSpec(const uint8_t* data, size_t size) {
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::PREFIX);
   // TODO (sidchhabra): Added more optimized fuzzing techniques.
-  string query_string(reinterpret_cast<const char*>(data), size);
+  std::string query_string(reinterpret_cast<const char*>(data), size);
   search_spec.set_query(query_string);
   return search_spec;
 }

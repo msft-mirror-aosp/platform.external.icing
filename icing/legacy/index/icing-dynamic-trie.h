@@ -48,7 +48,7 @@
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
-#include "utf.h"
+#include "unicode/utf8.h"
 
 namespace icing {
 namespace lib {
@@ -549,11 +549,11 @@ class IcingDynamicTrie : public IIcingStorage {
     void InitBranch(Branch *branch, const Node *start, char key_char);
     void GoIntoSuffix(const Node *node);
 
-    char cur_[UTFmax + 1];  // NULL-terminated
+    char cur_[U8_MAX_LENGTH + 1];  // NULL-terminated
     int cur_len_;
     LogicalNode cur_logical_node_;
 
-    Branch branch_stack_[UTFmax];
+    Branch branch_stack_[U8_MAX_LENGTH];
     Branch *branch_end_;
 
     const IcingDynamicTrie &trie_;

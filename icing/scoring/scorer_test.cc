@@ -102,12 +102,6 @@ TEST_F(ScorerTest, CreationWithNullPointerShouldFail) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ScorerTest, CreationWithInvalidRankingStrategyShouldFail) {
-  EXPECT_THAT(Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
-                             /*default_score=*/0, document_store()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
 TEST_F(ScorerTest, ShouldGetDefaultScore) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
@@ -191,6 +185,25 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
               Eq(fake_clock1().GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(document_id2),
               Eq(fake_clock2().GetSystemTimeMilliseconds()));
+}
+
+TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
+                     /*default_score=*/3, document_store()));
+
+  EXPECT_THAT(scorer->GetScore(/*document_id=*/0), Eq(3));
+  EXPECT_THAT(scorer->GetScore(/*document_id=*/1), Eq(3));
+  EXPECT_THAT(scorer->GetScore(/*document_id=*/2), Eq(3));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer, Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
+                             /*default_score=*/111, document_store()));
+
+  EXPECT_THAT(scorer->GetScore(/*document_id=*/4), Eq(111));
+  EXPECT_THAT(scorer->GetScore(/*document_id=*/5), Eq(111));
+  EXPECT_THAT(scorer->GetScore(/*document_id=*/6), Eq(111));
 }
 
 }  // namespace

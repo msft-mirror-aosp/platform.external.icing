@@ -54,8 +54,6 @@ constexpr UChar kTransformRulesUtf16[] =
 constexpr int kTransformRulesLength =
     sizeof(kTransformRulesUtf16) / sizeof(kTransformRulesUtf16[0]) - 1;
 
-// An invalid value defined by Unicode.
-constexpr UChar32 kInvalidUchar32 = 0xFFFD;
 }  // namespace
 
 // Creates a Normalizer with a valid TermTransformer instance.
@@ -103,7 +101,7 @@ std::string Normalizer::NormalizeTerm(const std::string_view term) const {
   // term can be transformed into ASCII if the first character can.
   UChar32 first_uchar32 =
       i18n_utils::GetUChar32At(term.data(), term.length(), 0);
-  if (normalizer2 != nullptr && first_uchar32 != kInvalidUchar32 &&
+  if (normalizer2 != nullptr && first_uchar32 != i18n_utils::kInvalidUchar32 &&
       i18n_utils::DiacriticCharToAscii(normalizer2, first_uchar32, nullptr)) {
     // This is a faster method to normalize Latin terms.
     normalized_text = NormalizeLatin(normalizer2, term);
@@ -127,7 +125,7 @@ std::string Normalizer::NormalizeLatin(const UNormalizer2* normalizer2,
       result.push_back(std::tolower(term[i]));
     } else if (i18n_utils::IsLeadUtf8Byte(term[i])) {
       UChar32 uchar32 = i18n_utils::GetUChar32At(term.data(), term.length(), i);
-      if (uchar32 == kInvalidUchar32) {
+      if (uchar32 == i18n_utils::kInvalidUchar32) {
         ICING_LOG(WARNING) << "Unable to get uchar32 from " << term
                            << " at position" << i;
         continue;

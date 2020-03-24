@@ -36,6 +36,7 @@
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/i18n-utils.h"
 
 namespace icing {
@@ -84,9 +85,11 @@ class SnippetRetrieverTest : public testing::Test {
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
+        normalizer_, Normalizer::Create(/*max_term_byte_size=*/10000));
+    ICING_ASSERT_OK_AND_ASSIGN(
         snippet_retriever_,
-        SnippetRetriever::Create(schema_store_.get(),
-                                 language_segmenter_.get()));
+        SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                                 normalizer_.get()));
 
     // Set limits to max - effectively no limit. Enable matching and request a
     // window of 64 bytes.
@@ -104,17 +107,24 @@ class SnippetRetrieverTest : public testing::Test {
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SnippetRetriever> snippet_retriever_;
+  std::unique_ptr<Normalizer> normalizer_;
   ResultSpecProto::SnippetSpecProto snippet_spec_;
   std::string test_dir_;
 };
 
 TEST_F(SnippetRetrieverTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(SnippetRetriever::Create(/*schema_store=*/nullptr,
-                                       language_segmenter_.get()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      SnippetRetriever::Create(/*schema_store=*/nullptr,
+                               language_segmenter_.get(), normalizer_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(SnippetRetriever::Create(schema_store_.get(),
-                                       /*language_segmenter=*/nullptr),
+                                       /*language_segmenter=*/nullptr,
+                                       normalizer_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               /*normalizer=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeSmallerThanMatch) {
@@ -563,6 +573,46 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
   EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("foo"));
   EXPECT_THAT(GetWindow(document, snippet, "body", 1), IsEmpty());
   EXPECT_THAT(GetMatch(document, snippet, "body", 1), IsEmpty());
+}
+
+TEST_F(SnippetRetrieverTest, PrefixSnippetingNormalization) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "MDI team")
+          .AddStringProperty("body", "Some members are in Zürich.")
+          .Build();
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"md"}}};
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
+      section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), Eq("MDI team"));
+  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("MDI"));
+}
+
+TEST_F(SnippetRetrieverTest, ExactSnippetingNormalization) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "MDI team")
+          .AddStringProperty("body", "Some members are in Zürich.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"zurich"}}};
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
+      section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(GetWindow(document, snippet, "body", 0),
+              Eq("Some members are in Zürich."));
+  EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("Zürich"));
 }
 
 }  // namespace

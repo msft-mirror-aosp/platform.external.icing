@@ -17,7 +17,6 @@
 #include <limits>
 #include <memory>
 
-#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/mock-filesystem.h"
@@ -26,7 +25,6 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
-#include "icing/query/query-terms.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
@@ -34,6 +32,7 @@
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -42,6 +41,7 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::IsEmpty;
 using ::testing::Return;
 using ::testing::SizeIs;
 
@@ -49,27 +49,6 @@ class ResultRetrieverTest : public testing::Test {
  protected:
   ResultRetrieverTest() : test_dir_(GetTestTempDir() + "/icing") {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-    test_document1_ = DocumentBuilder()
-        .SetKey("icing", "email/1")
-        .SetSchema("email")
-        .AddStringProperty("subject", "subject foo")
-        .AddStringProperty("body", "body bar")
-        .SetCreationTimestampMs(1574365086666)
-                          .Build();
-    test_document2_ = DocumentBuilder()
-        .SetKey("icing", "email/2")
-        .SetSchema("email")
-        .AddStringProperty("subject", "subject foo 2")
-        .AddStringProperty("body", "body bar 2")
-        .SetCreationTimestampMs(1574365087777)
-                          .Build();
-    test_document3_ = DocumentBuilder()
-        .SetKey("icing", "email/3")
-        .SetSchema("email")
-        .AddStringProperty("subject", "subject foo 3")
-        .AddStringProperty("body", "body bar 3")
-        .SetCreationTimestampMs(1574365088888)
-                          .Build();
   }
 
   void SetUp() override {
@@ -81,6 +60,8 @@ class ResultRetrieverTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
                                SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        normalizer_, Normalizer::Create(/*max_term_byte_size=*/10000));
 
     SchemaProto schema;
     auto type_config = schema.add_types();
@@ -102,14 +83,6 @@ class ResultRetrieverTest : public testing::Test {
     prop_config->mutable_indexing_config()->set_tokenizer_type(
         IndexingConfig::TokenizerType::PLAIN);
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-    result_spec_no_snippet_ = ResultSpecProto::default_instance();
-
-    result_spec_snippet_.mutable_snippet_spec()->set_num_to_snippet(
-        std::numeric_limits<int>::max());
-    result_spec_snippet_.mutable_snippet_spec()->set_num_matches_per_property(
-        std::numeric_limits<int>::max());
-    result_spec_snippet_.mutable_snippet_spec()->set_max_window_bytes(1024);
   }
 
   void TearDown() override {
@@ -117,21 +90,35 @@ class ResultRetrieverTest : public testing::Test {
   }
 
   const Filesystem filesystem_;
-  ResultSpecProto result_spec_no_snippet_;
-  ResultSpecProto result_spec_snippet_;
   const std::string test_dir_;
-  DocumentProto test_document1_;
-  DocumentProto test_document2_;
-  DocumentProto test_document3_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<Normalizer> normalizer_;
   FakeClock fake_clock_;
 };
+
+ResultSpecProto::SnippetSpecProto CreateSnippetSpec() {
+  ResultSpecProto::SnippetSpecProto snippet_spec;
+  snippet_spec.set_num_to_snippet(std::numeric_limits<int>::max());
+  snippet_spec.set_num_matches_per_property(std::numeric_limits<int>::max());
+  snippet_spec.set_max_window_bytes(1024);
+  return snippet_spec;
+}
+
+DocumentProto CreateDocument(int id) {
+  return DocumentBuilder()
+      .SetKey("icing", "email/" + std::to_string(id))
+      .SetSchema("email")
+      .AddStringProperty("subject", "subject foo " + std::to_string(id))
+      .AddStringProperty("body", "body bar " + std::to_string(id))
+      .SetCreationTimestampMs(1574365086666 + id)
+      .Build();
+}
 
 TEST_F(ResultRetrieverTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
       ResultRetriever::Create(/*doc_store=*/nullptr, schema_store_.get(),
-                              language_segmenter_.get()),
+                              language_segmenter_.get(), normalizer_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -139,25 +126,31 @@ TEST_F(ResultRetrieverTest, CreationWithNullPointerShouldFail) {
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
 
-  EXPECT_THAT(ResultRetriever::Create(doc_store.get(), /*schema_store=*/nullptr,
-                                      language_segmenter_.get()),
+  EXPECT_THAT(
+      ResultRetriever::Create(doc_store.get(), /*schema_store=*/nullptr,
+                              language_segmenter_.get(), normalizer_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                                      /*language_segmenter=*/nullptr,
+                                      normalizer_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                                      /*language_segmenter=*/nullptr),
+                                      language_segmenter_.get(),
+                                      /*normalizer=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ResultRetrieverTest, Simple) {
+TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(test_document3_));
+                             doc_store->Put(CreateDocument(/*id=*/3)));
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
@@ -166,55 +159,26 @@ TEST_F(ResultRetrieverTest, Simple) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get()));
+                              language_segmenter_.get(), normalizer_.get()));
 
   SearchResultProto::ResultProto result1;
-  *result1.mutable_document() = test_document1_;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
   SearchResultProto::ResultProto result2;
-  *result2.mutable_document() = test_document2_;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
   SearchResultProto::ResultProto result3;
-  *result3.mutable_document() = test_document3_;
+  *result3.mutable_document() = CreateDocument(/*id=*/3);
 
-  SectionRestrictQueryTermsMap query_terms{};
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{},
+      ResultSpecProto::SnippetSpecProto::default_instance(),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
   EXPECT_THAT(
-      result_retriever->RetrieveResults(result_spec_no_snippet_, query_terms,
-                                        TermMatchType::EXACT_ONLY,
-                                        scored_document_hits),
+      result_retriever->RetrieveResults(page_result_state),
       IsOkAndHolds(ElementsAre(EqualsProto(result1), EqualsProto(result2),
                                EqualsProto(result3))));
-}
-
-TEST_F(ResultRetrieverTest, OnlyOneResultRequested) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(test_document3_));
-
-  result_spec_no_snippet_.set_num_to_retrieve(1);
-
-  std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
-      {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
-      {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ResultRetriever> result_retriever,
-      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get()));
-
-  SearchResultProto::ResultProto result1;
-  *result1.mutable_document() = test_document1_;
-
-  SectionRestrictQueryTermsMap query_terms{};
-  EXPECT_THAT(result_retriever->RetrieveResults(
-                  result_spec_no_snippet_, query_terms,
-                  TermMatchType::EXACT_ONLY, scored_document_hits),
-              IsOkAndHolds(ElementsAre(EqualsProto(result1))));
 }
 
 TEST_F(ResultRetrieverTest, IgnoreErrors) {
@@ -223,9 +187,9 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
 
   DocumentId invalid_document_id = -1;
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -235,19 +199,23 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get(),
+                              language_segmenter_.get(), normalizer_.get(),
                               /*ignore_bad_document_ids=*/true));
 
   SearchResultProto::ResultProto result1;
-  *result1.mutable_document() = test_document1_;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
   SearchResultProto::ResultProto result2;
-  *result2.mutable_document() = test_document2_;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
 
-  SectionRestrictQueryTermsMap query_terms{};
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{},
+      ResultSpecProto::SnippetSpecProto::default_instance(),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
   EXPECT_THAT(
-      result_retriever->RetrieveResults(result_spec_no_snippet_, query_terms,
-                                        TermMatchType::EXACT_ONLY,
-                                        scored_document_hits),
+      result_retriever->RetrieveResults(page_result_state),
       IsOkAndHolds(ElementsAre(EqualsProto(result1), EqualsProto(result2))));
 }
 
@@ -257,9 +225,9 @@ TEST_F(ResultRetrieverTest, NotIgnoreErrors) {
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
 
   DocumentId invalid_document_id = -1;
   std::vector<ScoredDocumentHit> scored_document_hits = {
@@ -269,28 +237,30 @@ TEST_F(ResultRetrieverTest, NotIgnoreErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get(),
+                              language_segmenter_.get(), normalizer_.get(),
                               /*ignore_bad_document_ids=*/false));
 
-  SectionRestrictQueryTermsMap query_terms{};
-  EXPECT_THAT(result_retriever->RetrieveResults(
-                  result_spec_no_snippet_, query_terms,
-                  TermMatchType::EXACT_ONLY, scored_document_hits),
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{},
+      ResultSpecProto::SnippetSpecProto::default_instance(),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
+  EXPECT_THAT(result_retriever->RetrieveResults(page_result_state),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   DocumentId non_existing_document_id = 4;
-  scored_document_hits = {
+  page_result_state.scored_document_hits = {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {non_existing_document_id, /*hit_section_id_mask=*/0b00000011,
        /*score=*/0}};
-  EXPECT_THAT(result_retriever->RetrieveResults(
-                  result_spec_no_snippet_, query_terms,
-                  TermMatchType::EXACT_ONLY, scored_document_hits),
+  EXPECT_THAT(result_retriever->RetrieveResults(page_result_state),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(ResultRetrieverTest, IOError) {
+TEST_F(ResultRetrieverTest, IOErrorShouldReturnInternalError) {
   MockFilesystem mock_filesystem;
   ON_CALL(mock_filesystem, OpenForRead(_)).WillByDefault(Return(false));
 
@@ -299,37 +269,42 @@ TEST_F(ResultRetrieverTest, IOError) {
       DocumentStore::Create(&mock_filesystem, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
       {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
 
-  SectionRestrictQueryTermsMap query_terms{};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get(),
+                              language_segmenter_.get(), normalizer_.get(),
                               /*ignore_bad_document_ids=*/true));
-  EXPECT_THAT(result_retriever->RetrieveResults(
-                  result_spec_no_snippet_, query_terms,
-                  TermMatchType::EXACT_ONLY, scored_document_hits),
+
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{},
+      ResultSpecProto::SnippetSpecProto::default_instance(),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
+  EXPECT_THAT(result_retriever->RetrieveResults(page_result_state),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_F(ResultRetrieverTest, SnippetingDisabled) {
+TEST_F(ResultRetrieverTest, DefaultSnippetSpecShouldDisableSnippeting) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(test_document3_));
+                             doc_store->Put(CreateDocument(/*id=*/3)));
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
@@ -338,14 +313,18 @@ TEST_F(ResultRetrieverTest, SnippetingDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get()));
+                              language_segmenter_.get(), normalizer_.get()));
 
-  SectionRestrictQueryTermsMap query_terms{};
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{},
+      ResultSpecProto::SnippetSpecProto::default_instance(),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<SearchResultProto::ResultProto> results,
-      result_retriever->RetrieveResults(result_spec_no_snippet_, query_terms,
-                                        TermMatchType::EXACT_ONLY,
-                                        scored_document_hits));
+      result_retriever->RetrieveResults(page_result_state));
   ASSERT_THAT(results, SizeIs(3));
   EXPECT_THAT(results.at(0).snippet(),
               EqualsProto(SnippetProto::default_instance()));
@@ -361,11 +340,11 @@ TEST_F(ResultRetrieverTest, SimpleSnippeted) {
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(test_document3_));
+                             doc_store->Put(CreateDocument(/*id=*/3)));
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
@@ -374,27 +353,30 @@ TEST_F(ResultRetrieverTest, SimpleSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get()));
+                              language_segmenter_.get(), normalizer_.get()));
 
-  SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{{"", {"foo", "bar"}}}, CreateSnippetSpec(),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<SearchResultProto::ResultProto> result,
-      result_retriever->RetrieveResults(result_spec_snippet_, query_terms,
-                                        TermMatchType::EXACT_ONLY,
-                                        scored_document_hits));
+      result_retriever->RetrieveResults(page_result_state));
   EXPECT_THAT(result, SizeIs(3));
-  EXPECT_THAT(result[0].document(), EqualsProto(test_document1_));
+  EXPECT_THAT(result[0].document(), EqualsProto(CreateDocument(/*id=*/1)));
   EXPECT_THAT(
       GetWindow(result[0].document(), result[0].snippet(), "subject", 0),
-      Eq("subject foo"));
+      Eq("subject foo 1"));
   EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "subject", 0),
               Eq("foo"));
   EXPECT_THAT(GetWindow(result[0].document(), result[0].snippet(), "body", 0),
-              Eq("body bar"));
+              Eq("body bar 1"));
   EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "body", 0),
               Eq("bar"));
 
-  EXPECT_THAT(result[1].document(), EqualsProto(test_document2_));
+  EXPECT_THAT(result[1].document(), EqualsProto(CreateDocument(/*id=*/2)));
   EXPECT_THAT(
       GetWindow(result[1].document(), result[1].snippet(), "subject", 0),
       Eq("subject foo 2"));
@@ -405,7 +387,7 @@ TEST_F(ResultRetrieverTest, SimpleSnippeted) {
   EXPECT_THAT(GetMatch(result[1].document(), result[1].snippet(), "body", 0),
               Eq("bar"));
 
-  EXPECT_THAT(result[2].document(), EqualsProto(test_document3_));
+  EXPECT_THAT(result[2].document(), EqualsProto(CreateDocument(/*id=*/3)));
   EXPECT_THAT(
       GetWindow(result[2].document(), result[2].snippet(), "subject", 0),
       Eq("subject foo 3"));
@@ -423,13 +405,14 @@ TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(test_document2_));
+                             doc_store->Put(CreateDocument(/*id=*/2)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(test_document3_));
+                             doc_store->Put(CreateDocument(/*id=*/3)));
 
-  result_spec_snippet_.mutable_snippet_spec()->set_num_to_snippet(1);
+  ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
+  snippet_spec.set_num_to_snippet(1);
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
       {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
@@ -438,33 +421,159 @@ TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
-                              language_segmenter_.get()));
+                              language_segmenter_.get(), normalizer_.get()));
 
-  SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
+  SnippetContext snippet_context(/*query_terms_in=*/{{"", {"foo", "bar"}}},
+                                 snippet_spec, TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<SearchResultProto::ResultProto> result,
-      result_retriever->RetrieveResults(result_spec_snippet_, query_terms,
-                                        TermMatchType::EXACT_ONLY,
-                                        scored_document_hits));
+      result_retriever->RetrieveResults(page_result_state));
   EXPECT_THAT(result, SizeIs(3));
-  EXPECT_THAT(result[0].document(), EqualsProto(test_document1_));
+  EXPECT_THAT(result[0].document(), EqualsProto(CreateDocument(/*id=*/1)));
   EXPECT_THAT(
       GetWindow(result[0].document(), result[0].snippet(), "subject", 0),
-      Eq("subject foo"));
+      Eq("subject foo 1"));
   EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "subject", 0),
               Eq("foo"));
   EXPECT_THAT(GetWindow(result[0].document(), result[0].snippet(), "body", 0),
-              Eq("body bar"));
+              Eq("body bar 1"));
   EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "body", 0),
               Eq("bar"));
 
-  EXPECT_THAT(result[1].document(), EqualsProto(test_document2_));
+  EXPECT_THAT(result[1].document(), EqualsProto(CreateDocument(/*id=*/2)));
   EXPECT_THAT(result[1].snippet(),
               EqualsProto(SnippetProto::default_instance()));
 
-  EXPECT_THAT(result[2].document(), EqualsProto(test_document3_));
+  EXPECT_THAT(result[2].document(), EqualsProto(CreateDocument(/*id=*/3)));
   EXPECT_THAT(result[2].snippet(),
               EqualsProto(SnippetProto::default_instance()));
+}
+
+TEST_F(ResultRetrieverTest, ShouldSnippetAllResults) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             doc_store->Put(CreateDocument(/*id=*/3)));
+
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
+      {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
+      {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get(), normalizer_.get()));
+
+  ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
+  snippet_spec.set_num_to_snippet(5);
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{{"", {"foo", "bar"}}}, std::move(snippet_spec),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/0);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<SearchResultProto::ResultProto> result,
+      result_retriever->RetrieveResults(page_result_state));
+  // num_to_snippet = 5, num_previously_returned_in = 0,
+  // We can return 5 - 0 = 5 snippets at most. We're able to return all 3
+  // snippets here.
+  ASSERT_THAT(result, SizeIs(3));
+  EXPECT_THAT(result[0].snippet().entries(), Not(IsEmpty()));
+  EXPECT_THAT(result[1].snippet().entries(), Not(IsEmpty()));
+  EXPECT_THAT(result[2].snippet().entries(), Not(IsEmpty()));
+}
+
+TEST_F(ResultRetrieverTest, ShouldSnippetSomeResults) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             doc_store->Put(CreateDocument(/*id=*/3)));
+
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
+      {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
+      {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get(), normalizer_.get()));
+
+  ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
+  snippet_spec.set_num_to_snippet(5);
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{{"", {"foo", "bar"}}}, std::move(snippet_spec),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/3);
+
+  // num_to_snippet = 5, num_previously_returned_in = 3,
+  // We can return 5 - 3 = 2 snippets.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<SearchResultProto::ResultProto> result,
+      result_retriever->RetrieveResults(page_result_state));
+  ASSERT_THAT(result, SizeIs(3));
+  EXPECT_THAT(result[0].snippet().entries(), Not(IsEmpty()));
+  EXPECT_THAT(result[1].snippet().entries(), Not(IsEmpty()));
+  EXPECT_THAT(result[2].snippet().entries(), IsEmpty());
+}
+
+TEST_F(ResultRetrieverTest, ShouldNotSnippetAnyResults) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             doc_store->Put(CreateDocument(/*id=*/3)));
+
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
+      {document_id2, /*hit_section_id_mask=*/0b00000011, /*score=*/0},
+      {document_id3, /*hit_section_id_mask=*/0b00000011, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetriever> result_retriever,
+      ResultRetriever::Create(doc_store.get(), schema_store_.get(),
+                              language_segmenter_.get(), normalizer_.get()));
+
+  ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
+  snippet_spec.set_num_to_snippet(5);
+  SnippetContext snippet_context(
+      /*query_terms_in=*/{{"", {"foo", "bar"}}}, std::move(snippet_spec),
+      TermMatchType::EXACT_ONLY);
+  PageResultState page_result_state(
+      std::move(scored_document_hits), /*next_page_token_in=*/1,
+      std::move(snippet_context), /*num_previously_returned_in=*/6);
+
+  // num_to_snippet = 5, num_previously_returned_in = 6,
+  // We can't return any snippets for this page.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<SearchResultProto::ResultProto> result,
+      result_retriever->RetrieveResults(page_result_state));
+  ASSERT_THAT(result, SizeIs(3));
+  EXPECT_THAT(result[0].snippet().entries(), IsEmpty());
+  EXPECT_THAT(result[1].snippet().entries(), IsEmpty());
+  EXPECT_THAT(result[2].snippet().entries(), IsEmpty());
 }
 
 }  // namespace
