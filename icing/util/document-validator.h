@@ -60,9 +60,11 @@ class DocumentValidator {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if no schema is set yet
   //   INVALID_ARGUMENT if any of case 1, 2, 3, 5, 8, 9, 10, 11, 12, 13 fails
   //   NOT_FOUND if case 4 or 7 fails
   //   ALREADY_EXISTS if case 6 fails
+  //   INTERNAL on any I/O error
   libtextclassifier3::Status Validate(const DocumentProto& document);
 
   void UpdateSchemaStore(const SchemaStore* schema_store) {

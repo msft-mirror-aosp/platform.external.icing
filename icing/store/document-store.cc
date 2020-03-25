@@ -817,11 +817,7 @@ libtextclassifier3::Status DocumentStore::Delete(
     const std::string_view name_space, const std::string_view uri) {
   // Try to get the DocumentId first
   auto document_id_or = GetDocumentId(name_space, uri);
-  if (absl_ports::IsNotFound(document_id_or.status())) {
-    // No need to delete nonexistent (name_space, uri)
-    return libtextclassifier3::Status::OK;
-  } else if (!document_id_or.ok()) {
-    // Real error
+  if (!document_id_or.ok()) {
     return absl_ports::Annotate(
         document_id_or.status(),
         absl_ports::StrCat("Failed to delete Document. namespace: ", name_space,
@@ -831,15 +827,11 @@ libtextclassifier3::Status DocumentStore::Delete(
   // Check if the DocumentId's Document still exists.
   DocumentId document_id = document_id_or.ValueOrDie();
   auto file_offset_or = DoesDocumentExistAndGetFileOffset(document_id);
-  if (absl_ports::IsNotFound(file_offset_or.status())) {
-    // No need to delete nonexistent documents
-    return libtextclassifier3::Status::OK;
-  } else if (!file_offset_or.ok()) {
-    // Real error, pass it up
+  if (!file_offset_or.ok()) {
     return absl_ports::Annotate(
         file_offset_or.status(),
-        IcingStringUtil::StringPrintf(
-            "Failed to retrieve file offset for DocumentId %d", document_id));
+        absl_ports::StrCat("Failed to delete Document. namespace: ", name_space,
+                           ", uri: ", uri));
   }
 
   // Update ground truth first.
@@ -852,10 +844,9 @@ libtextclassifier3::Status DocumentStore::Delete(
       document_log_->WriteProto(CreateDocumentTombstone(name_space, uri))
           .status();
   if (!status.ok()) {
-    ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete Document. namespace: " << name_space
-                     << ", uri: " << uri;
-    return status;
+    return absl_ports::Annotate(
+        status, absl_ports::StrCat("Failed to delete Document. namespace: ",
+                                   name_space, ", uri: ", uri));
   }
 
   ICING_RETURN_IF_ERROR(
@@ -894,12 +885,11 @@ DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
 libtextclassifier3::Status DocumentStore::DeleteByNamespace(
     std::string_view name_space) {
   auto namespace_id_or = namespace_mapper_->Get(name_space);
-  if (absl_ports::IsNotFound(namespace_id_or.status())) {
-    // Namespace doesn't exist. Don't need to delete anything.
-    return libtextclassifier3::Status::OK;
-  } else if (!namespace_id_or.ok()) {
-    // Real error, pass it up.
-    return namespace_id_or.status();
+  if (!namespace_id_or.ok()) {
+    return absl_ports::Annotate(
+        namespace_id_or.status(),
+        absl_ports::StrCat("Failed to delete by namespace. namespace: ",
+                           name_space));
   }
 
   // Update ground truth first.
@@ -916,22 +906,30 @@ libtextclassifier3::Status DocumentStore::DeleteByNamespace(
     return status;
   }
 
-  return UpdateDerivedFilesNamespaceDeleted(name_space);
+  ICING_ASSIGN_OR_RETURN(bool updated_existing_document,
+                         UpdateDerivedFilesNamespaceDeleted(name_space));
+  if (!updated_existing_document) {
+    // Treat the fact that no existing documents had this namespace to be the
+    // same as this namespace not existing at all.
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Namespace '", name_space, "' doesn't exist"));
+  }
+  return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocumentStore::UpdateDerivedFilesNamespaceDeleted(
-    std::string_view name_space) {
+libtextclassifier3::StatusOr<bool>
+DocumentStore::UpdateDerivedFilesNamespaceDeleted(std::string_view name_space) {
   auto namespace_id_or = namespace_mapper_->Get(name_space);
-  if (absl_ports::IsNotFound(namespace_id_or.status())) {
-    // Namespace doesn't exist. Don't need to delete anything.
-    return libtextclassifier3::Status::OK;
-  } else if (!namespace_id_or.ok()) {
-    // Real error, pass it up.
+  if (!namespace_id_or.ok()) {
     return namespace_id_or.status();
   }
 
   // Guaranteed to have a NamespaceId now.
   NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+
+  // Tracks if there were any existing documents with this namespace that we
+  // will mark as deleted.
+  bool updated_existing_document = false;
 
   // Traverse FilterCache and delete all docs that match namespace_id
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
@@ -941,6 +939,10 @@ libtextclassifier3::Status DocumentStore::UpdateDerivedFilesNamespaceDeleted(
     ICING_ASSIGN_OR_RETURN(const DocumentFilterData* data,
                            filter_cache_->Get(document_id));
     if (data->namespace_id() == namespace_id) {
+      if (DoesDocumentExist(document_id)) {
+        updated_existing_document = true;
+      }
+
       // docid_mapper_->Set can only fail if document_id is < 0
       // or >= docid_mapper_->num_elements. So the only possible way to get an
       // error here would be if filter_cache_->num_elements >
@@ -950,18 +952,17 @@ libtextclassifier3::Status DocumentStore::UpdateDerivedFilesNamespaceDeleted(
     }
   }
 
-  return libtextclassifier3::Status::OK;
+  return updated_existing_document;
 }
 
 libtextclassifier3::Status DocumentStore::DeleteBySchemaType(
     std::string_view schema_type) {
   auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema_type);
-  if (absl_ports::IsNotFound(schema_type_id_or.status())) {
-    // SchemaType doesn't exist. Don't need to delete anything.
-    return libtextclassifier3::Status::OK;
-  } else if (!schema_type_id_or.ok()) {
-    // Real error, pass it up.
-    return schema_type_id_or.status();
+  if (!schema_type_id_or.ok()) {
+    return absl_ports::Annotate(
+        schema_type_id_or.status(),
+        absl_ports::StrCat("Failed to delete by schema type. schema_type: ",
+                           schema_type));
   }
 
   // Update ground truth first.
@@ -1076,7 +1077,11 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
     } else {
       // Document is no longer valid with the new SchemaStore. Mark as
       // deleted
-      ICING_RETURN_IF_ERROR(Delete(document.namespace_(), document.uri()));
+      auto delete_status = Delete(document.namespace_(), document.uri());
+      if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+        // Real error, pass up
+        return delete_status;
+      }
     }
   }
 
@@ -1167,7 +1172,11 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
         if (!document_validator_.Validate(document).ok()) {
           // Document is no longer valid with the new SchemaStore. Mark as
           // deleted
-          ICING_RETURN_IF_ERROR(Delete(document.namespace_(), document.uri()));
+          auto delete_status = Delete(document.namespace_(), document.uri());
+          if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+            // Real error, pass up
+            return delete_status;
+          }
         }
       }
     }

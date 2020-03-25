@@ -41,7 +41,7 @@ MemoryMappedFile::~MemoryMappedFile() { Unmap(); }
 
 void MemoryMappedFile::MemoryMappedFile::Unmap() {
   if (mmap_result_ != nullptr) {
-    munmap(mmap_result_, region_size_);
+    munmap(mmap_result_, adjusted_mmap_size_);
     mmap_result_ = nullptr;
   }
 

@@ -80,10 +80,6 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
       .ValueOrDie();
 }
 
-void CleanUp(const Filesystem& filesystem, const std::string& base_dir) {
-  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-}
-
 void BM_QueryOneTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
@@ -92,12 +88,12 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -151,18 +147,41 @@ void BM_QueryOneTerm(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryOneTerm)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
@@ -180,12 +199,12 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -257,18 +276,41 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryFiveTerms)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
@@ -286,12 +328,12 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -348,18 +390,41 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryDiacriticTerm)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
@@ -377,12 +442,12 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -439,18 +504,41 @@ void BM_QueryHiragana(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryHiragana)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
