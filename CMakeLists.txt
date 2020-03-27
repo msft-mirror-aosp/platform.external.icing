@@ -14,8 +14,8 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
-# Build protoc with a host configuration. We need to run it on the host to create our proto
-# files.
+# Build protoc with a host configuration. We need to run it on the host to
+# create our proto files.
 set(CMAKE_HOST_ARGS
   -DBUILD_SHARED_LIBS:BOOL=${BUILD_SHARED_LIBS}
   -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
@@ -23,15 +23,16 @@ set(CMAKE_HOST_ARGS
   -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
   -DCMAKE_GENERATOR:STRING=${CMAKE_GENERATOR}
   -DCMAKE_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM})
-
 set(Protobuf_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../protobuf")
-set(Protobuf_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-host")
+set(Protobuf_HOST_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-host")
+set(Protobuf_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-target")
+
 # Run another cmake invocation to configure the protobuf project
 execute_process(
     COMMAND "${CMAKE_COMMAND}"
     ${CMAKE_HOST_ARGS}
     -H${Protobuf_SOURCE_DIR}/cmake
-    -B${Protobuf_BINARY_DIR}
+    -B${Protobuf_HOST_BINARY_DIR}
     -Dprotobuf_BUILD_TESTS:BOOL=OFF
     RESULT_VARIABLE exec_value
     OUTPUT_VARIABLE exec_output
@@ -42,7 +43,7 @@ message("Result of proto configuration: ${exec_value}. Output: ${exec_output}")
 # Run the actual build tool (ninja) to compile protoc for the host
 execute_process(
     COMMAND "${CMAKE_MAKE_PROGRAM}" protoc
-    WORKING_DIRECTORY ${Protobuf_BINARY_DIR}
+    WORKING_DIRECTORY ${Protobuf_HOST_BINARY_DIR}
     RESULT_VARIABLE exec_value
     OUTPUT_VARIABLE exec_output
     ERROR_VARIABLE exec_output
@@ -64,7 +65,7 @@ foreach(FILE ${Icing_PROTO_FILES})
     # Find the name of the proto file without the .proto extension
     string(REGEX REPLACE "\.proto$" "" FILE_NOEXT ${FILE})
     execute_process(
-        COMMAND "${Protobuf_BINARY_DIR}/protoc"
+        COMMAND "${Protobuf_HOST_BINARY_DIR}/protoc"
         --proto_path ${CMAKE_CURRENT_SOURCE_DIR}
         --cpp_out ${Icing_PROTO_GEN_DIR}
         ${FILE}
@@ -84,6 +85,10 @@ file(
     "${Icing_PROTO_GEN_DIR}/*.pb.h"
 )
 message(STATUS "Icing_PROTO_SOURCES=${Icing_PROTO_SOURCES}")
+
+# Compile libprotobuf
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "")
+add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
 
 # Glob Icing C++ sources
 # TODO: When supporting cmake v3.12 or higher, use CONFIGURE_DEPENDS in the glob
@@ -119,3 +124,4 @@ add_library(
 target_include_directories(icing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(icing PRIVATE ${Icing_PROTO_GEN_DIR})
 target_include_directories(icing PRIVATE "${Protobuf_SOURCE_DIR}/src")
+target_link_libraries(icing protobuf::libprotobuf log)
