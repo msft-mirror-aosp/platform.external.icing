@@ -26,6 +26,7 @@
 #include "icing/schema/section.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 #include "unicode/utf8.h"
@@ -45,13 +46,14 @@ class TokenMatcherExact : public TokenMatcher {
  public:
   explicit TokenMatcherExact(
       const std::unordered_set<std::string>& unrestricted_query_terms,
-      const std::unordered_set<std::string>& restricted_query_terms)
+      const std::unordered_set<std::string>& restricted_query_terms,
+      const Normalizer& normalizer)
       : unrestricted_query_terms_(unrestricted_query_terms),
-        restricted_query_terms_(restricted_query_terms) {}
+        restricted_query_terms_(restricted_query_terms),
+        normalizer_(normalizer) {}
 
   bool Matches(Token token) const override {
-    // TODO(tjbarron) : Add normalization of token.
-    std::string s(token.text);
+    std::string s = normalizer_.NormalizeTerm(token.text);
     return (unrestricted_query_terms_.count(s) > 0) ||
            (restricted_query_terms_.count(s) > 0);
   }
@@ -59,49 +61,55 @@ class TokenMatcherExact : public TokenMatcher {
  private:
   const std::unordered_set<std::string>& unrestricted_query_terms_;
   const std::unordered_set<std::string>& restricted_query_terms_;
+  const Normalizer& normalizer_;
 };
 
 class TokenMatcherPrefix : public TokenMatcher {
  public:
   explicit TokenMatcherPrefix(
       const std::unordered_set<std::string>& unrestricted_query_terms,
-      const std::unordered_set<std::string>& restricted_query_terms)
+      const std::unordered_set<std::string>& restricted_query_terms,
+      const Normalizer& normalizer)
       : unrestricted_query_terms_(unrestricted_query_terms),
-        restricted_query_terms_(restricted_query_terms) {}
+        restricted_query_terms_(restricted_query_terms),
+        normalizer_(normalizer) {}
 
   bool Matches(Token token) const override {
+    std::string s = normalizer_.NormalizeTerm(token.text);
     if (std::any_of(unrestricted_query_terms_.begin(),
                     unrestricted_query_terms_.end(),
-                    [&token](const std::string& term) {
-                      return term.length() <= token.text.length() &&
-                             token.text.compare(0, term.length(), term) == 0;
+                    [&s](const std::string& term) {
+                      return term.length() <= s.length() &&
+                             s.compare(0, term.length(), term) == 0;
                     })) {
       return true;
     }
     return std::any_of(restricted_query_terms_.begin(),
                        restricted_query_terms_.end(),
-                       [token](const std::string& term) {
-                         return term.length() <= token.text.length() &&
-                                token.text.compare(0, term.length(), term) == 0;
+                       [&s](const std::string& term) {
+                         return term.length() <= s.length() &&
+                                s.compare(0, term.length(), term) == 0;
                        });
   }
 
  private:
   const std::unordered_set<std::string>& unrestricted_query_terms_;
   const std::unordered_set<std::string>& restricted_query_terms_;
+  const Normalizer& normalizer_;
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> CreateTokenMatcher(
     TermMatchType::Code match_type,
     const std::unordered_set<std::string>& unrestricted_query_terms,
-    const std::unordered_set<std::string>& restricted_query_terms) {
+    const std::unordered_set<std::string>& restricted_query_terms,
+    const Normalizer& normalizer) {
   switch (match_type) {
     case TermMatchType::EXACT_ONLY:
-      return std::make_unique<TokenMatcherExact>(unrestricted_query_terms,
-                                                 restricted_query_terms);
+      return std::make_unique<TokenMatcherExact>(
+          unrestricted_query_terms, restricted_query_terms, normalizer);
     case TermMatchType::PREFIX:
-      return std::make_unique<TokenMatcherPrefix>(unrestricted_query_terms,
-                                                  restricted_query_terms);
+      return std::make_unique<TokenMatcherPrefix>(
+          unrestricted_query_terms, restricted_query_terms, normalizer);
     case TermMatchType::UNKNOWN:
       U_FALLTHROUGH;
     default:
@@ -260,12 +268,14 @@ libtextclassifier3::StatusOr<SnippetProto::EntryProto> RetrieveMatches(
 
 libtextclassifier3::StatusOr<std::unique_ptr<SnippetRetriever>>
 SnippetRetriever::Create(const SchemaStore* schema_store,
-                         const LanguageSegmenter* language_segmenter) {
+                         const LanguageSegmenter* language_segmenter,
+                         const Normalizer* normalizer) {
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
+  ICING_RETURN_ERROR_IF_NULL(normalizer);
 
   return std::unique_ptr<SnippetRetriever>(
-      new SnippetRetriever(schema_store, language_segmenter));
+      new SnippetRetriever(schema_store, language_segmenter, normalizer));
 }
 
 SnippetProto SnippetRetriever::RetrieveSnippet(
@@ -307,8 +317,8 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     const std::unordered_set<std::string>& restricted_set =
         (itr != query_terms.end()) ? itr->second : empty_set;
     libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> matcher_or =
-        CreateTokenMatcher(section_match_type, unrestricted_set,
-                           restricted_set);
+        CreateTokenMatcher(section_match_type, unrestricted_set, restricted_set,
+                           normalizer_);
     if (!matcher_or.ok()) {
       continue;
     }

@@ -26,6 +26,9 @@ namespace icing {
 namespace lib {
 namespace i18n_utils {
 
+// An invalid value defined by Unicode.
+static constexpr UChar32 kInvalidUchar32 = 0xFFFD;
+
 // Converts a UTF16 string to a UTF8 string.
 //
 // Returns:

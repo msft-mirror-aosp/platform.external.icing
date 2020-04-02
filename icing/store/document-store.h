@@ -94,6 +94,9 @@ class DocumentStore {
   //
   // Returns:
   //   A newly generated document id on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   NOT_FOUND if the schema_type or a property config of the document doesn't
+  //     exist in schema
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> Put(const DocumentProto& document);
   libtextclassifier3::StatusOr<DocumentId> Put(DocumentProto&& document);
@@ -118,8 +121,11 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentProto> Get(DocumentId document_id) const;
 
-  // Returns true if there's an existing document associated with the given
-  // document id.
+  // Check if a document exists. Existence means it hasn't been deleted and it
+  // hasn't expired yet.
+  //
+  // Returns:
+  //   boolean whether a document exists or not
   bool DoesDocumentExist(DocumentId document_id) const;
 
   // Deletes the document identified by the given namespace and uri
@@ -129,6 +135,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
                                     std::string_view uri);
@@ -178,6 +185,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if namespace doesn't exist
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status DeleteByNamespace(std::string_view name_space);
 
@@ -188,6 +196,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if schema_type doesn't exist
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status DeleteBySchemaType(std::string_view schema_type);
 
@@ -394,9 +403,9 @@ class DocumentStore {
   // called.
   //
   // Returns:
-  //   OK on success
+  //   bool on whether an existing document was actually updated to be deleted
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status UpdateDerivedFilesNamespaceDeleted(
+  libtextclassifier3::StatusOr<bool> UpdateDerivedFilesNamespaceDeleted(
       std::string_view name_space);
 
   // Update derived files that the schema type schema_type_id has been deleted.

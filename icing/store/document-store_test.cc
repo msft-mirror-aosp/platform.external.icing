@@ -340,7 +340,7 @@ TEST_F(DocumentStoreTest, GetInvalidDocumentId) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, Delete) {
+TEST_F(DocumentStoreTest, DeleteOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -352,16 +352,43 @@ TEST_F(DocumentStoreTest, Delete) {
   EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
   EXPECT_THAT(doc_store->Get(document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  // icing + email/1 has already been deleted.
-  EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+
+  EXPECT_THAT(
+      document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+
+  // First time is OK
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+
+  // Deleting it again is NOT_FOUND
+  EXPECT_THAT(document_store->Delete(test_document1_.namespace_(),
+                                     test_document1_.uri()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
@@ -403,7 +430,7 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceOk) {
+TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -414,11 +441,28 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceOk) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  ICING_EXPECT_OK(doc_store->DeleteByNamespace("nonexistent_namespace"));
+  EXPECT_THAT(doc_store->DeleteByNamespace("nonexistent_namespace"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteByNamespaceNoExistingDocumentsNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+
+  // At this point, there are no existing documents with the namespace, even
+  // though Icing's derived files know about this namespace. We should still
+  // return NOT_FOUND since nothing existing has this namespace.
+  EXPECT_THAT(document_store->DeleteByNamespace(test_document1_.namespace_()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
@@ -568,7 +612,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
               IsOkAndHolds(EqualsProto(person_document)));
 }
 
-TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeOk) {
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> document_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -579,12 +623,28 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeOk) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  ICING_EXPECT_OK(document_store->DeleteBySchemaType("nonexistent_type"));
+  EXPECT_THAT(document_store->DeleteBySchemaType("nonexistent_type"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeNoExistingDocumentsOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+
+  // At this point, there are no existing documents with the schema type, but we
+  // still return OK because the SchemaStore is the ground truth on schemas and
+  // knows about the type
+  ICING_EXPECT_OK(document_store->DeleteBySchemaType(test_document1_.schema()));
 }
 
 TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
