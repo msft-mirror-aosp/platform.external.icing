@@ -22,6 +22,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -45,7 +46,8 @@ class SnippetRetriever {
   //   FAILED_PRECONDITION on any null pointer input
   static libtextclassifier3::StatusOr<std::unique_ptr<SnippetRetriever>> Create(
       const SchemaStore* schema_store,
-      const LanguageSegmenter* language_segmenter);
+      const LanguageSegmenter* language_segmenter,
+      const Normalizer* normalizer);
 
   // Retrieve the snippet information for content in document. terms in
   // query_terms are matched to content in document according to match_type.
@@ -60,12 +62,15 @@ class SnippetRetriever {
 
  private:
   explicit SnippetRetriever(const SchemaStore* schema_store,
-                            const LanguageSegmenter* language_segmenter)
+                            const LanguageSegmenter* language_segmenter,
+                            const Normalizer* normalizer)
       : schema_store_(*schema_store),
-        language_segmenter_(*language_segmenter) {}
+        language_segmenter_(*language_segmenter),
+        normalizer_(*normalizer) {}
 
   const SchemaStore& schema_store_;
   const LanguageSegmenter& language_segmenter_;
+  const Normalizer& normalizer_;
 };
 
 }  // namespace lib

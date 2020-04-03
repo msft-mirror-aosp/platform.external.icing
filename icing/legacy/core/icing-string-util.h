@@ -37,8 +37,6 @@ class IcingStringUtil {
     return (static_cast<uint8_t>(byte) & 0xC0) == 0x80;
   }
 
-  static bool IsAsciiChar(char c) { return static_cast<signed char>(c) >= 0; }
-
   // Update a rolling crc32. This undoes the one's complement
   // pre-conditioning and post-conditioning of zlib's
   // crc32. Therefore, UpdateCrc32(0, str, len) != HashCrc32(str,

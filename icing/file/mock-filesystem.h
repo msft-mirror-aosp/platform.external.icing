@@ -67,22 +67,24 @@ class MockFilesystem : public Filesystem {
 
     ON_CALL(*this, ListDirectory(_, _))
         .WillByDefault(
-            [this](const char* dir_name, std::vector<string>* entries) {
+            [this](const char* dir_name, std::vector<std::string>* entries) {
               return real_filesystem_.ListDirectory(dir_name, entries);
             });
 
     ON_CALL(*this, ListDirectory(_, _, _, _))
         .WillByDefault([this](const char* dir_name,
-                              const std::unordered_set<string>& exclude,
-                              bool recursive, std::vector<string>* entries) {
+                              const std::unordered_set<std::string>& exclude,
+                              bool recursive,
+                              std::vector<std::string>* entries) {
           return real_filesystem_.ListDirectory(dir_name, exclude, recursive,
                                                 entries);
         });
 
     ON_CALL(*this, GetMatchingFiles)
-        .WillByDefault([this](const char* glob, std::vector<string>* matches) {
-          return real_filesystem_.GetMatchingFiles(glob, matches);
-        });
+        .WillByDefault(
+            [this](const char* glob, std::vector<std::string>* matches) {
+              return real_filesystem_.GetMatchingFiles(glob, matches);
+            });
 
     ON_CALL(*this, OpenForWrite).WillByDefault([this](const char* file_name) {
       return real_filesystem_.OpenForWrite(file_name);

@@ -20,7 +20,6 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/store/document-id.h"
 #include "icing/util/logging.h"
 
 namespace icing {
@@ -33,9 +32,10 @@ namespace {
 
 // Helper function to wrap the heapify algorithm, it heapifies the target
 // subtree node in place.
-void Heapify(std::vector<ScoredDocumentHit>* scored_document_hits,
-             int target_subtree_root_index,
-             const ScoredDocumentHitComparator scored_document_hit_comparator) {
+void Heapify(
+    std::vector<ScoredDocumentHit>* scored_document_hits,
+    int target_subtree_root_index,
+    const ScoredDocumentHitComparator& scored_document_hit_comparator) {
   const int heap_size = scored_document_hits->size();
   if (target_subtree_root_index >= heap_size) {
     return;
@@ -71,11 +71,40 @@ void Heapify(std::vector<ScoredDocumentHit>* scored_document_hits,
   }
 }
 
-// Helper function to build a heap in place whose root is the best node defined
-// by scored_document_hit_comparator. Time complexity is O(n).
-void BuildHeap(
+// Helper function to extract the root from the heap. The heap structure will be
+// maintained.
+//
+// Returns:
+//   The current root element on success
+//   RESOURCE_EXHAUSTED_ERROR if heap is empty
+libtextclassifier3::StatusOr<ScoredDocumentHit> PopRoot(
+    std::vector<ScoredDocumentHit>* scored_document_hits_heap,
+    const ScoredDocumentHitComparator& scored_document_hit_comparator) {
+  if (scored_document_hits_heap->empty()) {
+    // An invalid ScoredDocumentHit
+    return absl_ports::ResourceExhaustedError("Heap is empty");
+  }
+
+  // Steps to extract root from heap:
+  // 1. copy out root
+  ScoredDocumentHit root = scored_document_hits_heap->at(0);
+  const size_t last_node_index = scored_document_hits_heap->size() - 1;
+  // 2. swap root and the last node
+  std::swap(scored_document_hits_heap->at(0),
+            scored_document_hits_heap->at(last_node_index));
+  // 3. remove last node
+  scored_document_hits_heap->pop_back();
+  // 4. heapify root
+  Heapify(scored_document_hits_heap, /*target_subtree_root_index=*/0,
+          scored_document_hit_comparator);
+  return root;
+}
+
+}  // namespace
+
+void BuildHeapInPlace(
     std::vector<ScoredDocumentHit>* scored_document_hits,
-    const ScoredDocumentHitComparator scored_document_hit_comparator) {
+    const ScoredDocumentHitComparator& scored_document_hit_comparator) {
   const int heap_size = scored_document_hits->size();
   // Since we use a vector to represent the heap, [size / 2 - 1] is the index
   // of the parent node of the last node.
@@ -86,50 +115,15 @@ void BuildHeap(
   }
 }
 
-// Helper function to extract the root from the heap. The heap structure will be
-// maintained.
-//
-// Returns:
-//   The current root element on success
-//   RESOURCE_EXHAUSTED_ERROR if heap is empty
-libtextclassifier3::StatusOr<ScoredDocumentHit> ExtractRoot(
-    std::vector<ScoredDocumentHit>* scored_document_hits,
-    ScoredDocumentHitComparator scored_document_hit_comparator) {
-  if (scored_document_hits->empty()) {
-    // An invalid ScoredDocumentHit
-    return absl_ports::ResourceExhaustedError("Heap is empty");
-  }
-
-  // Steps to extract root from heap:
-  // 1. copy out root
-  ScoredDocumentHit root = scored_document_hits->at(0);
-  const size_t last_node_index = scored_document_hits->size() - 1;
-  // 2. swap root and the last node
-  std::swap(scored_document_hits->at(0),
-            scored_document_hits->at(last_node_index));
-  // 3. remove last node
-  scored_document_hits->pop_back();
-  // 4. heapify root
-  Heapify(scored_document_hits, /*target_subtree_root_index=*/0,
-          scored_document_hit_comparator);
-  return root;
-}
-
-std::vector<ScoredDocumentHit> HeapifyAndProduceTopN(
-    std::vector<ScoredDocumentHit> scored_document_hits, int num_result,
-    bool is_descending) {
-  // Build a heap in place
-  const ScoredDocumentHitComparator scored_document_hit_comparator(
-      is_descending);
-  BuildHeap(&scored_document_hits, scored_document_hit_comparator);
-
-  // Get best nodes from heap one by one
+std::vector<ScoredDocumentHit> PopTopResultsFromHeap(
+    std::vector<ScoredDocumentHit>* scored_document_hits_heap, int num_results,
+    const ScoredDocumentHitComparator& scored_document_hit_comparator) {
   std::vector<ScoredDocumentHit> scored_document_hit_result;
-  int result_size =
-      std::min(num_result, static_cast<int>(scored_document_hits.size()));
+  int result_size = std::min(
+      num_results, static_cast<int>(scored_document_hits_heap->size()));
   while (result_size-- > 0) {
     libtextclassifier3::StatusOr<ScoredDocumentHit> next_best_document_hit_or =
-        ExtractRoot(&scored_document_hits, scored_document_hit_comparator);
+        PopRoot(scored_document_hits_heap, scored_document_hit_comparator);
     if (next_best_document_hit_or.ok()) {
       scored_document_hit_result.push_back(
           std::move(next_best_document_hit_or).ValueOrDie());
@@ -138,15 +132,6 @@ std::vector<ScoredDocumentHit> HeapifyAndProduceTopN(
     }
   }
   return scored_document_hit_result;
-}
-
-}  // namespace
-
-std::vector<ScoredDocumentHit> GetTopNFromScoredDocumentHits(
-    std::vector<ScoredDocumentHit> scored_document_hits, int num_result,
-    bool is_descending) {
-  return HeapifyAndProduceTopN(std::move(scored_document_hits), num_result,
-                               is_descending);
 }
 
 }  // namespace lib

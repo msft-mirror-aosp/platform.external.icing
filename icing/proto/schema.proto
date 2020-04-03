@@ -223,13 +223,14 @@ message GetSchemaResultProto {
 message GetSchemaTypeResultProto {
   // Status code can be one of:
   //   OK
+  //   FAILED_PRECONDITION
   //   NOT_FOUND
   //   INTERNAL
   //
   // See status.proto for more details.
   //
-  // TODO(b/147699081): Fix error codes: +ABORTED, +FAILED_PRECONDITION,
-  // -INTERNAL go/icing-library-apis.
+  // TODO(b/147699081): Fix error codes: +ABORTED, -INTERNAL
+  // go/icing-library-apis.
   optional StatusProto status = 1;
 
   // Copy of the SchemaTypeConfig proto with the specified schema_type.
