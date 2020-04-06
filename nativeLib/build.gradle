@@ -17,7 +17,7 @@
 buildscript {
     boolean unbundleBuild = (new File('unbundled-build')).exists()
     repositories {
-        maven { url '../../prebuilts/androidx/external' }
+        maven { url '../../../prebuilts/androidx/external' }
         if (unbundleBuild) {
             jcenter()
         }
@@ -29,8 +29,6 @@ buildscript {
 
 apply plugin: 'AndroidXPlugin'
 apply plugin: 'com.android.library'
-apply plugin: 'com.google.protobuf'
-apply plugin: 'idea'
 
 def protoGeneratedFilesBaseDir = "${project.buildDir}/generated/source/proto"
 
@@ -48,11 +46,7 @@ android {
 
     sourceSets {
         main {
-            manifest.srcFile 'AndroidManifest.xml'
-            proto {
-                srcDir '.'
-                include '**/*.proto'
-            }
+            manifest.srcFile '../AndroidManifest.xml'
         }
     }
 
@@ -60,28 +54,7 @@ android {
         cmake {
             version '3.10.2'
             // TODO(b/149853706): Uncomment this line once the lib fully compiles under cmake
-            //path 'CMakeLists.txt'
-        }
-    }
-}
-
-dependencies {
-    api('com.google.protobuf:protobuf-javalite:3.10.0')
-}
-
-protobuf {
-    generatedFilesBaseDir = protoGeneratedFilesBaseDir
-    protoc {
-        artifact = 'com.google.protobuf:protoc:3.10.0'
-    }
-
-    generateProtoTasks {
-        all().each { task ->
-            task.builtins {
-                java {
-                    option 'lite'
-                }
-            }
+            //path '../CMakeLists.txt'
         }
     }
 }
