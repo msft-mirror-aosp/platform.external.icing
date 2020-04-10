@@ -24,11 +24,13 @@ buildscript {
     }
     dependencies {
         classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.8')
+        classpath('org.anarres.jarjar:jarjar-gradle:1.0.1')
     }
 }
 
 apply plugin: 'java-library'
 apply plugin: 'com.google.protobuf'
+apply plugin: 'org.anarres.jarjar'
 apply plugin: 'idea'
 
 sourceSets {
@@ -40,8 +42,13 @@ sourceSets {
     }
 }
 
+compileJava {
+    sourceCompatibility = JavaVersion.VERSION_1_7
+    targetCompatibility = JavaVersion.VERSION_1_7
+}
+
 dependencies {
-    api('com.google.protobuf:protobuf-javalite:3.10.0')
+    implementation('com.google.protobuf:protobuf-javalite:3.10.0')
 }
 
 protobuf {
@@ -57,5 +64,25 @@ protobuf {
                 }
             }
         }
+    }
+}
+
+jarjar.repackage('jarjarTask') {
+    destinationName "icing-java-jarjar.jar"
+    from 'com.google.protobuf:protobuf-javalite:3.10.0'
+    from files(sourceSets.main.output.classesDirs)
+    dependsOn sourceSets.main.output
+    classRename 'com.google.protobuf.**', 'com.google.android.icing.protobuf.@1'
+}
+
+configurations {
+    jarjarConf
+}
+
+artifacts {
+    jarjarConf(jarjarTask.destinationPath) {
+        name 'icing-java-jarjar'
+        type 'jar'
+        builtBy jarjarTask
     }
 }
