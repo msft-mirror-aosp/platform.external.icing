@@ -1,1 +1,0 @@
-rule com.google.protobuf.** com.google.android.icing.protobuf.@1
