@@ -48,7 +48,7 @@
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
-#include "unicode/utf8.h"
+#include "icing/util/icu-i18n-utils.h"
 
 namespace icing {
 namespace lib {

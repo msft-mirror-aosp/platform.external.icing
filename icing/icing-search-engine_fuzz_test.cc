@@ -19,6 +19,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/document-builder.h"
 #include "icing/icing-search-engine.h"
+#include "icing/icu-data-file-helper.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -31,8 +32,6 @@ namespace {
 
 IcingSearchEngineOptions Setup() {
   IcingSearchEngineOptions icing_options;
-  libtextclassifier3::Status status =
-      SetUpICUDataFile("icing/icu.dat");
   icing_options.set_base_dir(GetTestTempDir() + "/icing");
   return icing_options;
 }
@@ -74,6 +73,10 @@ SearchSpecProto SetSearchSpec(const uint8_t* data, size_t size) {
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // Initialize
   IcingSearchEngineOptions icing_options = Setup();
+  std::string icu_data_file_path = GetTestFilePath("icing/icu.dat");
+  if (!icu_data_file_helper::SetUpICUDataFile(icu_data_file_path).ok()) {
+    return 1;
+  }
   IcingSearchEngine icing(icing_options);
   const Filesystem filesystem_;
   // TODO (b/145758378): Deleting directory should not be required.

@@ -15,21 +15,28 @@
 #include "icing/result/snippet-retriever.h"
 
 #include <algorithm>
-#include <cctype>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-terms.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/i18n-utils.h"
+#include "icing/util/icu-i18n-utils.h"
 #include "icing/util/status-macros.h"
-#include "unicode/utf8.h"
 
 namespace icing {
 namespace lib {
@@ -111,7 +118,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> CreateTokenMatcher(
       return std::make_unique<TokenMatcherPrefix>(
           unrestricted_query_terms, restricted_query_terms, normalizer);
     case TermMatchType::UNKNOWN:
-      U_FALLTHROUGH;
+      [[fallthrough]];
     default:
       return absl_ports::InvalidArgumentError("Invalid match type provided.");
   }
@@ -145,7 +152,8 @@ int IncludeTrailingPunctuation(std::string_view value, int window_end_exclusive,
                                int window_end_max_exclusive) {
   while (window_end_exclusive < window_end_max_exclusive) {
     int char_len = 0;
-    if (!i18n_utils::IsPunctuationAt(value, window_end_exclusive, &char_len)) {
+    if (!icu_i18n_utils::IsPunctuationAt(value, window_end_exclusive,
+                                         &char_len)) {
       break;
     }
     if (window_end_exclusive + char_len > window_end_max_exclusive) {
@@ -285,8 +293,8 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     const DocumentProto& document, SectionIdMask section_id_mask) const {
   SnippetProto snippet_proto;
   ICING_ASSIGN_OR_RETURN(SchemaTypeId type_id,
-                             schema_store_.GetSchemaTypeId(document.schema()),
-                             snippet_proto);
+                         schema_store_.GetSchemaTypeId(document.schema()),
+                         snippet_proto);
   const std::unordered_set<std::string> empty_set;
   auto itr = query_terms.find("");
   const std::unordered_set<std::string>& unrestricted_set =

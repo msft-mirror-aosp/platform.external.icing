@@ -33,6 +33,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
@@ -1067,16 +1068,25 @@ TEST_F(DocumentStoreTest, GetDiskUsage) {
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                             schema_store_.get()));
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t size1, doc_store->GetDiskUsage());
-  EXPECT_THAT(size1, Gt(0));
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t empty_doc_store_size,
+                             doc_store->GetDiskUsage());
+  EXPECT_THAT(empty_doc_store_size, Gt(0));
 
-  ICING_ASSERT_OK(doc_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t size2, doc_store->GetDiskUsage());
-  EXPECT_THAT(size2, Gt(size1));
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "email/1")
+                               .SetSchema("email")
+                               .AddStringProperty("subject", "foo")
+                               .Build();
 
-  ICING_ASSERT_OK(doc_store->Put(test_document2_));
-  EXPECT_THAT(doc_store->GetDiskUsage(), IsOkAndHolds(Gt(size2)));
-  doc_store.reset();
+  // Since our GetDiskUsage can only get sizes in increments of block_size, we
+  // need to insert enough documents so the disk usage will increase by at least
+  // 1 block size. The number 100 is a bit arbitrary, gotten from manually
+  // testing.
+  for (int i = 0; i < 100; ++i) {
+    ICING_ASSERT_OK(doc_store->Put(document));
+  }
+  EXPECT_THAT(doc_store->GetDiskUsage(),
+              IsOkAndHolds(Gt(empty_doc_store_size)));
 
   // Bad file system
   MockFilesystem mock_filesystem;

@@ -22,6 +22,7 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -35,9 +36,10 @@
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/i18n-utils.h"
 
 namespace icing {
 namespace lib {
@@ -56,9 +58,11 @@ class SnippetRetrieverTest : public testing::Test {
 
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
-    ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               LanguageSegmenter::Create());
+        icu_data_file_helper::SetUpICUDataFile(
+            GetTestFilePath("icing/icu.dat")));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        language_segmenter_,
+        language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
 
     // Setup the schema
     ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
@@ -85,7 +89,9 @@ class SnippetRetrieverTest : public testing::Test {
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        normalizer_, Normalizer::Create(/*max_term_byte_size=*/10000));
+        normalizer_,
+        normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
+                                   /*max_term_byte_size=*/10000));
     ICING_ASSERT_OK_AND_ASSIGN(
         snippet_retriever_,
         SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
