@@ -79,6 +79,7 @@ cc_library_shared {
         // Tools for manual debugging/investigating
         "icing/tools/**/*",
     ],
+    header_libs: ["jni_headers"],
     static_libs: [
         "icing-c-proto",
         "libutf",
