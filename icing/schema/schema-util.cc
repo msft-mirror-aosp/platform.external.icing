@@ -22,6 +22,7 @@
 #include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/absl_ports/annotate.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
@@ -35,16 +36,6 @@ namespace icing {
 namespace lib {
 
 namespace {
-
-bool isAlphaNumeric(std::string_view str) {
-  for (char c : str) {
-    if (!std::isalnum(c)) {
-      return false;
-    }
-  }
-
-  return true;
-}
 
 bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
                              const PropertyConfigProto& new_property) {
@@ -148,8 +139,15 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
         // Need to know what schema_type these Document properties should be
         // validated against
         std::string_view property_schema_type(property_config.schema_type());
-        ICING_RETURN_IF_ERROR(ValidatePropertySchemaType(
-            property_schema_type, schema_type, property_name));
+        libtextclassifier3::Status validated_status =
+            ValidateSchemaType(property_schema_type);
+        if (!validated_status.ok()) {
+          return absl_ports::Annotate(
+              validated_status,
+              absl_ports::StrCat("Field 'schema_type' is required for DOCUMENT "
+                                 "data_types in schema property '",
+                                 schema_type, " ", property_name, "'"));
+        }
 
         // Need to make sure we eventually see/validate this schema_type
         if (known_schema_types.count(property_schema_type) == 0) {
@@ -184,14 +182,6 @@ libtextclassifier3::Status SchemaUtil::ValidateSchemaType(
         "Field 'schema_type' cannot be empty.");
   }
 
-  // Only support alphanumeric values.
-  if (!isAlphaNumeric(schema_type)) {
-    return absl_ports::InvalidArgumentError(
-        absl_ports::StrCat("Field 'schema_type' '", schema_type,
-                           "' can only contain "
-                           "alphanumeric characters."));
-  }
-
   return libtextclassifier3::Status::OK;
 }
 
@@ -208,7 +198,7 @@ libtextclassifier3::Status SchemaUtil::ValidatePropertyName(
   for (char c : property_name) {
     if (!std::isalnum(c)) {
       return absl_ports::InvalidArgumentError(
-          absl_ports::StrCat("Field 'property_name' '", schema_type,
+          absl_ports::StrCat("Field 'property_name' '", property_name,
                              "' can only contain alphanumeric characters."));
     }
   }
@@ -227,18 +217,6 @@ libtextclassifier3::Status SchemaUtil::ValidateDataType(
         schema_type, " ", property_name, "'"));
   }
 
-  return libtextclassifier3::Status::OK;
-}
-
-libtextclassifier3::Status SchemaUtil::ValidatePropertySchemaType(
-    std::string_view property_schema_type, std::string_view schema_type,
-    std::string_view property_name) {
-  if (property_schema_type.empty()) {
-    return absl_ports::InvalidArgumentError(
-        absl_ports::StrCat("Field 'schema_type' is required for DOCUMENT "
-                           "data_types in schema property '",
-                           schema_type, " ", property_name, "'"));
-  }
   return libtextclassifier3::Status::OK;
 }
 

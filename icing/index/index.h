@@ -27,10 +27,12 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite-index.h"
 #include "icing/index/term-id-codec.h"
+#include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -123,6 +125,19 @@ class Index {
       const std::string& term, SectionIdMask section_id_mask,
       TermMatchType::Code term_match_type);
 
+  // Finds terms with the given prefix in the given namespaces. If
+  // 'namespace_ids' is empty, returns results from all the namespaces. The
+  // input prefix must be normalized, otherwise inaccurate results may be
+  // returned. Results are not sorted specifically and are in their original
+  // order. Number of results are no more than 'num_to_return'.
+  //
+  // Returns:
+  //   A list of TermMetadata on success
+  //   INTERNAL_ERROR if failed to access term data.
+  libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
+      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
+      int num_to_return);
+
   // A class that can be used to add hits to the index.
   //
   // An editor groups hits from a particular section within a document together
@@ -136,11 +151,12 @@ class Index {
     // TODO(b/141180665): Add nullptr checks for the raw pointers
     Editor(const TermIdCodec* term_id_codec, LiteIndex* lite_index,
            DocumentId document_id, SectionId section_id,
-           TermMatchType::Code term_match_type)
+           TermMatchType::Code term_match_type, NamespaceId namespace_id)
         : term_id_codec_(term_id_codec),
           lite_index_(lite_index),
           document_id_(document_id),
           term_match_type_(term_match_type),
+          namespace_id_(namespace_id),
           section_id_(section_id) {}
 
     libtextclassifier3::Status AddHit(const char* term,
@@ -155,12 +171,13 @@ class Index {
     LiteIndex* lite_index_;
     DocumentId document_id_;
     TermMatchType::Code term_match_type_;
+    NamespaceId namespace_id_;
     SectionId section_id_;
   };
   Editor Edit(DocumentId document_id, SectionId section_id,
-              TermMatchType::Code term_match_type) {
+              TermMatchType::Code term_match_type, NamespaceId namespace_id) {
     return Editor(term_id_codec_.get(), lite_index_.get(), document_id,
-                  section_id, term_match_type);
+                  section_id, term_match_type, namespace_id);
   }
 
  private:

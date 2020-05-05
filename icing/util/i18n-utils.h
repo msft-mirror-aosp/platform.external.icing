@@ -18,54 +18,42 @@
 #include <string>
 #include <string_view>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "unicode/umachine.h"
-#include "unicode/unorm2.h"
-
 namespace icing {
 namespace lib {
+
+// These are included for uses when we don't have access to ICU.
+//
+// Defined in ICU;
+// https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/umachine_8h.html#a09fff5c3b5a5b015324dc3ec3cf92809
+using UChar32 = int32_t;
+
+// Defined in ICU:
+// https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/utf8_8h.html#aa2298b48749d9f45772c8f5a6885464a
+#define U8_MAX_LENGTH 4
+
+// Defined in ICU:
+// https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/uloc_8h.html#aa55404d3c725af4e05e65e5b40a6e13d
+#define ULOC_US "en_US"
+
+// Internationalization utils that use standard utilities or custom code. Does
+// not require any special dependencies, i.e. for use when the library is NOT
+// guaranteed to have access to ICU.
+//
+// Note: This does not handle Unicode.
+//
+// TODO(cassiewang): Figure out if we want to keep this file as a non-ICU
+// solution long-term, or if we'll do something along the lines of reverse-jni,
+// etc.
 namespace i18n_utils {
 
 // An invalid value defined by Unicode.
-static constexpr UChar32 kInvalidUchar32 = 0xFFFD;
+static constexpr UChar32 kInvalidUChar32 = 0xFFFD;
 
-// Converts a UTF16 string to a UTF8 string.
-//
-// Returns:
-//   A UTF8 string on success
-//   INTERNAL_ERROR on any failures
-libtextclassifier3::StatusOr<std::string> Utf16ToUtf8(
-    const std::u16string& utf16_string);
-
-// Converts a UTF8 string to a UTF16 string.
-//
-// Returns:
-//   A UTF16 string on success
-//   INTERNAL_ERROR on any failures
-libtextclassifier3::StatusOr<std::u16string> Utf8ToUtf16(
-    std::string_view utf8_string);
-
-// Returns the Unicode char at the given position. If anything wrong happens, an
-// invalid value 0xFFFD is returned.
+// Returns the char at the given position.
 UChar32 GetUChar32At(const char* data, int length, int position);
-
-// Safely truncates a UTF8 string so that multi-byte UTF8 characters are not cut
-// in the middle. The string will be truncated in place.
-void SafeTruncateUtf8(std::string* str, int truncate_to_length);
 
 // Checks if the single char is within ASCII range.
 bool IsAscii(char c);
-
-// Checks if the Unicode char is within ASCII range.
-bool IsAscii(UChar32 c);
-
-// Returns how many code units (bytes) are used for the UTF-8 encoding of this
-// Unicode character. Returns 0 if not valid.
-int GetUtf8Length(UChar32 c);
-
-// Checks if the single char is the first byte of a UTF8 character, note
-// that a single ASCII char is also considered a lead byte.
-bool IsLeadUtf8Byte(char c);
 
 // Checks if the character at position is punctuation. Assigns the length of the
 // character at position to *char_len_out if the character at position is valid
@@ -73,16 +61,8 @@ bool IsLeadUtf8Byte(char c);
 bool IsPunctuationAt(std::string_view input, int position,
                      int* char_len_out = nullptr);
 
-// Transforms a Unicode character with diacritics to its counterpart in ASCII
-// range. E.g. "ü" -> "u". Result will be set to char_out. Returns true if
-// the transformation is successful.
-//
-// NOTE: According to our convention this function should have returned
-// StatusOr<char>. However, this function is performance-sensitive because is
-// could be called on every Latin character in normalization, so we make it
-// return a bool here to save a bit more time and memory.
-bool DiacriticCharToAscii(const UNormalizer2* normalizer2, UChar32 uchar32_in,
-                          char* char_out);
+// Checks if the character at position is a whitespace.
+bool IsWhitespaceAt(std::string_view input, int position);
 
 }  // namespace i18n_utils
 }  // namespace lib

@@ -51,7 +51,9 @@
 #include "icing/scoring/scoring-processor.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
@@ -267,10 +269,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers() {
   ICING_RETURN_IF_ERROR(InitializeSchemaStore());
   ICING_RETURN_IF_ERROR(InitializeDocumentStore());
 
-  TC3_ASSIGN_OR_RETURN(language_segmenter_, LanguageSegmenter::Create());
+  TC3_ASSIGN_OR_RETURN(
+      language_segmenter_,
+      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
 
-  TC3_ASSIGN_OR_RETURN(normalizer_,
-                       Normalizer::Create(options_.max_token_length()));
+  TC3_ASSIGN_OR_RETURN(
+      normalizer_,
+      normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
+                                 options_.max_token_length()));
 
   ICING_RETURN_IF_ERROR(InitializeIndex());
 

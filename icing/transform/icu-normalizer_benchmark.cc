@@ -14,15 +14,17 @@
 
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
+#include "icing/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/transform:normalizer_benchmark
+//    //icing/transform:icu-normalizer_benchmark
 //
-//    $ blaze-bin/icing/transform/normalizer_benchmark
+//    $ blaze-bin/icing/transform/icu-normalizer_benchmark
 //    --benchmarks=all
 //
 // Run on an Android device:
@@ -31,12 +33,13 @@
 //
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //    --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//    //icing/transform:normalizer_benchmark
+//    //icing/transform:icu-normalizer_benchmark
 //
-//    $ adb push blaze-bin/icing/transform/normalizer_benchmark
+//    $ adb push blaze-bin/icing/transform/icu-normalizer_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/normalizer_benchmark --benchmarks=all --adb
+//    $ adb shell /data/local/tmp/icu-normalizer_benchmark --benchmarks=all
+//    --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
 // the benchmark will set up data files accordingly.
@@ -50,12 +53,14 @@ namespace {
 void BM_NormalizeUppercase(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Normalizer> normalizer,
-      Normalizer::Create(
+      normalizer_factory::Create(
+          normalizer_factory::NormalizerType::ICU4C,
           /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string(state.range(0), 'A');
@@ -82,12 +87,14 @@ BENCHMARK(BM_NormalizeUppercase)
 void BM_NormalizeAccent(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Normalizer> normalizer,
-      Normalizer::Create(
+      normalizer_factory::Create(
+          normalizer_factory::NormalizerType::ICU4C,
           /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
@@ -118,12 +125,14 @@ BENCHMARK(BM_NormalizeAccent)
 void BM_NormalizeHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Normalizer> normalizer,
-      Normalizer::Create(
+      normalizer_factory::Create(
+          normalizer_factory::NormalizerType::ICU4C,
           /*max_term_byte_size=*/std::numeric_limits<int>::max()));
 
   std::string input_string;
