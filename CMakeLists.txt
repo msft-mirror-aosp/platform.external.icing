@@ -26,31 +26,23 @@ set(CMAKE_HOST_ARGS
 set(Protobuf_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../protobuf")
 set(Protobuf_HOST_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-host")
 set(Protobuf_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-target")
+add_custom_command(
+    OUTPUT "${Protobuf_HOST_BINARY_DIR}/protoc"
 
-# Run another cmake invocation to configure the protobuf project
-execute_process(
+    # Run another cmake invocation to configure the protobuf project
     COMMAND "${CMAKE_COMMAND}"
-    ${CMAKE_HOST_ARGS}
-    -H${Protobuf_SOURCE_DIR}/cmake
-    -B${Protobuf_HOST_BINARY_DIR}
-    -Dprotobuf_BUILD_TESTS:BOOL=OFF
-    RESULT_VARIABLE exec_value
-    OUTPUT_VARIABLE exec_output
-    ERROR_VARIABLE exec_output
-)
-message("Result of proto configuration: ${exec_value}. Output: ${exec_output}")
+      ${CMAKE_HOST_ARGS}
+      -H${Protobuf_SOURCE_DIR}/cmake
+      -B${Protobuf_HOST_BINARY_DIR}
+      -Dprotobuf_BUILD_TESTS:BOOL=OFF
 
-# Run the actual build tool (ninja) to compile protoc for the host
-execute_process(
+    # Run the actual build tool (ninja) to compile protoc for the host
     COMMAND "${CMAKE_MAKE_PROGRAM}" protoc
     WORKING_DIRECTORY ${Protobuf_HOST_BINARY_DIR}
-    RESULT_VARIABLE exec_value
-    OUTPUT_VARIABLE exec_output
-    ERROR_VARIABLE exec_output
 )
-message("Result of proto build: ${exec_value}. Output: ${exec_output}")
+message(STATUS "Building protoc at: ${Protobuf_HOST_BINARY_DIR}/protoc")
 
-# Glob Icing proto sources
+# Glob Icing proto sources. Results look like this: icing/proto/document.proto
 file(
     GLOB_RECURSE
     Icing_PROTO_FILES
@@ -64,26 +56,20 @@ file(MAKE_DIRECTORY ${Icing_PROTO_GEN_DIR})
 foreach(FILE ${Icing_PROTO_FILES})
     # Find the name of the proto file without the .proto extension
     string(REGEX REPLACE "\.proto$" "" FILE_NOEXT ${FILE})
-    execute_process(
+    list(APPEND Icing_PROTO_SOURCES
+      "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.cc"
+      "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.h")
+    add_custom_command(
+        OUTPUT "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.cc"
+          "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.h"
         COMMAND "${Protobuf_HOST_BINARY_DIR}/protoc"
-        --proto_path ${CMAKE_CURRENT_SOURCE_DIR}
-        --cpp_out ${Icing_PROTO_GEN_DIR}
-        ${FILE}
+          --proto_path ${CMAKE_CURRENT_SOURCE_DIR}
+          --cpp_out ${Icing_PROTO_GEN_DIR}
+          ${FILE}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        RESULT_VARIABLE exec_value
-        OUTPUT_VARIABLE exec_output
-        ERROR_VARIABLE exec_output
+        DEPENDS "${Protobuf_HOST_BINARY_DIR}/protoc"
     )
-    message("Result of protoc ${FILE}: ${exec_value}. Output: ${exec_output}")
 endforeach()
-
-# Glob generated source files from running protoc
-file(
-    GLOB_RECURSE
-    Icing_PROTO_SOURCES
-    "${Icing_PROTO_GEN_DIR}/*.pb.cc"
-    "${Icing_PROTO_GEN_DIR}/*.pb.h"
-)
 message(STATUS "Icing_PROTO_SOURCES=${Icing_PROTO_SOURCES}")
 
 # Compile libprotobuf
