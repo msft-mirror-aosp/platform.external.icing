@@ -14,11 +14,22 @@
 
 #include "icing/tokenization/raw-query-tokenizer.h"
 
+#include <stddef.h>
+
+#include <cctype>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
-#include "icing/util/i18n-utils.h"
+#include "icing/util/icu-i18n-utils.h"
 #include "icing/util/status-macros.h"
 
 // This file provides rules that tell the tokenizer what to do when it sees a
@@ -305,8 +316,8 @@ TermType GetTermType(std::string_view term) {
     return OR_OPERATOR;
   }
   // Checks the first char to see if it's an ASCII term
-  if (i18n_utils::IsAscii(term[0])) {
-    if (u_isalnum(term[0])) {
+  if (icu_i18n_utils::IsAscii(term[0])) {
+    if (std::isalnum(term[0])) {
       return ALPHANUMERIC_TERM;
     }
     return OTHER;
@@ -370,7 +381,7 @@ libtextclassifier3::Status OutputToken(State new_state,
     case ALPHANUMERIC_TERM:
       if (new_state == PROCESSING_PROPERTY_TERM) {
         // Asserts extra rule 1: property name must be in ASCII
-        if (!i18n_utils::IsAscii(current_term[0])) {
+        if (!icu_i18n_utils::IsAscii(current_term[0])) {
           return absl_ports::InvalidArgumentError(
               "Characters in property name must all be ASCII.");
         }
@@ -431,7 +442,7 @@ libtextclassifier3::Status ProcessTerm(State* current_state,
     case OUTPUT:
       ICING_RETURN_IF_ERROR(
           OutputToken(new_state, *current_term, *current_term_type, tokens));
-      U_FALLTHROUGH;
+      [[fallthrough]];
     case IGNORE:
       *current_term = next_term;
       *current_term_type = next_term_type;

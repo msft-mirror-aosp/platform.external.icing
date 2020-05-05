@@ -18,9 +18,8 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "icing/util/i18n-utils.h"
+#include "icing/util/icu-i18n-utils.h"
 #include "icing/util/status-macros.h"
-#include "unicode/umachine.h"
 
 namespace icing {
 namespace lib {
@@ -40,8 +39,8 @@ bool IsValidTerm(std::string_view term) {
   }
   // Gets the first unicode character. We can know what the whole term is by
   // checking only the first character.
-  UChar32 uchar32 = i18n_utils::GetUChar32At(term.data(), term.length(), 0);
-  return !u_isUWhiteSpace(uchar32) && !u_ispunct(uchar32);
+  return !icu_i18n_utils::IsWhitespaceAt(term, /*position=*/0) &&
+         !icu_i18n_utils::IsPunctuationAt(term, /*position=*/0);
 }
 }  // namespace
 

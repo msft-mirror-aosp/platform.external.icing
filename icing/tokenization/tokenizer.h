@@ -16,9 +16,12 @@
 #define ICING_TOKENIZATION_TOKENIZER_H_
 
 #include <cstdint>
+#include <memory>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/token.h"
+
 namespace icing {
 namespace lib {
 

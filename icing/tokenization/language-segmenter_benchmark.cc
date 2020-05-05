@@ -14,8 +14,10 @@
 
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
+#include "icing/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 
@@ -53,11 +55,13 @@ namespace {
 void BM_SegmentNoSpace(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
+          .ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
 
@@ -88,11 +92,13 @@ BENCHMARK(BM_SegmentNoSpace)
 void BM_SegmentWithSpaces(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
+          .ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
   for (int i = 1; i < input_string.length(); i += 2) {
@@ -126,11 +132,13 @@ BENCHMARK(BM_SegmentWithSpaces)
 void BM_SegmentCJK(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
+          .ValueOrDie();
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {

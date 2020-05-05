@@ -125,13 +125,12 @@ TEST_F(SchemaUtilTest, Invalid_EmptySchemaType) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_NotAlphanumericSchemaType) {
+TEST_F(SchemaUtilTest, AnySchemaTypeOk) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
-  type->set_schema_type("_");
+  type->set_schema_type("abc123!@#$%^&*()_-+=[{]}|\\;:'\",<.>?你好");
 
-  ASSERT_THAT(SchemaUtil::Validate(schema_proto_),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
 TEST_F(SchemaUtilTest, Invalid_ClearedPropertyName) {
@@ -160,7 +159,7 @@ TEST_F(SchemaUtilTest, Invalid_EmptyPropertyName) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_NotAlphanumericPropertyName) {
+TEST_F(SchemaUtilTest, NonAlphanumericPropertyNameIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -171,6 +170,18 @@ TEST_F(SchemaUtilTest, Invalid_NotAlphanumericPropertyName) {
 
   ASSERT_THAT(SchemaUtil::Validate(schema_proto_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(SchemaUtilTest, AlphanumericPropertyNameOk) {
+  auto type = schema_proto_.add_types();
+  *type = CreateSchemaTypeConfig(kEmailType);
+
+  auto property = type->add_properties();
+  property->set_property_name("abc123");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+
+  ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
 TEST_F(SchemaUtilTest, Invalid_DuplicatePropertyName) {
@@ -343,8 +354,8 @@ TEST_F(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
   property->set_data_type(PropertyConfigProto::DataType::INT64);
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
 
-  // Configure new schema, new schema needs to at least have all the previously
-  // defined properties
+  // Configure new schema, new schema needs to at least have all the
+  // previously defined properties
   SchemaProto new_schema;
   type = new_schema.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);

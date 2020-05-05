@@ -67,7 +67,7 @@ class SchemaUtil {
   //   8. PropertyConfigProtos.cardinality cannot be UNKNOWN
   //   9. PropertyConfigProtos.schema_type's must correspond to a
   //      SchemaTypeConfigProto.schema_type
-  //  10. All string fields must be alphanumeric.
+  //  10. Property names can only be alphanumeric.
   //
   // Returns:
   //   ALREADY_EXISTS for case 1 and 2

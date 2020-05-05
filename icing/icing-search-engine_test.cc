@@ -26,13 +26,12 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
-#include "icing/proto/document.proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/schema/schema-store.h"
@@ -47,6 +46,7 @@ namespace icing {
 namespace lib {
 
 namespace {
+
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
 using ::testing::Eq;
@@ -73,9 +73,10 @@ std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
 class IcingSearchEngineTest : public testing::Test {
  protected:
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
+    // File generated via icu_data_file rule in //icing/BUILD.
+    std::string icu_data_file_path =
+        GetTestFilePath("icing/icu.dat");
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
 
