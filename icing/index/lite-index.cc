@@ -34,6 +34,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/term-property-id.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
 #include "icing/legacy/index/icing-array-storage.h"
@@ -276,26 +277,31 @@ void LiteIndex::UpdateChecksum() {
 }
 
 libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
-    const std::string& term, TermMatchType::Code term_match_type) {
+    const std::string& term, TermMatchType::Code term_match_type,
+    NamespaceId namespace_id) {
   uint32_t tvi;
   if (!lexicon_.Insert(term.c_str(), "", &tvi, false)) {
     return absl_ports::ResourceExhaustedError(
         absl_ports::StrCat("Unable to add term ", term, " to lexicon!"));
   }
-  ICING_RETURN_IF_ERROR(UpdateTerm(tvi, term_match_type));
+  ICING_RETURN_IF_ERROR(UpdateTermProperties(
+      tvi, term_match_type == TermMatchType::PREFIX, namespace_id));
   return tvi;
 }
 
-libtextclassifier3::Status LiteIndex::UpdateTerm(
-    uint32_t tvi, TermMatchType::Code term_match_type) {
-  if (term_match_type != TermMatchType::PREFIX) {
-    return libtextclassifier3::Status::OK;
+libtextclassifier3::Status LiteIndex::UpdateTermProperties(
+    uint32_t tvi, bool hasPrefixHits, NamespaceId namespace_id) {
+  if (hasPrefixHits &&
+      !lexicon_.SetProperty(tvi, GetHasHitsInPrefixSectionPropertyId())) {
+    return absl_ports::ResourceExhaustedError(
+        "Insufficient disk space to create prefix property!");
   }
 
-  if (!lexicon_.SetProperty(tvi, kHasHitsInPrefixSection)) {
+  if (!lexicon_.SetProperty(tvi, GetNamespacePropertyId(namespace_id))) {
     return absl_ports::ResourceExhaustedError(
-        "Insufficient disk space to create property!");
+        "Insufficient disk space to create namespace property!");
   }
+
   return libtextclassifier3::Status::OK;
 }
 
@@ -361,6 +367,12 @@ uint32_t LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
     }
   }
   return count;
+}
+
+uint32_t LiteIndex::CountHits(uint32_t term_id) {
+  return AppendHits(term_id, kSectionIdMaskAll,
+                    /*only_from_prefix_sections=*/false,
+                    /*hits_out=*/nullptr);
 }
 
 bool LiteIndex::is_full() const {

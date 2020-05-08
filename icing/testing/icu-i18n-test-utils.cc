@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/i18n-test-utils.h"
+#include "icing/testing/icu-i18n-test-utils.h"
 
 #include <cstdint>
 #include <string>
@@ -24,7 +24,7 @@
 namespace icing {
 namespace lib {
 
-std::string UcharToString(UChar32 uchar) {
+std::string UCharToString(UChar32 uchar) {
   std::string result;
   uint8_t utf8_buffer[4];  // U8_APPEND writes 0 to 4 bytes
 

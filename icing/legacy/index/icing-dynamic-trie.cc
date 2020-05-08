@@ -84,7 +84,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
-#include "icing/util/i18n-utils.h"
+#include "icing/util/icu-i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 
@@ -1868,7 +1868,7 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 
   // If we start with non-ascii, take all left branches while there is
   // a continuation byte.
-  if (!i18n_utils::IsAscii(cur_[cur_len_ - 1])) {
+  if (!icu_i18n_utils::IsAscii(cur_[cur_len_ - 1])) {
     while (!node->is_leaf()) {
       if (cur_len_ >= U8_MAX_LENGTH) break;
 
@@ -1877,8 +1877,8 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
       if (branch_end_->child->val() == 0) {
         // Check if we already have a valid cur_.
         cur_[cur_len_] = 0;
-        UChar32 uchar32 = i18n_utils::GetUChar32At(cur_, cur_len_, 0);
-        if (uchar32 == i18n_utils::kInvalidUchar32 &&
+        UChar32 uchar32 = icu_i18n_utils::GetUChar32At(cur_, cur_len_, 0);
+        if (uchar32 == icu_i18n_utils::kInvalidUChar32 &&
             node->log2_num_children() > 0) {
           branch_end_->child++;
         } else {
