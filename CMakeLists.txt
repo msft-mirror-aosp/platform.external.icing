@@ -76,6 +76,11 @@ message(STATUS "Icing_PROTO_SOURCES=${Icing_PROTO_SOURCES}")
 set(protobuf_BUILD_TESTS OFF CACHE BOOL "")
 add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
 
+# Compile libandroidicu
+set(ICU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../icu/libandroidicu")
+set(ICU_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/icu-target")
+add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
+
 # Glob Icing C++ sources
 # TODO: When supporting cmake v3.12 or higher, use CONFIGURE_DEPENDS in the glob
 # below so that cmake knows when to re-generate the makefiles.
@@ -110,4 +115,5 @@ add_library(
 target_include_directories(icing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(icing PRIVATE ${Icing_PROTO_GEN_DIR})
 target_include_directories(icing PRIVATE "${Protobuf_SOURCE_DIR}/src")
-target_link_libraries(icing protobuf::libprotobuf log)
+target_include_directories(icing PRIVATE "${ICU_SOURCE_DIR}/include")
+target_link_libraries(icing protobuf::libprotobuf libandroidicu log)
