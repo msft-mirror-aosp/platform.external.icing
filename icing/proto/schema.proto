@@ -21,6 +21,7 @@ import "icing/proto/term.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
+option objc_class_prefix = "ICNG";
 
 // Defines the schema that every Document of a specific "type" should adhere
 // to. These can be considered as definitions of rich structured types for
@@ -204,6 +205,7 @@ message SetSchemaResultProto {
 message GetSchemaResultProto {
   // Status code can be one of:
   //   OK
+  //   FAILED_PRECONDITION
   //   NOT_FOUND
   //   INTERNAL
   //

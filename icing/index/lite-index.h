@@ -205,6 +205,14 @@ class LiteIndex {
   // verbosity > 0, more detailed debug information from the lexicon.
   void GetDebugInfo(int verbosity, std::string* out) const;
 
+  // Returns the byte size of all the elements held in the index. This excludes
+  // the size of any internal metadata of the index, e.g. the index's header.
+  //
+  // Returns:
+  //   Byte size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
+
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
 
@@ -228,15 +236,29 @@ class LiteIndex {
   // hit buffer if term_id is not present.
   uint32_t Seek(uint32_t term_id);
 
+  // File descriptor that points to where the header and hit buffer are written
+  // to.
   ScopedFd hit_buffer_fd_;
 
+  // Mmapped region past the header that stores the hits.
   IcingArrayStorage hit_buffer_;
+
+  // Crc checksum of the hits, excludes the header.
   uint32_t hit_buffer_crc_;
+
+  // Trie that maps indexed terms to their term id
   IcingDynamicTrie lexicon_;
+
   // TODO(b/140437260): Port over to MemoryMappedFile
+  // Memory mapped region of the underlying file that reflects the header.
   IcingMMapper header_mmap_;
+
+  // Wrapper around the mmapped header that contains stats on the lite index.
   std::unique_ptr<IcingLiteIndex_Header> header_;
+
+  // Options used to initialize the LiteIndex.
   const Options options_;
+
   // TODO(b/139087650) Move to icing::Filesystem
   const IcingFilesystem* const filesystem_;
 };

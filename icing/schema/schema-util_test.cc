@@ -502,6 +502,40 @@ TEST_F(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
               Eq(schema_delta));
 }
 
+TEST_F(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
+  // Configure old schema
+  SchemaProto old_schema;
+  auto old_type = old_schema.add_types();
+  *old_type = CreateSchemaTypeConfig(kEmailType, kPersonType);
+
+  auto old_property = old_type->add_properties();
+  old_property->set_property_name("Property");
+  old_property->set_data_type(PropertyConfigProto::DataType::STRING);
+  old_property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  // Configure new schema
+  SchemaProto new_schema;
+  auto new_type = new_schema.add_types();
+  *new_type = CreateSchemaTypeConfig(kEmailType, kPersonType);
+
+  auto new_property = new_type->add_properties();
+  new_property->set_property_name("Property");
+  new_property->set_data_type(PropertyConfigProto::DataType::STRING);
+  new_property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  new_property = new_type->add_properties();
+  new_property->set_property_name("NewIndexedProperty");
+  new_property->set_data_type(PropertyConfigProto::DataType::STRING);
+  new_property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  new_property->mutable_indexing_config()->set_term_match_type(
+      TermMatchType::EXACT_ONLY);
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.index_incompatible = true;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
+              Eq(schema_delta));
+}
+
 TEST_F(SchemaUtilTest, AddingTypeIsCompatible) {
   // Can add a new type, existing data isn't incompatible, since none of them
   // are of this new schema type

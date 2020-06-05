@@ -210,12 +210,22 @@ class FileBackedProtoLog {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<ProtoT> ReadProto(int64_t file_offset) const;
 
-  // Calculates and returns the disk usage in bytes.
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
   //
   // Returns:
   //   Disk usage on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the file size of all the elements held in the log. File size is in
+  // bytes. This excludes the size of any internal metadata of the log, e.g. the
+  // log's header.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
   // An iterator helping to find offsets of all the protos in file.
   // Example usage:
@@ -733,6 +743,17 @@ libtextclassifier3::StatusOr<int64_t> FileBackedProtoLog<ProtoT>::GetDiskUsage()
     return absl_ports::InternalError("Failed to get disk usage of proto log");
   }
   return size;
+}
+
+template <typename ProtoT>
+libtextclassifier3::StatusOr<int64_t>
+FileBackedProtoLog<ProtoT>::GetElementsFileSize() const {
+  int64_t total_file_size = filesystem_->GetFileSize(file_path_.c_str());
+  if (total_file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError(
+        "Failed to get file size of elments in the proto log");
+  }
+  return total_file_size - sizeof(Header);
 }
 
 template <typename ProtoT>

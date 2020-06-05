@@ -88,10 +88,15 @@ file(
     icing/*.cc icing/*.h
 )
 # Exclude the same types of files as Android.bp. See the comments there.
-list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/.*_test\.cc$")
+list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/.*[^a-zA-Z0-9]test[^a-zA-Z0-9].*$")
 list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/.*_benchmark\.cc$")
+list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/helpers/icu/.*$")
 list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/testing/.*$")
+list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/tokenization/icu/.*$")
+list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/tokenization/simple/.*$")
 list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/tools/.*$")
+list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/transform/icu/.*$")
+list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/transform/simple/.*$")
 message(STATUS "Icing_CC_SOURCES=${Icing_CC_SOURCES}")
 
 add_library(

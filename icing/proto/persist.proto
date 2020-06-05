@@ -20,12 +20,14 @@ import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
+option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Persist
 // Next tag: 2
 message PersistToDiskResultProto {
   // Status code can be one of:
   //   OK
+  //   FAILED_PRECONDITION
   //   INTERNAL
   //
   // See status.proto for more details.
