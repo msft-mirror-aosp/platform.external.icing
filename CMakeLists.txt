@@ -14,33 +14,35 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
-# Build protoc with a host configuration. We need to run it on the host to
-# create our proto files.
-set(CMAKE_HOST_ARGS
-  -DBUILD_SHARED_LIBS:BOOL=${BUILD_SHARED_LIBS}
-  -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
-  -DCMAKE_C_COMPILER:STRING=${CMAKE_C_COMPILER}
-  -DCMAKE_CXX_COMPILER:STRING=${CMAKE_CXX_COMPILER}
-  -DCMAKE_GENERATOR:STRING=${CMAKE_GENERATOR}
-  -DCMAKE_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM})
+set(
+    Protobuf_PREBUILTS_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../prebuilts/protobuf")
 set(Protobuf_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../protobuf")
-set(Protobuf_HOST_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-host")
 set(Protobuf_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-target")
-add_custom_command(
-    OUTPUT "${Protobuf_HOST_BINARY_DIR}/protoc"
 
-    # Run another cmake invocation to configure the protobuf project
-    COMMAND "${CMAKE_COMMAND}"
-      ${CMAKE_HOST_ARGS}
-      -H${Protobuf_SOURCE_DIR}/cmake
-      -B${Protobuf_HOST_BINARY_DIR}
-      -Dprotobuf_BUILD_TESTS:BOOL=OFF
+## Configure libprotobuf ##
+# Find the right protoc to compile our proto files
+if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Darwin")
+  set(Protobuf_PROTOC_PATH "${Protobuf_PREBUILTS_DIR}/darwin-x86_64/protoc")
+elseif(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Linux")
+  set(Protobuf_PROTOC_PATH "${Protobuf_PREBUILTS_DIR}/linux-x86_64/protoc")
+elseif(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Windows")
+  set(Protobuf_PROTOC_PATH "${Protobuf_PREBUILTS_DIR}/windows-x86/protoc.exe")
+else()
+  message(
+      FATAL_ERROR
+      "No protoc prebuilt found for host OS ${CMAKE_HOST_SYSTEM_NAME}")
+endif()
+message(STATUS "Using prebuilt protoc at: ${Protobuf_PROTOC_PATH}")
 
-    # Run the actual build tool (ninja) to compile protoc for the host
-    COMMAND "${CMAKE_MAKE_PROGRAM}" protoc
-    WORKING_DIRECTORY ${Protobuf_HOST_BINARY_DIR}
-)
-message(STATUS "Building protoc at: ${Protobuf_HOST_BINARY_DIR}/protoc")
+# Compile libprotobuf
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "")
+add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
+
+# Compile libandroidicu
+set(ICU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../icu/libandroidicu")
+set(ICU_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/icu-target")
+add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
 
 # Glob Icing proto sources. Results look like this: icing/proto/document.proto
 file(
@@ -62,24 +64,15 @@ foreach(FILE ${Icing_PROTO_FILES})
     add_custom_command(
         OUTPUT "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.cc"
           "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.h"
-        COMMAND "${Protobuf_HOST_BINARY_DIR}/protoc"
+        COMMAND ${Protobuf_PROTOC_PATH}
           --proto_path ${CMAKE_CURRENT_SOURCE_DIR}
           --cpp_out ${Icing_PROTO_GEN_DIR}
           ${FILE}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS "${Protobuf_HOST_BINARY_DIR}/protoc"
+        DEPENDS ${Protobuf_PROTOC_PATH}
     )
 endforeach()
 message(STATUS "Icing_PROTO_SOURCES=${Icing_PROTO_SOURCES}")
-
-# Compile libprotobuf
-set(protobuf_BUILD_TESTS OFF CACHE BOOL "")
-add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
-
-# Compile libandroidicu
-set(ICU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../icu/libandroidicu")
-set(ICU_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/icu-target")
-add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
 
 # Glob Icing C++ sources
 # TODO: When supporting cmake v3.12 or higher, use CONFIGURE_DEPENDS in the glob
