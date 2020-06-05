@@ -22,6 +22,7 @@ import "icing/proto/term.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
+option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
 // Next tag: 5
@@ -148,6 +149,7 @@ message SnippetProto {
 message SearchResultProto {
   // Status code can be one of:
   //   OK
+  //   FAILED_PRECONDITION
   //   INVALID_ARGUMENT
   //   ABORTED
   //   INTERNAL

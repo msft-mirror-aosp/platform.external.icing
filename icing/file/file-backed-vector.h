@@ -194,12 +194,22 @@ class FileBackedVector {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates and returns the disk usage in bytes.
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
   //
   // Returns:
   //   Disk usage on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the file size of the all the elements held in the vector. File size
+  // is in bytes. This excludes the size of any internal metadata of the vector,
+  // e.g. the vector's header.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
   // Accessors.
   const T* array() const {
@@ -703,6 +713,17 @@ libtextclassifier3::StatusOr<int64_t> FileBackedVector<T>::GetDiskUsage()
         "Failed to get disk usage of file-backed vector");
   }
   return size;
+}
+
+template <typename T>
+libtextclassifier3::StatusOr<int64_t> FileBackedVector<T>::GetElementsFileSize()
+    const {
+  int64_t total_file_size = filesystem_->GetFileSize(file_path_.c_str());
+  if (total_file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError(
+        "Failed to get file size of elements in the file-backed vector");
+  }
+  return total_file_size - sizeof(Header);
 }
 
 }  // namespace lib

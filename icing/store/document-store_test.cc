@@ -1966,5 +1966,53 @@ TEST_F(DocumentStoreTest,
               IsOkAndHolds(EqualsProto(message_document)));
 }
 
+TEST_F(DocumentStoreTest, GetOptimizeInfo) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  // Nothing should be optimizable yet
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::OptimizeInfo optimize_info,
+                             document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(0));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+
+  ICING_EXPECT_OK(document_store->Put(DocumentProto(test_document1_)));
+
+  // Adding a document, still nothing is optimizable
+  ICING_ASSERT_OK_AND_ASSIGN(optimize_info, document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(1));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+
+  // Delete a document. Now something is optimizable
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+  ICING_ASSERT_OK_AND_ASSIGN(optimize_info, document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(1));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(1));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Gt(0));
+
+  // Optimize it into a different directory, should bring us back to nothing
+  // since all documents were optimized away.
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  EXPECT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  EXPECT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK(document_store->OptimizeInto(optimized_dir));
+  document_store.reset();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> optimized_document_store,
+      DocumentStore::Create(&filesystem_, optimized_dir, &fake_clock_,
+                            schema_store_.get()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(optimize_info,
+                             optimized_document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(0));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+}
+
 }  // namespace lib
 }  // namespace icing

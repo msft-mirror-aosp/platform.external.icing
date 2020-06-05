@@ -391,6 +391,29 @@ void LiteIndex::GetDebugInfo(int verbosity, std::string* out) const {
   lexicon_.GetDebugInfo(verbosity, out);
 }
 
+libtextclassifier3::StatusOr<int64_t> LiteIndex::GetElementsSize() const {
+  int64_t header_and_hit_buffer_file_size =
+      filesystem_->GetFileSize(hit_buffer_fd_.get());
+
+  if (header_and_hit_buffer_file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError(
+        "Failed to get element size of the LiteIndex's header and hit buffer");
+  }
+
+  int64_t lexicon_disk_usage = lexicon_.GetElementsSize();
+  if (lexicon_disk_usage == IcingFilesystem::kBadFileSize) {
+    return absl_ports::InternalError(
+        "Failed to get element size of LiteIndex's lexicon");
+  }
+
+  // On initialization, we grow the file to a padded size first. So this size
+  // won't count towards the size taken up by elements
+  size_t header_padded_size = IcingMMapper::page_aligned_size(header_size());
+
+  return header_and_hit_buffer_file_size - header_padded_size +
+         lexicon_disk_usage;
+}
+
 uint32_t LiteIndex::Seek(uint32_t term_id) {
   // Make searchable by sorting by hit buffer.
   uint32_t sort_len = header_->cur_size() - header_->searchable_end();

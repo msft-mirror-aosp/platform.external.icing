@@ -45,6 +45,7 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::IsTrue;
 using ::testing::NiceMock;
@@ -621,12 +622,13 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInOneNamespace) {
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
                                         /*num_to_return=*/10),
               IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
-                                       EqualsTermMetadata("foo", 1))));
+                                                EqualsTermMetadata("foo", 1))));
 
   // namespace with id 1 has 1 result.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{1},
-                                        /*num_to_return=*/10),
-              IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{1},
+                                /*num_to_return=*/10),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInMultipleNamespaces) {
@@ -650,7 +652,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInMultipleNamespaces) {
       index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{1, 2},
                                 /*num_to_return=*/10),
       IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
-                               EqualsTermMetadata("fool", 1))));
+                                        EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
@@ -672,9 +674,9 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
   // Should return "fo", "foo" and "fool" across all namespaces.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{},
                                         /*num_to_return=*/10),
-              IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
-                                       EqualsTermMetadata("foo", 1),
-                                       EqualsTermMetadata("fool", 1))));
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("fo", 1), EqualsTermMetadata("foo", 1),
+                  EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
@@ -690,10 +692,22 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
   EXPECT_THAT(edit2.AddHit("fool"), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 2 hits.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
-                                        /*num_to_return=*/10),
-              IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
-                                       EqualsTermMetadata("fool", 2))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                /*num_to_return=*/10),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 2))));
+}
+
+TEST_F(IndexTest, GetElementsSize) {
+  // Check empty index.
+  EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(Eq(0)));
+
+  // Add an element.
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(Gt(0)));
 }
 
 }  // namespace

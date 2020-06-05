@@ -26,7 +26,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -1367,6 +1367,72 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldDeleteTemporaryDirectory) {
   EXPECT_FALSE(filesystem()->FileExists(tmp_file.c_str()));
 }
 
+TEST_F(IcingSearchEngineTest, GetOptimizeInfoHasCorrectStats) {
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "uri2")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", "message body")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(500)
+                                .Build();
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetSystemTimeMilliseconds(1000);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::move(fake_clock));
+  ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+  // Just initialized, nothing is optimizable yet.
+  GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+  EXPECT_THAT(optimize_info.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
+
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
+              Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
+
+  // Only have active documents, nothing is optimizable yet.
+  optimize_info = icing.GetOptimizeInfo();
+  EXPECT_THAT(optimize_info.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
+
+  // Deletes document1
+  ASSERT_THAT(icing.Delete("namespace", "uri1").status().code(),
+              Eq(StatusProto::OK));
+
+  optimize_info = icing.GetOptimizeInfo();
+  EXPECT_THAT(optimize_info.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(optimize_info.optimizable_docs(), Eq(1));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Gt(0));
+  int64_t first_estimated_optimizable_bytes =
+      optimize_info.estimated_optimizable_bytes();
+
+  // Add a second document, but it'll be expired since the time (1000) is
+  // greater than the document's creation timestamp (100) + the document's ttl
+  // (500)
+  ASSERT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
+
+  optimize_info = icing.GetOptimizeInfo();
+  EXPECT_THAT(optimize_info.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes(),
+              Gt(first_estimated_optimizable_bytes));
+
+  // Optimize
+  ASSERT_THAT(icing.Optimize().status().code(), Eq(StatusProto::OK));
+
+  // Nothing is optimizable now that everything has been optimized away.
+  optimize_info = icing.GetOptimizeInfo();
+  EXPECT_THAT(optimize_info.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
+}
+
 TEST_F(IcingSearchEngineTest, GetAndPutShouldWorkAfterOptimization) {
   DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
   DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
@@ -1861,7 +1927,7 @@ TEST_F(IcingSearchEngineTest, SearchIncludesDocumentsBeforeTtl) {
       document;
 
   // Time just has to be less than the document's creation timestamp (100) + the
-  // schema's ttl (500)
+  // document's ttl (500)
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetSystemTimeMilliseconds(400);
 
@@ -1908,7 +1974,7 @@ TEST_F(IcingSearchEngineTest, SearchDoesntIncludeDocumentsPastTtl) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
 
   // Time just has to be greater than the document's creation timestamp (100) +
-  // the schema's ttl (500)
+  // the document's ttl (500)
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetSystemTimeMilliseconds(700);
 
@@ -3148,6 +3214,49 @@ TEST_F(IcingSearchEngineTest, SnippetSectionRestrict) {
   EXPECT_THAT(GetWindow(result_document, result_snippet, "subject",
                         /*snippet_index=*/0),
               IsEmpty());
+}
+
+TEST_F(IcingSearchEngineTest, UninitializedInstanceFailsSafely) {
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+
+  SchemaProto email_schema = CreateMessageSchema();
+  EXPECT_THAT(icing.SetSchema(email_schema).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.GetSchema().status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      icing.GetSchemaType(email_schema.types(0).schema_type()).status().code(),
+      Eq(StatusProto::FAILED_PRECONDITION));
+
+  DocumentProto doc = CreateMessageDocument("namespace", "uri");
+  EXPECT_THAT(icing.Put(doc).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.Get(doc.namespace_(), doc.uri()).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.Delete(doc.namespace_(), doc.uri()).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.DeleteByNamespace(doc.namespace_()).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.DeleteBySchemaType(email_schema.types(0).schema_type())
+                  .status()
+                  .code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+
+  SearchSpecProto search_spec = SearchSpecProto::default_instance();
+  ScoringSpecProto scoring_spec = ScoringSpecProto::default_instance();
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  EXPECT_THAT(
+      icing.Search(search_spec, scoring_spec, result_spec).status().code(),
+      Eq(StatusProto::FAILED_PRECONDITION));
+  constexpr int kSomePageToken = 12;
+  EXPECT_THAT(icing.GetNextPage(kSomePageToken).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  icing.InvalidateNextPageToken(kSomePageToken);  // Verify this doesn't crash.
+
+  EXPECT_THAT(icing.PersistToDisk().status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.Optimize().status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
 }
 
 }  // namespace

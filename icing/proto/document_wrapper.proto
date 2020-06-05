@@ -21,6 +21,8 @@ import "icing/proto/document.proto";
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
+option objc_class_prefix = "ICNG";
+
 // DocumentWrapper as a wrapper of the user-facing DocumentProto is meant to
 // be used by icing team internally. It stores the original document provided
 // by library users and metadata of the document which shouldn't be exposed to

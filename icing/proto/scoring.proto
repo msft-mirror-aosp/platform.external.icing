@@ -19,6 +19,8 @@ package icing.lib;
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
+option objc_class_prefix = "ICNG";
+
 // Encapsulates the configurations on how Icing should score and rank the search
 // results.
 // Next tag: 3
@@ -26,9 +28,8 @@ message ScoringSpecProto {
   // OPTIONAL: Indicates how the search results will be ranked.
   message RankingStrategy {
     enum Code {
-      // No ranking strategy specified, documents will be returned in the
-      // default order that the most recent document inserted into Icing comes
-      // first.
+      // No ranking strategy specified, documents may be returned in an
+      // arbitrary order.
       NONE = 0;
 
       // Ranked by user-provided document scores.

@@ -22,7 +22,7 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
@@ -102,14 +102,11 @@ class QueryProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        language_segmenter_,
-        language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+    ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
+                               language_segmenter_factory::Create());
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        normalizer_,
-        normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
-                                   /*max_term_byte_size=*/1000));
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/1000));
   }
 
   libtextclassifier3::Status AddTokenToIndex(

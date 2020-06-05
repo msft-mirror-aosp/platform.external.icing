@@ -28,8 +28,7 @@ namespace lib {
 //
 // Example use:
 //   ICING_ASSIGN_OR_RETURN(auto normalizer,
-//       normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
-//       /*max_term_byte_size=*/5);
+//       normalizer_factory::Create(/*max_term_byte_size=*/5);
 //
 //   std::string normalized_text = normalizer->NormalizeText("HELLO!");
 //   ICING_LOG(INFO) << normalized_text; // prints "hello"

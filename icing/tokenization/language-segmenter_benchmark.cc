@@ -14,7 +14,7 @@
 
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -60,8 +60,7 @@ void BM_SegmentNoSpace(benchmark::State& state) {
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
 
@@ -97,8 +96,7 @@ void BM_SegmentWithSpaces(benchmark::State& state) {
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
   for (int i = 1; i < input_string.length(); i += 2) {
@@ -137,8 +135,7 @@ void BM_SegmentCJK(benchmark::State& state) {
   }
 
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {

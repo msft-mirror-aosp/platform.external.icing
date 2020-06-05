@@ -21,6 +21,8 @@ import "icing/proto/status.proto";
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
+option objc_class_prefix = "ICNG";
+
 // Next tag: 5
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.

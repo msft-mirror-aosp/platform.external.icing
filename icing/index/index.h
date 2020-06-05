@@ -113,6 +113,17 @@ class Index {
     lite_index_->GetDebugInfo(verbosity, out);
   }
 
+  // Returns the byte size of the all the elements held in the index. This
+  // excludes the size of any internal metadata of the index, e.g. the index's
+  // header.
+  //
+  // Returns:
+  //   Byte size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsSize() const {
+    return lite_index_->GetElementsSize();
+  }
+
   // Create an iterator to iterate through all doc hit infos in the index that
   // match the term. section_id_mask can be set to ignore hits from sections not
   // listed in the mask. Eg. section_id_mask = 1U << 3; would only return hits
