@@ -256,23 +256,29 @@ void SchemaUtil::BuildTypeConfigMap(
   }
 }
 
-void SchemaUtil::BuildPropertyConfigMap(
-    const SchemaTypeConfigProto& type_config,
-    std::unordered_map<std::string_view, const PropertyConfigProto*>*
-        property_config_map,
-    int32_t* num_required_properties) {
+SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
+    const SchemaTypeConfigProto& type_config) {
+  ParsedPropertyConfigs parsed_property_configs;
+
   // TODO(samzheng): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
-  *num_required_properties = 0;
-  property_config_map->clear();
   for (const PropertyConfigProto& property_config : type_config.properties()) {
-    property_config_map->emplace(property_config.property_name(),
-                                 &property_config);
+    parsed_property_configs.property_config_map.emplace(
+        property_config.property_name(), &property_config);
     if (property_config.cardinality() ==
         PropertyConfigProto::Cardinality::REQUIRED) {
-      (*num_required_properties)++;
+      parsed_property_configs.num_required_properties++;
+    }
+
+    // A non-default term_match_type indicates that this property is meant to be
+    // indexed.
+    if (property_config.indexing_config().term_match_type() !=
+        TermMatchType::UNKNOWN) {
+      parsed_property_configs.num_indexed_properties++;
     }
   }
+
+  return parsed_property_configs;
 }
 
 const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
@@ -298,22 +304,21 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       continue;
     }
 
-    std::unordered_map<std::string_view, const PropertyConfigProto*>
-        new_property_map;
-    int32_t new_required_properties = 0;
-    BuildPropertyConfigMap(new_schema_type_and_config->second,
-                           &new_property_map, &new_required_properties);
+    ParsedPropertyConfigs new_parsed_property_configs =
+        ParsePropertyConfigs(new_schema_type_and_config->second);
 
     // We only need to check the old, existing properties to see if they're
     // compatible since we'll have old data that may be invalidated or need to
-    // be reindexed. New properties don't have any data that would be
-    // invalidated or incompatible, so we blanket accept all new properties.
+    // be reindexed.
     int32_t old_required_properties = 0;
+    int32_t old_indexed_properties = 0;
     for (const auto& old_property_config : old_type_config.properties()) {
       auto new_property_name_and_config =
-          new_property_map.find(old_property_config.property_name());
+          new_parsed_property_configs.property_config_map.find(
+              old_property_config.property_name());
 
-      if (new_property_name_and_config == new_property_map.end()) {
+      if (new_property_name_and_config ==
+          new_parsed_property_configs.property_config_map.end()) {
         // Didn't find the old property
         ICING_VLOG(1) << absl_ports::StrCat("Previously defined property type ",
                                             old_type_config.schema_type(), ".",
@@ -340,6 +345,13 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         ++old_required_properties;
       }
 
+      // A non-default term_match_type indicates that this property is meant to
+      // be indexed.
+      if (old_property_config.indexing_config().term_match_type() !=
+          TermMatchType::UNKNOWN) {
+        ++old_indexed_properties;
+      }
+
       // Any change in the indexed property requires a reindexing
       if (!IsTermMatchTypeCompatible(old_property_config.indexing_config(),
                                      new_property_config->indexing_config())) {
@@ -352,13 +364,26 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // guaranteed from our previous checks that all the old properties are also
     // present in the new property config, so we can do a simple int comparison
     // here to detect new required properties.
-    if (new_required_properties > old_required_properties) {
+    if (new_parsed_property_configs.num_required_properties >
+        old_required_properties) {
       ICING_VLOG(1) << absl_ports::StrCat(
           "New schema ", old_type_config.schema_type(),
           " has REQUIRED properties that are not "
           "present in the previously defined schema");
       schema_delta.schema_types_incompatible.insert(
           old_type_config.schema_type());
+    }
+
+    // If we've gained any new indexed properties, then the section ids may
+    // change. Since the section ids are stored in the index, we'll need to
+    // reindex everything.
+    if (new_parsed_property_configs.num_indexed_properties >
+        old_indexed_properties) {
+      ICING_VLOG(1) << absl_ports::StrCat(
+          "Set of indexed properties in schema type '",
+          old_type_config.schema_type(),
+          "' has  changed, required reindexing.");
+      schema_delta.index_incompatible = true;
     }
   }
 

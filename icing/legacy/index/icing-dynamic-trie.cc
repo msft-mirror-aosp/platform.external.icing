@@ -11,9 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2011 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
 //
 // We store the trie in three areas: nodes, nexts and suffixes.
 //
@@ -84,7 +81,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
-#include "icing/util/icu-i18n-utils.h"
+#include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 
@@ -250,6 +247,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
                      const IcingFilesystem &filesystem);
   bool Sync();
   uint64_t GetDiskUsage() const;
+
+  // Returns the size of the elements held in the trie. This excludes the size
+  // of any internal metadata of the trie, e.g. the trie's header.
+  uint64_t GetElementsFileSize() const;
+
   void Warm();
 
   void Clear();
@@ -693,6 +695,18 @@ uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetDiskUsage() const {
   IcingFilesystem::IncrementByOrSetInvalid(
       filesystem_->GetFileDiskUsage(header_filename.c_str()), &total);
 
+  return total;
+}
+
+uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetElementsFileSize()
+    const {
+  // Trie files themselves, exclude size of the header. These arrays are dense,
+  // not sparse, so use file size for more accurate numbers.
+  uint64_t total = 0;
+  for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
+    IcingFilesystem::IncrementByOrSetInvalid(
+        filesystem_->GetFileSize(array_fds_[i].get()), &total);
+  }
   return total;
 }
 
@@ -1151,6 +1165,30 @@ uint64_t IcingDynamicTrie::GetDiskUsage() const {
 
   // Storage.
   IcingFilesystem::IncrementByOrSetInvalid(storage_->GetDiskUsage(), &total);
+  return total;
+}
+
+uint64_t IcingDynamicTrie::GetElementsSize() const {
+  uint64_t total = 0;
+
+  // Bitmaps are sparsely populated, so disk usage is more accurate for those.
+  // Property bitmaps.
+  IcingFilesystem::IncrementByOrSetInvalid(deleted_bitmap_->GetDiskUsage(),
+                                           &total);
+  // The deleted bitmap is always initially grown to kGrowSize, whether there
+  // are elements or not. So even if there are no elements in the trie, we'll
+  // still have the bitmap of size kGrowSize, so subtract that from the size of
+  // the trie's elements.
+  total -= IcingFlashBitmap::kGrowSize;
+
+  for (auto &bitmap : property_bitmaps_) {
+    if (bitmap == nullptr) continue;
+    IcingFilesystem::IncrementByOrSetInvalid(bitmap->GetDiskUsage(), &total);
+  }
+
+  // Storage. We can use file size here since the storage files aren't sparse.
+  IcingFilesystem::IncrementByOrSetInvalid(storage_->GetElementsFileSize(),
+                                           &total);
   return total;
 }
 
@@ -1868,7 +1906,7 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 
   // If we start with non-ascii, take all left branches while there is
   // a continuation byte.
-  if (!icu_i18n_utils::IsAscii(cur_[cur_len_ - 1])) {
+  if (!i18n_utils::IsAscii(cur_[cur_len_ - 1])) {
     while (!node->is_leaf()) {
       if (cur_len_ >= U8_MAX_LENGTH) break;
 
@@ -1877,8 +1915,8 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
       if (branch_end_->child->val() == 0) {
         // Check if we already have a valid cur_.
         cur_[cur_len_] = 0;
-        UChar32 uchar32 = icu_i18n_utils::GetUChar32At(cur_, cur_len_, 0);
-        if (uchar32 == icu_i18n_utils::kInvalidUChar32 &&
+        UChar32 uchar32 = i18n_utils::GetUChar32At(cur_, cur_len_, 0);
+        if (uchar32 == i18n_utils::kInvalidUChar32 &&
             node->log2_num_children() > 0) {
           branch_end_->child++;
         } else {

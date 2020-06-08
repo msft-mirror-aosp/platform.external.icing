@@ -19,6 +19,8 @@ package icing.lib;
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
+option objc_class_prefix = "ICNG";
+
 // Encapsulates the configurations on how Icing should query/index these terms.
 // Next tag: 0
 message TermMatchType {

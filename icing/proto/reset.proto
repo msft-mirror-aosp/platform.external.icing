@@ -21,6 +21,8 @@ import "icing/proto/status.proto";
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
+option objc_class_prefix = "ICNG";
+
 // Result of a call to IcingSearchEngine.Reset
 // Next tag: 2
 message ResetResultProto {

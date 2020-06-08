@@ -27,7 +27,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -91,14 +91,13 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        lang_segmenter_,
-        language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+    ICING_ASSERT_OK_AND_ASSIGN(lang_segmenter_,
+                               language_segmenter_factory::Create());
 
     ICING_ASSERT_OK_AND_ASSIGN(
         normalizer_,
         normalizer_factory::Create(
-            normalizer_factory::NormalizerType::ICU4C,
+
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -415,9 +414,8 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
   IndexProcessor::Options options;
   options.max_tokens_per_document = 1000;
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Normalizer> normalizer,
-      normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(
                                  /*max_term_byte_size=*/4));
 
   ICING_ASSERT_OK_AND_ASSIGN(

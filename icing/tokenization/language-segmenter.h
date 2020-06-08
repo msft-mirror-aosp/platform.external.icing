@@ -64,16 +64,18 @@ class LanguageSegmenter {
     //   iterator.ResetToTermStartingAfter(4);
     //   iterator.GetTerm() // returns "baz";
     //
-    // Passing in a negative offset will return the offset of the first term.
-    //
-    // Passing in an offset that is equal to or exceeds the underlying text
-    // length will return NOT_FOUND.
+    // Return types of OK and NOT_FOUND indicate that the function call was
+    // valid and the state of the iterator has changed. Return type of
+    // INVALID_ARGUMENT will leave the iterator unchanged.
     //
     // Returns:
     //   On success, the starting position of the first term that starts after
     //   offset.
     //   NOT_FOUND if an error occurred or there are no terms that start after
     //   offset.
+    //   INVALID_ARGUMENT if offset is out of bounds for the provided text.
+    //   ABORTED if an invalid unicode character is encountered while
+    //   traversing the text.
     virtual libtextclassifier3::StatusOr<int32_t> ResetToTermStartingAfter(
         int32_t offset) = 0;
 
@@ -85,21 +87,22 @@ class LanguageSegmenter {
     //   iterator.ResetToTermEndingBefore(7);
     //   iterator.GetTerm() // returns "bar";
     //
-    // Passing in an offset equal to or less than 0 will return NOT_FOUND.
-    //
-    // Passing in an offset equal to the underlying text length will return the
-    // offset of the last term.
-    //
-    // Passing in an offset that is greater than the underlying text length will
-    // return NOT_FOUND.
+    // Return types of OK and NOT_FOUND indicate that the function call was
+    // valid and the state of the iterator has changed. Return type of
+    // INVALID_ARGUMENT will leave the iterator unchanged.
     //
     // Returns:
     //   On success, the starting position of the first term that ends before
     //   offset.
     //   NOT_FOUND if an error occurred or there are no terms that ends before
     //   offset.
+    //   INVALID_ARGUMENT if offset is out of bounds for the provided text.
+    //   ABORTED if an invalid unicode character is encountered while
+    //   traversing the text.
     virtual libtextclassifier3::StatusOr<int32_t> ResetToTermEndingBefore(
         int32_t offset) = 0;
+
+    virtual libtextclassifier3::StatusOr<int32_t> ResetToStart() = 0;
   };
 
   // Segments the input text into terms.

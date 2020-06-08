@@ -1235,6 +1235,59 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::StatusOr<DocumentStore::OptimizeInfo>
+DocumentStore::GetOptimizeInfo() const {
+  OptimizeInfo optimize_info;
+
+  // Figure out our ratio of optimizable/total docs.
+  int32_t num_documents = document_id_mapper_->num_elements();
+  for (DocumentId document_id = kMinDocumentId; document_id < num_documents;
+       ++document_id) {
+    if (!DoesDocumentExist(document_id)) {
+      ++optimize_info.optimizable_docs;
+    }
+
+    ++optimize_info.total_docs;
+  }
+
+  if (optimize_info.total_docs == 0) {
+    // Can exit early since there's nothing to calculate.
+    return optimize_info;
+  }
+
+  // Get the total element size.
+  //
+  // We use file size instead of disk usage here because the files are not
+  // sparse, so it's more accurate. Disk usage rounds up to the nearest block
+  // size.
+  ICING_ASSIGN_OR_RETURN(const int64_t document_log_file_size,
+                         document_log_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t document_id_mapper_file_size,
+                         document_id_mapper_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t score_cache_file_size,
+                         score_cache_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t filter_cache_file_size,
+                         filter_cache_->GetElementsFileSize());
+
+  // We use a combined disk usage and file size for the KeyMapper because it's
+  // backed by a trie, which has some sparse property bitmaps.
+  ICING_ASSIGN_OR_RETURN(const int64_t document_key_mapper_size,
+                         document_key_mapper_->GetElementsSize());
+
+  // We don't include the namespace mapper because it's not clear if we could
+  // recover any space even if Optimize were called. Deleting 100s of documents
+  // could still leave a few documents of a namespace, and then there would be
+  // no change.
+
+  int64_t total_size = document_log_file_size + document_key_mapper_size +
+                       document_id_mapper_file_size + score_cache_file_size +
+                       filter_cache_file_size;
+
+  optimize_info.estimated_optimizable_bytes =
+      total_size * optimize_info.optimizable_docs / optimize_info.total_docs;
+  return optimize_info;
+}
+
 libtextclassifier3::Status DocumentStore::UpdateDocumentAssociatedScoreCache(
     DocumentId document_id, const DocumentAssociatedScoreData& score_data) {
   return score_cache_->Set(document_id, score_data);

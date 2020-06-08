@@ -54,6 +54,20 @@ class DocumentStore {
     uint32_t checksum;
   };
 
+  struct OptimizeInfo {
+    // The estimated size in bytes of the optimizable docs. We don't track the
+    // size of each document, so we estimate by taking the size of the entire
+    // DocumentStore and dividing that by the total number of documents we have.
+    // So we end up with an average document size.
+    int64_t estimated_optimizable_bytes = 0;
+
+    // Number of total documents the DocumentStore tracks.
+    int32_t total_docs = 0;
+
+    // Number of optimizable (deleted + expired) docs the DocumentStore tracks.
+    int32_t optimizable_docs = 0;
+  };
+
   // Not copyable
   DocumentStore(const DocumentStore&) = delete;
   DocumentStore& operator=(const DocumentStore&) = delete;
@@ -208,7 +222,8 @@ class DocumentStore {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates and returns the disk usage in bytes.
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
   //
   // Returns:
   //   Disk usage on success
@@ -272,6 +287,15 @@ class DocumentStore {
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status OptimizeInto(const std::string& new_directory);
+
+  // Calculates status for a potential Optimize call. Includes how many docs
+  // there are vs how many would be optimized away. And also includes an
+  // estimated size gains, in bytes, if Optimize were called.
+  //
+  // Returns:
+  //   OptimizeInfo on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<OptimizeInfo> GetOptimizeInfo() const;
 
   // Computes the combined checksum of the document store - includes the ground
   // truth and all derived files.
