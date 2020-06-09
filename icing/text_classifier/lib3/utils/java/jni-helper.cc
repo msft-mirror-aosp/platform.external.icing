@@ -25,6 +25,15 @@ StatusOr<ScopedLocalRef<jclass>> JniHelper::FindClass(JNIEnv* env,
   return result;
 }
 
+StatusOr<ScopedLocalRef<jclass>> JniHelper::GetObjectClass(JNIEnv* env,
+                                                           jobject object) {
+  TC3_ENSURE_LOCAL_CAPACITY_OR_RETURN;
+  ScopedLocalRef<jclass> result(env->GetObjectClass(object), env);
+  TC3_NO_EXCEPTION_OR_RETURN;
+  TC3_NOT_NULL_OR_RETURN;
+  return result;
+}
+
 StatusOr<jmethodID> JniHelper::GetMethodID(JNIEnv* env, jclass clazz,
                                            const char* method_name,
                                            const char* return_type) {

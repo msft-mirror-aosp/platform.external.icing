@@ -72,6 +72,9 @@ class JniHelper {
   static StatusOr<ScopedLocalRef<jclass>> FindClass(JNIEnv* env,
                                                     const char* class_name);
 
+  static StatusOr<ScopedLocalRef<jclass>> GetObjectClass(JNIEnv* env,
+                                                         jobject object);
+
   template <typename T = jobject>
   static StatusOr<ScopedLocalRef<T>> GetObjectArrayElement(JNIEnv* env,
                                                            jobjectArray array,
