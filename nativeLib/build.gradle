@@ -50,8 +50,7 @@ android {
     externalNativeBuild {
         cmake {
             version '3.10.2'
-            // TODO(b/149853706): Uncomment this line once the lib fully compiles under cmake
-            // path '../CMakeLists.txt'
+            path '../CMakeLists.txt'
         }
     }
 }
