@@ -65,8 +65,6 @@ bool EnsureLocalCapacity(JNIEnv* env, int capacity);
 // Returns true if there was an exception. Also it clears the exception.
 bool JniExceptionCheckAndClear(JNIEnv* env);
 
-StatusOr<std::string> ToStlString(JNIEnv* env, const jstring& str);
-
 // A deleter to be used with std::unique_ptr to delete JNI global references.
 class GlobalRefDeleter {
  public:

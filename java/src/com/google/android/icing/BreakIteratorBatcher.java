@@ -1,6 +1,19 @@
+// Copyright (C) 2019 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package com.google.android.icing;
 
-import com.google.android.apps.common.proguard.UsedByNative;
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,33 +36,27 @@ import java.util.Locale;
  * assertThat(utf16Boundaries).asList().containsExactly(9);
  * }</pre>
  */
-@UsedByNative("jni-cache.cc")
 public class BreakIteratorBatcher {
 
   private final BreakIterator iterator;
 
-  @UsedByNative("jni-cache.cc")
   public BreakIteratorBatcher(Locale locale) {
     this.iterator = BreakIterator.getWordInstance(locale);
   }
 
   /* Direct calls to BreakIterator */
-  @UsedByNative("jni-cache.cc")
   public void setText(String text) {
     iterator.setText(text);
   }
 
-  @UsedByNative("jni-cache.cc")
   public int first() {
     return iterator.first();
   }
 
-  @UsedByNative("jni-cache.cc")
   public int preceding(int utf16Offset) {
     return iterator.preceding(utf16Offset);
   }
 
-  @UsedByNative("jni-cache.cc")
   public int following(int utf16Offset) {
     return iterator.following(utf16Offset);
   }
@@ -60,7 +67,6 @@ public class BreakIteratorBatcher {
    * the end of the text (returns BreakIterator#DONE), then only the results of the previous calls
    * in that batch will be returned.
    */
-  @UsedByNative("jni-cache.cc")
   public int[] next(int batchSize) {
     List<Integer> breakIndices = new ArrayList<>(batchSize);
     for (int i = 0; i < batchSize; ++i) {

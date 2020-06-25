@@ -12,24 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/text_classifier/lib3/utils/java/jni-base.h"
+#ifndef ICING_TESTING_JNI_TEST_HELPERS_H_
+#define ICING_TESTING_JNI_TEST_HELPERS_H_
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/jni/jni-cache.h"
 
-namespace libtextclassifier3 {
+#ifdef ICING_REVERSE_JNI_SEGMENTATION
 
-bool EnsureLocalCapacity(JNIEnv* env, int capacity) {
-  return env->EnsureLocalCapacity(capacity) == JNI_OK;
-}
+#include <jni.h>
 
-bool JniExceptionCheckAndClear(JNIEnv* env) {
-  TC3_CHECK(env != nullptr);
-  const bool result = env->ExceptionCheck();
-  if (result) {
-    env->ExceptionDescribe();
-    env->ExceptionClear();
-  }
-  return result;
-}
+extern JNIEnv* g_jenv;
 
-}  // namespace libtextclassifier3
+#define ICING_TEST_JNI_CACHE JniCache::Create(g_jenv).ValueOrDie()
+
+#else
+
+#define ICING_TEST_JNI_CACHE nullptr
+
+#endif  // ICING_REVERSE_JNI_SEGMENTATION
+
+namespace icing {
+namespace lib {
+
+std::unique_ptr<JniCache> GetTestJniCache() { return ICING_TEST_JNI_CACHE; }
+
+}  // namespace lib
+}  // namespace icing
+
+#endif  // ICING_TESTING_JNI_TEST_HELPERS_H_

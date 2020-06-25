@@ -58,6 +58,7 @@ using ::testing::Matcher;
 using ::testing::Return;
 using ::testing::SizeIs;
 using ::testing::StrEq;
+using ::testing::UnorderedElementsAre;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -3257,6 +3258,108 @@ TEST_F(IcingSearchEngineTest, UninitializedInstanceFailsSafely) {
               Eq(StatusProto::FAILED_PRECONDITION));
   EXPECT_THAT(icing.Optimize().status().code(),
               Eq(StatusProto::FAILED_PRECONDITION));
+}
+
+TEST_F(IcingSearchEngineTest, GetAllNamespaces) {
+  DocumentProto namespace1 = DocumentBuilder()
+                                 .SetKey("namespace1", "uri")
+                                 .SetSchema("Message")
+                                 .AddStringProperty("body", "message body")
+                                 .SetCreationTimestampMs(100)
+                                 .SetTtlMs(1000)
+                                 .Build();
+  DocumentProto namespace2_uri1 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri1")
+                                      .SetSchema("Message")
+                                      .AddStringProperty("body", "message body")
+                                      .SetCreationTimestampMs(100)
+                                      .SetTtlMs(1000)
+                                      .Build();
+  DocumentProto namespace2_uri2 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri2")
+                                      .SetSchema("Message")
+                                      .AddStringProperty("body", "message body")
+                                      .SetCreationTimestampMs(100)
+                                      .SetTtlMs(1000)
+                                      .Build();
+
+  DocumentProto namespace3 = DocumentBuilder()
+                                 .SetKey("namespace3", "uri")
+                                 .SetSchema("Message")
+                                 .AddStringProperty("body", "message body")
+                                 .SetCreationTimestampMs(100)
+                                 .SetTtlMs(500)
+                                 .Build();
+  {
+    // Some arbitrary time that's less than all the document's creation time +
+    // ttl
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(500);
+
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::move(fake_clock));
+
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
+                Eq(StatusProto::OK));
+
+    // No namespaces exist yet
+    GetAllNamespacesResultProto result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(), IsEmpty());
+
+    ASSERT_THAT(icing.Put(namespace1).status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(icing.Put(namespace2_uri1).status().code(),
+                Eq(StatusProto::OK));
+    ASSERT_THAT(icing.Put(namespace2_uri2).status().code(),
+                Eq(StatusProto::OK));
+    ASSERT_THAT(icing.Put(namespace3).status().code(), Eq(StatusProto::OK));
+
+    // All namespaces should exist now
+    result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(),
+                UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+    // After deleting namespace2_uri1 document, we still have namespace2_uri2 in
+    // "namespace2" so it should still show up
+    ASSERT_THAT(icing.Delete("namespace2", "uri1").status().code(),
+                Eq(StatusProto::OK));
+
+    result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(),
+                UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+    // After deleting namespace2_uri2 document, we no longer have any documents
+    // in "namespace2"
+    ASSERT_THAT(icing.Delete("namespace2", "uri2").status().code(),
+                Eq(StatusProto::OK));
+
+    result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(),
+                UnorderedElementsAre("namespace1", "namespace3"));
+  }
+
+  // We reinitialize here so we can feed in a fake clock this time
+  {
+    // Time needs to be past namespace3's creation time (100) + ttl (500) for it
+    // to count as "expired"
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(1000);
+
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::move(fake_clock));
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+    // Only valid document left is the one in "namespace1"
+    GetAllNamespacesResultProto result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(), UnorderedElementsAre("namespace1"));
+  }
 }
 
 }  // namespace

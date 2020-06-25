@@ -205,6 +205,12 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on IO error
   GetResultProto Get(std::string_view name_space, std::string_view uri);
 
+  // Returns all the namespaces that have at least one valid document in it.
+  //
+  // Returns:
+  //   All namespaces on success
+  GetAllNamespacesResultProto GetAllNamespaces();
+
   // Deletes the Document specified by the given namespace / uri pair from the
   // search engine. Delete changes are automatically applied to disk, callers
   // can also call PersistToDisk() to flush changes immediately.

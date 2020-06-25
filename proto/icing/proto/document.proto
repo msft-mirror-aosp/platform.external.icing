@@ -124,6 +124,20 @@ message GetResultProto {
   optional DocumentProto document = 2;
 }
 
+// Result of a call to IcingSearchEngine.GetAllNamespaces
+// Next tag: 3
+message GetAllNamespacesResultProto {
+  // Status code can be one of:
+  //   OK
+  //
+  // See status.proto for more details.
+  optional StatusProto status = 1;
+
+  // List of namespaces which have at least one existing document in it (not
+  // deleted and not expired). Order of namespaces is undefined.
+  repeated string namespaces = 2;
+}
+
 // Result of a call to IcingSearchEngine.Delete
 // Next tag: 2
 message DeleteResultProto {

@@ -778,6 +778,36 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
   return document_id_or.ValueOrDie();
 }
 
+std::vector<std::string> DocumentStore::GetAllNamespaces() const {
+  std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
+      namespace_mapper_->GetValuesToKeys();
+
+  std::unordered_set<NamespaceId> existing_namespace_ids;
+  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
+       ++document_id) {
+    // filter_cache_->Get can only fail if document_id is < 0
+    // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
+    auto status_or_data = filter_cache_->Get(document_id);
+    if (!status_or_data.ok()) {
+      ICING_LOG(ERROR)
+          << "Error while iterating over filter cache in GetAllNamespaces";
+      return std::vector<std::string>();
+    }
+    const DocumentFilterData* data = status_or_data.ValueOrDie();
+
+    if (DoesDocumentExist(document_id)) {
+      existing_namespace_ids.insert(data->namespace_id());
+    }
+  }
+
+  std::vector<std::string> existing_namespaces;
+  for (auto itr = existing_namespace_ids.begin();
+       itr != existing_namespace_ids.end(); ++itr) {
+    existing_namespaces.push_back(namespace_id_to_namespace.at(*itr));
+  }
+  return existing_namespaces;
+}
+
 libtextclassifier3::StatusOr<int64_t>
 DocumentStore::DoesDocumentExistAndGetFileOffset(DocumentId document_id) const {
   if (!IsDocumentIdValid(document_id)) {
