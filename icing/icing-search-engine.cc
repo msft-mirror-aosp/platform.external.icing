@@ -618,6 +618,22 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   return result_proto;
 }
 
+GetAllNamespacesResultProto IcingSearchEngine::GetAllNamespaces() {
+  GetAllNamespacesResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::shared_lock l(&mutex_);
+
+  std::vector<std::string> namespaces = document_store_->GetAllNamespaces();
+
+  for (const std::string& namespace_ : namespaces) {
+    result_proto.add_namespaces(namespace_);
+  }
+
+  result_status->set_code(StatusProto::OK);
+  return result_proto;
+}
+
 DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
                                             const std::string_view uri) {
   ICING_VLOG(1) << "Deleting document from doc store";

@@ -35,6 +35,8 @@ struct SegmenterOptions {
       : locale(std::move(locale)), jni_cache(jni_cache) {}
 
   std::string locale;
+
+  // Does not hold ownership.
   const JniCache* jni_cache;
 };
 
