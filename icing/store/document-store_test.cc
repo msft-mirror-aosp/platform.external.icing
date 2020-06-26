@@ -47,10 +47,12 @@ using ::testing::_;
 using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Not;
 using ::testing::Return;
+using ::testing::UnorderedElementsAre;
 
 class DocumentStoreTest : public ::testing::Test {
  protected:
@@ -2012,6 +2014,74 @@ TEST_F(DocumentStoreTest, GetOptimizeInfo) {
   EXPECT_THAT(optimize_info.total_docs, Eq(0));
   EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
   EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+}
+
+TEST_F(DocumentStoreTest, GetAllNamespaces) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  // Empty namespaces to start with
+  EXPECT_THAT(document_store->GetAllNamespaces(), IsEmpty());
+
+  DocumentProto namespace1 = DocumentBuilder()
+                                 .SetKey("namespace1", "uri")
+                                 .SetSchema("email")
+                                 .SetCreationTimestampMs(0)
+                                 .SetTtlMs(500)
+                                 .Build();
+  DocumentProto namespace2_uri1 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri1")
+                                      .SetSchema("email")
+                                      .SetCreationTimestampMs(0)
+                                      .SetTtlMs(500)
+                                      .Build();
+  DocumentProto namespace2_uri2 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri2")
+                                      .SetSchema("email")
+                                      .SetCreationTimestampMs(0)
+                                      .SetTtlMs(500)
+                                      .Build();
+  DocumentProto namespace3 = DocumentBuilder()
+                                 .SetKey("namespace3", "uri")
+                                 .SetSchema("email")
+                                 .SetCreationTimestampMs(0)
+                                 .SetTtlMs(100)
+                                 .Build();
+
+  ICING_ASSERT_OK(document_store->Put(namespace1));
+  ICING_ASSERT_OK(document_store->Put(namespace2_uri1));
+  ICING_ASSERT_OK(document_store->Put(namespace2_uri2));
+  ICING_ASSERT_OK(document_store->Put(namespace3));
+
+  auto get_result = document_store->Get("namespace1", "uri");
+  get_result = document_store->Get("namespace2", "uri1");
+  get_result = document_store->Get("namespace2", "uri2");
+  get_result = document_store->Get("namespace3", "uri");
+
+  // Have all the namespaces now
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+  // After deleting namespace2_uri1, there's still namespace2_uri2, so
+  // "namespace2" still shows up in results
+  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri1"));
+
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+  // After deleting namespace2_uri2, there's no more documents in "namespace2"
+  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri2"));
+
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1", "namespace3"));
+
+  // Some arbitrary time past namespace3's creation time (0) and ttl (100)
+  fake_clock_.SetSystemTimeMilliseconds(110);
+
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1"));
 }
 
 }  // namespace lib

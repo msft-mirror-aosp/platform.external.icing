@@ -136,6 +136,10 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentProto> Get(DocumentId document_id) const;
 
+  // Returns all namespaces which have at least 1 active document (not deleted
+  // or expired). Order of namespaces is undefined.
+  std::vector<std::string> GetAllNamespaces() const;
+
   // Check if a document exists. Existence means it hasn't been deleted and it
   // hasn't expired yet.
   //
