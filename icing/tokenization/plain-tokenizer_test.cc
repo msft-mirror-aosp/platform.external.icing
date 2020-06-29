@@ -18,7 +18,7 @@
 
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/test-data.h"
@@ -49,9 +49,8 @@ TEST_F(PlainTokenizerTest, CreationWithNullPointerShouldFail) {
 }
 
 TEST_F(PlainTokenizerTest, Simple) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -82,9 +81,8 @@ TEST_F(PlainTokenizerTest, Simple) {
 }
 
 TEST_F(PlainTokenizerTest, Whitespace) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -109,9 +107,8 @@ TEST_F(PlainTokenizerTest, Whitespace) {
 }
 
 TEST_F(PlainTokenizerTest, Punctuation) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -139,9 +136,8 @@ TEST_F(PlainTokenizerTest, Punctuation) {
 }
 
 TEST_F(PlainTokenizerTest, SpecialCharacters) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -161,9 +157,8 @@ TEST_F(PlainTokenizerTest, SpecialCharacters) {
 }
 
 TEST_F(PlainTokenizerTest, CJKT) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -214,9 +209,8 @@ TEST_F(PlainTokenizerTest, CJKT) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -232,9 +226,8 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -250,9 +243,8 @@ TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -299,9 +291,8 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(

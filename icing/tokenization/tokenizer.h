@@ -85,6 +85,8 @@ class Tokenizer {
     // // "foo".
     // PrintToken(iterator.GetToken());  // prints "foo"
     virtual bool ResetToTokenBefore(int32_t offset) { return false; }
+
+    virtual bool ResetToStart() { return false; }
   };
 
   // Tokenizes the input text. The input text should outlive the returned

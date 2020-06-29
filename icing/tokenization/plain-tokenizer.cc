@@ -18,7 +18,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "icing/util/icu-i18n-utils.h"
+#include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -39,8 +39,8 @@ bool IsValidTerm(std::string_view term) {
   }
   // Gets the first unicode character. We can know what the whole term is by
   // checking only the first character.
-  return !icu_i18n_utils::IsWhitespaceAt(term, /*position=*/0) &&
-         !icu_i18n_utils::IsPunctuationAt(term, /*position=*/0);
+  return !i18n_utils::IsWhitespaceAt(term, /*position=*/0) &&
+         !i18n_utils::IsPunctuationAt(term, /*position=*/0);
 }
 }  // namespace
 
@@ -92,6 +92,18 @@ class PlainTokenIterator : public Tokenizer::Iterator {
       ICING_ASSIGN_OR_RETURN(
           offset, base_iterator_->ResetToTermEndingBefore(offset), false);
       current_term_ = base_iterator_->GetTerm();
+    }
+    return true;
+  }
+
+  bool ResetToStart() override {
+    if (!base_iterator_->ResetToStart().ok()) {
+      return false;
+    }
+    current_term_ = base_iterator_->GetTerm();
+    if (!IsValidTerm(current_term_)) {
+      // If the current value isn't valid, advance to the next valid value.
+      return Advance();
     }
     return true;
   }

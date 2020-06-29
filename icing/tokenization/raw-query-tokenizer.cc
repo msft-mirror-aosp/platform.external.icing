@@ -29,7 +29,7 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
-#include "icing/util/icu-i18n-utils.h"
+#include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 
 // This file provides rules that tell the tokenizer what to do when it sees a
@@ -316,7 +316,7 @@ TermType GetTermType(std::string_view term) {
     return OR_OPERATOR;
   }
   // Checks the first char to see if it's an ASCII term
-  if (icu_i18n_utils::IsAscii(term[0])) {
+  if (i18n_utils::IsAscii(term[0])) {
     if (std::isalnum(term[0])) {
       return ALPHANUMERIC_TERM;
     }
@@ -381,7 +381,7 @@ libtextclassifier3::Status OutputToken(State new_state,
     case ALPHANUMERIC_TERM:
       if (new_state == PROCESSING_PROPERTY_TERM) {
         // Asserts extra rule 1: property name must be in ASCII
-        if (!icu_i18n_utils::IsAscii(current_term[0])) {
+        if (!i18n_utils::IsAscii(current_term[0])) {
           return absl_ports::InvalidArgumentError(
               "Characters in property name must all be ASCII.");
         }

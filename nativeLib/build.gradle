@@ -30,13 +30,10 @@ buildscript {
 apply plugin: 'AndroidXPlugin'
 apply plugin: 'com.android.library'
 
-def protoGeneratedFilesBaseDir = "${project.buildDir}/generated/source/proto"
-
 android {
     defaultConfig {
         externalNativeBuild {
             cmake {
-                arguments "-DPROTO_GENERATED_FILES_BASE_DIR=${protoGeneratedFilesBaseDir}"
                 cppFlags "-std=c++17"
                 arguments "-DCMAKE_VERBOSE_MAKEFILE=ON"
                 targets "icing"
@@ -53,8 +50,7 @@ android {
     externalNativeBuild {
         cmake {
             version '3.10.2'
-            // TODO(b/149853706): Uncomment this line once the lib fully compiles under cmake
-            //path '../CMakeLists.txt'
+            path '../CMakeLists.txt'
         }
     }
 }

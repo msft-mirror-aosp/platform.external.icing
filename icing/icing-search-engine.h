@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 
+#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
@@ -60,7 +61,12 @@ class IcingSearchEngine {
     uint32_t checksum;
   };
 
-  explicit IcingSearchEngine(const IcingSearchEngineOptions& options);
+  // Note: It is only required to provide a pointer to a valid instance of
+  // JniCache if this instance needs to perform reverse-jni calls. Users on
+  // Linux and iOS should always provide a nullptr.
+  explicit IcingSearchEngine(
+      const IcingSearchEngineOptions& options,
+      std::unique_ptr<const JniCache> jni_cache = nullptr);
 
   // Calculates integrity checks and persists files to disk.
   ~IcingSearchEngine();
@@ -117,14 +123,17 @@ class IcingSearchEngine {
   // So, callers should only have to call this if the schema changed.
   // However, calling it multiple times with the same schema is a no-op.
   //
-  // On any error, Icing will keep using the older schema.
+  // On some errors, Icing will keep using the older schema, but on
+  // INTERNAL_ERROR, it is undefined to continue using Icing.
   //
   // Returns:
   //   OK on success
   //   INVALID_ARGUMENT if 'new_schema' is invalid
-  //   FAILED_PRECONDITION if 'new_schema' is incompatible
+  //   FAILED_PRECONDITION if 'new_schema' is incompatible, or IcingSearchEngine
+  //     has not been initialized yet.
   //   INTERNAL_ERROR if Icing failed to store the new schema or upgrade
-  //     existing data based on the new schema.
+  //     existing data based on the new schema. Using Icing beyond this error is
+  //     undefined and may cause crashes.
   //
   // TODO(cassiewang) Figure out, document (and maybe even enforce) the best
   // way ordering of calls between Initialize() and SetSchema(), both when
@@ -149,6 +158,7 @@ class IcingSearchEngine {
   // Returns:
   //   SchemaProto on success
   //   NOT_FOUND if a schema has not been set yet
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet.
   //   INTERNAL_ERROR on IO error
   GetSchemaResultProto GetSchema() ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -156,7 +166,8 @@ class IcingSearchEngine {
   //
   // Returns:
   //   SchemaTypeConfigProto on success
-  //   FAILED_PRECONDITION if a schema has not been set yet
+  //   FAILED_PRECONDITION if a schema has not been set yet, IcingSearchEngine
+  //     has not been initialized yet.
   //   NOT_FOUND if there is no SchemaTypeConfig of schema_type in the
   //     SchemaProto
   //   INTERNAL_ERROR on IO error
@@ -169,7 +180,8 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
-  //   FAILED_PRECONDITION if a schema has not been set yet
+  //   FAILED_PRECONDITION if a schema has not been set yet, IcingSearchEngine
+  //     has not been initialized yet.
   //   NOT_FOUND if there is no SchemaTypeConfig in the SchemaProto that matches
   //     the document's schema
   //   INTERNAL_ERROR on IO error
@@ -189,6 +201,7 @@ class IcingSearchEngine {
   // Returns:
   //   The document found on success
   //   NOT_FOUND if the key doesn't exist or doc has been deleted
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
   GetResultProto Get(std::string_view name_space, std::string_view uri);
 
@@ -202,6 +215,7 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   NOT_FOUND if no document exists with namespace, uri
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
   DeleteResultProto Delete(std::string_view name_space, std::string_view uri)
       ICING_LOCKS_EXCLUDED(mutex_);
@@ -216,6 +230,7 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   NOT_FOUND if namespace doesn't exist
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
   DeleteByNamespaceResultProto DeleteByNamespace(std::string_view name_space)
       ICING_LOCKS_EXCLUDED(mutex_);
@@ -230,6 +245,7 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   NOT_FOUND if schema type doesn't exist
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
   DeleteBySchemaTypeResultProto DeleteBySchemaType(std::string_view schema_type)
       ICING_LOCKS_EXCLUDED(mutex_);
@@ -246,6 +262,7 @@ class IcingSearchEngine {
   //   OK with results on success
   //   INVALID_ARGUMENT if any of specs is invalid
   //   ABORTED if failed to perform search but existing data is not affected
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
   SearchResultProto Search(const SearchSpecProto& search_spec,
                            const ScoringSpecProto& scoring_spec,
@@ -258,6 +275,7 @@ class IcingSearchEngine {
   // Returns a SearchResultProto with status:
   //   OK with results on success
   //   ABORTED if failed to get results but existing data is not affected
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on any other errors
   SearchResultProto GetNextPage(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
@@ -276,6 +294,7 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL on I/O error
   PersistToDiskResultProto PersistToDisk() ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -284,13 +303,14 @@ class IcingSearchEngine {
   // resource-efficient. This method purely optimizes the internal files and
   // has no functional impact on what gets accepted/returned.
   //
-  // NOTE: This method should be called about once every 24 hours when the
-  // device is idle and charging. It can also be called when the system needs
-  // to free up extra disk-space.
-  //
   // WARNING: This method is CPU and IO intensive and depending on the
   // contents stored, it can take from a few seconds to a few minutes.
   // This call also blocks all read/write operations on Icing.
+  //
+  // SUGGESTION: Assuming the client has no restrictions on their side, it's
+  // recommended to call this method about once every 24 hours when the
+  // device is idle and charging. It can also be called when the system needs
+  // to free up extra disk-space.
   //
   // Returns:
   //   OK on success
@@ -298,10 +318,19 @@ class IcingSearchEngine {
   //                 actual modifications are made.
   //   DATA_LOSS_ERROR on errors that could potentially cause data loss,
   //                   IcingSearchEngine is still functioning.
-  //   INTERNAL_ERROR on any IO errors or other unrecoverable errors. Icing
-  //                  could be in an inconsistent state and might not be usable.
+  //   INTERNAL_ERROR on any IO errors or other unrecoverable errors. Continued
+  //                  use of Icing is undefined.
   //                  Clients could clear and reinitialize IcingSearchEngine.
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   OptimizeResultProto Optimize() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Returns potential size and document savings if Optimize were called.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION if IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on IO error
+  GetOptimizeInfoResultProto GetOptimizeInfo() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Clears all data from Icing and re-initializes. Clients DO NOT need to call
   // Initialize again.
@@ -319,13 +348,14 @@ class IcingSearchEngine {
  protected:
   IcingSearchEngine(IcingSearchEngineOptions options,
                     std::unique_ptr<const Filesystem> filesystem,
-                    std::unique_ptr<Clock> clock);
+                    std::unique_ptr<Clock> clock,
+                    std::unique_ptr<const JniCache> jni_cache = nullptr);
 
  private:
   const IcingSearchEngineOptions options_;
   const std::unique_ptr<const Filesystem> filesystem_;
   const std::unique_ptr<const IcingFilesystem> icing_filesystem_;
-  bool initialized_ = false;
+  bool initialized_ ICING_GUARDED_BY(mutex_) = false;
 
   // Abstraction for accessing time values.
   std::unique_ptr<Clock> clock_;
@@ -355,11 +385,20 @@ class IcingSearchEngine {
   // Storage for all hits of content from the document store.
   std::unique_ptr<Index> index_ ICING_GUARDED_BY(mutex_);
 
+  // Pointer to JNI class references
+  const std::unique_ptr<const JniCache> jni_cache_;
+
   // Helper method to do the actual work to persist data to disk. We need this
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
   libtextclassifier3::Status InternalPersistToDisk()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to the actual work to Initialize. We need this separate
+  // method so that other public methods don't need to call Initialize(). Public
+  // methods calling each other may cause deadlock issues.
+  InitializeResultProto InternalInitialize()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to initialize member variables.

@@ -16,7 +16,7 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
@@ -80,7 +80,7 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
   return normalizer_factory::Create(
-             normalizer_factory::NormalizerType::ICU4C,
+
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
 }
@@ -108,8 +108,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -221,8 +220,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -352,8 +350,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -468,8 +465,7 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 

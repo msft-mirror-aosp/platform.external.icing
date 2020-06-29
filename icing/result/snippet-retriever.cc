@@ -35,7 +35,7 @@
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/icu-i18n-utils.h"
+#include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -126,19 +126,18 @@ libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> CreateTokenMatcher(
 
 // Returns true if token matches any of the terms in query terms according to
 // the provided match type.
-
+//
 // Returns:
 //   the position of the window start if successful
 //   INTERNAL_ERROR - if a tokenizer error is encountered
 libtextclassifier3::StatusOr<int> DetermineWindowStart(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     std::string_view value, int match_mid, Tokenizer::Iterator* iterator) {
-  int window_start_min =
-      std::max((match_mid - snippet_spec.max_window_bytes() / 2), 0);
-  if (window_start_min == 0) {
+  int window_start_min = (match_mid - snippet_spec.max_window_bytes() / 2) - 1;
+  if (window_start_min < 0) {
     return 0;
   }
-  if (!iterator->ResetToTokenAfter(window_start_min - 1)) {
+  if (!iterator->ResetToTokenAfter(window_start_min)) {
     return absl_ports::InternalError(
         "Couldn't reset tokenizer to determine snippet window!");
   }
@@ -152,8 +151,7 @@ int IncludeTrailingPunctuation(std::string_view value, int window_end_exclusive,
                                int window_end_max_exclusive) {
   while (window_end_exclusive < window_end_max_exclusive) {
     int char_len = 0;
-    if (!icu_i18n_utils::IsPunctuationAt(value, window_end_exclusive,
-                                         &char_len)) {
+    if (!i18n_utils::IsPunctuationAt(value, window_end_exclusive, &char_len)) {
       break;
     }
     if (window_end_exclusive + char_len > window_end_max_exclusive) {
@@ -174,10 +172,9 @@ libtextclassifier3::StatusOr<int> DetermineWindowEnd(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     std::string_view value, int match_mid, Tokenizer::Iterator* iterator) {
   int window_end_max_exclusive =
-      std::min((match_mid + snippet_spec.max_window_bytes() / 2),
-               static_cast<int>(value.length()));
-  if (window_end_max_exclusive == value.length()) {
-    return window_end_max_exclusive;
+      match_mid + snippet_spec.max_window_bytes() / 2;
+  if (window_end_max_exclusive >= value.length()) {
+    return value.length();
   }
   if (!iterator->ResetToTokenBefore(window_end_max_exclusive)) {
     return absl_ports::InternalError(
@@ -228,8 +225,11 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
                            iterator));
     snippet_match.set_window_bytes(window_end_exclusive - window_start);
 
-    // Reset the iterator back to the original position.
-    if (!iterator->ResetToTokenAfter(match_pos - 1)) {
+    // DetermineWindowStart/End may change the position of the iterator. So,
+    // reset the iterator back to the original position.
+    bool success = (match_pos > 0) ? iterator->ResetToTokenAfter(match_pos - 1)
+                                   : iterator->ResetToStart();
+    if (!success) {
       return absl_ports::InternalError(
           "Couldn't reset tokenizer to determine snippet window!");
     }
