@@ -19,7 +19,7 @@
 #include <stack>
 #include <string>
 #include <string_view>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -270,7 +270,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
         break;
       }
       case Token::Type::INVALID:
-        U_FALLTHROUGH;
+        [[fallthrough]];
       default:
         // This wouldn't happen if tokenizer and query processor both work
         // correctly. An unknown token indicates inconsistency between tokenizer

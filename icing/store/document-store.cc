@@ -40,6 +40,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
@@ -777,6 +778,36 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
   return document_id_or.ValueOrDie();
 }
 
+std::vector<std::string> DocumentStore::GetAllNamespaces() const {
+  std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
+      namespace_mapper_->GetValuesToKeys();
+
+  std::unordered_set<NamespaceId> existing_namespace_ids;
+  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
+       ++document_id) {
+    // filter_cache_->Get can only fail if document_id is < 0
+    // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
+    auto status_or_data = filter_cache_->Get(document_id);
+    if (!status_or_data.ok()) {
+      ICING_LOG(ERROR)
+          << "Error while iterating over filter cache in GetAllNamespaces";
+      return std::vector<std::string>();
+    }
+    const DocumentFilterData* data = status_or_data.ValueOrDie();
+
+    if (DoesDocumentExist(document_id)) {
+      existing_namespace_ids.insert(data->namespace_id());
+    }
+  }
+
+  std::vector<std::string> existing_namespaces;
+  for (auto itr = existing_namespace_ids.begin();
+       itr != existing_namespace_ids.end(); ++itr) {
+    existing_namespaces.push_back(namespace_id_to_namespace.at(*itr));
+  }
+  return existing_namespaces;
+}
+
 libtextclassifier3::StatusOr<int64_t>
 DocumentStore::DoesDocumentExistAndGetFileOffset(DocumentId document_id) const {
   if (!IsDocumentIdValid(document_id)) {
@@ -1232,6 +1263,59 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
 
   ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk());
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<DocumentStore::OptimizeInfo>
+DocumentStore::GetOptimizeInfo() const {
+  OptimizeInfo optimize_info;
+
+  // Figure out our ratio of optimizable/total docs.
+  int32_t num_documents = document_id_mapper_->num_elements();
+  for (DocumentId document_id = kMinDocumentId; document_id < num_documents;
+       ++document_id) {
+    if (!DoesDocumentExist(document_id)) {
+      ++optimize_info.optimizable_docs;
+    }
+
+    ++optimize_info.total_docs;
+  }
+
+  if (optimize_info.total_docs == 0) {
+    // Can exit early since there's nothing to calculate.
+    return optimize_info;
+  }
+
+  // Get the total element size.
+  //
+  // We use file size instead of disk usage here because the files are not
+  // sparse, so it's more accurate. Disk usage rounds up to the nearest block
+  // size.
+  ICING_ASSIGN_OR_RETURN(const int64_t document_log_file_size,
+                         document_log_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t document_id_mapper_file_size,
+                         document_id_mapper_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t score_cache_file_size,
+                         score_cache_->GetElementsFileSize());
+  ICING_ASSIGN_OR_RETURN(const int64_t filter_cache_file_size,
+                         filter_cache_->GetElementsFileSize());
+
+  // We use a combined disk usage and file size for the KeyMapper because it's
+  // backed by a trie, which has some sparse property bitmaps.
+  ICING_ASSIGN_OR_RETURN(const int64_t document_key_mapper_size,
+                         document_key_mapper_->GetElementsSize());
+
+  // We don't include the namespace mapper because it's not clear if we could
+  // recover any space even if Optimize were called. Deleting 100s of documents
+  // could still leave a few documents of a namespace, and then there would be
+  // no change.
+
+  int64_t total_size = document_log_file_size + document_key_mapper_size +
+                       document_id_mapper_file_size + score_cache_file_size +
+                       filter_cache_file_size;
+
+  optimize_info.estimated_optimizable_bytes =
+      total_size * optimize_info.optimizable_docs / optimize_info.total_docs;
+  return optimize_info;
 }
 
 libtextclassifier3::Status DocumentStore::UpdateDocumentAssociatedScoreCache(
