@@ -14,41 +14,55 @@
  * limitations under the License.
  */
 
+import org.anarres.gradle.plugin.jarjar.JarjarTask
+
+import static androidx.build.SupportConfig.*
+import static androidx.build.dependencies.DependenciesKt.*
+
 buildscript {
-    boolean unbundleBuild = (new File('unbundled-build')).exists()
-    repositories {
-        maven { url '../../../prebuilts/androidx/external' }
-        if (unbundleBuild) {
-            jcenter()
-        }
-    }
     dependencies {
         classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.8')
         classpath('org.anarres.jarjar:jarjar-gradle:1.0.1')
     }
 }
 
-apply plugin: 'java-library'
-apply plugin: 'com.google.protobuf'
-apply plugin: 'org.anarres.jarjar'
-apply plugin: 'idea'
+plugins {
+    id('com.android.library')
+    id('com.google.protobuf')
+    id('org.anarres.jarjar')
+}
 
-sourceSets {
-    main {
-        proto {
-            srcDir '../proto'
-            include '**/*.proto'
+android {
+    buildToolsVersion BUILD_TOOLS_VERSION
+    compileSdkVersion COMPILE_SDK_VERSION
+    defaultConfig {
+        minSdkVersion DEFAULT_MIN_SDK_VERSION
+        targetSdkVersion TARGET_SDK_VERSION
+        testInstrumentationRunner INSTRUMENTATION_RUNNER
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    sourceSets {
+        main {
+            java.srcDir 'src/'
+            manifest.srcFile '../AndroidManifest.xml'
+            proto.srcDir '../proto'
         }
+        androidTest.java.srcDir 'tests/instrumentation'
     }
 }
 
-compileJava {
-    sourceCompatibility = JavaVersion.VERSION_1_7
-    targetCompatibility = JavaVersion.VERSION_1_7
-}
-
 dependencies {
+    api('androidx.annotation:annotation:1.1.0')
+
+    implementation project(':icing:nativeLib')
     implementation('com.google.protobuf:protobuf-javalite:3.10.0')
+
+    androidTestImplementation(ANDROIDX_TEST_CORE)
+    androidTestImplementation(ANDROIDX_TEST_RULES)
+    androidTestImplementation(TRUTH)
 }
 
 protobuf {
@@ -67,21 +81,21 @@ protobuf {
     }
 }
 
-jarjar.repackage('jarjarTask') {
-    destinationName "icing-java-jarjar.jar"
-    from 'com.google.protobuf:protobuf-javalite:3.10.0'
-    from files(sourceSets.main.output.classesDirs)
-    dependsOn sourceSets.main.output
-    classRename 'com.google.protobuf.**', 'com.google.android.icing.protobuf.@1'
-}
+// Create jarjar artifact for all variants (debug/release)
+android.libraryVariants.all { variant ->
+    def variantName = variant.name
+    def suffix = variantName.capitalize()
+    def jarjarTask = tasks.create("jarjar${suffix}", JarjarTask) {
+        destinationName "icing-java-${variantName}-jarjar.jar"
+        from 'com.google.protobuf:protobuf-javalite:3.10.0'
+        from files(variant.javaCompileProvider.get().destinationDir)
+        dependsOn variant.javaCompileProvider.get()
+        classRename 'com.google.protobuf.**', 'com.google.android.icing.protobuf.@1'
+    }
 
-configurations {
-    jarjarConf
-}
-
-artifacts {
-    jarjarConf(jarjarTask.destinationPath) {
-        name 'icing-java-jarjar'
+    def jarjarConf = configurations.register("jarjar${suffix}")
+    artifacts.add("${jarjarConf.name}", jarjarTask.destinationPath) {
+        name "icing-java-${variantName}-jarjar"
         type 'jar'
         builtBy jarjarTask
     }

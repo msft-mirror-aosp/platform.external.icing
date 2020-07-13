@@ -16,8 +16,6 @@ package com.google.android.icing;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
-import androidx.annotation.RestrictTo;
-
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
@@ -39,14 +37,9 @@ import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StatusProto;
-import com.google.android.icing.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.InvalidProtocolBufferException;
 
-/**
- * Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h
- *
- * @hide
- */
-@RestrictTo(RestrictTo.Scope.LIBRARY_GROUP)
+/** Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h */
 public final class IcingSearchEngine {
 
   private static final String TAG = "IcingSearchEngine";
