@@ -46,11 +46,11 @@ android {
     }
     sourceSets {
         main {
-            java.srcDir 'src/'
-            manifest.srcFile '../AndroidManifest.xml'
-            proto.srcDir '../proto'
+            java.srcDir 'java/src/'
+            manifest.srcFile 'AndroidManifest.xml'
+            proto.srcDir 'proto/'
         }
-        androidTest.java.srcDir 'tests/instrumentation'
+        androidTest.java.srcDir 'java/tests/instrumentation/'
     }
 }
 
