@@ -17,12 +17,13 @@
 #include <memory>
 #include <string>
 
+#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
@@ -37,12 +38,14 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -92,24 +95,31 @@ class QueryProcessorTest : public Test {
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
 
+#ifndef ICING_REVERSE_JNI_SEGMENTATION
+    // If we've specified using the reverse-JNI method for segmentation (i.e.
+    // not ICU), then we won't have the ICU data file included to set up.
+    // Technically, we could choose to use reverse-JNI for segmentation AND
+    // include an ICU data file, but that seems unlikely and our current BUILD
+    // setup doesn't do this.
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
         icu_data_file_helper::SetUpICUDataFile(
             GetTestFilePath("icing/icu.dat")));
+#endif  // ICING_REVERSE_JNI_SEGMENTATION
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
+    language_segmenter_factory::SegmenterOptions segmenter_options(
+        ULOC_US, jni_cache_.get());
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
-        language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+        language_segmenter_factory::Create(segmenter_options));
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        normalizer_,
-        normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
-                                   /*max_term_byte_size=*/1000));
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/1000));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
@@ -135,6 +145,7 @@ class QueryProcessorTest : public Test {
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
 
  private:
   IcingFilesystem icing_filesystem_;

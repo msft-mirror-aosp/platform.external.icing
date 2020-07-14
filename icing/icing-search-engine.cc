@@ -194,19 +194,22 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
 
 }  // namespace
 
-IcingSearchEngine::IcingSearchEngine(const IcingSearchEngineOptions& options)
+IcingSearchEngine::IcingSearchEngine(const IcingSearchEngineOptions& options,
+                                     std::unique_ptr<const JniCache> jni_cache)
     : IcingSearchEngine(options, std::make_unique<Filesystem>(),
-                        std::make_unique<Clock>()) {}
+                        std::make_unique<Clock>(), std::move(jni_cache)) {}
 
 IcingSearchEngine::IcingSearchEngine(
     IcingSearchEngineOptions options,
-    std::unique_ptr<const Filesystem> filesystem, std::unique_ptr<Clock> clock)
+    std::unique_ptr<const Filesystem> filesystem, std::unique_ptr<Clock> clock,
+    std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::make_unique<IcingFilesystem>()),
       clock_(std::move(clock)),
       result_state_manager_(performance_configuration_.max_num_hits_per_query,
-                            performance_configuration_.max_num_cache_results) {
+                            performance_configuration_.max_num_cache_results),
+      jni_cache_(std::move(jni_cache)) {
   ICING_VLOG(1) << "Creating IcingSearchEngine in dir: " << options_.base_dir();
 }
 
@@ -220,22 +223,24 @@ IcingSearchEngine::~IcingSearchEngine() {
 }
 
 InitializeResultProto IcingSearchEngine::Initialize() {
+  // This method does both read and write so we need a writer lock. Using two
+  // locks (reader and writer) has the chance to be interrupted during
+  // switching.
+  absl_ports::unique_lock l(&mutex_);
+  return InternalInitialize();
+}
+
+InitializeResultProto IcingSearchEngine::InternalInitialize() {
   ICING_VLOG(1) << "Initializing IcingSearchEngine in dir: "
                 << options_.base_dir();
 
   InitializeResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
-
   if (initialized_) {
     // Already initialized.
     result_status->set_code(StatusProto::OK);
     return result_proto;
   }
-
-  // This method does both read and write so we need a writer lock. Using two
-  // locks (reader and writer) has the chance to be interrupted during
-  // switching.
-  absl_ports::unique_lock l(&mutex_);
 
   // Releases result / query cache if any
   result_state_manager_.InvalidateAllResultStates();
@@ -269,14 +274,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers() {
   ICING_RETURN_IF_ERROR(InitializeSchemaStore());
   ICING_RETURN_IF_ERROR(InitializeDocumentStore());
 
-  TC3_ASSIGN_OR_RETURN(
-      language_segmenter_,
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C));
+  // TODO(b/156383798) : Resolve how to specify the locale.
+  language_segmenter_factory::SegmenterOptions segmenter_options(
+      ULOC_US, jni_cache_.get());
+  TC3_ASSIGN_OR_RETURN(language_segmenter_, language_segmenter_factory::Create(
+                                                std::move(segmenter_options)));
 
-  TC3_ASSIGN_OR_RETURN(
-      normalizer_,
-      normalizer_factory::Create(normalizer_factory::NormalizerType::ICU4C,
-                                 options_.max_token_length()));
+  TC3_ASSIGN_OR_RETURN(normalizer_,
+                       normalizer_factory::Create(options_.max_token_length()));
 
   ICING_RETURN_IF_ERROR(InitializeIndex());
 
@@ -416,13 +421,18 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   SetSchemaResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
+  absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+
   libtextclassifier3::Status status = SchemaUtil::Validate(new_schema);
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
   }
-
-  absl_ports::unique_lock l(&mutex_);
 
   auto lost_previous_schema_or = LostPreviousSchema();
   if (!lost_previous_schema_or.ok()) {
@@ -498,6 +508,11 @@ GetSchemaResultProto IcingSearchEngine::GetSchema() {
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   auto schema_or = schema_store_->GetSchema();
   if (!schema_or.ok()) {
@@ -516,6 +531,11 @@ GetSchemaTypeResultProto IcingSearchEngine::GetSchemaType(
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   auto type_config_or = schema_store_->GetSchemaTypeConfig(schema_type);
   if (!type_config_or.ok()) {
@@ -542,6 +562,11 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   // the schema file to validate, and the schema could be changed in
   // SetSchema() which is protected by the same mutex.
   absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   auto document_id_or = document_store_->Put(document);
   if (!document_id_or.ok()) {
@@ -576,6 +601,11 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   auto document_or = document_store_->Get(name_space, uri);
   if (!document_or.ok()) {
@@ -588,6 +618,22 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   return result_proto;
 }
 
+GetAllNamespacesResultProto IcingSearchEngine::GetAllNamespaces() {
+  GetAllNamespacesResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::shared_lock l(&mutex_);
+
+  std::vector<std::string> namespaces = document_store_->GetAllNamespaces();
+
+  for (const std::string& namespace_ : namespaces) {
+    result_proto.add_namespaces(namespace_);
+  }
+
+  result_status->set_code(StatusProto::OK);
+  return result_proto;
+}
+
 DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
                                             const std::string_view uri) {
   ICING_VLOG(1) << "Deleting document from doc store";
@@ -596,6 +642,11 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
@@ -616,14 +667,20 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
     const std::string_view name_space) {
   ICING_VLOG(1) << "Deleting namespace from doc store";
 
+  DeleteByNamespaceResultProto delete_result;
+  StatusProto* result_status = delete_result.mutable_status();
   absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return delete_result;
+  }
 
   // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status =
       document_store_->DeleteByNamespace(name_space);
-  DeleteByNamespaceResultProto delete_result;
-  TransformStatus(status, delete_result.mutable_status());
+  TransformStatus(status, result_status);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete Namespace: " << name_space;
@@ -636,14 +693,20 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
     const std::string_view schema_type) {
   ICING_VLOG(1) << "Deleting type from doc store";
 
+  DeleteBySchemaTypeResultProto delete_result;
+  StatusProto* result_status = delete_result.mutable_status();
   absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return delete_result;
+  }
 
   // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status =
       document_store_->DeleteBySchemaType(schema_type);
-  DeleteBySchemaTypeResultProto delete_result;
-  TransformStatus(status, delete_result.mutable_status());
+  TransformStatus(status, result_status);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete SchemaType: " << schema_type;
@@ -659,6 +722,11 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk() {
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   auto status = InternalPersistToDisk();
   TransformStatus(status, result_status);
@@ -678,6 +746,11 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   // Releases result / query cache if any
   result_state_manager_.InvalidateAllResultStates();
@@ -726,6 +799,54 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   }
 
   TransformStatus(optimization_status, result_status);
+  return result_proto;
+}
+
+GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
+  ICING_VLOG(1) << "Getting optimize info from IcingSearchEngine";
+
+  GetOptimizeInfoResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+
+  // Get stats from DocumentStore
+  auto doc_store_optimize_info_or = document_store_->GetOptimizeInfo();
+  if (!doc_store_optimize_info_or.ok()) {
+    TransformStatus(doc_store_optimize_info_or.status(), result_status);
+    return result_proto;
+  }
+  DocumentStore::OptimizeInfo doc_store_optimize_info =
+      doc_store_optimize_info_or.ValueOrDie();
+  result_proto.set_optimizable_docs(doc_store_optimize_info.optimizable_docs);
+
+  if (doc_store_optimize_info.optimizable_docs == 0) {
+    // Can return early since there's nothing to calculate on the index side
+    result_proto.set_estimated_optimizable_bytes(0);
+    result_status->set_code(StatusProto::OK);
+    return result_proto;
+  }
+
+  // Get stats from Index.
+  auto index_elements_size_or = index_->GetElementsSize();
+  if (!index_elements_size_or.ok()) {
+    TransformStatus(index_elements_size_or.status(), result_status);
+    return result_proto;
+  }
+  int64_t index_elements_size = index_elements_size_or.ValueOrDie();
+
+  // Sum up the optimizable sizes from DocumentStore and Index
+  result_proto.set_estimated_optimizable_bytes(
+      index_elements_size * doc_store_optimize_info.optimizable_docs /
+          doc_store_optimize_info.total_docs +
+      doc_store_optimize_info.estimated_optimizable_bytes);
+
+  result_status->set_code(StatusProto::OK);
   return result_proto;
 }
 
@@ -808,6 +929,13 @@ SearchResultProto IcingSearchEngine::Search(
     const ResultSpecProto& result_spec) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
+  // TODO(b/146008613) Explore ideas to make this function read-only.
+  absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   libtextclassifier3::Status status = ValidateResultSpec(result_spec);
   if (!status.ok()) {
@@ -819,9 +947,6 @@ SearchResultProto IcingSearchEngine::Search(
     TransformStatus(status, result_status);
     return result_proto;
   }
-
-  // TODO(b/146008613) Explore ideas to make this function read-only.
-  absl_ports::unique_lock l(&mutex_);
 
   // Gets unordered results from query processor
   auto query_processor_or = QueryProcessor::Create(
@@ -917,6 +1042,11 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   // ResultStateManager has its own writer lock, so here we only need a reader
   // lock for other components.
   absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   libtextclassifier3::StatusOr<PageResultState> page_result_state_or =
       result_state_manager_.GetNextPage(next_page_token);
@@ -969,6 +1099,11 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
 }
 
 void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
+  absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    ICING_LOG(ERROR) << "IcingSearchEngine has not been initialized!";
+    return;
+  }
   result_state_manager_.InvalidateResultState(next_page_token);
 }
 
@@ -1138,8 +1273,9 @@ ResetResultProto IcingSearchEngine::Reset() {
     return result_proto;
   }
 
+  absl_ports::unique_lock l(&mutex_);
   initialized_ = false;
-  if (Initialize().status().code() != StatusProto::OK) {
+  if (InternalInitialize().status().code() != StatusProto::OK) {
     // We shouldn't hit the following Initialize errors:
     //   NOT_FOUND: all data was cleared, we aren't expecting anything
     //   DATA_LOSS: all data was cleared, we aren't expecting anything

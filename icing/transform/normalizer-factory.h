@@ -16,23 +16,15 @@
 #define ICING_TRANSFORM_NORMALIZER_FACTORY_H_
 
 #include <memory>
-#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/transform/icu-normalizer.h"
-#include "icing/transform/none-normalizer.h"
 #include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
 
 namespace normalizer_factory {
-
-enum NormalizerType {
-  ICU4C,  // Normalizes using the ICU library.
-  NONE,   // Doesn't perform normalization. Not for use in production.
-};
 
 // Creates a normalizer. max_term_byte_size enforces the max size of text after
 // normalization, text will be truncated if exceeds the max size.
@@ -42,19 +34,7 @@ enum NormalizerType {
 //   INVALID_ARGUMENT if max_term_byte_size <= 0
 //   INTERNAL_ERROR on errors
 libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
-    NormalizerType type, int max_term_byte_size) {
-  if (max_term_byte_size <= 0) {
-    return absl_ports::InvalidArgumentError(
-        "max_term_byte_size must be greater than zero.");
-  }
-
-  switch (type) {
-    case ICU4C:
-      return IcuNormalizer::Create(max_term_byte_size);
-    case NONE:
-      return std::make_unique<NoneNormalizer>(max_term_byte_size);
-  }
-}
+    int max_term_byte_size);
 
 }  // namespace normalizer_factory
 

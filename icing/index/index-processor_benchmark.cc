@@ -16,7 +16,7 @@
 #include "gmock/gmock.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/icu-data-file-helper.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -140,7 +140,7 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
   return normalizer_factory::Create(
-             normalizer_factory::NormalizerType::ICU4C,
+
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
 }
@@ -193,8 +193,7 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -241,8 +240,7 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -290,8 +288,7 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -339,8 +336,7 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create(language_segmenter_factory::ICU4C)
-          .ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
