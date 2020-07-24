@@ -21,6 +21,7 @@ import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
+import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
@@ -308,6 +309,30 @@ public final class IcingSearchEngineTest {
     assertThat(getOptimizeInfoResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
     assertThat(getOptimizeInfoResultProto.getOptimizableDocs()).isEqualTo(0);
     assertThat(getOptimizeInfoResultProto.getEstimatedOptimizableBytes()).isEqualTo(0);
+  }
+
+  @Test
+  public void testGetAllNamespaces() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+        icing
+            .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+            .getStatus()
+            .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
+    assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    GetAllNamespacesResultProto getAllNamespacesResultProto = icing.getAllNamespaces();
+    assertThat(getAllNamespacesResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(getAllNamespacesResultProto.getNamespacesList()).containsExactly("namespace");
   }
 
   @Test

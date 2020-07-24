@@ -188,6 +188,18 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGet(
 }
 
 JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
+    JNIEnv* env, jclass clazz, jlong native_pointer) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing::lib::GetAllNamespacesResultProto get_all_namespaces_result_proto =
+      icing->GetAllNamespaces();
+
+  return SerializeProtoToJniByteArray(env, get_all_namespaces_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
     JNIEnv* env, jclass clazz, jlong native_pointer,
     jbyteArray search_spec_bytes, jbyteArray scoring_spec_bytes,
