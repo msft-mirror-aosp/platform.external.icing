@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/posting-list-utils.h"
+#include "icing/index/main/posting-list-utils.h"
 
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/util/logging.h"

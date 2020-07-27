@@ -158,8 +158,8 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   // Truncate the content
   ICING_EXPECT_OK(vector->TruncateTo(0));
 
-  // We don't automatically update the crc when we truncate.
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(good_crc));
+  // Crc is cleared after truncation and reset to 0.
+  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
   EXPECT_EQ(0u, vector->num_elements());
 }
 
@@ -409,10 +409,10 @@ TEST_F(FileBackedVectorTest, TruncateTo) {
   EXPECT_EQ(1, vector->num_elements());
   EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(31158534)));
 
-  // Truncating doesn't cause the checksum to be updated.
+  // Truncating clears the checksum and resets it to 0
   ICING_EXPECT_OK(vector->TruncateTo(0));
   EXPECT_EQ(0, vector->num_elements());
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(31158534)));
+  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
 
   // Can't truncate past end.
   EXPECT_THAT(vector->TruncateTo(100),
@@ -421,6 +421,46 @@ TEST_F(FileBackedVectorTest, TruncateTo) {
   // Must be greater than or equal to 0
   EXPECT_THAT(vector->TruncateTo(-1),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(FileBackedVectorTest, TruncateAndReReadFile) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<float>> vector,
+        FileBackedVector<float>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    ICING_ASSERT_OK(vector->Set(0, 1.0));
+    ICING_ASSERT_OK(vector->Set(1, 2.0));
+    ICING_ASSERT_OK(vector->Set(2, 2.0));
+    ICING_ASSERT_OK(vector->Set(3, 2.0));
+    ICING_ASSERT_OK(vector->Set(4, 2.0));
+  }  // Destroying the vector should trigger a checksum of the 5 elements
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<float>> vector,
+        FileBackedVector<float>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    EXPECT_EQ(5, vector->num_elements());
+    ICING_EXPECT_OK(vector->TruncateTo(4));
+    EXPECT_EQ(4, vector->num_elements());
+  }  // Destroying the vector should update the checksum to 4 elements
+
+  // Creating again should double check that our checksum of 4 elements matches
+  // what was previously saved.
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<float>> vector,
+        FileBackedVector<float>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    EXPECT_EQ(vector->num_elements(), 4);
+  }
 }
 
 }  // namespace

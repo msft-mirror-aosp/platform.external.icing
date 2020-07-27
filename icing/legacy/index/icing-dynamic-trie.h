@@ -569,6 +569,7 @@ class IcingDynamicTrie : public IIcingStorage {
   class CandidateSet;
 
   // For testing only.
+  friend class IcingDynamicTrieTest_TrieShouldRespectLimits_Test;
   friend class IcingDynamicTrieTest_SyncErrorRecovery_Test;
   friend class IcingDynamicTrieTest_BitmapsClosedWhenInitFails_Test;
   void GetHeader(IcingDynamicTrieHeader *hdr) const;
