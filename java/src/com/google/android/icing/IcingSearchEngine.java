@@ -241,6 +241,31 @@ public final class IcingSearchEngine {
   }
 
   @NonNull
+  public SearchResultProto getNextPage(long nextPageToken) {
+    byte[] searchResultBytes = nativeGetNextPage(nativePointer, nextPageToken);
+    if (searchResultBytes == null) {
+      Log.e(TAG, "Received null SearchResultProto from native.");
+      return SearchResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return SearchResultProto.parseFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing SearchResultProto.", e);
+      return SearchResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
+  public void invalidateNextPageToken(long nextPageToken) {
+    nativeInvalidateNextPageToken(nativePointer, nextPageToken);
+  }
+
+  @NonNull
   public DeleteResultProto delete(@NonNull String namespace, @NonNull String uri) {
     byte[] deleteResultBytes = nativeDelete(nativePointer, namespace, uri);
     if (deleteResultBytes == null) {
@@ -402,6 +427,10 @@ public final class IcingSearchEngine {
 
   private static native byte[] nativeSearch(
       long nativePointer, byte[] searchSpecBytes, byte[] scoringSpecBytes, byte[] resultSpecBytes);
+
+  private static native byte[] nativeGetNextPage(long nativePointer, long nextPageToken);
+
+  private static native void nativeInvalidateNextPageToken(long nativePointer, long nextPageToken);
 
   private static native byte[] nativeDelete(long nativePointer, String namespace, String uri);
 
