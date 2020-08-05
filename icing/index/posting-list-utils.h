@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_POSTING_LIST_UTILS_H_
-#define ICING_INDEX_MAIN_POSTING_LIST_UTILS_H_
+#ifndef ICING_INDEX_POSTING_LIST_UTILS_H_
+#define ICING_INDEX_POSTING_LIST_UTILS_H_
 
 #include <cstdint>
 
@@ -26,8 +26,7 @@ namespace posting_list_utils {
 
 // Represents the byte length of the two special hits described
 // in the private section of posting-list-used.h.
-inline constexpr uint32_t kNumSpecialHits = 2;
-inline constexpr uint32_t kSpecialHitsSize = sizeof(Hit) * kNumSpecialHits;
+static constexpr uint32_t kSpecialHitsSize = sizeof(Hit) * 2;
 
 constexpr uint32_t min_posting_list_size() { return kSpecialHitsSize; }
 
@@ -42,4 +41,4 @@ bool IsValidPostingListSize(uint32_t size_in_bytes);
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_POSTING_LIST_UTILS_H_
+#endif  // ICING_INDEX_POSTING_LIST_UTILS_H_

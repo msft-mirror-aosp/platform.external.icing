@@ -79,10 +79,7 @@ class MemoryMappedFile {
   // file_path : Full path of the file that needs to be memory-mapped.
   MemoryMappedFile(const Filesystem& filesystem, std::string_view file_path,
                    Strategy mmap_strategy);
-  MemoryMappedFile(const MemoryMappedFile& other) = delete;
-  MemoryMappedFile(MemoryMappedFile&& other);
-  MemoryMappedFile& operator=(const MemoryMappedFile& other) = delete;
-  MemoryMappedFile& operator=(MemoryMappedFile&& other);
+
   // Frees any region that is still memory-mapped region.
   ~MemoryMappedFile();
 
@@ -137,13 +134,10 @@ class MemoryMappedFile {
   Strategy strategy() const { return strategy_; }
 
  private:
-  // Swaps the contents of this with other.
-  void Swap(MemoryMappedFile* other);
-
   // Cached constructor params.
-  const Filesystem* filesystem_;
-  std::string file_path_;
-  Strategy strategy_;
+  const Filesystem* const filesystem_;
+  const std::string file_path_;
+  const Strategy strategy_;
 
   // Offset within the file at which the current memory-mapped region starts.
   size_t file_offset_ = 0;

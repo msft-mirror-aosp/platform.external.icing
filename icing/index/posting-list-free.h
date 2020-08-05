@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
-#define ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
+#ifndef ICING_INDEX_POSTING_LIST_FREE_H_
+#define ICING_INDEX_POSTING_LIST_FREE_H_
 
 #include <string.h>
 #include <sys/mman.h>
@@ -23,7 +23,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/index/posting-list-utils.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -33,7 +33,7 @@ namespace lib {
 
 // A FlashIndexBlock can contain multiple posting lists. This specifies which
 // PostingList in the FlashIndexBlock we want to refer to.
-using PostingListIndex = int32_t;
+using PostingListIndex = uint32_t;
 inline constexpr PostingListIndex kInvalidPostingListIndex = ~0U;
 
 // A posting list in the index block's free list.
@@ -126,4 +126,4 @@ class PostingListFree {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
+#endif  // ICING_INDEX_POSTING_LIST_FREE_H_

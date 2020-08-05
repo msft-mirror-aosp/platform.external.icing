@@ -17,15 +17,13 @@
 #ifndef ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
 #define ICING_LEGACY_INDEX_ICING_FILESYSTEM_H_
 
-#include <sys/types.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
 #include <memory>
 #include <string>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 namespace icing {

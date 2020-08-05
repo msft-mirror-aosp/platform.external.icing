@@ -184,9 +184,8 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
     default:
       // Other internal status codes aren't supported externally yet. If it
       // should be supported, add another switch-case above.
-      ICING_LOG(FATAL) << IcingStringUtil::StringPrintf(
-          "Internal status code %d not supported in the external API",
-          internal_status.error_code());
+      ICING_LOG(FATAL)
+          << "Internal status code not supported in the external API";
       break;
   }
 

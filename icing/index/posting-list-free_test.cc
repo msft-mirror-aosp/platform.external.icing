@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-free.h"
+#include "icing/index/posting-list-free.h"
 
 #include <cstdint>
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gtest/gtest.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/index/posting-list-utils.h"
 #include "icing/testing/common-matchers.h"
 
 namespace icing {

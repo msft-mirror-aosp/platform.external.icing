@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-used.h"
+#include "icing/index/posting-list-used.h"
 
 #include <algorithm>
 #include <cinttypes>
@@ -20,7 +20,7 @@
 #include <limits>
 
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/index/posting-list-utils.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/util/status-macros.h"
@@ -57,10 +57,7 @@ PostingListUsed::CreateFromUnitializedRegion(void *posting_list_buffer,
   return posting_list_used;
 }
 
-void PostingListUsed::Clear() {
-  // Safe to ignore return value because size_in_bytes_ a valid argument.
-  set_start_byte_offset(size_in_bytes_);
-}
+void PostingListUsed::Clear() { set_start_byte_offset(size_in_bytes_); }
 
 libtextclassifier3::Status PostingListUsed::MoveFrom(PostingListUsed *other) {
   ICING_RETURN_ERROR_IF_NULL(other);
@@ -74,7 +71,7 @@ libtextclassifier3::Status PostingListUsed::MoveFrom(PostingListUsed *other) {
     return absl_ports::FailedPreconditionError(
         "This posting list is in an invalid state and can't be used!");
   }
-  if (!other->IsPostingListValid()) {
+  if (other->IsPostingListValid()) {
     return absl_ports::InvalidArgumentError(
         "Cannot MoveFrom an invalid posting list!");
   }
@@ -85,7 +82,7 @@ libtextclassifier3::Status PostingListUsed::MoveFrom(PostingListUsed *other) {
   while (other->full() || other->almost_full() ||
          (size_in_bytes_ - posting_list_utils::kSpecialHitsSize <
           other->BytesUsed())) {
-    if (!other->GetHitsInternal(/*limit=*/1, /*pop=*/true, &hits).ok()) {
+    if (other->GetHitsInternal(/*limit=*/1, /*pop=*/true, &hits) != 1) {
       return absl_ports::AbortedError(
           "Unable to retrieve hits from other posting list.");
     }
@@ -99,7 +96,7 @@ libtextclassifier3::Status PostingListUsed::MoveFrom(PostingListUsed *other) {
   // Because we popped all hits from other outside of the compressed area and we
   // guaranteed that other->BytesUsed is less than size_in_bytes_ -
   // kSpecialHitSize. This is guaranteed to be a valid byte offset for the
-  // NOT_FULL state, so ignoring the value is safe.
+  // NOT_FULL state.
   set_start_byte_offset(size_in_bytes_ - other->BytesUsed());
 
   // Put back remaining hits.
@@ -130,22 +127,20 @@ uint32_t PostingListUsed::GetPadEnd(uint32_t offset) const {
   return pad_end;
 }
 
-bool PostingListUsed::PadToEnd(uint32_t start, uint32_t end) {
+void PostingListUsed::PadToEnd(uint32_t start, uint32_t end) {
   if (end > size_in_bytes_) {
     ICING_LOG(ERROR) << "Cannot pad a region that ends after size!";
-    return false;
+    return;
   }
   // In VarInt a value of 0 encodes to 0.
   memset(posting_list_buffer_ + start, 0, end - start);
-  return true;
 }
 
 libtextclassifier3::Status PostingListUsed::PrependHitToAlmostFull(
     const Hit &hit) {
   // Get delta between first hit and the new hit. Try to fit delta
   // in the padded area and put new hit at the special position 1.
-  // Calling ValueOrDie is safe here because 1 < kNumSpecialHits.
-  Hit cur = get_special_hit(1).ValueOrDie();
+  Hit cur = get_special_hit(1);
   if (cur.value() <= hit.value()) {
     return absl_ports::InvalidArgumentError(
         "Hit being prepended must be strictly less than the most recent Hit");
@@ -169,15 +164,12 @@ libtextclassifier3::Status PostingListUsed::PrependHitToAlmostFull(
     uint8_t *score_offset = delta_offset + delta_len;
     memcpy(score_offset, &score, cur_score_bytes);
 
-    // Now first hit is the new hit, at special position 1. Safe to ignore the
-    // return value because 1 < kNumSpecialHits.
+    // Now first hit is the new hit, at special position 1.
     set_special_hit(1, hit);
-    // Safe to ignore the return value because sizeof(Hit) is a valid argument.
     set_start_byte_offset(sizeof(Hit));
   } else {
     // No space for delta. We put the new hit at special position 0
-    // and go to the full state. Safe to ignore the return value because 1 <
-    // kNumSpecialHits.
+    // and go to the full state.
     set_special_hit(0, hit);
   }
   return libtextclassifier3::Status::OK;
@@ -186,17 +178,13 @@ libtextclassifier3::Status PostingListUsed::PrependHitToAlmostFull(
 void PostingListUsed::PrependHitToEmpty(const Hit &hit) {
   // First hit to be added. Just add verbatim, no compression.
   if (size_in_bytes_ == posting_list_utils::kSpecialHitsSize) {
-    // Safe to ignore the return value because 1 < kNumSpecialHits
     set_special_hit(1, hit);
-    // Safe to ignore the return value because sizeof(Hit) is a valid argument.
     set_start_byte_offset(sizeof(Hit));
   } else {
     // Since this is the first hit, size != kSpecialHitsSize and
     // size % sizeof(Hit) == 0, we know that there is room to fit 'hit' into
-    // the compressed region, so ValueOrDie is safe.
-    uint32_t offset = PrependHitUncompressed(hit, size_in_bytes_).ValueOrDie();
-    // Safe to ignore the return value because PrependHitUncompressed is
-    // guaranteed to return a valid offset.
+    // the compressed region.
+    uint32_t offset = PrependHitUncompressed(hit, size_in_bytes_);
     set_start_byte_offset(offset);
   }
 }
@@ -238,14 +226,12 @@ libtextclassifier3::Status PostingListUsed::PrependHitToNotFull(
     memcpy(posting_list_buffer_ + offset, delta_buf, delta_len);
 
     // Prepend new hit with (possibly) its score. We know that there is room
-    // for 'hit' because of the if statement above, so calling ValueOrDie is
-    // safe.
-    offset = PrependHitUncompressed(hit, offset).ValueOrDie();
-    // offset is guaranteed to be valid here. So it's safe to ignore the return
-    // value. The if above will guarantee that offset >= kSpecialHitSize and <
-    // size_in_bytes_ because the if ensures that there is enough room between
-    // offset and kSpecialHitSize to fit the delta of the previous hit, any
-    // score and the uncompressed hit.
+    // for 'hit' because of the if statement above.
+    offset = PrependHitUncompressed(hit, offset);
+    // offset is guaranteed to be valid here. The if above will guarantee that
+    // offset >= kSpecialHitSize and < size_in_bytes_ because the if ensures
+    // that there is enough room between offset and kSpecialHitSize to fit the
+    // delta of the previous hit, any score and the uncompressed hit.
     set_start_byte_offset(offset);
   } else if (posting_list_utils::kSpecialHitsSize + delta_len <= offset) {
     // Only have space for delta. The new hit must be put in special
@@ -255,17 +241,13 @@ libtextclassifier3::Status PostingListUsed::PrependHitToNotFull(
     offset -= delta_len;
     memcpy(posting_list_buffer_ + offset, delta_buf, delta_len);
 
-    // Prepend pad. Safe to ignore the return value of PadToEnd because offset
-    // must be less than size_in_bytes_. Otherwise, this function already would
-    // have returned FAILED_PRECONDITION.
+    // Prepend pad.
     PadToEnd(posting_list_utils::kSpecialHitsSize, offset);
 
-    // Put new hit in special position 1. Safe to ignore return value because 1
-    // < kNumSpecialHits.
+    // Put new hit in special position 1.
     set_special_hit(1, hit);
 
-    // State almost_full. Safe to ignore the return value because sizeof(Hit) is
-    // a valid argument.
+    // State almost_full.
     set_start_byte_offset(sizeof(Hit));
   } else {
     // Very rare case where delta is larger than sizeof(Hit::Value)
@@ -274,18 +256,10 @@ libtextclassifier3::Status PostingListUsed::PrependHitToNotFull(
     // special position 0.
     Hit cur(cur_value);
     if (cur.has_score()) {
-      // offset is < kSpecialHitsSize + delta_len. delta_len is at most 5 bytes.
-      // Therefore, offset must be less than kSpecialHitSize + 5. Since posting
-      // list size must be divisible by sizeof(Hit) (5), it is guaranteed that
-      // offset < size_in_bytes, so it is safe to call ValueOrDie here.
-      cur = Hit(cur_value, ReadScore(offset).ValueOrDie());
+      cur = Hit(cur_value, ReadScore(offset));
       offset += sizeof(Hit::Score);
     }
-    // Safe to ignore the return value of PadToEnd because offset must be less
-    // than size_in_bytes_. Otherwise, this function already would have returned
-    // FAILED_PRECONDITION.
     PadToEnd(posting_list_utils::kSpecialHitsSize, offset);
-    // Safe to ignore the return value here because 0 and 1 < kNumSpecialHits.
     set_special_hit(1, cur);
     set_special_hit(0, hit);
   }
@@ -318,20 +292,18 @@ libtextclassifier3::Status PostingListUsed::PrependHit(const Hit &hit) {
   }
 }
 
-libtextclassifier3::StatusOr<std::vector<Hit>> PostingListUsed::GetHits()
-    const {
+std::vector<Hit> PostingListUsed::GetHits() const {
   std::vector<Hit> hits_out;
-  ICING_RETURN_IF_ERROR(GetHits(&hits_out));
+  GetHits(&hits_out);
   return hits_out;
 }
 
-libtextclassifier3::Status PostingListUsed::GetHits(
-    std::vector<Hit> *hits_out) const {
-  return GetHitsInternal(/*limit=*/std::numeric_limits<uint32_t>::max(),
-                         /*pop=*/false, hits_out);
+void PostingListUsed::GetHits(std::vector<Hit> *hits_out) const {
+  GetHitsInternal(/*limit=*/std::numeric_limits<uint32_t>::max(), /*pop=*/false,
+                  hits_out);
 }
 
-libtextclassifier3::Status PostingListUsed::PopFrontHits(uint32_t num_hits) {
+void PostingListUsed::PopFrontHits(uint32_t num_hits) {
   if (num_hits == 1 && full()) {
     // The PL is in full status which means that we save 2 uncompressed hits in
     // the 2 special postions. But full status may be reached by 2 different
@@ -386,7 +358,7 @@ libtextclassifier3::Status PostingListUsed::PopFrontHits(uint32_t num_hits) {
 
     // Popping 2 hits should never fail because we've just ensured that the
     // posting list is in the FULL state.
-    ICING_RETURN_IF_ERROR(GetHitsInternal(/*limit=*/2, /*pop=*/true, &out));
+    GetHitsInternal(/*limit=*/2, /*pop=*/true, &out);
 
     // PrependHit should never fail because out[1] is a valid hit less than
     // previous hits in the posting list and because there's no way that the
@@ -394,13 +366,12 @@ libtextclassifier3::Status PostingListUsed::PopFrontHits(uint32_t num_hits) {
     // AND another hit.
     PrependHit(out[1]);
   } else if (num_hits > 0) {
-    return GetHitsInternal(/*limit=*/num_hits, /*pop=*/true, nullptr);
+    GetHitsInternal(/*limit=*/num_hits, /*pop=*/true, nullptr);
   }
-  return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status PostingListUsed::GetHitsInternal(
-    uint32_t limit, bool pop, std::vector<Hit> *out) const {
+uint32_t PostingListUsed::GetHitsInternal(uint32_t limit, bool pop,
+                                          std::vector<Hit> *out) const {
   // Put current uncompressed val here.
   Hit::Value val = Hit::kInvalidValue;
   uint32_t offset = get_start_byte_offset();
@@ -408,9 +379,7 @@ libtextclassifier3::Status PostingListUsed::GetHitsInternal(
 
   // First traverse the first two special positions.
   while (count < limit && offset < posting_list_utils::kSpecialHitsSize) {
-    // Calling ValueOrDie is safe here because offset / sizeof(Hit) <
-    // kNumSpecialHits because of the check above.
-    Hit hit = get_special_hit(offset / sizeof(Hit)).ValueOrDie();
+    Hit hit = get_special_hit(offset / sizeof(Hit));
     val = hit.value();
     if (out != nullptr) {
       out->push_back(hit);
@@ -438,16 +407,7 @@ libtextclassifier3::Status PostingListUsed::GetHitsInternal(
     }
     Hit hit(val);
     if (hit.has_score()) {
-      auto score_or = ReadScore(offset);
-      if (!score_or.ok()) {
-        // This posting list has been corrupted somehow. The first hit of the
-        // posting list claims to have a score, but there's no more room in the
-        // posting list for that score to exist. Return an empty vector and zero
-        // to indicate no hits retrieved.
-        out->clear();
-        return absl_ports::InternalError("Posting list has been corrupted!");
-      }
-      hit = Hit(val, score_or.ValueOrDie());
+      hit = Hit(val, ReadScore(offset));
       offset += sizeof(Hit::Score);
     }
     if (out != nullptr) {
@@ -475,33 +435,18 @@ libtextclassifier3::Status PostingListUsed::GetHitsInternal(
         offset -= sizeof(Hit::Value);
         memcpy(posting_list_buffer_ + offset, &val, sizeof(Hit::Value));
       } else {
-        // val won't fit in compressed area. Also see if there is a score.
+        // val won't fit in compressed area. Also see if there is a
+        // score.
         Hit hit(val);
         if (hit.has_score()) {
-          auto score_or = ReadScore(offset);
-          if (!score_or.ok()) {
-            // This posting list has been corrupted somehow. The first hit of
-            // the posting list claims to have a score, but there's no more room
-            // in the posting list for that score to exist. Return an empty
-            // vector and zero to indicate no hits retrieved. Do not pop
-            // anything.
-            out->clear();
-            return absl_ports::InternalError(
-                "Posting list has been corrupted!");
-          }
-          hit = Hit(val, score_or.ValueOrDie());
+          hit = Hit(val, ReadScore(offset));
         }
-        // Okay to ignore the return value here because 1 < kNumSpecialHits.
         mutable_this->set_special_hit(1, hit);
-
-        // Prepend pad. Safe to ignore the return value of PadToEnd because
-        // offset must be less than size_in_bytes_ thanks to the if above.
         mutable_this->PadToEnd(posting_list_utils::kSpecialHitsSize, offset);
         offset = sizeof(Hit);
       }
     }
-    // offset is guaranteed to be valid so ignoring the return value of
-    // set_start_byte_offset is safe. It falls into one of four scenarios:
+    // offset is guaranteed to be valid. It falls into one of four scenarios:
     // Scenario 1: the above if was false because offset is not < size_in_bytes_
     //   In this case, offset must be == size_in_bytes_ because we reached
     //   offset by unwinding hits on the posting list.
@@ -521,28 +466,26 @@ libtextclassifier3::Status PostingListUsed::GetHitsInternal(
     mutable_this->set_start_byte_offset(offset);
   }
 
-  return libtextclassifier3::Status::OK;
+  return count;
 }
 
-libtextclassifier3::StatusOr<Hit> PostingListUsed::get_special_hit(
-    uint32_t index) const {
+Hit PostingListUsed::get_special_hit(uint32_t index) const {
   static_assert(sizeof(Hit::Value) >= sizeof(uint32_t), "HitTooSmall");
-  if (index >= posting_list_utils::kNumSpecialHits || index < 0) {
-    return absl_ports::InvalidArgumentError(
-        "Special hits only exist at indices 0 and 1");
+  if (index >= posting_list_utils::kSpecialHitsSize / sizeof(Hit)) {
+    ICING_LOG(ERROR) << "Special hits only exist at indices 0 and 1";
+    return Hit();
   }
   Hit val;
   memcpy(&val, posting_list_buffer_ + index * sizeof(val), sizeof(val));
   return val;
 }
 
-bool PostingListUsed::set_special_hit(uint32_t index, const Hit &val) {
-  if (index >= posting_list_utils::kNumSpecialHits || index < 0) {
+void PostingListUsed::set_special_hit(uint32_t index, const Hit &val) {
+  if (index >= posting_list_utils::kSpecialHitsSize / sizeof(Hit)) {
     ICING_LOG(ERROR) << "Special hits only exist at indices 0 and 1";
-    return false;
+    return;
   }
   memcpy(posting_list_buffer_ + index * sizeof(val), &val, sizeof(val));
-  return true;
 }
 
 uint32_t PostingListUsed::BytesUsed() const {
@@ -572,20 +515,17 @@ uint32_t PostingListUsed::MinPostingListSizeToFit() const {
 
 bool PostingListUsed::IsPostingListValid() const {
   if (almost_full()) {
-    // Special Hit 1 should hold a Hit. Calling ValueOrDie is safe because we
-    // know that 1 < kNumSpecialHits.
-    if (!get_special_hit(1).ValueOrDie().is_valid()) {
+    // Special Hit 1 should hold a Hit.
+    if (!get_special_hit(1).is_valid()) {
       ICING_LOG(ERROR)
           << "Both special hits cannot be invalid at the same time.";
       return false;
     }
   } else if (!full()) {
-    // NOT_FULL. Special Hit 0 should hold a valid offset. Calling ValueOrDie is
-    // safe because we know that 0 < kNumSpecialHits.
-    if (get_special_hit(0).ValueOrDie().value() > size_in_bytes_ ||
-        get_special_hit(0).ValueOrDie().value() <
-            posting_list_utils::kSpecialHitsSize) {
-      ICING_LOG(ERROR) << "Hit: " << get_special_hit(0).ValueOrDie().value()
+    // NOT_FULL. Special Hit 0 should hold a valid offset.
+    if (get_special_hit(0).value() > size_in_bytes_ ||
+        get_special_hit(0).value() < posting_list_utils::kSpecialHitsSize) {
+      ICING_LOG(ERROR) << "Hit: " << get_special_hit(0).value()
                        << " size: " << size_in_bytes_
                        << " sp size: " << posting_list_utils::kSpecialHitsSize;
       return false;
@@ -600,57 +540,55 @@ uint32_t PostingListUsed::get_start_byte_offset() const {
   } else if (almost_full()) {
     return sizeof(Hit);
   } else {
-    // NOT_FULL, calling ValueOrDie is safe because we know that 0 <
-    // kNumSpecialHits.
-    return get_special_hit(0).ValueOrDie().value();
+    // NOT_FULL
+    return get_special_hit(0).value();
   }
 }
 
-bool PostingListUsed::set_start_byte_offset(uint32_t offset) {
+void PostingListUsed::set_start_byte_offset(uint32_t offset) {
   if (offset > size_in_bytes_) {
     ICING_LOG(ERROR) << "offset cannot be a value greater than size "
                      << size_in_bytes_ << ". offset is " << offset << ".";
-    return false;
+    return;
   }
   if (offset < posting_list_utils::kSpecialHitsSize && offset > sizeof(Hit)) {
     ICING_LOG(ERROR) << "offset cannot be a value between (" << sizeof(Hit)
                      << ", " << posting_list_utils::kSpecialHitsSize
                      << "). offset is " << offset << ".";
-    return false;
+    return;
   }
   if (offset < sizeof(Hit) && offset != 0) {
     ICING_LOG(ERROR) << "offset cannot be a value between (0, " << sizeof(Hit)
                      << "). offset is " << offset << ".";
-    return false;
+    return;
   }
   if (offset >= posting_list_utils::kSpecialHitsSize) {
-    // not_full state. Safe to ignore the return value because 0 and 1 are both
-    // < kNumSpecialHits.
+    // not_full state.
     set_special_hit(0, Hit(offset));
     set_special_hit(1, Hit());
   } else if (offset == sizeof(Hit)) {
-    // almost_full state. Safe to ignore the return value because 1 is both <
-    // kNumSpecialHits.
+    // almost_full state.
     set_special_hit(0, Hit());
   }
   // Nothing to do for the FULL state - the offset isn't actually stored
   // anywhere and both special hits hold valid hits.
-  return true;
 }
 
-libtextclassifier3::StatusOr<uint32_t> PostingListUsed::PrependHitUncompressed(
-    const Hit &hit, uint32_t offset) {
+uint32_t PostingListUsed::PrependHitUncompressed(const Hit &hit,
+                                                 uint32_t offset) {
   if (hit.has_score()) {
     if (offset < posting_list_utils::kSpecialHitsSize + sizeof(Hit)) {
-      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-          "Not enough room to prepend Hit at offset %d.", offset));
+      ICING_LOG(ERROR) << "Not enough room to prepend Hit at offset " << offset
+                       << ".";
+      return offset;
     }
     offset -= sizeof(Hit);
     memcpy(posting_list_buffer_ + offset, &hit, sizeof(Hit));
   } else {
     if (offset < posting_list_utils::kSpecialHitsSize + sizeof(Hit::Value)) {
-      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-          "Not enough room to prepend Hit::Value at offset %d.", offset));
+      ICING_LOG(ERROR) << "Not enough room to prepend Hit::Value at offset "
+                       << offset << ".";
+      return offset;
     }
     offset -= sizeof(Hit::Value);
     Hit::Value val = hit.value();
@@ -659,12 +597,12 @@ libtextclassifier3::StatusOr<uint32_t> PostingListUsed::PrependHitUncompressed(
   return offset;
 }
 
-libtextclassifier3::StatusOr<Hit::Score> PostingListUsed::ReadScore(
-    uint32_t offset) const {
+Hit::Score PostingListUsed::ReadScore(uint32_t offset) const {
   if (offset + sizeof(Hit::Score) > size_in_bytes_) {
-    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "offset %d must not point past the end of the posting list of size %d.",
-        offset, size_in_bytes_));
+    ICING_LOG(FATAL)
+        << "offset " << offset
+        << " must not point past the end of the posting list of size "
+        << size_in_bytes_ << ".";
   }
   Hit::Score score;
   memcpy(&score, posting_list_buffer_ + offset, sizeof(Hit::Score));

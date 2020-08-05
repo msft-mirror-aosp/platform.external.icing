@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/lite/lite-index.h"
+#include "icing/index/lite-index.h"
 
 #include <inttypes.h>
 #include <stddef.h>

@@ -21,7 +21,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/lite/lite-index.h"
+#include "icing/index/lite-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
 
