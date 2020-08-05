@@ -68,8 +68,10 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
   uint32_t num_tokens = 0;
   libtextclassifier3::Status overall_status;
   for (const Section& section : sections) {
-    Index::Editor editor = index_->Edit(document_id, section.metadata.id,
-                                        section.metadata.term_match_type);
+    // TODO(b/152934343): pass real namespace ids in
+    Index::Editor editor =
+        index_->Edit(document_id, section.metadata.id,
+                     section.metadata.term_match_type, /*namespace_id=*/0);
     for (std::string_view subcontent : section.content) {
       ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
                              tokenizer_factory::CreateIndexingTokenizer(

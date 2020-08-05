@@ -39,15 +39,12 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
-
-enum TermPropertyId {
-  kHasHitsInPrefixSection = 0,
-};
 
 class LiteIndex {
  public:
@@ -153,14 +150,24 @@ class LiteIndex {
     return PrefixIterator(IcingDynamicTrie::Iterator(lexicon_, prefix.c_str()));
   }
 
-  // Insert a term. Returns non-OK if lexicon is full.
+  // Inserts a term with its properties.
+  //
+  // Returns:
+  //   A value index on success
+  //   RESOURCE_EXHAUSTED if lexicon is full or no disk space is available
   libtextclassifier3::StatusOr<uint32_t> InsertTerm(
-      const std::string& term, TermMatchType::Code term_match_type);
+      const std::string& term, TermMatchType::Code term_match_type,
+      NamespaceId namespace_id);
 
-  // Updates term properties by setting the bit for has_hits_in_prefix_section
-  // only if term_match_type == PREFIX. Otherwise, this does nothing.
-  libtextclassifier3::Status UpdateTerm(uint32_t tvi,
-                                        TermMatchType::Code term_match_type);
+  // Updates term properties by setting hasPrefixHits and namespace id of the
+  // term.
+  //
+  // Returns:
+  //   OK on success
+  //   RESOURCE_EXHAUSTED if no disk space is available
+  libtextclassifier3::Status UpdateTermProperties(uint32_t tvi,
+                                                  bool hasPrefixHits,
+                                                  NamespaceId namespace_id);
 
   // Append hit to buffer. term_id must be encoded using the same term_id_codec
   // supplied to the index constructor. Returns non-OK if hit cannot be added
@@ -173,6 +180,9 @@ class LiteIndex {
   uint32_t AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
                       bool only_from_prefix_sections,
                       std::vector<DocHitInfo>* hits_out);
+
+  // Returns the hit count of the term.
+  uint32_t CountHits(uint32_t term_id);
 
   // Check if buffer has reached its capacity.
   bool is_full() const;
@@ -188,10 +198,20 @@ class LiteIndex {
     return header_->last_added_docid();
   }
 
+  const IcingDynamicTrie& lexicon() const { return lexicon_; }
+
   // Returns debug information for the index in out.
   // verbosity <= 0, simplest debug information - size of lexicon, hit buffer
   // verbosity > 0, more detailed debug information from the lexicon.
   void GetDebugInfo(int verbosity, std::string* out) const;
+
+  // Returns the byte size of all the elements held in the index. This excludes
+  // the size of any internal metadata of the index, e.g. the index's header.
+  //
+  // Returns:
+  //   Byte size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
@@ -216,15 +236,29 @@ class LiteIndex {
   // hit buffer if term_id is not present.
   uint32_t Seek(uint32_t term_id);
 
+  // File descriptor that points to where the header and hit buffer are written
+  // to.
   ScopedFd hit_buffer_fd_;
 
+  // Mmapped region past the header that stores the hits.
   IcingArrayStorage hit_buffer_;
+
+  // Crc checksum of the hits, excludes the header.
   uint32_t hit_buffer_crc_;
+
+  // Trie that maps indexed terms to their term id
   IcingDynamicTrie lexicon_;
+
   // TODO(b/140437260): Port over to MemoryMappedFile
+  // Memory mapped region of the underlying file that reflects the header.
   IcingMMapper header_mmap_;
+
+  // Wrapper around the mmapped header that contains stats on the lite index.
   std::unique_ptr<IcingLiteIndex_Header> header_;
+
+  // Options used to initialize the LiteIndex.
   const Options options_;
+
   // TODO(b/139087650) Move to icing::Filesystem
   const IcingFilesystem* const filesystem_;
 };

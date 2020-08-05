@@ -18,9 +18,11 @@
 
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/i18n-test-utils.h"
+#include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
 
 namespace icing {
@@ -34,7 +36,8 @@ class PlainTokenizerTest : public ::testing::Test {
   void SetUp() override {
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
+        icu_data_file_helper::SetUpICUDataFile(
+            GetTestFilePath("icing/icu.dat")));
   }
 };
 
@@ -47,7 +50,7 @@ TEST_F(PlainTokenizerTest, CreationWithNullPointerShouldFail) {
 
 TEST_F(PlainTokenizerTest, Simple) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -79,7 +82,7 @@ TEST_F(PlainTokenizerTest, Simple) {
 
 TEST_F(PlainTokenizerTest, Whitespace) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -90,14 +93,14 @@ TEST_F(PlainTokenizerTest, Whitespace) {
 
   // 0x0009 is horizontal tab, considered as a whitespace
   std::string text_with_horizontal_tab =
-      absl_ports::StrCat("Hello", UcharToString(0x0009), "World");
+      absl_ports::StrCat("Hello", UCharToString(0x0009), "World");
   EXPECT_THAT(plain_tokenizer->TokenizeAll(text_with_horizontal_tab),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
                                        EqualsToken(Token::REGULAR, "World"))));
 
   // 0x000B is vertical tab, considered as a whitespace
   std::string text_with_vertical_tab =
-      absl_ports::StrCat("Hello", UcharToString(0x000B), "World");
+      absl_ports::StrCat("Hello", UCharToString(0x000B), "World");
   EXPECT_THAT(plain_tokenizer->TokenizeAll(text_with_vertical_tab),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
                                        EqualsToken(Token::REGULAR, "World"))));
@@ -105,7 +108,7 @@ TEST_F(PlainTokenizerTest, Whitespace) {
 
 TEST_F(PlainTokenizerTest, Punctuation) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -134,7 +137,7 @@ TEST_F(PlainTokenizerTest, Punctuation) {
 
 TEST_F(PlainTokenizerTest, SpecialCharacters) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -155,7 +158,7 @@ TEST_F(PlainTokenizerTest, SpecialCharacters) {
 
 TEST_F(PlainTokenizerTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -207,7 +210,7 @@ TEST_F(PlainTokenizerTest, CJKT) {
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -224,7 +227,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
 
 TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -241,7 +244,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(
@@ -289,7 +292,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
 
 TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> plain_tokenizer,
       tokenizer_factory::CreateIndexingTokenizer(

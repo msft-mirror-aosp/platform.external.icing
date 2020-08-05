@@ -32,7 +32,7 @@ class StatusOr {
   inline StatusOr();
 
   // Builds from a non-OK status. Crashes if an OK status is specified.
-  inline StatusOr(const Status& status);             // NOLINT
+  inline StatusOr(const Status& status);  // NOLINT
 
   // Builds from the specified value.
   inline StatusOr(const T& value);  // NOLINT
@@ -257,7 +257,17 @@ inline StatusOr<T>& StatusOr<T>::operator=(const StatusOr<U>& other) {
 #define TC3_ASSIGN_OR_RETURN_FALSE(lhs, rexpr) \
   TC3_ASSIGN_OR_RETURN(lhs, rexpr, false)
 
-#define TC3_ASSIGN_OR_RETURN_0(lhs, rexpr) TC3_ASSIGN_OR_RETURN(lhs, rexpr, 0)
+#define TC3_ASSIGN_OR_RETURN_0(...)                              \
+  TC_STATUS_MACROS_IMPL_GET_VARIADIC_(                           \
+      (__VA_ARGS__, TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_0_3_, \
+       TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_0_2_))             \
+  (__VA_ARGS__)
+
+#define TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_0_2_(lhs, rexpr) \
+  TC3_ASSIGN_OR_RETURN(lhs, rexpr, 0)
+#define TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_0_3_(lhs, rexpr,     \
+                                                    log_expression) \
+  TC3_ASSIGN_OR_RETURN(lhs, rexpr, (log_expression, 0))
 
 // =================================================================
 // == Implementation details, do not rely on anything below here. ==
@@ -279,11 +289,11 @@ constexpr bool HasPossiblyConditionalOperator(const char* lhs, int index) {
 
 #define TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_2_(lhs, rexpr) \
   TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_3_(lhs, rexpr, _)
-#define TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_3_(lhs, rexpr,                \
-                                                  error_expression)          \
-  TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_(                                   \
-      TC_STATUS_MACROS_IMPL_CONCAT_(_status_or_value, __LINE__), lhs, rexpr, \
-      error_expression)
+#define TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_3_(lhs, rexpr,            \
+                                                  error_expression)      \
+  TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_(                               \
+      TC_STATUS_MACROS_IMPL_CONCAT_(_status_or_value, __COUNTER__), lhs, \
+      rexpr, error_expression)
 #define TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_(statusor, lhs, rexpr,          \
                                                 error_expression)              \
   auto statusor = (rexpr);                                                     \
