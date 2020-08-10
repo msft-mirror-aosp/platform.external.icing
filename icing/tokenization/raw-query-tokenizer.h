@@ -15,10 +15,13 @@
 #ifndef ICING_TOKENIZATION_RAW_QUERY_TOKENIZER_H_
 #define ICING_TOKENIZATION_RAW_QUERY_TOKENIZER_H_
 
+#include <memory>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
 
 namespace icing {

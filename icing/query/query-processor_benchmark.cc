@@ -16,6 +16,7 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
@@ -26,6 +27,8 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/util/logging.h"
 
 // Run on a Linux workstation:
@@ -64,7 +67,8 @@ namespace {
 void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
                      TermMatchType::Code term_match_type,
                      const std::string& token) {
-  Index::Editor editor = index->Edit(document_id, section_id, term_match_type);
+  Index::Editor editor =
+      index->Edit(document_id, section_id, term_match_type, /*namespace_id=*/0);
   ICING_ASSERT_OK(editor.AddHit(token.c_str()));
 }
 
@@ -75,29 +79,27 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
-  return Normalizer::Create(
+  return normalizer_factory::Create(
+
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
-}
-
-void CleanUp(const Filesystem& filesystem, const std::string& base_dir) {
-  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 
 void BM_QueryOneTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -106,7 +108,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -151,18 +153,41 @@ void BM_QueryOneTerm(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryOneTerm)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
@@ -175,17 +200,18 @@ BENCHMARK(BM_QueryOneTerm)
 void BM_QueryFiveTerms(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -194,7 +220,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -257,18 +283,41 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryFiveTerms)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
@@ -281,17 +330,18 @@ BENCHMARK(BM_QueryFiveTerms)
 void BM_QueryDiacriticTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -300,7 +350,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -348,18 +398,41 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryDiacriticTerm)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)
@@ -372,17 +445,18 @@ BENCHMARK(BM_QueryDiacriticTerm)
 void BM_QueryHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  const std::string base_dir = GetTestTempDir() + "/query_test";
+  const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
-  CleanUp(filesystem, base_dir);
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
   if (!filesystem.CreateDirectoryRecursively(index_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(schema_dir.c_str()) ||
       !filesystem.CreateDirectoryRecursively(doc_store_dir.c_str())) {
@@ -391,7 +465,7 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -439,18 +513,41 @@ void BM_QueryHiragana(benchmark::State& state) {
     }
   }
 
-  // Destroy document store before the whole directory is removed because it
-  // persists data in destructor.
+  // Destroy document store and schema store before the whole directory is
+  // removed because they persist data in destructor.
   document_store.reset();
-  CleanUp(filesystem, base_dir);
+  schema_store.reset();
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 BENCHMARK(BM_QueryHiragana)
+    // The testing numbers are in an ascending order with a fixed interval, that
+    // way we can tell if the performance increments are linear, exponential, or
+    // something else.
     ->Arg(1000)
-    ->Arg(2000)
-    ->Arg(4000)
-    ->Arg(8000)
-    ->Arg(16000)
-    ->Arg(32000)
+    ->Arg(3000)
+    ->Arg(5000)
+    ->Arg(7000)
+    ->Arg(9000)
+    ->Arg(11000)
+    ->Arg(13000)
+    ->Arg(15000)
+    ->Arg(17000)
+    ->Arg(19000)
+    ->Arg(21000)
+    ->Arg(23000)
+    ->Arg(25000)
+    ->Arg(27000)
+    ->Arg(29000)
+    ->Arg(31000)
+    ->Arg(33000)
+    ->Arg(35000)
+    ->Arg(37000)
+    ->Arg(39000)
+    ->Arg(41000)
+    ->Arg(43000)
+    ->Arg(45000)
+    ->Arg(47000)
+    ->Arg(49000)
     ->Arg(64000)
     ->Arg(128000)
     ->Arg(256000)

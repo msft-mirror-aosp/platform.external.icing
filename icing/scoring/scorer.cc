@@ -67,6 +67,18 @@ class DocumentCreationTimestampScorer : public Scorer {
   double default_score_;
 };
 
+// A special scorer which does nothing but assigns the default score to each
+// document. This is used especially when no scoring is required in a query.
+class NoScorer : public Scorer {
+ public:
+  explicit NoScorer(double default_score) : default_score_(default_score) {}
+
+  double GetScore(DocumentId document_id) override { return default_score_; }
+
+ private:
+  double default_score_;
+};
+
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     ScoringSpecProto::RankingStrategy::Code rank_by, double default_score,
     const DocumentStore* document_store) {
@@ -80,8 +92,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
       return std::make_unique<DocumentCreationTimestampScorer>(document_store,
                                                                default_score);
     case ScoringSpecProto::RankingStrategy::NONE:
-      return absl_ports::InvalidArgumentError(
-          "RankingStrategy NONE not supported");
+      return std::make_unique<NoScorer>(default_score);
   }
 }
 

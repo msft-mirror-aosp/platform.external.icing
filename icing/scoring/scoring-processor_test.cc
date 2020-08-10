@@ -126,12 +126,6 @@ TEST_F(ScoringProcessorTest, CreationWithNullPointerShouldFail) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ScoringProcessorTest, CreationWithInvalidRankingStrategyShouldFail) {
-  ScoringSpecProto spec_proto;
-  EXPECT_THAT(ScoringProcessor::Create(spec_proto, document_store()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
 TEST_F(ScoringProcessorTest, ShouldCreateInstance) {
   ScoringSpecProto spec_proto;
   spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
@@ -139,28 +133,25 @@ TEST_F(ScoringProcessorTest, ShouldCreateInstance) {
 }
 
 TEST_F(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-
   // Creates an empty DocHitInfoIterator
   std::vector<DocHitInfo> doc_hit_infos = {};
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
 
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/5),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/5),
               IsEmpty());
 }
 
-TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToReturn) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-
+TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Sets up documents
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id1,
@@ -173,63 +164,57 @@ TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToReturn) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
 
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/-1),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/-1),
               IsEmpty());
 
   doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/0),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/0),
               IsEmpty());
 }
 
-TEST_F(ScoringProcessorTest, ShouldRespectNumToReturn) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-
+TEST_F(ScoringProcessorTest, ShouldRespectNumToScore) {
   // Sets up documents
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
       CreateAndInsertsDocumentsWithScores(document_store(), {1, 2, 3}));
   std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
 
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
-
   // Creates a dummy DocHitInfoIterator with 3 results
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
 
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/2),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/2),
               SizeIs(2));
 
   doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/4),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/4),
               SizeIs(3));
 }
 
-TEST_F(ScoringProcessorTest, ShouldRankByDocumentScoreDesc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-
-  // Sets up documents, guaranteed relationship:
-  // document1 < document2 < document3
-  // Intentionally inserts documents in a different order
+TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
+  // Creates input doc_hit_infos and expected output scored_document_hits
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
       CreateAndInsertsDocumentsWithScores(document_store(), {1, 3, 2}));
@@ -237,75 +222,26 @@ TEST_F(ScoringProcessorTest, ShouldRankByDocumentScoreDesc) {
   std::vector<ScoredDocumentHit> scored_document_hits =
       std::move(doc_hit_result_pair.second);
 
-  // Rearranges scored_document_hits so that it's in a document score increasing
-  // order.
-  std::swap(scored_document_hits.at(1), scored_document_hits.at(2));
-
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
-
   // Creates a dummy DocHitInfoIterator with 3 results
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // Creates a ScoringProcessor
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store()));
-
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/3),
-              ElementsAre(EqualsScoredDocumentHit(scored_document_hits.at(2)),
-                          EqualsScoredDocumentHit(scored_document_hits.at(1)),
-                          EqualsScoredDocumentHit(scored_document_hits.at(0))));
-}
-
-TEST_F(ScoringProcessorTest, ShouldRankByDocumentScoreAsc) {
   ScoringSpecProto spec_proto;
   spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  spec_proto.set_order_by(ScoringSpecProto::Order::ASC);
-
-  // Sets up documents, guaranteed relationship:
-  // document1 < document2 < document3
-  // Intentionally inserts documents in a different order
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto doc_hit_result_pair,
-      CreateAndInsertsDocumentsWithScores(document_store(), {1, 3, 2}));
-  std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
-  std::vector<ScoredDocumentHit> scored_document_hits =
-      std::move(doc_hit_result_pair.second);
-
-  // Rearranges scored_document_hits so that it's in a document score increasing
-  // order.
-  std::swap(scored_document_hits.at(1), scored_document_hits.at(2));
-
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
-
-  // Creates a dummy DocHitInfoIterator with 3 results
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
 
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/3),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hits.at(0)),
                           EqualsScoredDocumentHit(scored_document_hits.at(1)),
                           EqualsScoredDocumentHit(scored_document_hits.at(2))));
 }
 
-TEST_F(ScoringProcessorTest, ShouldRankByCreationTimestampDesc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
-
-  // Sets up documents, guaranteed relationship:
-  // document1 < document2 < document3
+TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
                      /*creation_timestamp_ms=*/1571100001111);
@@ -338,152 +274,29 @@ TEST_F(ScoringProcessorTest, ShouldRankByCreationTimestampDesc) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
 
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/3),
-              ElementsAre(EqualsScoredDocumentHit(scored_document_hit3),
-                          EqualsScoredDocumentHit(scored_document_hit2),
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit2),
+                          EqualsScoredDocumentHit(scored_document_hit3),
                           EqualsScoredDocumentHit(scored_document_hit1)));
 }
 
-TEST_F(ScoringProcessorTest, ShouldRankByCreationTimestampAsc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
-  spec_proto.set_order_by(ScoringSpecProto::Order::ASC);
-
-  // Sets up documents, guaranteed relationship:
-  // document1 < document2 < document3
-  DocumentProto document1 =
-      CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_ms=*/1571100001000);
-  DocumentProto document2 =
-      CreateDocument("icing", "email/2", kDefaultScore,
-                     /*creation_timestamp_ms=*/1571100002000);
-  DocumentProto document3 =
-      CreateDocument("icing", "email/3", kDefaultScore,
-                     /*creation_timestamp_ms=*/1571100003000);
-  // Intentionally inserts documents in a different order
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store()->Put(document1));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store()->Put(document3));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store()->Put(document2));
-  DocHitInfo doc_hit_info1(document_id1);
-  DocHitInfo doc_hit_info2(document_id2);
-  DocHitInfo doc_hit_info3(document_id3);
-  ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
-                                         document1.creation_timestamp_ms());
-  ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
-                                         document2.creation_timestamp_ms());
-  ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
-                                         document3.creation_timestamp_ms());
-
-  // Creates a dummy DocHitInfoIterator with 3 results
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info2, doc_hit_info3,
-                                           doc_hit_info1};
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  // Creates a ScoringProcessor which ranks in descending order
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store()));
-
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/3),
-              ElementsAre(EqualsScoredDocumentHit(scored_document_hit1),
-                          EqualsScoredDocumentHit(scored_document_hit2),
-                          EqualsScoredDocumentHit(scored_document_hit3)));
-}
-
-TEST_F(ScoringProcessorTest, ShouldHandleSameScoresDesc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-
-  // Creates 3 documents with the same score.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto doc_hit_result_pair,
-      CreateAndInsertsDocumentsWithScores(document_store(), {100, 100, 100}));
-  std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
-  std::vector<ScoredDocumentHit> scored_document_hits =
-      std::move(doc_hit_result_pair.second);
-
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
-
-  // Creates a dummy DocHitInfoIterator with 3 results
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  // Creates a ScoringProcessor which ranks in descending order
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store()));
-
-  // Results should be ranked in descending document id order.
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/3),
-              ElementsAre(EqualsScoredDocumentHit(scored_document_hits.at(2)),
-                          EqualsScoredDocumentHit(scored_document_hits.at(1)),
-                          EqualsScoredDocumentHit(scored_document_hits.at(0))));
-}
-
-TEST_F(ScoringProcessorTest, ShouldHandleSameScoresAsc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  spec_proto.set_order_by(ScoringSpecProto::Order::ASC);
-
-  // Creates 3 documents with the same score.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto doc_hit_result_pair,
-      CreateAndInsertsDocumentsWithScores(document_store(), {100, 100, 100}));
-  std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
-  std::vector<ScoredDocumentHit> scored_document_hits =
-      std::move(doc_hit_result_pair.second);
-
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
-
-  // Creates a dummy DocHitInfoIterator with 3 results
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  // Creates a ScoringProcessor which ranks in ascending order
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store()));
-
-  // Results should be ranked in ascending document id order.
-  EXPECT_THAT(scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                              /*num_to_return=*/3),
-              ElementsAre(EqualsScoredDocumentHit(scored_document_hits.at(0)),
-                          EqualsScoredDocumentHit(scored_document_hits.at(1)),
-                          EqualsScoredDocumentHit(scored_document_hits.at(2))));
-}
-
-TEST_F(ScoringProcessorTest, ShouldHandleNoScoresDesc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-
-  // Sets up documents, guaranteed relationship:
-  // document1 < document2 < document3
+TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {
+  // Creates input doc_hit_infos and corresponding scored_document_hits
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
       CreateAndInsertsDocumentsWithScores(document_store(), {1, 2, 3}));
   std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
   std::vector<ScoredDocumentHit> scored_document_hits =
       std::move(doc_hit_result_pair.second);
-
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
 
   // Creates a dummy DocHitInfoIterator with 4 results one of which doesn't have
   // a score.
@@ -494,63 +307,71 @@ TEST_F(ScoringProcessorTest, ShouldHandleNoScoresDesc) {
 
   // The document hit without a score will be be assigned the default score 0 in
   // a descending order.
-  ScoredDocumentHit scored_document_hit_default_desc =
+  ScoredDocumentHit scored_document_hit_default =
       ScoredDocumentHit(4, kSectionIdMaskNone, /*score=*/0.0);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
 
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
-  EXPECT_THAT(
-      scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                      /*num_to_return=*/4),
-      ElementsAre(EqualsScoredDocumentHit(scored_document_hits.at(2)),
-                  EqualsScoredDocumentHit(scored_document_hits.at(1)),
-                  EqualsScoredDocumentHit(scored_document_hits.at(0)),
-                  EqualsScoredDocumentHit(scored_document_hit_default_desc)));
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/4),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
+                          EqualsScoredDocumentHit(scored_document_hits.at(0)),
+                          EqualsScoredDocumentHit(scored_document_hits.at(1)),
+                          EqualsScoredDocumentHit(scored_document_hits.at(2))));
 }
 
-TEST_F(ScoringProcessorTest, ShouldHandleNoScoresAsc) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  spec_proto.set_order_by(ScoringSpecProto::Order::ASC);
+TEST_F(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
+  DocumentProto document1 = CreateDocument("icing", "email/1", /*score=*/1,
+                                           kDefaultCreationTimestampMs);
+  DocumentProto document2 = CreateDocument("icing", "email/2", /*score=*/2,
+                                           kDefaultCreationTimestampMs);
+  DocumentProto document3 = CreateDocument("icing", "email/3", /*score=*/3,
+                                           kDefaultCreationTimestampMs);
 
-  // Sets up documents, guaranteed relationship:
-  // document1 < document2 < document3
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto doc_hit_result_pair,
-      CreateAndInsertsDocumentsWithScores(document_store(), {1, 2, 3}));
-  std::vector<DocHitInfo> doc_hit_infos = std::move(doc_hit_result_pair.first);
-  std::vector<ScoredDocumentHit> scored_document_hits =
-      std::move(doc_hit_result_pair.second);
+  // Intentionally inserts documents in a different order
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             document_store()->Put(document3));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
+  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfo doc_hit_info3(document_id3);
 
-  // Disarrays doc_hit_infos
-  std::swap(doc_hit_infos.at(0), doc_hit_infos.at(1));
-  std::swap(doc_hit_infos.at(1), doc_hit_infos.at(2));
+  // The expected results should all have the default score 0.
+  ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
+                                         kDefaultScore);
+  ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
+                                         kDefaultScore);
+  ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
+                                         kDefaultScore);
 
-  // Creates a dummy DocHitInfoIterator with 4 results one of which doesn't have
-  // a score.
-  doc_hit_infos.emplace(doc_hit_infos.begin(), /*document_id_in=*/4,
-                        kSectionIdMaskNone);
+  // Creates a dummy DocHitInfoIterator with 3 results
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info2, doc_hit_info3,
+                                           doc_hit_info1};
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // The document hit without a score will be be assigned the default score
-  // max of double in an ascending order.
-  ScoredDocumentHit scored_document_hit_default_asc = ScoredDocumentHit(
-      4, kSectionIdMaskNone, /*score=*/std::numeric_limits<double>::max());
+  // A ScoringSpecProto with no scoring strategy
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
 
-  // Creates a ScoringProcessor which ranks in ascending order
+  // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store()));
-  EXPECT_THAT(
-      scoring_processor->ScoreAndRank(std::move(doc_hit_info_iterator),
-                                      /*num_to_return=*/4),
-      ElementsAre(EqualsScoredDocumentHit(scored_document_hits.at(0)),
-                  EqualsScoredDocumentHit(scored_document_hits.at(1)),
-                  EqualsScoredDocumentHit(scored_document_hits.at(2)),
-                  EqualsScoredDocumentHit(scored_document_hit_default_asc)));
+
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit2),
+                          EqualsScoredDocumentHit(scored_document_hit3),
+                          EqualsScoredDocumentHit(scored_document_hit1)));
 }
 
 }  // namespace

@@ -20,11 +20,16 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "unicode/umachine.h"
-#include "unicode/unorm2.h"
 
 namespace icing {
 namespace lib {
+
+// Internationalization utils that use standard utilities or custom code. Does
+// not require any special dependencies, such as data files for ICU.
 namespace i18n_utils {
+
+// An invalid value defined by Unicode.
+static constexpr UChar32 kInvalidUChar32 = 0xFFFD;
 
 // Converts a UTF16 string to a UTF8 string.
 //
@@ -42,8 +47,7 @@ libtextclassifier3::StatusOr<std::string> Utf16ToUtf8(
 libtextclassifier3::StatusOr<std::u16string> Utf8ToUtf16(
     std::string_view utf8_string);
 
-// Returns the Unicode char at the given position. If anything wrong happens, an
-// invalid value 0xFFFD is returned.
+// Returns the char at the given position.
 UChar32 GetUChar32At(const char* data, int length, int position);
 
 // Safely truncates a UTF8 string so that multi-byte UTF8 characters are not cut
@@ -56,9 +60,13 @@ bool IsAscii(char c);
 // Checks if the Unicode char is within ASCII range.
 bool IsAscii(UChar32 c);
 
-// Returns how many code units (bytes) are used for the UTF-8 encoding of this
+// Returns how many code units (char) are used for the UTF-8 encoding of this
 // Unicode character. Returns 0 if not valid.
 int GetUtf8Length(UChar32 c);
+
+// Returns how many code units (char16_t) are used for the UTF-16 encoding of
+// this Unicode character. Returns 0 if not valid.
+int GetUtf16Length(UChar32 c);
 
 // Checks if the single char is the first byte of a UTF8 character, note
 // that a single ASCII char is also considered a lead byte.
@@ -70,16 +78,13 @@ bool IsLeadUtf8Byte(char c);
 bool IsPunctuationAt(std::string_view input, int position,
                      int* char_len_out = nullptr);
 
-// Transforms a Unicode character with diacritics to its counterpart in ASCII
-// range. E.g. "ü" -> "u". Result will be set to char_out. Returns true if
-// the transformation is successful.
-//
-// NOTE: According to our convention this function should have returned
-// StatusOr<char>. However, this function is performance-sensitive because is
-// could be called on every Latin character in normalization, so we make it
-// return a bool here to save a bit more time and memory.
-bool DiacriticCharToAscii(const UNormalizer2* normalizer2, UChar32 uchar32_in,
-                          char* char_out);
+// Checks if the character at position is a whitespace.
+bool IsWhitespaceAt(std::string_view input, int position);
+
+// Checks if the character at position is a whitespace.
+bool IsAlphabeticAt(std::string_view input, int position);
+
+void AppendUchar32ToUtf8(std::string* utf8_string, UChar32 uchar);
 
 }  // namespace i18n_utils
 }  // namespace lib

@@ -54,6 +54,18 @@ class SchemaUtil {
     }
   };
 
+  struct ParsedPropertyConfigs {
+    // Mapping of property name to PropertyConfigProto
+    std::unordered_map<std::string_view, const PropertyConfigProto*>
+        property_config_map;
+
+    // Total number of properties that have an indexing config
+    int32_t num_indexed_properties = 0;
+
+    // Total number of properties that were REQUIRED
+    int32_t num_required_properties = 0;
+  };
+
   // This function validates:
   //   1. SchemaTypeConfigProto.schema_type's must be unique
   //   2. Properties within one SchemaTypeConfigProto must be unique
@@ -67,7 +79,7 @@ class SchemaUtil {
   //   8. PropertyConfigProtos.cardinality cannot be UNKNOWN
   //   9. PropertyConfigProtos.schema_type's must correspond to a
   //      SchemaTypeConfigProto.schema_type
-  //  10. All string fields must be alphanumeric.
+  //  10. Property names can only be alphanumeric.
   //
   // Returns:
   //   ALREADY_EXISTS for case 1 and 2
@@ -81,14 +93,10 @@ class SchemaUtil {
   static void BuildTypeConfigMap(const SchemaProto& schema,
                                  TypeConfigMap* type_config_map);
 
-  // Calculate and return a hash map of (property name -> property config)
-  // from the given type config. The number of required properties will be
-  // assigned to output param num_required_properties.
-  static void BuildPropertyConfigMap(
-      const SchemaTypeConfigProto& type_config,
-      std::unordered_map<std::string_view, const PropertyConfigProto*>*
-          property_config_map,
-      int32_t* num_required_properties);
+  // Parses the given type_config and returns a struct of easily-parseable
+  // information about the properties.
+  static ParsedPropertyConfigs ParsePropertyConfigs(
+      const SchemaTypeConfigProto& type_config);
 
   // Computes the delta between the old and new schema. There are a few
   // differences that'll be reported:

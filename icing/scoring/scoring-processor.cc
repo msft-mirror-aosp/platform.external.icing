@@ -54,21 +54,15 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
 
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
-      new ScoringProcessor(std::move(scorer), is_descending_order));
+      new ScoringProcessor(std::move(scorer)));
 }
 
-std::vector<ScoredDocumentHit> ScoringProcessor::ScoreAndRank(
+std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator,
-    int num_to_return) {
+    int num_to_score) {
   std::vector<ScoredDocumentHit> scored_document_hits;
 
-  if (num_to_return <= 0) {
-    return scored_document_hits;
-  }
-
-  // TODO(b/145025400) Determine if we want to score all DocHitInfo or enforce
-  // an upper limit.
-  while (doc_hit_info_iterator->Advance().ok()) {
+  while (doc_hit_info_iterator->Advance().ok() && num_to_score-- > 0) {
     const DocHitInfo& doc_hit_info = doc_hit_info_iterator->doc_hit_info();
     // TODO(b/144955274) Calculate hit demotion factor from HitScore
     double hit_demotion_factor = 1.0;
@@ -80,8 +74,7 @@ std::vector<ScoredDocumentHit> ScoringProcessor::ScoreAndRank(
         doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);
   }
 
-  return GetTopNFromScoredDocumentHits(std::move(scored_document_hits),
-                                       num_to_return, is_descending_);
+  return scored_document_hits;
 }
 
 }  // namespace lib
