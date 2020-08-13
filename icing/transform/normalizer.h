@@ -20,92 +20,25 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "unicode/unorm2.h"
-#include "unicode/utrans.h"
 
 namespace icing {
 namespace lib {
 
-// Used to normalize UTF8 strings for text matching. It enforces a set of rules:
-//  1. Transforms text to be lowercase UTF8.
-//  2. Transforms full-width Latin characters to ASCII characters if possible.
-//  3. Transforms hiragana to katakana.
-//  4. Removes accent / diacritic marks on Latin characters
-//  5. Normalized text must be less than or equal to max_term_byte_size,
-//     otherwise it will be truncated.
-//
-// There're some other rules from ICU not listed here, please see .cc file for
-// details.
+// Normalizes strings for text matching.
 //
 // Example use:
 //   ICING_ASSIGN_OR_RETURN(auto normalizer,
-//       Normalizer::Create(/*max_term_byte_size=*/5);
+//       normalizer_factory::Create(/*max_term_byte_size=*/5);
 //
 //   std::string normalized_text = normalizer->NormalizeText("HELLO!");
 //   ICING_LOG(INFO) << normalized_text; // prints "hello"
 class Normalizer {
  public:
-  Normalizer(const Normalizer&) = delete;
-  Normalizer& operator=(const Normalizer&) = delete;
+  virtual ~Normalizer() = default;
 
-  // Creates a normalizer with the subcomponents it needs. max_term_byte_size
-  // enforces the max size of text after normalization, text will be truncated
-  // if exceeds the max size.
-  //
-  // Returns:
-  //   A normalizer on success
-  //   INVALID_ARGUMENT if max_term_byte_size <= 0
-  //   INTERNAL_ERROR if failed to create any subcomponent
-  static libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
-      int max_term_byte_size);
-
-  // Normalizes the input term based on rules. See .cc file for rule details.
-  //
-  // NOTE: Term should not mix Latin and non-Latin characters. Doing so may
-  // result in the non-Latin characters not properly being normalized
-  std::string NormalizeTerm(std::string_view term) const;
-
- private:
-  // A handler class that helps manage the lifecycle of UTransliterator. It's
-  // used in Normalizer to transform terms into the formats we need.
-  class TermTransformer {
-   public:
-    // Creates TermTransformer with a valid UTransliterator instance
-    //
-    // Returns:
-    //   A term transformer on success
-    //   INTERNAL_ERROR if failed to create any subcomponent
-    static libtextclassifier3::StatusOr<std::unique_ptr<TermTransformer>>
-    Create();
-
-    // Closes the UTransliterator instance
-    ~TermTransformer();
-
-    // Transforms the text based on our rules described at top of this file
-    std::string Transform(std::string_view term) const;
-
-   private:
-    explicit TermTransformer(UTransliterator* u_transliterator);
-
-    // An ICU class to execute custom term transformation / normalization rules.
-    // utrans_close() must by called after using.
-    UTransliterator* u_transliterator_;
-  };
-
-  explicit Normalizer(std::unique_ptr<TermTransformer> term_transformer,
-                      int max_term_byte_size);
-
-  // Helper method to normalize Latin terms only. Rules applied:
-  // 1. Uppercase to lowercase
-  // 2. Remove diacritic (accent) marks
-  std::string NormalizeLatin(const UNormalizer2* normalizer2,
-                             std::string_view term) const;
-
-  // Used to transform terms into their normalized forms.
-  std::unique_ptr<TermTransformer> term_transformer_;
-
-  // The maximum term length allowed after normalization.
-  const int max_term_byte_size_;
+  // Normalizes the input term based on rules. See implementation classes for
+  // specific transformation rules.
+  virtual std::string NormalizeTerm(std::string_view term) const = 0;
 };
 
 }  // namespace lib

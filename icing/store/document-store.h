@@ -33,6 +33,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/document-validator.h"
@@ -51,6 +52,20 @@ class DocumentStore {
 
     // Checksum of the DocumentStore's sub-component's checksums.
     uint32_t checksum;
+  };
+
+  struct OptimizeInfo {
+    // The estimated size in bytes of the optimizable docs. We don't track the
+    // size of each document, so we estimate by taking the size of the entire
+    // DocumentStore and dividing that by the total number of documents we have.
+    // So we end up with an average document size.
+    int64_t estimated_optimizable_bytes = 0;
+
+    // Number of total documents the DocumentStore tracks.
+    int32_t total_docs = 0;
+
+    // Number of optimizable (deleted + expired) docs the DocumentStore tracks.
+    int32_t optimizable_docs = 0;
   };
 
   // Not copyable
@@ -94,6 +109,9 @@ class DocumentStore {
   //
   // Returns:
   //   A newly generated document id on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   NOT_FOUND if the schema_type or a property config of the document doesn't
+  //     exist in schema
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> Put(const DocumentProto& document);
   libtextclassifier3::StatusOr<DocumentId> Put(DocumentProto&& document);
@@ -118,8 +136,15 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentProto> Get(DocumentId document_id) const;
 
-  // Returns true if there's an existing document associated with the given
-  // document id.
+  // Returns all namespaces which have at least 1 active document (not deleted
+  // or expired). Order of namespaces is undefined.
+  std::vector<std::string> GetAllNamespaces() const;
+
+  // Check if a document exists. Existence means it hasn't been deleted and it
+  // hasn't expired yet.
+  //
+  // Returns:
+  //   boolean whether a document exists or not
   bool DoesDocumentExist(DocumentId document_id) const;
 
   // Deletes the document identified by the given namespace and uri
@@ -129,6 +154,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
                                     std::string_view uri);
@@ -178,6 +204,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if namespace doesn't exist
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status DeleteByNamespace(std::string_view name_space);
 
@@ -188,6 +215,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if schema_type doesn't exist
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status DeleteBySchemaType(std::string_view schema_type);
 
@@ -198,7 +226,8 @@ class DocumentStore {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates and returns the disk usage in bytes.
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
   //
   // Returns:
   //   Disk usage on success
@@ -262,6 +291,15 @@ class DocumentStore {
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status OptimizeInto(const std::string& new_directory);
+
+  // Calculates status for a potential Optimize call. Includes how many docs
+  // there are vs how many would be optimized away. And also includes an
+  // estimated size gains, in bytes, if Optimize were called.
+  //
+  // Returns:
+  //   OptimizeInfo on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<OptimizeInfo> GetOptimizeInfo() const;
 
   // Computes the combined checksum of the document store - includes the ground
   // truth and all derived files.
@@ -394,9 +432,9 @@ class DocumentStore {
   // called.
   //
   // Returns:
-  //   OK on success
+  //   bool on whether an existing document was actually updated to be deleted
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status UpdateDerivedFilesNamespaceDeleted(
+  libtextclassifier3::StatusOr<bool> UpdateDerivedFilesNamespaceDeleted(
       std::string_view name_space);
 
   // Update derived files that the schema type schema_type_id has been deleted.

@@ -16,6 +16,7 @@
 #define ICING_DOCUMENT_BUILDER_H_
 
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <utility>

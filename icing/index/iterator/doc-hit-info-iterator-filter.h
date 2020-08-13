@@ -25,8 +25,8 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
-#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 
 namespace icing {

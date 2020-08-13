@@ -84,6 +84,9 @@ class KeyMapper {
   // Returns any encountered IO errors.
   libtextclassifier3::StatusOr<T> Get(std::string_view key) const;
 
+  // Returns a map of values to keys. Empty map if the mapper is empty.
+  std::unordered_map<T, std::string> GetValuesToKeys() const;
+
   // Count of unique keys stored in the KeyMapper.
   int32_t num_keys() const { return trie_.size(); }
 
@@ -99,12 +102,22 @@ class KeyMapper {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates and returns the disk usage in bytes.
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
   //
   // Returns:
   //   Disk usage on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the size of the elements held in the key mapper. This excludes the
+  // size of any internal metadata of the key mapper, e.g. the key mapper's
+  // header.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
 
   // Computes and returns the checksum of the header and contents.
   Crc32 ComputeChecksum();
@@ -242,6 +255,21 @@ libtextclassifier3::StatusOr<T> KeyMapper<T>::Get(std::string_view key) const {
 }
 
 template <typename T>
+std::unordered_map<T, std::string> KeyMapper<T>::GetValuesToKeys() const {
+  std::unordered_map<T, std::string> values_to_keys;
+  for (IcingDynamicTrie::Iterator itr(trie_, /*prefix=*/""); itr.IsValid();
+       itr.Advance()) {
+    if (itr.IsValid()) {
+      T value;
+      memcpy(&value, itr.GetValue(), sizeof(T));
+      values_to_keys.insert({value, itr.GetKey()});
+    }
+  }
+
+  return values_to_keys;
+}
+
+template <typename T>
 libtextclassifier3::Status KeyMapper<T>::PersistToDisk() {
   if (!trie_.Sync()) {
     return absl_ports::InternalError(
@@ -256,6 +284,16 @@ libtextclassifier3::StatusOr<int64_t> KeyMapper<T>::GetDiskUsage() const {
   int64_t size = trie_.GetDiskUsage();
   if (size == IcingFilesystem::kBadFileSize || size < 0) {
     return absl_ports::InternalError("Failed to get disk usage of key mapper");
+  }
+  return size;
+}
+
+template <typename T>
+libtextclassifier3::StatusOr<int64_t> KeyMapper<T>::GetElementsSize() const {
+  int64_t size = trie_.GetElementsSize();
+  if (size == IcingFilesystem::kBadFileSize || size < 0) {
+    return absl_ports::InternalError(
+        "Failed to get disk usage of elements in the key mapper");
   }
   return size;
 }

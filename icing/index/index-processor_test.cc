@@ -27,6 +27,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -42,7 +43,9 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 
 namespace icing {
@@ -80,18 +83,21 @@ class IndexProcessorTest : public Test {
   void SetUp() override {
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
+        icu_data_file_helper::SetUpICUDataFile(
+            GetTestFilePath("icing/icu.dat")));
 
     index_dir_ = GetTestTempDir() + "/index_test/";
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
-    ICING_ASSERT_OK_AND_ASSIGN(lang_segmenter_, LanguageSegmenter::Create());
+    ICING_ASSERT_OK_AND_ASSIGN(lang_segmenter_,
+                               language_segmenter_factory::Create());
 
     ICING_ASSERT_OK_AND_ASSIGN(
         normalizer_,
-        Normalizer::Create(
+        normalizer_factory::Create(
+
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -409,7 +415,8 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
   options.max_tokens_per_document = 1000;
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
-                             Normalizer::Create(/*max_token_length=*/4));
+                             normalizer_factory::Create(
+                                 /*max_term_byte_size=*/4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
