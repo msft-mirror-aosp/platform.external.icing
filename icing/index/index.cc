@@ -26,7 +26,7 @@
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-term.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/lite-index.h"
+#include "icing/index/lite/lite-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/core/icing-string-util.h"
