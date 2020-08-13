@@ -30,7 +30,7 @@ android_test {
     ],
 
     jni_libs: [
-        "libicing_jni",
+        "libicing",
     ],
 
     test_suites: [

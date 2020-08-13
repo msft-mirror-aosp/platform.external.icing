@@ -16,6 +16,7 @@
 #include "gmock/gmock.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -25,7 +26,9 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/logging.h"
 
@@ -136,7 +139,8 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
-  return Normalizer::Create(
+  return normalizer_factory::Create(
+
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
 }
@@ -178,7 +182,8 @@ std::unique_ptr<IndexProcessor> CreateIndexProcessor(
 void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem filesystem;
@@ -188,7 +193,7 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -224,7 +229,8 @@ BENCHMARK(BM_IndexDocumentWithOneProperty)
 void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem filesystem;
@@ -234,7 +240,7 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -271,7 +277,8 @@ BENCHMARK(BM_IndexDocumentWithTenProperties)
 void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem filesystem;
@@ -281,7 +288,7 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -318,7 +325,8 @@ BENCHMARK(BM_IndexDocumentWithDiacriticLetters)
 void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem filesystem;
@@ -328,7 +336,7 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =

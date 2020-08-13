@@ -181,7 +181,9 @@ class FileBackedVector {
   //   OUT_OF_RANGE_ERROR if idx < 0 or file cannot be grown idx size
   libtextclassifier3::Status Set(int32_t idx, const T& value);
 
-  // Resizes to first len elements. The crc is not updated on truncation.
+  // Resizes to first len elements. The crc is cleared on truncation and will be
+  // updated on destruction, or once the client calls ComputeChecksum() or
+  // PersistToDisk().
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if len < 0 or >= num_elements()
@@ -194,12 +196,22 @@ class FileBackedVector {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates and returns the disk usage in bytes.
+  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
+  // block size.
   //
   // Returns:
   //   Disk usage on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+
+  // Returns the file size of the all the elements held in the vector. File size
+  // is in bytes. This excludes the size of any internal metadata of the vector,
+  // e.g. the vector's header.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
   // Accessors.
   const T* array() const {
@@ -567,6 +579,13 @@ libtextclassifier3::Status FileBackedVector<T>::TruncateTo(
         new_num_elements, header_->num_elements));
   }
 
+  ICING_VLOG(2)
+      << "FileBackedVector truncating, need to recalculate entire checksum";
+  changes_.clear();
+  saved_original_buffer_.clear();
+  changes_end_ = 0;
+  header_->vector_checksum = 0;
+
   header_->num_elements = new_num_elements;
   return libtextclassifier3::Status::OK;
 }
@@ -643,6 +662,7 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
     }
     cur_offset += sizeof(T);
   }
+
   if (!changes_.empty()) {
     ICING_VLOG(2) << IcingStringUtil::StringPrintf(
         "Array update partial crcs %d truncated %d overlapped %d duplicate %d",
@@ -703,6 +723,17 @@ libtextclassifier3::StatusOr<int64_t> FileBackedVector<T>::GetDiskUsage()
         "Failed to get disk usage of file-backed vector");
   }
   return size;
+}
+
+template <typename T>
+libtextclassifier3::StatusOr<int64_t> FileBackedVector<T>::GetElementsFileSize()
+    const {
+  int64_t total_file_size = filesystem_->GetFileSize(file_path_.c_str());
+  if (total_file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError(
+        "Failed to get file size of elements in the file-backed vector");
+  }
+  return total_file_size - sizeof(Header);
 }
 
 }  // namespace lib

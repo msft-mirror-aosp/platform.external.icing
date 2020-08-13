@@ -20,6 +20,7 @@
 #ifndef ICING_LEGACY_INDEX_ICING_STORAGE_H_
 #define ICING_LEGACY_INDEX_ICING_STORAGE_H_
 
+#include <cstdint>
 #include <string>
 
 namespace icing {

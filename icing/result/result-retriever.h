@@ -22,13 +22,16 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
+#include "icing/result/page-result-state.h"
+#include "icing/result/snippet-context.h"
+#include "icing/result/snippet-retriever.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/result/snippet-retriever.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer.h"
 
 namespace icing {
 namespace lib {
@@ -44,33 +47,34 @@ class ResultRetriever {
   //   FAILED_PRECONDITION on any null pointer input
   static libtextclassifier3::StatusOr<std::unique_ptr<ResultRetriever>> Create(
       const DocumentStore* doc_store, const SchemaStore* schema_store,
-      const LanguageSegmenter* language_segmenter,
+      const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
       bool ignore_bad_document_ids = true);
 
-  // Gets results (pairs of DocumentProtos and SnippetProtos) with the given
-  // document ids from the given document store. The
-  // order of documents returned is the same as the order of document_ids.
+  // Retrieves results (pairs of DocumentProtos and SnippetProtos) with the
+  // given document and snippet information. The expected number of documents to
+  // return is the number of all scored document hits inside PageResultState.
+  // The number of snippets to return is based on the total number of snippets
+  // needed and number of snippets that have already been returned previously
+  // for the same query. The order of results returned is the same as the order
+  // of scored document hits inside PageResultState.
   //
-  // Parameter "ignore_bad_document_ids" indicates whether to ignore invalid and
-  // non-existing document_ids. If it's true, errors on some document_ids will
-  // be ignored and valid documents will be returned, otherwise any error will
-  // be returned immediately. Note that IO errors will always be returned.
+  // "ignore_bad_document_ids" from constructor indicates whether to ignore
+  // invalid and non-existing document ids. If it's true, errors on some
+  // document ids will be ignored and valid documents will be returned,
+  // otherwise any error will be returned immediately. Note that IO errors will
+  // always be returned.
   //
   // Returns when ignore_bad_document_ids is true:
-  //   A list of valid documents on success
+  //   A list of ResultProto on success
   //   INTERNAL_ERROR on IO error
   //
   // Returns when ignore_bad_document_ids is false:
-  //   A list of documents on success
+  //   A list of ResultProto on success
   //   INVALID_ARGUMENT if any document_id < 0
   //   NOT_FOUND if any doc doesn't exist or has been deleted
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<std::vector<SearchResultProto::ResultProto>>
-  RetrieveResults(
-      const ResultSpecProto& result_spec,
-      const SectionRestrictQueryTermsMap& query_terms,
-      TermMatchType::Code match_type,
-      const std::vector<ScoredDocumentHit>& scored_document_hits) const;
+  RetrieveResults(const PageResultState& page_result_state) const;
 
  private:
   explicit ResultRetriever(const DocumentStore* doc_store,

@@ -17,11 +17,13 @@
 #include <memory>
 #include <string>
 
+#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
@@ -36,10 +38,14 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -52,100 +58,75 @@ using ::testing::SizeIs;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
 
+SchemaTypeConfigProto* AddSchemaType(SchemaProto* schema,
+                                     std::string schema_type) {
+  SchemaTypeConfigProto* type_config = schema->add_types();
+  type_config->set_schema_type(schema_type);
+  return type_config;
+}
+
+void AddIndexedProperty(SchemaTypeConfigProto* type_config, std::string name) {
+  PropertyConfigProto* property_config = type_config->add_properties();
+  property_config->set_property_name(name);
+  property_config->set_data_type(PropertyConfigProto::DataType::STRING);
+  property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  property_config->mutable_indexing_config()->set_term_match_type(
+      TermMatchType::EXACT_ONLY);
+  property_config->mutable_indexing_config()->set_tokenizer_type(
+      IndexingConfig::TokenizerType::PLAIN);
+}
+
+void AddUnindexedProperty(SchemaTypeConfigProto* type_config,
+                          std::string name) {
+  PropertyConfigProto* property_config = type_config->add_properties();
+  property_config->set_property_name(name);
+  property_config->set_data_type(PropertyConfigProto::DataType::STRING);
+}
+
 class QueryProcessorTest : public Test {
  protected:
   QueryProcessorTest()
       : test_dir_(GetTestTempDir() + "/icing"),
-        index_dir_(test_dir_ + "/index"),
-        store_dir_(test_dir_ + "/store") {}
+        store_dir_(test_dir_ + "/store"),
+        index_dir_(test_dir_ + "/index") {}
 
   void SetUp() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
 
+#ifndef ICING_REVERSE_JNI_SEGMENTATION
+    // If we've specified using the reverse-JNI method for segmentation (i.e.
+    // not ICU), then we won't have the ICU data file included to set up.
+    // Technically, we could choose to use reverse-JNI for segmentation AND
+    // include an ICU data file, but that seems unlikely and our current BUILD
+    // setup doesn't do this.
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
+        icu_data_file_helper::SetUpICUDataFile(
+            GetTestFilePath("icing/icu.dat")));
+#endif  // ICING_REVERSE_JNI_SEGMENTATION
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
-    ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               LanguageSegmenter::Create());
-
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
-                               Normalizer::Create(/*max_term_byte_size=*/1000));
-
-    SchemaProto schema;
-
-    // Message schema
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("message");
-
-    // Add an indexed property so we generate section metadata on it
-    auto property = type_config->add_properties();
-    property->set_property_name("foo");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
-
-    // Add another indexed property so we generate section metadata on it
-    property = type_config->add_properties();
-    property->set_property_name(indexed_property_);
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
-
-    // Since we order indexed properties alphabetically, "foo" gets section id
-    // 0, and "subject" gets section id 1 for messages
-    indexed_message_section_id_ = 1;
-
-    // Email schema
-    type_config = schema.add_types();
-    type_config->set_schema_type("email");
-
-    // Add an indexed property so we generate section metadata on it
-    property = type_config->add_properties();
-    property->set_property_name(indexed_property_);
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
-
-    // First and only indexed property, so it gets the first id of 0
-    indexed_email_section_id_ = 0;
-
-    // Add an unindexed property
-    property = type_config->add_properties();
-    property->set_property_name(unindexed_property_);
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
-    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
+    language_segmenter_factory::SegmenterOptions segmenter_options(
+        ULOC_US, jni_cache_.get());
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
-        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                              schema_store_.get()));
+        language_segmenter_,
+        language_segmenter_factory::Create(segmenter_options));
+
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
+                                                /*max_term_byte_size=*/1000));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
       DocumentId document_id, SectionId section_id,
       TermMatchType::Code term_match_type, const std::string& token) {
-    Index::Editor editor =
-        index_->Edit(document_id, section_id, term_match_type);
+    Index::Editor editor = index_->Edit(document_id, section_id,
+                                        term_match_type, /*namespace_id=*/0);
     return editor.AddHit(token.c_str());
   }
 
@@ -155,23 +136,20 @@ class QueryProcessorTest : public Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  Filesystem filesystem_;
+  const std::string test_dir_;
+  const std::string store_dir_;
   std::unique_ptr<Index> index_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
-  const std::string indexed_property_ = "subject";
-  const std::string unindexed_property_ = "to";
-  int indexed_email_section_id_;
-  int indexed_message_section_id_;
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
 
  private:
   IcingFilesystem icing_filesystem_;
-  Filesystem filesystem_;
-  const std::string test_dir_;
   const std::string index_dir_;
-  const std::string store_dir_;
 };
 
 TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
@@ -206,8 +184,18 @@ TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
 }
 
 TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
-  // We don't need to insert anything in the index since the empty query will
-  // match all DocumentIds from the DocumentStore
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
@@ -220,6 +208,10 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // We don't need to insert anything in the index since the empty query will
+  // match all DocumentIds from the DocumentStore
+
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -239,8 +231,18 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
 }
 
 TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
-  // We don't need to insert anything in the index since the empty query will
-  // match all DocumentIds from the DocumentStore
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
@@ -253,6 +255,10 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // We don't need to insert anything in the index since the empty query will
+  // match all DocumentIds from the DocumentStore
+
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -272,9 +278,18 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
 }
 
 TEST_F(QueryProcessorTest, QueryTermNormalized) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -285,6 +300,11 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
@@ -292,6 +312,7 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -313,9 +334,18 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
 }
 
 TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -326,10 +356,16 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -351,9 +387,18 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
 }
 
 TEST_F(QueryProcessorTest, OneTermExactMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -364,10 +409,16 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -389,9 +440,18 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
 }
 
 TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -402,6 +462,11 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
@@ -409,6 +474,7 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -430,9 +496,18 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
 }
 
 TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -443,6 +518,11 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
@@ -450,6 +530,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -471,8 +552,18 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
 }
 
 TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -483,13 +574,19 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+
   EXPECT_THAT(AddTokenToIndex(document_id, section_id,
                               TermMatchType::EXACT_ONLY, "hello"),
               IsOk());
   EXPECT_THAT(
-      AddTokenToIndex(document_id, section_id, TermMatchType::PREFIX, "world"),
+      AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -498,7 +595,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello wo");
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
                              query_processor->ParseSearch(search_spec));
@@ -511,9 +608,18 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
 }
 
 TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -529,6 +635,11 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "hello"),
       IsOk());
@@ -536,6 +647,7 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -558,9 +670,18 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
 }
 
 TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -576,6 +697,11 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+
   EXPECT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "hello"),
       IsOk());
@@ -583,6 +709,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -605,8 +732,18 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
 }
 
 TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -622,6 +759,10 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+
   EXPECT_THAT(AddTokenToIndex(document_id1, section_id,
                               TermMatchType::EXACT_ONLY, "hello"),
               IsOk());
@@ -629,6 +770,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
       AddTokenToIndex(document_id2, section_id, TermMatchType::PREFIX, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -651,9 +793,18 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
 }
 
 TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -668,6 +819,10 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
                                                       .SetKey("namespace", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
 
   // Document 1 has content "animal puppy dog"
   EXPECT_THAT(
@@ -689,6 +844,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -754,9 +910,18 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
 }
 
 TEST_F(QueryProcessorTest, OneGroup) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -772,6 +937,11 @@ TEST_F(QueryProcessorTest, OneGroup) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "puppy dog"
   EXPECT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "puppy"),
@@ -786,6 +956,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -810,9 +981,18 @@ TEST_F(QueryProcessorTest, OneGroup) {
 }
 
 TEST_F(QueryProcessorTest, TwoGroups) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -827,6 +1007,11 @@ TEST_F(QueryProcessorTest, TwoGroups) {
                                                       .SetKey("namespace", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
 
   // Document 1 has content "puppy dog"
   EXPECT_THAT(
@@ -868,9 +1053,18 @@ TEST_F(QueryProcessorTest, TwoGroups) {
 }
 
 TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -886,6 +1080,11 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "puppy dog"
   EXPECT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "puppy"),
@@ -900,6 +1099,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -924,9 +1124,18 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
 }
 
 TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that the DocHitInfoIterators will see that the
@@ -942,6 +1151,11 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "puppy dog"
   EXPECT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "puppy"),
@@ -956,6 +1170,7 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -980,8 +1195,18 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
 }
 
 TEST_F(QueryProcessorTest, ExcludeTerm) {
-  SectionId section_id = 0;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that they'll bump the last_added_document_id,
@@ -997,6 +1222,10 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "hello"),
       IsOk());
@@ -1004,6 +1233,7 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1026,8 +1256,18 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
 }
 
 TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
-  SectionId section_id = 0;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that they'll bump the last_added_document_id,
@@ -1042,6 +1282,9 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
                                                       .SetKey("namespace", "2")
                                                       .SetSchema("email")
                                                       .Build()));
+  // Populate the index
+  SectionId section_id = 0;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
 
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "hello"),
@@ -1050,6 +1293,7 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1071,8 +1315,18 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
 }
 
 TEST_F(QueryProcessorTest, ExcludeAnd) {
-  SectionId section_id = 0;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that they'll bump the last_added_document_id,
@@ -1088,6 +1342,10 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "animal dog"
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "animal"),
@@ -1102,6 +1360,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1141,9 +1400,18 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
 }
 
 TEST_F(QueryProcessorTest, ExcludeOr) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're just
   // inserting the documents so that they'll bump the last_added_document_id,
@@ -1159,6 +1427,11 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "animal dog"
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "animal"),
@@ -1173,6 +1446,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1213,9 +1487,18 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
 }
 
 TEST_F(QueryProcessorTest, DeletedFilter) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1232,6 +1515,11 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
                                                       .Build()));
   EXPECT_THAT(document_store_->Delete("namespace", "1"), IsOk());
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "animal dog"
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "animal"),
@@ -1246,6 +1534,7 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1267,9 +1556,18 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
 }
 
 TEST_F(QueryProcessorTest, NamespaceFilter) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1285,6 +1583,11 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "animal dog"
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "animal"),
@@ -1299,6 +1602,7 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1321,9 +1625,19 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
 }
 
 TEST_F(QueryProcessorTest, SchemaTypeFilter) {
-  SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+  AddSchemaType(&schema, "message");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1339,6 +1653,11 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
                                                       .SetSchema("message")
                                                       .Build()));
 
+  // Populate the index
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document 1 has content "animal dog"
   ASSERT_THAT(
       AddTokenToIndex(document_id1, section_id, term_match_type, "animal"),
@@ -1349,6 +1668,7 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "animal"),
       IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1371,8 +1691,22 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
 }
 
 TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
-  SectionIdMask section_id_mask = 1U << indexed_email_section_id_;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
+
+  // First and only indexed property, so it gets a section_id of 0
+  AddIndexedProperty(email_type, "subject");
+  int subject_section_id = 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1383,11 +1717,16 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  SectionIdMask section_id_mask = 1U << subject_section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(document_id, indexed_email_section_id_,
-                              term_match_type, "animal"),
+  ASSERT_THAT(AddTokenToIndex(document_id, subject_section_id, term_match_type,
+                              "animal"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1396,7 +1735,7 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
-  search_spec.set_query(indexed_property_ + ":animal");
+  search_spec.set_query("subject:animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
@@ -1406,14 +1745,31 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(DocHitInfo(document_id, section_id_mask)));
   EXPECT_THAT(results.query_terms, SizeIs(1));
-  EXPECT_THAT(results.query_terms[indexed_property_],
-              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_terms["subject"], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
-  SectionIdMask email_section_id_mask = 1U << indexed_email_section_id_;
-  SectionIdMask message_section_id_mask = 1U << indexed_message_section_id_;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(email_type, "a");  // Section "a" would get sectionId 0
+  AddIndexedProperty(email_type, "foo");
+  int email_foo_section_id = 1;
+
+  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(message_type, "foo");
+  int message_foo_section_id = 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1429,16 +1785,22 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
                                                       .SetSchema("message")
                                                       .Build()));
 
+  // Populate the index
+  SectionIdMask email_section_id_mask = 1U << email_foo_section_id;
+  SectionIdMask message_section_id_mask = 1U << message_foo_section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Email document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
   // Message document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(message_document_id, indexed_message_section_id_,
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1447,7 +1809,7 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
-  search_spec.set_query(indexed_property_ + ":animal");
+  search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
@@ -1460,13 +1822,30 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
       ElementsAre(DocHitInfo(message_document_id, message_section_id_mask),
                   DocHitInfo(email_document_id, email_section_id_mask)));
   EXPECT_THAT(results.query_terms, SizeIs(1));
-  EXPECT_THAT(results.query_terms[indexed_property_],
-              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
-  SectionIdMask email_section_id_mask = 1U << indexed_email_section_id_;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(email_type, "foo");
+  int email_foo_section_id = 0;
+
+  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(message_type, "foo");
+  int message_foo_section_id = 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1482,16 +1861,21 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
                                                       .SetSchema("message")
                                                       .Build()));
 
+  // Populate the index
+  SectionIdMask email_section_id_mask = 1U << email_foo_section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Email document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
   // Message document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(message_document_id, indexed_message_section_id_,
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1501,7 +1885,7 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
-  search_spec.set_query(indexed_property_ + ":animal");
+  search_spec.set_query("foo:animal");
   search_spec.add_schema_type_filters("email");
   search_spec.set_term_match_type(term_match_type);
 
@@ -1514,13 +1898,30 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
       GetDocHitInfos(results.root_iterator.get()),
       ElementsAre(DocHitInfo(email_document_id, email_section_id_mask)));
   EXPECT_THAT(results.query_terms, SizeIs(1));
-  EXPECT_THAT(results.query_terms[indexed_property_],
-              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
-  SectionIdMask email_section_id_mask = 1U << indexed_email_section_id_;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(email_type, "foo");
+  int email_foo_section_id = 0;
+
+  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(message_type, "bar");
+  int message_foo_section_id = 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1536,18 +1937,23 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
                                                       .SetSchema("message")
                                                       .Build()));
 
+  // Populate the index
+  SectionIdMask email_section_id_mask = 1U << email_foo_section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Email document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
   // Message document has content "animal", but put in in the same section id as
   // the indexed email section id, the same id as indexed property "foo" in the
   // message type
-  ASSERT_THAT(AddTokenToIndex(message_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1557,7 +1963,7 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
-  search_spec.set_query(indexed_property_ + ":animal");
+  search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
@@ -1569,12 +1975,22 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
       GetDocHitInfos(results.root_iterator.get()),
       ElementsAre(DocHitInfo(email_document_id, email_section_id_mask)));
   EXPECT_THAT(results.query_terms, SizeIs(1));
-  EXPECT_THAT(results.query_terms[indexed_property_],
-              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1585,11 +2001,15 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Email document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, /*section_id=*/0,
                               term_match_type, "animal"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1599,7 +2019,7 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
-  search_spec.set_query("nonexistent.section:animal");
+  search_spec.set_query("nonexistent:animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
@@ -1609,12 +2029,24 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   // doesn't match to the name of the section filter
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
   EXPECT_THAT(results.query_terms, SizeIs(1));
-  EXPECT_THAT(results.query_terms["nonexistent.section"],
+  EXPECT_THAT(results.query_terms["nonexistent"],
               UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
+  AddUnindexedProperty(email_type, "foo");
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1625,11 +2057,15 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
                                                       .SetSchema("email")
                                                       .Build()));
 
+  // Populate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Email document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, /*section_id=*/0,
                               term_match_type, "animal"),
               IsOk());
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1639,7 +2075,7 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look within
   // documents of email schema
-  search_spec.set_query(unindexed_property_ + ":animal");
+  search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
@@ -1649,14 +2085,30 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   // doesn't match to the name of the section filter
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
   EXPECT_THAT(results.query_terms, SizeIs(1));
-  EXPECT_THAT(results.query_terms[unindexed_property_],
-              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
-  SectionIdMask email_section_id_mask = 1U << indexed_email_section_id_;
-  SectionIdMask message_section_id_mask = 1U << indexed_message_section_id_;
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  // Create the schema and document store
+  SchemaProto schema;
+  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(email_type, "foo");
+  int email_foo_section_id = 0;
+
+  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
+  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  AddIndexedProperty(message_type, "foo");
+  int message_foo_section_id = 0;
+
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1672,16 +2124,21 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
                                                       .SetSchema("message")
                                                       .Build()));
 
+  // Poplate the index
+  SectionIdMask email_section_id_mask = 1U << email_foo_section_id;
+  SectionIdMask message_section_id_mask = 1U << message_foo_section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
   // Email document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
-  ASSERT_THAT(AddTokenToIndex(email_document_id, indexed_email_section_id_,
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
                               term_match_type, "cat"),
               IsOk());
 
   // Message document has content "animal"
-  ASSERT_THAT(AddTokenToIndex(message_document_id, indexed_message_section_id_,
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
 
@@ -1693,7 +2150,7 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
-  search_spec.set_query("cat OR " + indexed_property_ + ":animal");
+  search_spec.set_query("cat OR foo:animal");
   search_spec.set_term_match_type(term_match_type);
 
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
@@ -1707,30 +2164,46 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
                   DocHitInfo(email_document_id, email_section_id_mask)));
   EXPECT_THAT(results.query_terms, SizeIs(2));
   EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("cat"));
-  EXPECT_THAT(results.query_terms[indexed_property_],
-              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "1")
-                               .SetSchema("email")
-                               .SetCreationTimestampMs(0)
-                               .SetTtlMs(100)
-                               .Build()));
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
 
-  EXPECT_THAT(AddTokenToIndex(document_id, indexed_email_section_id_,
-                              term_match_type, "hello"),
-              IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "1")
+                                                      .SetSchema("email")
+                                                      .SetCreationTimestampMs(0)
+                                                      .SetTtlMs(100)
+                                                      .Build()));
+
+  // Populate the index
+  int section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  EXPECT_THAT(
+      AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
+      IsOk());
 
   // Arbitrary value, just has to be less than the document's creation
   // timestamp + ttl
   FakeClock fake_clock;
   fake_clock.SetSystemTimeMilliseconds(50);
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
@@ -1744,31 +2217,46 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
                              query_processor->ParseSearch(search_spec));
 
-  SectionIdMask section_id_mask = 1U << indexed_email_section_id_;
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(DocHitInfo(document_id, section_id_mask)));
 }
 
 TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
-      document_store_->Put(DocumentBuilder()
-                               .SetKey("namespace", "1")
-                               .SetSchema("email")
-                               .SetCreationTimestampMs(0)
-                               .SetTtlMs(100)
-                               .Build()));
+  // Create the schema and document store
+  SchemaProto schema;
+  AddSchemaType(&schema, "email");
 
-  EXPECT_THAT(AddTokenToIndex(document_id, indexed_email_section_id_,
-                              term_match_type, "hello"),
-              IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
+                             SchemaStore::Create(&filesystem_, test_dir_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      document_store_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "1")
+                                                      .SetSchema("email")
+                                                      .SetCreationTimestampMs(0)
+                                                      .SetTtlMs(100)
+                                                      .Build()));
+
+  // Populate the index
+  int section_id = 0;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  EXPECT_THAT(
+      AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
+      IsOk());
 
   // Arbitrary value, just has to be greater than the document's creation
   // timestamp + ttl
   FakeClock fake_clock;
   fake_clock.SetSystemTimeMilliseconds(200);
 
+  // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),

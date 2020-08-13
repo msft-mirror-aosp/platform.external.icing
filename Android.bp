@@ -12,17 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-java_library {
-    name: "icing-java-proto-lite",
-    proto: {
-        type: "lite",
-        include_dirs: ["external/protobuf/src"],
-        canonical_path_from_root: false,
-    },
-    srcs: ["icing/proto/*.proto"],
-    sdk_version: "core_current",
-}
-
 cc_defaults {
     name: "libicing_defaults",
 
@@ -43,6 +32,7 @@ cc_defaults {
         "-Wno-undefined-var-template",
         "-Wno-unused-function",
         "-Wno-unused-parameter",
+        "-Wno-unused-private-field",
         "-Wno-extern-c-compat",
 
         "-funsigned-char",
@@ -50,34 +40,23 @@ cc_defaults {
     ],
 }
 
-cc_library_static {
-    name: "icing-c-proto",
-    defaults: ["libicing_defaults"],
-    proto: {
-        type: "lite",
-        // Find protos relative from where they're specified (useful for external protos)
-        canonical_path_from_root: false,
-        // Need to be able to see the .pb.h files that are generated
-        export_proto_headers: true,
-    },
-    srcs: ["icing/**/*.proto"],
-}
-
 cc_library_shared {
-    name: "libicing_jni",
+    name: "libicing",
     defaults: ["libicing_defaults"],
     srcs: [
         "icing/**/*.cc",
     ],
     exclude_srcs: [
-        // Tests
+        "icing/**/*-test-*",
+        "icing/**/*-test.*",
         "icing/**/*_test.cc",
-        // Benchmarks
         "icing/**/*_benchmark.cc",
-        // Test-only related files (i.e. utils)
         "icing/testing/**/*",
-        // Tools for manual debugging/investigating
+        "icing/tokenization/reverse_jni/**/*",
+        "icing/tokenization/simple/**/*",
         "icing/tools/**/*",
+        "icing/transform/map/**/*",
+        "icing/transform/simple/**/*",
     ],
     header_libs: ["jni_headers"],
     static_libs: [

@@ -33,6 +33,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
@@ -46,10 +47,12 @@ using ::testing::_;
 using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Not;
 using ::testing::Return;
+using ::testing::UnorderedElementsAre;
 
 class DocumentStoreTest : public ::testing::Test {
  protected:
@@ -340,7 +343,7 @@ TEST_F(DocumentStoreTest, GetInvalidDocumentId) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, Delete) {
+TEST_F(DocumentStoreTest, DeleteOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -352,16 +355,43 @@ TEST_F(DocumentStoreTest, Delete) {
   EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
   EXPECT_THAT(doc_store->Get(document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  // icing + email/1 has already been deleted.
-  EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+
+  EXPECT_THAT(
+      document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+
+  // First time is OK
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+
+  // Deleting it again is NOT_FOUND
+  EXPECT_THAT(document_store->Delete(test_document1_.namespace_(),
+                                     test_document1_.uri()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
@@ -403,7 +433,7 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceOk) {
+TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -414,11 +444,28 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceOk) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  ICING_EXPECT_OK(doc_store->DeleteByNamespace("nonexistent_namespace"));
+  EXPECT_THAT(doc_store->DeleteByNamespace("nonexistent_namespace"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteByNamespaceNoExistingDocumentsNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+
+  // At this point, there are no existing documents with the namespace, even
+  // though Icing's derived files know about this namespace. We should still
+  // return NOT_FOUND since nothing existing has this namespace.
+  EXPECT_THAT(document_store->DeleteByNamespace(test_document1_.namespace_()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
@@ -568,7 +615,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
               IsOkAndHolds(EqualsProto(person_document)));
 }
 
-TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeOk) {
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> document_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -579,12 +626,28 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeOk) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  ICING_EXPECT_OK(document_store->DeleteBySchemaType("nonexistent_type"));
+  EXPECT_THAT(document_store->DeleteBySchemaType("nonexistent_type"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeNoExistingDocumentsOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+
+  // At this point, there are no existing documents with the schema type, but we
+  // still return OK because the SchemaStore is the ground truth on schemas and
+  // knows about the type
+  ICING_EXPECT_OK(document_store->DeleteBySchemaType(test_document1_.schema()));
 }
 
 TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
@@ -1007,16 +1070,25 @@ TEST_F(DocumentStoreTest, GetDiskUsage) {
       std::unique_ptr<DocumentStore> doc_store,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                             schema_store_.get()));
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t size1, doc_store->GetDiskUsage());
-  EXPECT_THAT(size1, Gt(0));
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t empty_doc_store_size,
+                             doc_store->GetDiskUsage());
+  EXPECT_THAT(empty_doc_store_size, Gt(0));
 
-  ICING_ASSERT_OK(doc_store->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t size2, doc_store->GetDiskUsage());
-  EXPECT_THAT(size2, Gt(size1));
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "email/1")
+                               .SetSchema("email")
+                               .AddStringProperty("subject", "foo")
+                               .Build();
 
-  ICING_ASSERT_OK(doc_store->Put(test_document2_));
-  EXPECT_THAT(doc_store->GetDiskUsage(), IsOkAndHolds(Gt(size2)));
-  doc_store.reset();
+  // Since our GetDiskUsage can only get sizes in increments of block_size, we
+  // need to insert enough documents so the disk usage will increase by at least
+  // 1 block size. The number 100 is a bit arbitrary, gotten from manually
+  // testing.
+  for (int i = 0; i < 100; ++i) {
+    ICING_ASSERT_OK(doc_store->Put(document));
+  }
+  EXPECT_THAT(doc_store->GetDiskUsage(),
+              IsOkAndHolds(Gt(empty_doc_store_size)));
 
   // Bad file system
   MockFilesystem mock_filesystem;
@@ -1894,6 +1966,122 @@ TEST_F(DocumentStoreTest,
   // The "message" document should be unaffected
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
+}
+
+TEST_F(DocumentStoreTest, GetOptimizeInfo) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  // Nothing should be optimizable yet
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::OptimizeInfo optimize_info,
+                             document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(0));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+
+  ICING_EXPECT_OK(document_store->Put(DocumentProto(test_document1_)));
+
+  // Adding a document, still nothing is optimizable
+  ICING_ASSERT_OK_AND_ASSIGN(optimize_info, document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(1));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+
+  // Delete a document. Now something is optimizable
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
+  ICING_ASSERT_OK_AND_ASSIGN(optimize_info, document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(1));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(1));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Gt(0));
+
+  // Optimize it into a different directory, should bring us back to nothing
+  // since all documents were optimized away.
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  EXPECT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  EXPECT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK(document_store->OptimizeInto(optimized_dir));
+  document_store.reset();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> optimized_document_store,
+      DocumentStore::Create(&filesystem_, optimized_dir, &fake_clock_,
+                            schema_store_.get()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(optimize_info,
+                             optimized_document_store->GetOptimizeInfo());
+  EXPECT_THAT(optimize_info.total_docs, Eq(0));
+  EXPECT_THAT(optimize_info.optimizable_docs, Eq(0));
+  EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
+}
+
+TEST_F(DocumentStoreTest, GetAllNamespaces) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  // Empty namespaces to start with
+  EXPECT_THAT(document_store->GetAllNamespaces(), IsEmpty());
+
+  DocumentProto namespace1 = DocumentBuilder()
+                                 .SetKey("namespace1", "uri")
+                                 .SetSchema("email")
+                                 .SetCreationTimestampMs(0)
+                                 .SetTtlMs(500)
+                                 .Build();
+  DocumentProto namespace2_uri1 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri1")
+                                      .SetSchema("email")
+                                      .SetCreationTimestampMs(0)
+                                      .SetTtlMs(500)
+                                      .Build();
+  DocumentProto namespace2_uri2 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri2")
+                                      .SetSchema("email")
+                                      .SetCreationTimestampMs(0)
+                                      .SetTtlMs(500)
+                                      .Build();
+  DocumentProto namespace3 = DocumentBuilder()
+                                 .SetKey("namespace3", "uri")
+                                 .SetSchema("email")
+                                 .SetCreationTimestampMs(0)
+                                 .SetTtlMs(100)
+                                 .Build();
+
+  ICING_ASSERT_OK(document_store->Put(namespace1));
+  ICING_ASSERT_OK(document_store->Put(namespace2_uri1));
+  ICING_ASSERT_OK(document_store->Put(namespace2_uri2));
+  ICING_ASSERT_OK(document_store->Put(namespace3));
+
+  auto get_result = document_store->Get("namespace1", "uri");
+  get_result = document_store->Get("namespace2", "uri1");
+  get_result = document_store->Get("namespace2", "uri2");
+  get_result = document_store->Get("namespace3", "uri");
+
+  // Have all the namespaces now
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+  // After deleting namespace2_uri1, there's still namespace2_uri2, so
+  // "namespace2" still shows up in results
+  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri1"));
+
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+  // After deleting namespace2_uri2, there's no more documents in "namespace2"
+  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri2"));
+
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1", "namespace3"));
+
+  // Some arbitrary time past namespace3's creation time (0) and ttl (100)
+  fake_clock_.SetSystemTimeMilliseconds(110);
+
+  EXPECT_THAT(document_store->GetAllNamespaces(),
+              UnorderedElementsAre("namespace1"));
 }
 
 }  // namespace lib

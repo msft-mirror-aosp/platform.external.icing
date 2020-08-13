@@ -151,7 +151,9 @@ class SchemaStore {
   //
   // Returns:
   //   SchemaTypeConfigProto on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if schema type name doesn't exist
+  //   INTERNAL on any I/O errors
   libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
   GetSchemaTypeConfig(std::string_view schema_type) const;
 
