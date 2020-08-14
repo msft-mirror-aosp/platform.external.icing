@@ -16,6 +16,7 @@ java_library {
     name: "libicing-java",
     srcs: ["src/**/*.java"],
     static_libs: [
+        "androidx.annotation_annotation",
         "icing-java-proto-lite",
         "libprotobuf-java-lite",
     ],

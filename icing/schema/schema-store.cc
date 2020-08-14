@@ -382,6 +382,14 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
 libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
 SchemaStore::GetSchemaTypeConfig(std::string_view schema_type) const {
+  auto schema_proto_or = GetSchema();
+  if (absl_ports::IsNotFound(schema_proto_or.status())) {
+    return absl_ports::FailedPreconditionError("Schema not set yet.");
+  } else if (!schema_proto_or.ok()) {
+    // Some other real error, pass it up
+    return schema_proto_or.status();
+  }
+
   const auto& type_config_iter =
       type_config_map_.find(std::string(schema_type));
   if (type_config_iter == type_config_map_.end()) {

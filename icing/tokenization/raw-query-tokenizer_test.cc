@@ -16,8 +16,10 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 
@@ -32,7 +34,8 @@ class RawQueryTokenizerTest : public ::testing::Test {
   void SetUp() override {
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
+        icu_data_file_helper::SetUpICUDataFile(
+            GetTestFilePath("icing/icu.dat")));
   }
 };
 
@@ -44,7 +47,7 @@ TEST_F(RawQueryTokenizerTest, CreationWithNullPointerShouldFail) {
 
 TEST_F(RawQueryTokenizerTest, Simple) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -57,7 +60,7 @@ TEST_F(RawQueryTokenizerTest, Simple) {
 
 TEST_F(RawQueryTokenizerTest, Parentheses) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -157,7 +160,7 @@ TEST_F(RawQueryTokenizerTest, Parentheses) {
 
 TEST_F(RawQueryTokenizerTest, Exclustion) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -224,7 +227,7 @@ TEST_F(RawQueryTokenizerTest, Exclustion) {
 
 TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -312,7 +315,7 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
 
 TEST_F(RawQueryTokenizerTest, OR) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -433,7 +436,7 @@ TEST_F(RawQueryTokenizerTest, OR) {
 // here we test Chinese and Japanese to represent CJKT.
 TEST_F(RawQueryTokenizerTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -486,7 +489,7 @@ TEST_F(RawQueryTokenizerTest, CJKT) {
 // so we can choose comma "," to represent all OTHER characters.
 TEST_F(RawQueryTokenizerTest, OtherChars) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -531,7 +534,7 @@ TEST_F(RawQueryTokenizerTest, OtherChars) {
 
 TEST_F(RawQueryTokenizerTest, Mix) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+                             language_segmenter_factory::Create());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
