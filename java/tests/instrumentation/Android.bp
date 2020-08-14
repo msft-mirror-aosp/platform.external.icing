@@ -14,13 +14,9 @@
 
 android_test {
     name: "IcingSearchEngineTest",
-
-    manifest: "AndroidManifest.xml",
-
     srcs: [
-        "src/**/*.java",
+        "src/com/google/android/icing/**/*.java",
     ],
-
     static_libs: [
         "androidx.test.ext.junit",
         "androidx.test.rules",
@@ -28,15 +24,24 @@ android_test {
         "libicing-java",
         "icing-java-proto-lite",
     ],
+    jni_libs: ["libicing"],
+    test_suites: ["device-tests"],
+    platform_apis: true,
+    use_embedded_native_libs: true,
+}
 
-    jni_libs: [
-        "libicing",
+android_test {
+    name: "AndroidXSmokeTest",
+    srcs: ["src/androidx/**/*.java"],
+    static_libs: [
+        "androidx.appsearch_appsearch",
+        "androidx.test.ext.junit",
+        "androidx.test.runner",
+        "truth-prebuilt",
     ],
-
-    test_suites: [
-        "device-tests",
-    ],
-
+    jni_libs: ["libicing"],
+    plugins: ["androidx.appsearch_appsearch-compiler-plugin"],
+    test_suites: ["device-tests"],
     platform_apis: true,
     use_embedded_native_libs: true,
 }
