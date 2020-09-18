@@ -19,11 +19,11 @@
 #include <type_traits>
 
 #include "icing/legacy/core/icing-packed-pod.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
 
-using NamespaceId = int16_t;
 using SchemaTypeId = int16_t;
 
 class DocumentFilterData {

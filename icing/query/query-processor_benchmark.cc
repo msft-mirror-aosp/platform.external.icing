@@ -16,6 +16,7 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
@@ -26,6 +27,8 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/transform/normalizer-factory.h"
 #include "icing/util/logging.h"
 
 // Run on a Linux workstation:
@@ -64,7 +67,8 @@ namespace {
 void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
                      TermMatchType::Code term_match_type,
                      const std::string& token) {
-  Index::Editor editor = index->Edit(document_id, section_id, term_match_type);
+  Index::Editor editor =
+      index->Edit(document_id, section_id, term_match_type, /*namespace_id=*/0);
   ICING_ASSERT_OK(editor.AddHit(token.c_str()));
 }
 
@@ -75,7 +79,8 @@ std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
-  return Normalizer::Create(
+  return normalizer_factory::Create(
+
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
 }
@@ -83,7 +88,8 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
 void BM_QueryOneTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
@@ -102,7 +108,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -194,7 +200,8 @@ BENCHMARK(BM_QueryOneTerm)
 void BM_QueryFiveTerms(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
@@ -213,7 +220,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -323,7 +330,8 @@ BENCHMARK(BM_QueryFiveTerms)
 void BM_QueryDiacriticTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
@@ -342,7 +350,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -437,7 +445,8 @@ BENCHMARK(BM_QueryDiacriticTerm)
 void BM_QueryHiragana(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
-    ICING_ASSERT_OK(SetUpICUDataFile("icing/icu.dat"));
+    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(
+        GetTestFilePath("icing/icu.dat")));
   }
 
   IcingFilesystem icing_filesystem;
@@ -456,7 +465,7 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      LanguageSegmenter::Create().ValueOrDie();
+      language_segmenter_factory::Create().ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
