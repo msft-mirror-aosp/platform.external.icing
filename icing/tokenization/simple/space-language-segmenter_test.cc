@@ -18,6 +18,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -28,21 +29,27 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 
 TEST(SpaceLanguageSegmenterTest, EmptyText) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   EXPECT_THAT(language_segmenter->GetAllTerms(""), IsOkAndHolds(IsEmpty()));
 }
 
 TEST(SpaceLanguageSegmenterTest, SimpleText) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   EXPECT_THAT(language_segmenter->GetAllTerms("Hello World"),
               IsOkAndHolds(ElementsAre("Hello", " ", "World")));
 }
 
 TEST(SpaceLanguageSegmenterTest, Punctuation) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
 
   EXPECT_THAT(language_segmenter->GetAllTerms("Hello, World!!!"),
               IsOkAndHolds(ElementsAre("Hello,", " ", "World!!!")));
@@ -55,8 +62,10 @@ TEST(SpaceLanguageSegmenterTest, Punctuation) {
 }
 
 TEST(SpaceLanguageSegmenterTest, Alphanumeric) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
 
   // Alphanumeric terms are allowed
   EXPECT_THAT(language_segmenter->GetAllTerms("Se7en A4 3a"),
@@ -64,8 +73,10 @@ TEST(SpaceLanguageSegmenterTest, Alphanumeric) {
 }
 
 TEST(SpaceLanguageSegmenterTest, Number) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
 
   // Alphanumeric terms are allowed
   EXPECT_THAT(
@@ -80,8 +91,10 @@ TEST(SpaceLanguageSegmenterTest, Number) {
 }
 
 TEST(SpaceLanguageSegmenterTest, ContinuousWhitespaces) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
 
   // Multiple continuous whitespaces are treated as one.
   const int kNumSeparators = 256;
@@ -92,8 +105,10 @@ TEST(SpaceLanguageSegmenterTest, ContinuousWhitespaces) {
 }
 
 TEST(SpaceLanguageSegmenterTest, NotCopyStrings) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   // Validates that the input strings are not copied
   const std::string text = "Hello World";
   const char* word1_address = text.c_str();

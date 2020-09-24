@@ -36,6 +36,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -59,8 +60,10 @@ class ResultRetrieverTest : public testing::Test {
         // File generated via icu_data_file rule in //icing/BUILD.
         icu_data_file_helper::SetUpICUDataFile(
             GetTestFilePath("icing/icu.dat")));
-    ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               language_segmenter_factory::Create());
+    language_segmenter_factory::SegmenterOptions options(ULOC_US);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        language_segmenter_,
+        language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
                                SchemaStore::Create(&filesystem_, test_dir_));

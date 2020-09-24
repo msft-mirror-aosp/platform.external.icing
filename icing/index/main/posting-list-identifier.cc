@@ -12,19 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_NAMESPACE_ID_H_
-#define ICING_STORE_NAMESPACE_ID_H_
-
-#include <cstdint>
+#include "icing/index/main/posting-list-identifier.h"
 
 namespace icing {
 namespace lib {
 
-// Id of unique namespace in DocumentProto. Generated in DocumentStore.
-using NamespaceId = int16_t;
-inline constexpr NamespaceId kInvalidNamespaceId = -1;
+PostingListIdentifier PostingListIdentifier::kInvalid(
+    kInvalidBlockIndex, /*posting_list_index=*/0,
+    PostingListIdentifier::kEncodedPostingListIndexBits - 1);
 
-}  // namespace lib
-}  // namespace icing
-
-#endif  // ICING_STORE_NAMESPACE_ID_H_
+}  //  namespace lib
+}  //  namespace icing

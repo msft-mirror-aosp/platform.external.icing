@@ -24,8 +24,8 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/iterator/doc-hit-info-iterator-term.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/lite/lite-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
@@ -102,10 +102,10 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
                    TermMatchType::Code term_match_type) {
   switch (term_match_type) {
     case TermMatchType::EXACT_ONLY:
-      return std::make_unique<DocHitInfoIteratorTermExact>(
+      return std::make_unique<DocHitInfoIteratorTermLiteExact>(
           term_id_codec_.get(), lite_index_.get(), term, section_id_mask);
     case TermMatchType::PREFIX:
-      return std::make_unique<DocHitInfoIteratorTermPrefix>(
+      return std::make_unique<DocHitInfoIteratorTermLitePrefix>(
           term_id_codec_.get(), lite_index_.get(), term, section_id_mask);
     default:
       return absl_ports::InvalidArgumentError(
@@ -163,9 +163,14 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
 
   // Step 2: Update the lexicon, either add the term or update its properties
   if (tvi_or.ok()) {
+    tvi = tvi_or.ValueOrDie();
+    if (seen_tokens_.find(tvi) != seen_tokens_.end()) {
+      ICING_VLOG(1) << "A hit for term " << term
+                    << " has already been added. Skipping.";
+      return libtextclassifier3::Status::OK;
+    }
     ICING_VLOG(1) << "Term " << term
                   << " is already present in lexicon. Updating.";
-    tvi = tvi_or.ValueOrDie();
     // Already in the lexicon. Just update the properties.
     ICING_RETURN_IF_ERROR(lite_index_->UpdateTermProperties(
         tvi, term_match_type_ == TermMatchType::PREFIX, namespace_id_));
@@ -175,6 +180,7 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
     ICING_ASSIGN_OR_RETURN(
         tvi, lite_index_->InsertTerm(term, term_match_type_, namespace_id_));
   }
+  seen_tokens_.insert(tvi);
 
   // Step 3: Add the hit itself
   Hit hit(section_id_, document_id_, score,

@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/icu/icu-language-segmenter.h"
+#include "icing/tokenization/ios/ios-language-segmenter.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/util/logging.h"
-#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -31,10 +30,6 @@ constexpr std::string_view kLocaleAmericanEnglishComputer = "en_US_POSIX";
 // Returns:
 //   A LanguageSegmenter on success
 //   INVALID_ARGUMENT if locale string is invalid
-//
-// TODO(samzheng): Figure out if we want to verify locale strings and notify
-// users. Right now illegal locale strings will be ignored by ICU. ICU
-// components will be created with its default locale.
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(
     SegmenterOptions options) {
   // Word connector rules for "en_US_POSIX" (American English (Computer)) are
@@ -44,10 +39,10 @@ libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(
   // special rule, so we replace it with "en_US".
   if (options.locale == kLocaleAmericanEnglishComputer) {
     ICING_LOG(WARNING) << "Locale " << kLocaleAmericanEnglishComputer
-                       << " not supported. Converting to locale " << ULOC_US;
-    options.locale = ULOC_US;
+                       << " not supported. Converting to locale en_US";
+    options.locale = "en_US";
   }
-  return std::make_unique<IcuLanguageSegmenter>(std::move(options.locale));
+  return std::make_unique<IosLanguageSegmenter>(std::move(options.locale));
 }
 
 }  // namespace language_segmenter_factory

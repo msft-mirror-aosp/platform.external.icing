@@ -335,6 +335,58 @@ public final class IcingSearchEngineTest {
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
+
+  @Test
+  public void testDeleteByQuery() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+        icing
+            .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+            .getStatus()
+            .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 =
+        createEmailDocument("namespace", "uri1").toBuilder()
+        .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
+        .build();;
+    assertThat(icing.put(emailDocument1).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    DocumentProto emailDocument2 =
+        createEmailDocument("namespace", "uri2").toBuilder()
+        .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("bar"))
+        .build();;
+    assertThat(icing.put(emailDocument2).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            // .setQuery("")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+
+    SearchResultProto searchResultProto =
+        icing.search(
+            searchSpec,
+            ScoringSpecProto.getDefaultInstance(),
+            ResultSpecProto.getDefaultInstance());
+    assertThat(searchResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(2);
+    // assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
+
+    DeleteResultProto deleteResultProto = icing.deleteByQuery(searchSpec);
+    assertThat(deleteResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    GetResultProto getResultProto = icing.get("namespace", "uri1");
+    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+    getResultProto = icing.get("namespace", "uri2");
+    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
   @Test
   public void testPersistToDisk() throws Exception {
     IcingSearchEngineOptions options =
