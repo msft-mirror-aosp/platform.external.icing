@@ -128,6 +128,9 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   ALREADY_EXISTS if 'new_schema' contains multiple definitions of the same
+  //     type or contains a type that has multiple properties with the same
+  //     name.
   //   INVALID_ARGUMENT if 'new_schema' is invalid
   //   FAILED_PRECONDITION if 'new_schema' is incompatible, or IcingSearchEngine
   //     has not been initialized yet.
@@ -254,6 +257,21 @@ class IcingSearchEngine {
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
   DeleteBySchemaTypeResultProto DeleteBySchemaType(std::string_view schema_type)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Deletes all Documents that match the query specified in search_spec. Delete
+  // changes are automatically applied to disk, callers can also call
+  // PersistToDisk() to flush changes immediately.
+  //
+  // NOTE: Space is not reclaimed for deleted documents until Optimize() is
+  // called.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the query doesn't match any documents
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on IO error
+  DeleteResultProto DeleteByQuery(const SearchSpecProto& search_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves, scores, ranks, and returns the results according to the specs.

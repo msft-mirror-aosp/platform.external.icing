@@ -147,17 +147,41 @@ class DocumentStore {
   //   boolean whether a document exists or not
   bool DoesDocumentExist(DocumentId document_id) const;
 
-  // Deletes the document identified by the given namespace and uri
+  // Deletes the document identified by the given namespace and uri. The
+  // document proto will be marked as deleted if 'soft_delete' is true,
+  // otherwise the document proto will be erased immediately.
   //
-  // NOTE: Space is not reclaimed for deleted documents until Optimize() is
-  // called.
+  // NOTE:
+  // 1. The soft deletion uses less CPU power, it can be applied on
+  //    non-sensitive data.
+  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    called.
   //
   // Returns:
   //   OK on success
   //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
-                                    std::string_view uri);
+                                    std::string_view uri,
+                                    bool soft_delete = false);
+
+  // Deletes the document identified by the given document_id. The
+  // document proto will be marked as deleted if 'soft_delete' is true,
+  // otherwise the document proto will be erased immediately.
+  //
+  // NOTE:
+  // 1. If possible, please use the other method Delete(name_space, uri,
+  //    soft_delete) for soft deletes because we need namespace and uri to
+  //    perform soft deletes.
+  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    called.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  //   INVALID_ARGUMENT if document_id is invalid.
+  libtextclassifier3::Status Delete(DocumentId document_id,
+                                    bool soft_delete = false);
 
   // Returns the NamespaceId of the string namespace
   //
@@ -180,6 +204,7 @@ class DocumentStore {
   //   DocumentAssociatedScoreData on success
   //   OUT_OF_RANGE if document_id is negative or exceeds previously seen
   //                DocumentIds
+  //   NOT_FOUND if no score data is found
   libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
   GetDocumentAssociatedScoreData(DocumentId document_id) const;
 
@@ -194,30 +219,43 @@ class DocumentStore {
   //   DocumentFilterData on success
   //   OUT_OF_RANGE if document_id is negative or exceeds previously seen
   //                DocumentIds
+  //   NOT_FOUND if no filter data is found
   libtextclassifier3::StatusOr<DocumentFilterData> GetDocumentFilterData(
       DocumentId document_id) const;
 
-  // Deletes all documents belonging to the given namespace.
+  // Deletes all documents belonging to the given namespace. The documents will
+  // be marked as deleted if 'soft_delete' is true, otherwise they will be
+  // erased immediately.
   //
-  // NOTE: Space is not reclaimed for deleted documents until Optimize() is
-  // called.
+  // NOTE:
+  // 1. The soft deletion uses less CPU power, it can be applied on
+  //    non-sensitive data.
+  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    called.
   //
   // Returns:
   //   OK on success
   //   NOT_FOUND if namespace doesn't exist
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status DeleteByNamespace(std::string_view name_space);
+  libtextclassifier3::Status DeleteByNamespace(std::string_view name_space,
+                                               bool soft_delete = false);
 
-  // Deletes all documents belonging to the given schema type
+  // Deletes all documents belonging to the given schema type. The documents
+  // will be marked as deleted if 'soft_delete' is true, otherwise they will be
+  // erased immediately.
   //
-  // NOTE: Space is not reclaimed for deleted documents until Optimize() is
-  // called.
+  // NOTE:
+  // 1. The soft deletion uses less CPU power, it can be applied on
+  //    non-sensitive data.
+  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    called.
   //
   // Returns:
   //   OK on success
   //   NOT_FOUND if schema_type doesn't exist
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status DeleteBySchemaType(std::string_view schema_type);
+  libtextclassifier3::Status DeleteBySchemaType(std::string_view schema_type,
+                                                bool soft_delete = false);
 
   // Syncs all the data and metadata changes to disk.
   //
@@ -424,32 +462,42 @@ class DocumentStore {
   //   INTERNAL on I/O error
   libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
 
-  // Update derived files that `name_space` has been deleted. This is primarily
-  // useful if we're trying to update derived files when we've already seen a
-  // namespace tombstone, and don't need to write another tombstone.
+  // Helper function to do batch deletes. Documents with the given
+  // "namespace_id" and "schema_type_id" will be deleted. If callers don't need
+  // to specify the namespace or schema type, pass in kInvalidNamespaceId or
+  // kInvalidSchemaTypeId. The document protos will be marked as deleted if
+  // 'soft_delete' is true, otherwise the document protos with their derived
+  // data will be erased / cleared immediately.
   //
   // NOTE: Space is not reclaimed in the derived files until Optimize() is
   // called.
   //
   // Returns:
-  //   bool on whether an existing document was actually updated to be deleted
+  //   Number of documents that were actually updated to be deleted
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<bool> UpdateDerivedFilesNamespaceDeleted(
-      std::string_view name_space);
+  libtextclassifier3::StatusOr<int> BatchDelete(NamespaceId namespace_id,
+                                                SchemaTypeId schema_type_id,
+                                                bool soft_delete);
 
-  // Update derived files that the schema type schema_type_id has been deleted.
-  // This is primarily useful if we're trying to update derived files when we've
-  // already seen a schema type tombstone, and don't need to write another
-  // tombstone.
-  //
-  // NOTE: Space is not reclaimed in the derived files until Optimize() is
-  // called.
+  // Marks the document identified by the given name_space, uri and document_id
+  // as deleted, to be removed later during Optimize().
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status UpdateDerivedFilesSchemaTypeDeleted(
-      SchemaTypeId schema_type_id);
+  libtextclassifier3::Status SoftDelete(std::string_view name_space,
+                                        std::string_view uri,
+                                        DocumentId document_id);
+
+  // Erases the document at the given document_log_offset from the document_log
+  // and clears the derived data identified by the given document_id. The space
+  // will be reclaimed later during Optimize().
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status HardDelete(DocumentId document_id,
+                                        uint64_t document_log_offset);
 
   // Helper method to find a DocumentId that is associated with the given
   // namespace and uri.
@@ -488,6 +536,9 @@ class DocumentStore {
   // Updates the entry in the filter cache for document_id.
   libtextclassifier3::Status UpdateFilterCache(
       DocumentId document_id, const DocumentFilterData& filter_data);
+
+  // Helper method to clear the derived data of a document
+  libtextclassifier3::Status ClearDerivedData(DocumentId document_id);
 };
 
 }  // namespace lib
