@@ -335,8 +335,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
     if (absl_ports::IsNotFound(document_wrapper_or.status())) {
       // The erased document still occupies 1 document id.
       DocumentId new_document_id = document_id_mapper_->num_elements();
-      ICING_RETURN_IF_ERROR(
-          ClearDerivedData(/*name_space=*/"", /*uri=*/"", new_document_id));
+      ICING_RETURN_IF_ERROR(ClearDerivedData(new_document_id));
       iterator_status = iterator.Advance();
       continue;
     } else if (!document_wrapper_or.ok()) {
@@ -889,7 +888,7 @@ libtextclassifier3::Status DocumentStore::Delete(
     return SoftDelete(name_space, uri, document_id);
   } else {
     uint64_t document_log_offset = file_offset_or.ValueOrDie();
-    return HardDelete(name_space, uri, document_id, document_log_offset);
+    return HardDelete(document_id, document_log_offset);
   }
 }
 
@@ -898,22 +897,21 @@ libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
   // Copy out the document to get namespace and uri.
   ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
                          DoesDocumentExistAndGetFileOffset(document_id));
-  auto document_wrapper_or = document_log_->ReadProto(document_log_offset);
-  if (!document_wrapper_or.ok()) {
-    ICING_LOG(ERROR) << document_wrapper_or.status().error_message()
-                     << "Failed to read from document log";
-    return document_wrapper_or.status();
-  }
-  DocumentWrapper document_wrapper =
-      std::move(document_wrapper_or).ValueOrDie();
 
   if (soft_delete) {
+    auto document_wrapper_or = document_log_->ReadProto(document_log_offset);
+    if (!document_wrapper_or.ok()) {
+      ICING_LOG(ERROR) << document_wrapper_or.status().error_message()
+                       << "Failed to read from document log";
+      return document_wrapper_or.status();
+    }
+    DocumentWrapper document_wrapper =
+        std::move(document_wrapper_or).ValueOrDie();
+
     return SoftDelete(document_wrapper.document().namespace_(),
                       document_wrapper.document().uri(), document_id);
   } else {
-    return HardDelete(document_wrapper.document().namespace_(),
-                      document_wrapper.document().uri(), document_id,
-                      document_log_offset);
+    return HardDelete(document_id, document_log_offset);
   }
 }
 
@@ -937,11 +935,10 @@ libtextclassifier3::Status DocumentStore::SoftDelete(
 }
 
 libtextclassifier3::Status DocumentStore::HardDelete(
-    std::string_view name_space, std::string_view uri, DocumentId document_id,
-    uint64_t document_log_offset) {
+    DocumentId document_id, uint64_t document_log_offset) {
   // Erases document proto.
   ICING_RETURN_IF_ERROR(document_log_->EraseProto(document_log_offset));
-  return ClearDerivedData(name_space, uri, document_id);
+  return ClearDerivedData(document_id);
 }
 
 libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
@@ -1112,23 +1109,15 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
       ICING_RETURN_IF_ERROR(
           document_id_mapper_->Set(document_id, kDocDeletedFlag));
     } else {
-      // Hard delete. Try to copy out the document to get namespace and uri.
-      // Getting namespace and uri is necessary to delete entries in
-      // document_key_mapper_.
-      auto document_or = Get(document_id);
-      if (absl_ports::IsNotFound(document_or.status())) {
-        // Document not found.
+      // Hard delete.
+      libtextclassifier3::Status delete_status =
+          Delete(document_id, /*soft_delete=*/false);
+      if (absl_ports::IsNotFound(delete_status)) {
         continue;
-      } else if (!document_or.ok()) {
+      } else if (!delete_status.ok()) {
         // Real error, pass up.
-        return document_or.status();
+        return delete_status;
       }
-      DocumentProto document_copy = std::move(document_or).ValueOrDie();
-
-      // Erase from the ground truth. Delete() won't return NOT_FOUND because
-      // NOT_FOUND should have been caught by Get() above.
-      ICING_RETURN_IF_ERROR(Delete(document_copy.namespace_(),
-                                   document_copy.uri(), /*soft_delete=*/false));
       ++num_updated_documents;
     }
   }
@@ -1424,11 +1413,10 @@ libtextclassifier3::Status DocumentStore::UpdateFilterCache(
 }
 
 libtextclassifier3::Status DocumentStore::ClearDerivedData(
-    const std::string_view name_space, const std::string_view uri,
     DocumentId document_id) {
-  if (!name_space.empty() && !uri.empty()) {
-    document_key_mapper_->Delete(MakeFingerprint(name_space, uri));
-  }
+  // We intentionally leave the data in key_mapper_ because locating that data
+  // requires fetching namespace and uri. Leaving data in key_mapper_ should be
+  // fine because the data is hashed.
 
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(document_id, kDocDeletedFlag));
 

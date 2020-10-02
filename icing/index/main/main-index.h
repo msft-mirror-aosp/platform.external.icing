@@ -20,7 +20,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
-#include "icing/index/lite/lite-index.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/flash-index-storage.h"
 #include "icing/index/main/posting-list-accessor.h"
 #include "icing/index/term-id-codec.h"
@@ -33,8 +33,11 @@ namespace lib {
 
 class MainIndex {
  public:
+  // RETURNS:
+  //  - valid instance of MainIndex, on success.
+  //  - INTERNAL error if unable to create the lexicon or flash storage.
   static libtextclassifier3::StatusOr<MainIndex> Create(
-      const string& index_filename, const Filesystem* filesystem,
+      const std::string& index_filename, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
   // Get a PostingListAccessor that holds the posting list chain for 'term'.
@@ -106,6 +109,11 @@ class MainIndex {
   // Add hits to the main index and backfill from existing posting lists to new
   // backfill branch points.
   //
+  // The backfill_map maps from main_lexicon tvi for a newly added branching
+  // point to the main_lexicon tvi for the posting list whose hits must be
+  // backfilled. backfill_map should be populated as part of LexiconMergeOutputs
+  // in MergeLexicon and be blindly passed to this function.
+  //
   // RETURNS:
   //  - OK on success
   //  - INVALID_ARGUMENT if one of the elements in the lite index has a term_id
@@ -116,10 +124,10 @@ class MainIndex {
   libtextclassifier3::Status AddHits(
       const TermIdCodec& term_id_codec,
       std::unordered_map<uint32_t, uint32_t>&& backfill_map,
-      std::vector<LiteIndex::Element>&& hits);
+      std::vector<TermIdHitPair>&& hits);
 
  private:
-  libtextclassifier3::Status Init(const string& index_filename,
+  libtextclassifier3::Status Init(const std::string& index_filename,
                                   const Filesystem* filesystem,
                                   const IcingFilesystem* icing_filesystem);
 
@@ -172,7 +180,52 @@ class MainIndex {
                       const IcingDynamicTrie& other_lexicon, uint32_t other_tvi,
                       uint32_t new_main_tvi);
 
-  std::unique_ptr<FlashIndexStorage> flash_index_;
+  // Add all hits between [hit_elements, hit_elements + len) to main_index,
+  // updating the entry in the main lexicon at trie_value_index to point to the
+  // resulting posting list. Hits are sorted in descending document id order, so
+  // they should be to posting lists in reverse (starting at hit_elements
+  // + len - 1) and working backwards. Therefore, hit_elements must be in sorted
+  // order.
+  //
+  // trie_value_index may point to a valid posting list id if there is a
+  // pre-existing posting list to append to.
+  //
+  // If backfill_posting_list_id is valid, then the hits from the posting list
+  // identified by backfill_posting_list_id should be added to the new posting
+  // list before the hits in hit_elements.
+  //
+  // RETURNS:
+  //  - OK on success
+  //  - INVALID_ARGUMENT if posting_list_id stored at trie_value_index is valid
+  //  but points out of bounds in the IndexBlock referred to by
+  //  id.block_index(), if one of the hits from [hit_elements,hit_elements+len)
+  //  is not valid, or if one of the hits from [hit_elements,hit_elements+len)
+  //  is not less than the previously added hits.
+  //  - INTERNAL_ERROR if posting_list_id stored at trie_value_index is valid
+  //  but points to an invalid block index or if unable to mmap the IndexBlock.
+  //  - RESOURCE_EXHAUSTED error if unable to grow the index to allocate a new
+  //  posting list.
+  libtextclassifier3::Status AddHitsForTerm(
+      uint32_t tvi, PostingListIdentifier backfill_posting_list_id,
+      const TermIdHitPair* hit_elements, size_t len);
+
+  // Adds all prefix hits or hits from prefix sections present on the posting
+  // list identified by backfill_posting_list_id to hit_accum.
+  //
+  // RETURNS:
+  //  - OK, on success
+  //  - INVALID_ARGUMENT if backfill_posting_list_id points out of bounds in the
+  //  IndexBlock referred to by id.block_index()
+  //  - INTERNAL_ERROR if unable to mmap the block identified by
+  //  backfill_posting_list_id or if the posting list identified by
+  //  backfill_posting_list_id has been corrupted.
+  //  - RESOURCE_EXHAUSTED error if unable to grow the index to allocate a new
+  //  posting list.
+  libtextclassifier3::Status AddPrefixBackfillHits(
+      PostingListIdentifier backfill_posting_list_id,
+      PostingListAccessor* hit_accum);
+
+  std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
 };
 

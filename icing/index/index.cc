@@ -159,7 +159,7 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
                                                  Hit::Score score) {
   // Step 1: See if this term is already in the lexicon
   uint32_t tvi;
-  auto tvi_or = lite_index_->FindTerm(term);
+  auto tvi_or = lite_index_->GetTermId(term);
 
   // Step 2: Update the lexicon, either add the term or update its properties
   if (tvi_or.ok()) {

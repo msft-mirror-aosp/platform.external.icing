@@ -365,7 +365,7 @@ public final class IcingSearchEngineTest {
 
     SearchSpecProto searchSpec =
         SearchSpecProto.newBuilder()
-            // .setQuery("")
+            .setQuery("foo")
             .setTermMatchType(TermMatchType.Code.PREFIX)
             .build();
 
@@ -375,8 +375,8 @@ public final class IcingSearchEngineTest {
             ScoringSpecProto.getDefaultInstance(),
             ResultSpecProto.getDefaultInstance());
     assertThat(searchResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
-    assertThat(searchResultProto.getResultsCount()).isEqualTo(2);
-    // assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+    assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
 
     DeleteResultProto deleteResultProto = icing.deleteByQuery(searchSpec);
     assertThat(deleteResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
@@ -384,7 +384,7 @@ public final class IcingSearchEngineTest {
     GetResultProto getResultProto = icing.get("namespace", "uri1");
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
     getResultProto = icing.get("namespace", "uri2");
-    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
   }
 
   @Test

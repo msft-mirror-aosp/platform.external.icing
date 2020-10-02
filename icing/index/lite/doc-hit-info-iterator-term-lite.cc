@@ -61,7 +61,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
 
 libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   // Exact match only. All hits in lite lexicon are exact.
-  ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->FindTerm(term_));
+  ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->GetTermId(term_));
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   lite_index_->AppendHits(term_id, section_restrict_mask_,

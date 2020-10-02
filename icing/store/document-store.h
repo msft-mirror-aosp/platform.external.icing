@@ -170,8 +170,9 @@ class DocumentStore {
   // otherwise the document proto will be erased immediately.
   //
   // NOTE:
-  // 1. The soft deletion uses less CPU power, it can be applied on
-  //    non-sensitive data.
+  // 1. If possible, please use the other method Delete(name_space, uri,
+  //    soft_delete) for soft deletes because we need namespace and uri to
+  //    perform soft deletes.
   // 2. Space is not reclaimed for deleted documents until Optimize() is
   //    called.
   //
@@ -488,16 +489,14 @@ class DocumentStore {
                                         std::string_view uri,
                                         DocumentId document_id);
 
-  // Erases the document identified by the given name_space, uri and document_id
-  // from the document_log and erases its uri from the document_key_mapper_, the
-  // space will be reclaimed later during Optimize().
+  // Erases the document at the given document_log_offset from the document_log
+  // and clears the derived data identified by the given document_id. The space
+  // will be reclaimed later during Optimize().
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status HardDelete(std::string_view name_space,
-                                        std::string_view uri,
-                                        DocumentId document_id,
+  libtextclassifier3::Status HardDelete(DocumentId document_id,
                                         uint64_t document_log_offset);
 
   // Helper method to find a DocumentId that is associated with the given
@@ -539,9 +538,7 @@ class DocumentStore {
       DocumentId document_id, const DocumentFilterData& filter_data);
 
   // Helper method to clear the derived data of a document
-  libtextclassifier3::Status ClearDerivedData(std::string_view name_space,
-                                              std::string_view uri,
-                                              DocumentId document_id);
+  libtextclassifier3::Status ClearDerivedData(DocumentId document_id);
 };
 
 }  // namespace lib
