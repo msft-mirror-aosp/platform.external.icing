@@ -37,6 +37,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -48,6 +49,7 @@ using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::IsTrue;
+using ::testing::Ne;
 using ::testing::NiceMock;
 using ::testing::Not;
 using ::testing::SizeIs;
@@ -255,11 +257,16 @@ TEST_F(IndexTest, MultiHitSectionRestrict) {
 }
 
 TEST_F(IndexTest, SingleHitDedupeIndex) {
+  Crc32 empty_crc = index_->ComputeChecksum();
   // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  Crc32 first_hit_crc = index_->ComputeChecksum();
+  EXPECT_THAT(first_hit_crc.Get(), Ne(empty_crc.Get()));
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  Crc32 second_hit_crc = index_->ComputeChecksum();
+  EXPECT_THAT(second_hit_crc.Get(), Eq(first_hit_crc.Get()));
 
   // Assert
   ICING_ASSERT_OK_AND_ASSIGN(

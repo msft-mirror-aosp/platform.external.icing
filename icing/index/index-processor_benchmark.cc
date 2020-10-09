@@ -31,6 +31,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
@@ -192,8 +193,9 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   CleanUp(filesystem, index_dir);
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -239,8 +241,9 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   CleanUp(filesystem, index_dir);
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -287,8 +290,9 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   CleanUp(filesystem, index_dir);
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
@@ -335,8 +339,9 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   CleanUp(filesystem, index_dir);
 
   std::unique_ptr<Index> index = CreateIndex(filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
   std::unique_ptr<IndexProcessor> index_processor =
