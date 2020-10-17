@@ -14,47 +14,6 @@
  * limitations under the License.
  */
 
-buildscript {
-    boolean unbundleBuild = (new File('unbundled-build')).exists()
-    repositories {
-        maven { url '../../../prebuilts/androidx/external' }
-        if (unbundleBuild) {
-            jcenter()
-        }
-    }
-    dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.8')
-    }
-}
-
-apply plugin: 'AndroidXPlugin'
-apply plugin: 'com.android.library'
-
-def protoGeneratedFilesBaseDir = "${project.buildDir}/generated/source/proto"
-
-android {
-    defaultConfig {
-        externalNativeBuild {
-            cmake {
-                arguments "-DPROTO_GENERATED_FILES_BASE_DIR=${protoGeneratedFilesBaseDir}"
-                cppFlags "-std=c++17"
-                arguments "-DCMAKE_VERBOSE_MAKEFILE=ON"
-                targets "icing"
-            }
-        }
-    }
-
-    sourceSets {
-        main {
-            manifest.srcFile '../AndroidManifest.xml'
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            version '3.10.2'
-            // TODO(b/149853706): Uncomment this line once the lib fully compiles under cmake
-            // path '../CMakeLists.txt'
-        }
-    }
-}
+// TODO(b/161205849): We've had to move libicing.so compilation into appsearch:appsearch to get
+//  it included into the exported aar. Find a proper solution for bundling libicing.so into
+//  appsearch-release.aar and move compilation of libicing.so back into the external/icing tree.

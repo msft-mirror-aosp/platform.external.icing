@@ -14,11 +14,14 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
+add_definitions("-DICING_REVERSE_JNI_SEGMENTATION=1")
+
 set(
     Protobuf_PREBUILTS_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../../prebuilts/protobuf")
 set(Protobuf_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../protobuf")
 set(Protobuf_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/protobuf-target")
+set(Icing_PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/icing-protobuf-gen")
 
 ## Configure libprotobuf ##
 # Find the right protoc to compile our proto files
@@ -48,12 +51,11 @@ add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
 file(
     GLOB_RECURSE
     Icing_PROTO_FILES
-    RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-    "icing/*.proto")
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/proto"
+    "*.proto")
 message(STATUS "Icing_PROTO_FILES=${Icing_PROTO_FILES}")
 
 # Run protoc on Icing_PROTO_FILES to generate pb.cc and pb.h files
-set(Icing_PROTO_GEN_DIR "${PROTO_GENERATED_FILES_BASE_DIR}/cpp")
 file(MAKE_DIRECTORY ${Icing_PROTO_GEN_DIR})
 foreach(FILE ${Icing_PROTO_FILES})
     # Find the name of the proto file without the .proto extension
@@ -65,7 +67,7 @@ foreach(FILE ${Icing_PROTO_FILES})
         OUTPUT "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.cc"
           "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.h"
         COMMAND ${Protobuf_PROTOC_PATH}
-          --proto_path ${CMAKE_CURRENT_SOURCE_DIR}
+          --proto_path "${CMAKE_CURRENT_SOURCE_DIR}/proto"
           --cpp_out ${Icing_PROTO_GEN_DIR}
           ${FILE}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

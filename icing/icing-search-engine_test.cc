@@ -55,9 +55,11 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Lt;
 using ::testing::Matcher;
+using ::testing::Ne;
 using ::testing::Return;
 using ::testing::SizeIs;
 using ::testing::StrEq;
+using ::testing::UnorderedElementsAre;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -467,6 +469,163 @@ TEST_F(IcingSearchEngineTest, FailToWriteSchema) {
               Eq(StatusProto::INTERNAL));
   EXPECT_THAT(set_schema_result_proto.status().message(),
               HasSubstr("Unable to open file for write"));
+}
+
+TEST_F(IcingSearchEngineTest, SetSchemaDelete2) {
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+    // 1. Create a schema with an Email type with properties { "title", "body"}
+    SchemaProto schema;
+    SchemaTypeConfigProto* type = schema.add_types();
+    type->set_schema_type("Email");
+    PropertyConfigProto* property = type->add_properties();
+    property->set_property_name("title");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+    property = type->add_properties();
+    property->set_property_name("body");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+    EXPECT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
+
+    // 2. Add an email document
+    DocumentProto doc = DocumentBuilder()
+                            .SetKey("emails", "email#1")
+                            .SetSchema("Email")
+                            .AddStringProperty("title", "Hello world.")
+                            .AddStringProperty("body", "Goodnight Moon.")
+                            .Build();
+    EXPECT_THAT(icing.Put(std::move(doc)).status().code(), Eq(StatusProto::OK));
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+    // 3. Set a schema that deletes email. This should fail.
+    SchemaProto schema;
+    SchemaTypeConfigProto* type = schema.add_types();
+    type->set_schema_type("Message");
+    PropertyConfigProto* property = type->add_properties();
+    property->set_property_name("body");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+    EXPECT_THAT(icing.SetSchema(schema, false).status().code(),
+                Eq(StatusProto::FAILED_PRECONDITION));
+
+    // 4. Try to delete by email type.
+    EXPECT_THAT(icing.DeleteBySchemaType("Email").status().code(),
+                Eq(StatusProto::OK));
+  }
+}
+
+TEST_F(IcingSearchEngineTest, SetSchemaDelete) {
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+    // 1. Create a schema with an Email type with properties { "title", "body"}
+    SchemaProto schema;
+    SchemaTypeConfigProto* type = schema.add_types();
+    type->set_schema_type("Email");
+    PropertyConfigProto* property = type->add_properties();
+    property->set_property_name("title");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+    property = type->add_properties();
+    property->set_property_name("body");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+    EXPECT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
+
+    // 2. Add an email document
+    DocumentProto doc = DocumentBuilder()
+                            .SetKey("emails", "email#1")
+                            .SetSchema("Email")
+                            .AddStringProperty("title", "Hello world.")
+                            .AddStringProperty("body", "Goodnight Moon.")
+                            .Build();
+    EXPECT_THAT(icing.Put(std::move(doc)).status().code(), Eq(StatusProto::OK));
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions());
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+    // 3. Set a schema that deletes email. This should fail.
+    SchemaProto schema;
+    SchemaTypeConfigProto* type = schema.add_types();
+    type->set_schema_type("Message");
+    PropertyConfigProto* property = type->add_properties();
+    property->set_property_name("body");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+    EXPECT_THAT(icing.SetSchema(schema, true).status().code(),
+                Eq(StatusProto::OK));
+
+    // 4. Try to delete by email type.
+    EXPECT_THAT(icing.DeleteBySchemaType("Email").status().code(),
+                Eq(StatusProto::NOT_FOUND));
+  }
+}
+
+TEST_F(IcingSearchEngineTest, SetSchemaDuplicateTypesReturnsAlreadyExists) {
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+  // Create a schema with types { "Email", "Message" and "Email" }
+  SchemaProto schema;
+  SchemaTypeConfigProto* type = schema.add_types();
+  type->set_schema_type("Email");
+  PropertyConfigProto* property = type->add_properties();
+  property->set_property_name("title");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  type = schema.add_types();
+  type->set_schema_type("Message");
+  property = type->add_properties();
+  property->set_property_name("body");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  *schema.add_types() = schema.types(0);
+
+  EXPECT_THAT(icing.SetSchema(schema).status().code(),
+              Eq(StatusProto::ALREADY_EXISTS));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SetSchemaDuplicatePropertiesReturnsAlreadyExists) {
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+  // Create a schema with an Email type with properties { "title", "body" and
+  // "title" }
+  SchemaProto schema;
+  SchemaTypeConfigProto* type = schema.add_types();
+  type->set_schema_type("Email");
+  PropertyConfigProto* property = type->add_properties();
+  property->set_property_name("title");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  property = type->add_properties();
+  property->set_property_name("body");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  property = type->add_properties();
+  property->set_property_name("title");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  EXPECT_THAT(icing.SetSchema(schema).status().code(),
+              Eq(StatusProto::ALREADY_EXISTS));
 }
 
 TEST_F(IcingSearchEngineTest, SetSchema) {
@@ -1518,6 +1677,82 @@ TEST_F(IcingSearchEngineTest, DeleteShouldWorkAfterOptimization) {
               EqualsProto(expected_get_result_proto));
 }
 
+TEST_F(IcingSearchEngineTest, OptimizationFailureUninitializesIcing) {
+  // Setup filesystem to fail
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  bool just_swapped_files = false;
+  auto create_dir_lambda = [this, &just_swapped_files](const char* dir_name) {
+    if (just_swapped_files) {
+      // We should fail the first call immediately after swapping files.
+      just_swapped_files = false;
+      return false;
+    }
+    return filesystem()->CreateDirectoryRecursively(dir_name);
+  };
+  ON_CALL(*mock_filesystem, CreateDirectoryRecursively)
+      .WillByDefault(create_dir_lambda);
+  auto swap_lambda = [&just_swapped_files](const char* first_dir,
+                                           const char* second_dir) {
+    just_swapped_files = true;
+    return false;
+  };
+  ON_CALL(*mock_filesystem, SwapFiles).WillByDefault(swap_lambda);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<FakeClock>());
+  ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+  // The mocks should cause an unrecoverable error during Optimize - returning
+  // INTERNAL.
+  ASSERT_THAT(icing.Optimize().status().code(), Eq(StatusProto::INTERNAL));
+
+  // Ordinary operations should fail safely.
+  SchemaProto simple_schema;
+  auto type = simple_schema.add_types();
+  type->set_schema_type("type0");
+  auto property = type->add_properties();
+  property->set_property_name("prop0");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  DocumentProto simple_doc = DocumentBuilder()
+                                 .SetKey("namespace0", "uri0")
+                                 .SetSchema("type0")
+                                 .AddStringProperty("prop0", "foo")
+                                 .Build();
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("foo");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  ResultSpecProto result_spec;
+  ScoringSpecProto scoring_spec;
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+
+  EXPECT_THAT(icing.SetSchema(simple_schema).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.Put(simple_doc).status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      icing.Get(simple_doc.namespace_(), simple_doc.uri()).status().code(),
+      Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      icing.Search(search_spec, scoring_spec, result_spec).status().code(),
+      Eq(StatusProto::FAILED_PRECONDITION));
+
+  // Reset should get icing back to a safe (empty) and working state.
+  EXPECT_THAT(icing.Reset().status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.SetSchema(simple_schema).status().code(),
+              Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(simple_doc).status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(
+      icing.Get(simple_doc.namespace_(), simple_doc.uri()).status().code(),
+      Eq(StatusProto::OK));
+  EXPECT_THAT(
+      icing.Search(search_spec, scoring_spec, result_spec).status().code(),
+      Eq(StatusProto::OK));
+}
+
 TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   SchemaProto schema;
   // Add an email type
@@ -1527,6 +1762,10 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   property->set_property_name("subject");
   property->set_data_type(PropertyConfigProto::DataType::STRING);
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  property->mutable_indexing_config()->set_term_match_type(
+      TermMatchType::EXACT_ONLY);
+  property->mutable_indexing_config()->set_tokenizer_type(
+      IndexingConfig::TokenizerType::PLAIN);
   // Add an message type
   type = schema.add_types();
   type->set_schema_type("message");
@@ -1534,6 +1773,10 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   property->set_property_name("body");
   property->set_data_type(PropertyConfigProto::DataType::STRING);
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  property->mutable_indexing_config()->set_term_match_type(
+      TermMatchType::EXACT_ONLY);
+  property->mutable_indexing_config()->set_tokenizer_type(
+      IndexingConfig::TokenizerType::PLAIN);
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -1549,10 +1792,10 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
   IcingSearchEngine icing(GetDefaultIcingOptions());
-  EXPECT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
-  EXPECT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
-  EXPECT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
-  EXPECT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
 
   GetResultProto expected_get_result_proto;
   expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
@@ -1581,9 +1824,174 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   *expected_get_result_proto.mutable_document() = document2;
   EXPECT_THAT(icing.Get("namespace2", "uri2"),
               EqualsProto(expected_get_result_proto));
+
+  // Search for "message", only document2 should show up.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("message");
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsProto(expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, DeleteSchemaTypeByQuery) {
+  SchemaProto schema = CreateMessageSchema();
+  // Add an email type
+  SchemaProto tmp = CreateEmailSchema();
+  *schema.add_types() = tmp.types(0);
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema(schema.types(0).schema_type())
+          .AddStringProperty("body", "message body1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri2")
+          .SetSchema(schema.types(1).schema_type())
+          .AddStringProperty("subject", "subject subject2")
+          .AddStringProperty("body", "message body2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  EXPECT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.SetSchema(schema).status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document1;
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace2", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  // Delete the first type. The first doc should be irretrievable. The
+  // second should still be present.
+  SearchSpecProto search_spec;
+  search_spec.add_schema_type_filters(schema.types(0).schema_type());
+  EXPECT_THAT(icing.DeleteByQuery(search_spec).status().code(),
+              Eq(StatusProto::OK));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace1, uri1) not found.");
+  expected_get_result_proto.clear_document();
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto.mutable_status()->clear_message();
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace2", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  search_spec = SearchSpecProto::default_instance();
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsProto(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace3", "uri3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
+              Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(icing.Put(document3).status().code(), Eq(StatusProto::OK));
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document1;
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace1", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document3;
+  EXPECT_THAT(icing.Get("namespace3", "uri3"),
+              EqualsProto(expected_get_result_proto));
+
+  // Delete namespace1. Document1 and document2 should be irretrievable.
+  // Document3 should still be present.
+  EXPECT_THAT(icing.DeleteByNamespace("namespace1").status().code(),
+              Eq(StatusProto::OK));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace1, uri1) not found.");
+  expected_get_result_proto.clear_document();
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace1, uri2) not found.");
+  expected_get_result_proto.clear_document();
+  EXPECT_THAT(icing.Get("namespace1", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto.mutable_status()->clear_message();
+  *expected_get_result_proto.mutable_document() = document3;
+  EXPECT_THAT(icing.Get("namespace3", "uri3"),
+              EqualsProto(expected_get_result_proto));
+
+  // Search for "message", only document3 should show up.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("message");
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsProto(expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, DeleteNamespaceByQuery) {
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -1618,7 +2026,9 @@ TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
 
   // Delete the first namespace. The first doc should be irretrievable. The
   // second should still be present.
-  EXPECT_THAT(icing.DeleteByNamespace("namespace1").status().code(),
+  SearchSpecProto search_spec;
+  search_spec.add_namespace_filters("namespace1");
+  EXPECT_THAT(icing.DeleteByQuery(search_spec).status().code(),
               Eq(StatusProto::OK));
 
   expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
@@ -1633,6 +2043,153 @@ TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
   *expected_get_result_proto.mutable_document() = document2;
   EXPECT_THAT(icing.Get("namespace2", "uri2"),
               EqualsProto(expected_get_result_proto));
+
+  search_spec = SearchSpecProto::default_instance();
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsProto(expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, DeleteByQuery) {
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  EXPECT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
+              Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document1;
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace2", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  // Delete all docs containing 'body1'. The first doc should be irretrievable.
+  // The second should still be present.
+  SearchSpecProto search_spec;
+  search_spec.set_query("body1");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(icing.DeleteByQuery(search_spec).status().code(),
+              Eq(StatusProto::OK));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto.mutable_status()->set_message(
+      "Document (namespace1, uri1) not found.");
+  expected_get_result_proto.clear_document();
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto.mutable_status()->clear_message();
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace2", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  search_spec = SearchSpecProto::default_instance();
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsProto(expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, DeleteByQueryNotFound) {
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions());
+  EXPECT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
+              Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(document1).status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(icing.Put(document2).status().code(), Eq(StatusProto::OK));
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document1;
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace2", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  // Delete all docs containing 'foo', which should be none of them. Both docs
+  // should still be present.
+  SearchSpecProto search_spec;
+  search_spec.set_query("foo");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(icing.DeleteByQuery(search_spec).status().code(),
+              Eq(StatusProto::NOT_FOUND));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto.mutable_status()->clear_message();
+  *expected_get_result_proto.mutable_document() = document1;
+  EXPECT_THAT(icing.Get("namespace1", "uri1"),
+              EqualsProto(expected_get_result_proto));
+
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  expected_get_result_proto.mutable_status()->clear_message();
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(icing.Get("namespace2", "uri2"),
+              EqualsProto(expected_get_result_proto));
+
+  search_spec = SearchSpecProto::default_instance();
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsProto(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SetSchemaShouldWorkAfterOptimization) {
@@ -3257,6 +3814,108 @@ TEST_F(IcingSearchEngineTest, UninitializedInstanceFailsSafely) {
               Eq(StatusProto::FAILED_PRECONDITION));
   EXPECT_THAT(icing.Optimize().status().code(),
               Eq(StatusProto::FAILED_PRECONDITION));
+}
+
+TEST_F(IcingSearchEngineTest, GetAllNamespaces) {
+  DocumentProto namespace1 = DocumentBuilder()
+                                 .SetKey("namespace1", "uri")
+                                 .SetSchema("Message")
+                                 .AddStringProperty("body", "message body")
+                                 .SetCreationTimestampMs(100)
+                                 .SetTtlMs(1000)
+                                 .Build();
+  DocumentProto namespace2_uri1 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri1")
+                                      .SetSchema("Message")
+                                      .AddStringProperty("body", "message body")
+                                      .SetCreationTimestampMs(100)
+                                      .SetTtlMs(1000)
+                                      .Build();
+  DocumentProto namespace2_uri2 = DocumentBuilder()
+                                      .SetKey("namespace2", "uri2")
+                                      .SetSchema("Message")
+                                      .AddStringProperty("body", "message body")
+                                      .SetCreationTimestampMs(100)
+                                      .SetTtlMs(1000)
+                                      .Build();
+
+  DocumentProto namespace3 = DocumentBuilder()
+                                 .SetKey("namespace3", "uri")
+                                 .SetSchema("Message")
+                                 .AddStringProperty("body", "message body")
+                                 .SetCreationTimestampMs(100)
+                                 .SetTtlMs(500)
+                                 .Build();
+  {
+    // Some arbitrary time that's less than all the document's creation time +
+    // ttl
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(500);
+
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::move(fake_clock));
+
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status().code(),
+                Eq(StatusProto::OK));
+
+    // No namespaces exist yet
+    GetAllNamespacesResultProto result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(), IsEmpty());
+
+    ASSERT_THAT(icing.Put(namespace1).status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(icing.Put(namespace2_uri1).status().code(),
+                Eq(StatusProto::OK));
+    ASSERT_THAT(icing.Put(namespace2_uri2).status().code(),
+                Eq(StatusProto::OK));
+    ASSERT_THAT(icing.Put(namespace3).status().code(), Eq(StatusProto::OK));
+
+    // All namespaces should exist now
+    result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(),
+                UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+    // After deleting namespace2_uri1 document, we still have namespace2_uri2 in
+    // "namespace2" so it should still show up
+    ASSERT_THAT(icing.Delete("namespace2", "uri1").status().code(),
+                Eq(StatusProto::OK));
+
+    result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(),
+                UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
+
+    // After deleting namespace2_uri2 document, we no longer have any documents
+    // in "namespace2"
+    ASSERT_THAT(icing.Delete("namespace2", "uri2").status().code(),
+                Eq(StatusProto::OK));
+
+    result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(),
+                UnorderedElementsAre("namespace1", "namespace3"));
+  }
+
+  // We reinitialize here so we can feed in a fake clock this time
+  {
+    // Time needs to be past namespace3's creation time (100) + ttl (500) for it
+    // to count as "expired"
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(1000);
+
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::move(fake_clock));
+    ASSERT_THAT(icing.Initialize().status().code(), Eq(StatusProto::OK));
+
+    // Only valid document left is the one in "namespace1"
+    GetAllNamespacesResultProto result = icing.GetAllNamespaces();
+    EXPECT_THAT(result.status().code(), Eq(StatusProto::OK));
+    EXPECT_THAT(result.namespaces(), UnorderedElementsAre("namespace1"));
+  }
 }
 
 }  // namespace

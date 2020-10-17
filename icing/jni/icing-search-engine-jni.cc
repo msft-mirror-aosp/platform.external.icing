@@ -188,6 +188,43 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGet(
 }
 
 JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
+    JNIEnv* env, jclass clazz, jlong native_pointer) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing::lib::GetAllNamespacesResultProto get_all_namespaces_result_proto =
+      icing->GetAllNamespaces();
+
+  return SerializeProtoToJniByteArray(env, get_all_namespaces_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
+    JNIEnv* env, jclass clazz, jlong native_pointer,
+    jlong next_page_token) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing::lib::SearchResultProto next_page_result_proto =
+      icing->GetNextPage(next_page_token);
+
+  return SerializeProtoToJniByteArray(env, next_page_result_proto);
+}
+
+JNIEXPORT void JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeInvalidateNextPageToken(
+    JNIEnv* env, jclass clazz, jlong native_pointer,
+    jlong next_page_token) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing->InvalidateNextPageToken(next_page_token);
+
+  return;
+}
+
+JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
     JNIEnv* env, jclass clazz, jlong native_pointer,
     jbyteArray search_spec_bytes, jbyteArray scoring_spec_bytes,
@@ -262,6 +299,24 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteBySchemaType(
       icing->DeleteBySchemaType(native_schema_type);
 
   return SerializeProtoToJniByteArray(env, delete_by_schema_type_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
+    JNIEnv* env, jclass clazz, jlong native_pointer,
+    jbyteArray search_spec_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing::lib::SearchSpecProto search_spec_proto;
+  if (!ParseProtoFromJniByteArray(env, search_spec_bytes, &search_spec_proto)) {
+    ICING_LOG(ERROR) << "Failed to parse SearchSpecProto in nativeSearch";
+    return nullptr;
+  }
+  icing::lib::DeleteResultProto delete_result_proto =
+      icing->DeleteByQuery(search_spec_proto);
+
+  return SerializeProtoToJniByteArray(env, delete_result_proto);
 }
 
 JNIEXPORT jbyteArray JNICALL

@@ -82,12 +82,10 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
         "Couldn't get current time. Try again in a bit");
   }
 
-  if (options_.filter_deleted) {
-    if (!document_store_.DoesDocumentExist(
-            delegate_->doc_hit_info().document_id())) {
-      // Document doesn't exist, keep searching
-      return Advance();
-    }
+  if (!document_store_.DoesDocumentExist(
+          delegate_->doc_hit_info().document_id())) {
+    // Document doesn't exist, keep searching
+    return Advance();
   }
 
   // Try to get the DocumentFilterData
