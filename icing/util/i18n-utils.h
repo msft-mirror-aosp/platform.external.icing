@@ -50,6 +50,13 @@ libtextclassifier3::StatusOr<std::u16string> Utf8ToUtf16(
 // Returns the char at the given position.
 UChar32 GetUChar32At(const char* data, int length, int position);
 
+// Returns the safe position to truncate a UTF8 string at so that multi-byte
+// UTF8 characters are not cut in the middle. The returned value will always be
+// 0 <= val <= desired_length.
+//
+// REQUIRES: 0 <= desired_length < strlen(str)
+int SafeTruncateUtf8Length(const char* str, int desired_length);
+
 // Safely truncates a UTF8 string so that multi-byte UTF8 characters are not cut
 // in the middle. The string will be truncated in place.
 void SafeTruncateUtf8(std::string* str, int truncate_to_length);

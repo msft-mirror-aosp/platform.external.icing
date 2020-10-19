@@ -47,6 +47,7 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -91,8 +92,10 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(index_,
                                Index::Create(options, &icing_filesystem_));
 
-    ICING_ASSERT_OK_AND_ASSIGN(lang_segmenter_,
-                               language_segmenter_factory::Create());
+    language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        lang_segmenter_,
+        language_segmenter_factory::Create(std::move(segmenter_options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         normalizer_,

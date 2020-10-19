@@ -20,6 +20,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
@@ -59,8 +60,9 @@ void BM_SegmentNoSpace(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
 
@@ -95,8 +97,9 @@ void BM_SegmentWithSpaces(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
 
   std::string input_string(state.range(0), 'A');
   for (int i = 1; i < input_string.length(); i += 2) {
@@ -134,8 +137,9 @@ void BM_SegmentCJK(benchmark::State& state) {
         GetTestFilePath("icing/icu.dat")));
   }
 
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
 
   std::string input_string;
   while (input_string.length() < state.range(0)) {
