@@ -14,6 +14,7 @@
 
 #include "icing/jni/reverse-jni-break-iterator.h"
 
+#include <jni.h>
 #include <math.h>
 
 #include <cassert>
@@ -26,7 +27,6 @@
 #include "icing/text_classifier/lib3/utils/java/jni-helper.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/util/status-macros.h"
-#include <jni.h>
 
 namespace icing {
 namespace lib {

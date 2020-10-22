@@ -14,6 +14,8 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
+add_definitions("-DICING_REVERSE_JNI_SEGMENTATION=1")
+
 set(
     Protobuf_PREBUILTS_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../../prebuilts/protobuf")

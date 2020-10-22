@@ -59,6 +59,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -148,30 +149,31 @@ std::string MakeSchemaDirectoryPath(const std::string& base_dir) {
 
 void TransformStatus(const libtextclassifier3::Status& internal_status,
                      StatusProto* status_proto) {
+  StatusProto::Code code;
   switch (internal_status.CanonicalCode()) {
     case libtextclassifier3::StatusCode::OK:
-      status_proto->set_code(StatusProto::OK);
+      code = StatusProto::OK;
       break;
     case libtextclassifier3::StatusCode::DATA_LOSS:
-      status_proto->set_code(StatusProto::WARNING_DATA_LOSS);
+      code = StatusProto::WARNING_DATA_LOSS;
       break;
     case libtextclassifier3::StatusCode::INVALID_ARGUMENT:
-      status_proto->set_code(StatusProto::INVALID_ARGUMENT);
+      code = StatusProto::INVALID_ARGUMENT;
       break;
     case libtextclassifier3::StatusCode::NOT_FOUND:
-      status_proto->set_code(StatusProto::NOT_FOUND);
+      code = StatusProto::NOT_FOUND;
       break;
     case libtextclassifier3::StatusCode::FAILED_PRECONDITION:
-      status_proto->set_code(StatusProto::FAILED_PRECONDITION);
+      code = StatusProto::FAILED_PRECONDITION;
       break;
     case libtextclassifier3::StatusCode::ABORTED:
-      status_proto->set_code(StatusProto::ABORTED);
+      code = StatusProto::ABORTED;
       break;
     case libtextclassifier3::StatusCode::INTERNAL:
       // TODO(b/147699081): Cleanup our internal use of INTERNAL since it
       // doesn't match with what it *should* indicate as described in
       // go/icing-library-apis.
-      status_proto->set_code(StatusProto::INTERNAL);
+      code = StatusProto::INTERNAL;
       break;
     case libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED:
       // TODO(b/147699081): Note that we don't detect all cases of OUT_OF_SPACE
@@ -179,16 +181,35 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
       // internally to indicate other resources are exhausted (e.g.
       // DocHitInfos) - although none of these are exposed through the API.
       // Consider separating the two cases out more clearly.
-      status_proto->set_code(StatusProto::OUT_OF_SPACE);
+      code = StatusProto::OUT_OF_SPACE;
       break;
-    default:
+    case libtextclassifier3::StatusCode::ALREADY_EXISTS:
+      code = StatusProto::ALREADY_EXISTS;
+      break;
+    case libtextclassifier3::StatusCode::CANCELLED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNKNOWN:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::DEADLINE_EXCEEDED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::PERMISSION_DENIED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::OUT_OF_RANGE:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNIMPLEMENTED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNAVAILABLE:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNAUTHENTICATED:
       // Other internal status codes aren't supported externally yet. If it
       // should be supported, add another switch-case above.
-      ICING_LOG(FATAL)
-          << "Internal status code not supported in the external API";
+      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
+          "Internal status code %d not supported in the external API",
+          internal_status.error_code());
+      code = StatusProto::UNKNOWN;
       break;
   }
-
+  status_proto->set_code(code);
   status_proto->set_message(internal_status.error_message());
 }
 
@@ -618,6 +639,22 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   return result_proto;
 }
 
+GetAllNamespacesResultProto IcingSearchEngine::GetAllNamespaces() {
+  GetAllNamespacesResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::shared_lock l(&mutex_);
+
+  std::vector<std::string> namespaces = document_store_->GetAllNamespaces();
+
+  for (const std::string& namespace_ : namespaces) {
+    result_proto.add_namespaces(namespace_);
+  }
+
+  result_status->set_code(StatusProto::OK);
+  return result_proto;
+}
+
 DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
                                             const std::string_view uri) {
   ICING_VLOG(1) << "Deleting document from doc store";
@@ -664,12 +701,14 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
   // that can support error logging.
   libtextclassifier3::Status status =
       document_store_->DeleteByNamespace(name_space);
-  TransformStatus(status, result_status);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete Namespace: " << name_space;
+    TransformStatus(status, result_status);
     return delete_result;
   }
+
+  result_status->set_code(StatusProto::OK);
   return delete_result;
 }
 
@@ -690,13 +729,80 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
   // that can support error logging.
   libtextclassifier3::Status status =
       document_store_->DeleteBySchemaType(schema_type);
-  TransformStatus(status, result_status);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete SchemaType: " << schema_type;
+    TransformStatus(status, result_status);
     return delete_result;
   }
+
+  result_status->set_code(StatusProto::OK);
   return delete_result;
+}
+
+DeleteResultProto IcingSearchEngine::DeleteByQuery(
+    const SearchSpecProto& search_spec) {
+  ICING_VLOG(1) << "Deleting documents for query " << search_spec.query()
+                << " from doc store";
+
+  DeleteResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+
+  libtextclassifier3::Status status =
+      ValidateSearchSpec(search_spec, performance_configuration_);
+  if (!status.ok()) {
+    TransformStatus(status, result_status);
+    return result_proto;
+  }
+
+  // Gets unordered results from query processor
+  auto query_processor_or = QueryProcessor::Create(
+      index_.get(), language_segmenter_.get(), normalizer_.get(),
+      document_store_.get(), schema_store_.get(), clock_.get());
+  if (!query_processor_or.ok()) {
+    TransformStatus(query_processor_or.status(), result_status);
+    return result_proto;
+  }
+  std::unique_ptr<QueryProcessor> query_processor =
+      std::move(query_processor_or).ValueOrDie();
+
+  auto query_results_or = query_processor->ParseSearch(search_spec);
+  if (!query_results_or.ok()) {
+    TransformStatus(query_results_or.status(), result_status);
+    return result_proto;
+  }
+  QueryProcessor::QueryResults query_results =
+      std::move(query_results_or).ValueOrDie();
+
+  ICING_LOG(ERROR) << "Deleting the docs that matched the query.";
+  bool found_results = false;
+  while (query_results.root_iterator->Advance().ok()) {
+    ICING_LOG(ERROR)
+        << "Deleting doc "
+        << query_results.root_iterator->doc_hit_info().document_id();
+    found_results = true;
+    status = document_store_->Delete(
+        query_results.root_iterator->doc_hit_info().document_id());
+    if (!status.ok()) {
+      TransformStatus(status, result_status);
+      return result_proto;
+    }
+  }
+  if (found_results) {
+    result_proto.mutable_status()->set_code(StatusProto::OK);
+  } else {
+    result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+    result_proto.mutable_status()->set_message(
+        "No documents matched the query to delete by!");
+  }
+  return result_proto;
 }
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk() {
@@ -1130,6 +1236,9 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
     // Ensures that current directory is still present.
     if (!filesystem_->CreateDirectoryRecursively(
             current_document_dir.c_str())) {
+      // Can't even create the old directory. Mark as uninitialized and return
+      // INTERNAL.
+      initialized_ = false;
       return absl_ports::InternalError(
           "Failed to create file directory for document store");
     }
@@ -1142,6 +1251,9 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
     if (!document_store_or.ok()) {
+      // Unable to create DocumentStore from the old file. Mark as uninitialized
+      // and return INTERNAL.
+      initialized_ = false;
       ICING_LOG(ERROR) << "Failed to create document store instance";
       return absl_ports::Annotate(
           absl_ports::InternalError("Failed to create document store instance"),
@@ -1156,13 +1268,18 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
   }
 
   // Recreates the doc store instance
-  ICING_ASSIGN_OR_RETURN(
-      document_store_,
+  auto document_store_or =
       DocumentStore::Create(filesystem_.get(), current_document_dir,
-                            clock_.get(), schema_store_.get()),
-      absl_ports::InternalError(
-          "Document store has been optimized, but a valid document store "
-          "instance can't be created"));
+                            clock_.get(), schema_store_.get());
+  if (!document_store_or.ok()) {
+    // Unable to create DocumentStore from the new file. Mark as uninitialized
+    // and return INTERNAL.
+    initialized_ = false;
+    return absl_ports::InternalError(
+        "Document store has been optimized, but a valid document store "
+        "instance can't be created");
+  }
+  document_store_ = std::move(document_store_or).ValueOrDie();
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(

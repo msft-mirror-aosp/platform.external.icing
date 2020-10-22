@@ -1,31 +1,28 @@
-/*
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (C) 2019 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.google.android.icing;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import android.content.Context;
-
-import androidx.test.InstrumentationRegistry;
-
+import androidx.test.core.app.ApplicationProvider;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
+import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
@@ -38,6 +35,7 @@ import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PropertyConfigProto;
 import com.google.android.icing.proto.PropertyProto;
 import com.google.android.icing.proto.PutResultProto;
+import com.google.android.icing.proto.ResetResultProto;
 import com.google.android.icing.proto.ResultSpecProto;
 import com.google.android.icing.proto.SchemaProto;
 import com.google.android.icing.proto.SchemaTypeConfigProto;
@@ -47,7 +45,9 @@ import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StatusProto;
 import com.google.android.icing.proto.TermMatchType;
-
+import com.google.android.icing.IcingSearchEngine;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -55,17 +55,16 @@ import org.junit.runners.JUnit4;
 
 /**
  * This test is not intended to fully test the functionality of each API. But rather to test the JNI
- * wrapper of Icing library.
+ * wrapper and Java interfaces of Icing library {@link IcingSearchEngine}.
  */
 @RunWith(JUnit4.class)
 public final class IcingSearchEngineTest {
 
   private static final String EMAIL_TYPE = "Email";
 
-  private Context mContext;
-  private String mFilesDir;
+  private String filesDir;
 
-  static SchemaTypeConfigProto createEmailTypeConfig() {
+  private static SchemaTypeConfigProto createEmailTypeConfig() {
     return SchemaTypeConfigProto.newBuilder()
         .setSchemaType(EMAIL_TYPE)
         .addProperties(
@@ -89,7 +88,7 @@ public final class IcingSearchEngineTest {
         .build();
   }
 
-  static DocumentProto createEmailDocument(String namespace, String uri) {
+  private static DocumentProto createEmailDocument(String namespace, String uri) {
     return DocumentProto.newBuilder()
         .setNamespace(namespace)
         .setUri(uri)
@@ -100,14 +99,13 @@ public final class IcingSearchEngineTest {
 
   @Before
   public void setUp() throws Exception {
-    mContext = InstrumentationRegistry.getInstrumentation().getContext();
-    mFilesDir = mContext.getFilesDir().getCanonicalPath();
+    filesDir = ApplicationProvider.getApplicationContext().getFilesDir().getCanonicalPath();
   }
 
   @Test
   public void testInitialize() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
 
     InitializeResultProto initializeResultProto = icing.initialize();
@@ -117,9 +115,9 @@ public final class IcingSearchEngineTest {
   @Test
   public void testSetAndGetSchema() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
@@ -140,14 +138,18 @@ public final class IcingSearchEngineTest {
   @Test
   public void testPutAndGetDocuments() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icing.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    assertThat(
+            icing
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
 
     DocumentProto emailDocument = createEmailDocument("namespace", "uri");
     PutResultProto putResultProto = icing.put(emailDocument);
@@ -161,20 +163,24 @@ public final class IcingSearchEngineTest {
   @Test
   public void testSearch() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icing.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    assertThat(
+            icing
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
 
     DocumentProto emailDocument =
         createEmailDocument("namespace", "uri").toBuilder()
             .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
             .build();
-    PutResultProto putResultProto = icing.put(emailDocument);
+    assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SearchSpecProto searchSpec =
         SearchSpecProto.newBuilder()
@@ -193,19 +199,80 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  public void testDelete() throws Exception {
+  public void testGetNextPage() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icing.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    assertThat(
+            icing
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    Map<String, DocumentProto> documents = new HashMap<>();
+    for (int i = 0; i < 10; i++) {
+      DocumentProto emailDocument =
+          createEmailDocument("namespace", "uri:" + i).toBuilder()
+              .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
+              .build();
+      documents.put("uri:" + i, emailDocument);
+      assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    }
+
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            .setQuery("foo")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+    ResultSpecProto resultSpecProto = ResultSpecProto.newBuilder().setNumPerPage(1).build();
+
+    SearchResultProto searchResultProto =
+        icing.search(searchSpec, ScoringSpecProto.getDefaultInstance(), resultSpecProto);
+    assertThat(searchResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+    DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
+    assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
+
+    // fetch rest pages
+    for (int i = 1; i < 5; i++) {
+      searchResultProto = icing.getNextPage(searchResultProto.getNextPageToken());
+      assertThat(searchResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+      assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+      resultDocument = searchResultProto.getResults(0).getDocument();
+      assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
+    }
+
+    // invalidate rest result
+    icing.invalidateNextPageToken(searchResultProto.getNextPageToken());
+
+    searchResultProto = icing.getNextPage(searchResultProto.getNextPageToken());
+    assertThat(searchResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
+  }
+
+  @Test
+  public void testDelete() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icing
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
 
     DocumentProto emailDocument = createEmailDocument("namespace", "uri");
-    PutResultProto putResultProto = icing.put(emailDocument);
+    assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     DeleteResultProto deleteResultProto = icing.delete("namespace", "uri");
     assertThat(deleteResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
@@ -217,17 +284,21 @@ public final class IcingSearchEngineTest {
   @Test
   public void testDeleteByNamespace() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icing.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    assertThat(
+            icing
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
 
     DocumentProto emailDocument = createEmailDocument("namespace", "uri");
-    PutResultProto putResultProto = icing.put(emailDocument);
+    assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     DeleteByNamespaceResultProto deleteByNamespaceResultProto =
         icing.deleteByNamespace("namespace");
@@ -240,17 +311,21 @@ public final class IcingSearchEngineTest {
   @Test
   public void testDeleteBySchemaType() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
     SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icing.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
+    assertThat(
+            icing
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
 
     DocumentProto emailDocument = createEmailDocument("namespace", "uri");
-    PutResultProto putResultProto = icing.put(emailDocument);
+    assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     DeleteBySchemaTypeResultProto deleteBySchemaTypeResultProto =
         icing.deleteBySchemaType(EMAIL_TYPE);
@@ -260,12 +335,64 @@ public final class IcingSearchEngineTest {
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
+
+  @Test
+  public void testDeleteByQuery() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+        icing
+            .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+            .getStatus()
+            .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 =
+        createEmailDocument("namespace", "uri1").toBuilder()
+        .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
+        .build();;
+    assertThat(icing.put(emailDocument1).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    DocumentProto emailDocument2 =
+        createEmailDocument("namespace", "uri2").toBuilder()
+        .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("bar"))
+        .build();;
+    assertThat(icing.put(emailDocument2).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            .setQuery("foo")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+
+    SearchResultProto searchResultProto =
+        icing.search(
+            searchSpec,
+            ScoringSpecProto.getDefaultInstance(),
+            ResultSpecProto.getDefaultInstance());
+    assertThat(searchResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+    assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
+
+    DeleteResultProto deleteResultProto = icing.deleteByQuery(searchSpec);
+    assertThat(deleteResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    GetResultProto getResultProto = icing.get("namespace", "uri1");
+    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
+    getResultProto = icing.get("namespace", "uri2");
+    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+  }
+
   @Test
   public void testPersistToDisk() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     PersistToDiskResultProto persistToDiskResultProto = icing.persistToDisk();
     assertThat(persistToDiskResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
@@ -274,11 +401,59 @@ public final class IcingSearchEngineTest {
   @Test
   public void testOptimize() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder().setBaseDir(mFilesDir).build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
-    InitializeResultProto initializeResultProto = icing.initialize();
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
 
     OptimizeResultProto optimizeResultProto = icing.optimize();
     assertThat(optimizeResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+  }
+
+  @Test
+  public void testGetOptimizeInfo() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    GetOptimizeInfoResultProto getOptimizeInfoResultProto = icing.getOptimizeInfo();
+    assertThat(getOptimizeInfoResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(getOptimizeInfoResultProto.getOptimizableDocs()).isEqualTo(0);
+    assertThat(getOptimizeInfoResultProto.getEstimatedOptimizableBytes()).isEqualTo(0);
+  }
+
+  @Test
+  public void testGetAllNamespaces() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+        icing
+            .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+            .getStatus()
+            .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
+    assertThat(icing.put(emailDocument).getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    GetAllNamespacesResultProto getAllNamespacesResultProto = icing.getAllNamespaces();
+    assertThat(getAllNamespacesResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+    assertThat(getAllNamespacesResultProto.getNamespacesList()).containsExactly("namespace");
+  }
+
+  @Test
+  public void testReset() throws Exception {
+    IcingSearchEngineOptions options =
+        IcingSearchEngineOptions.newBuilder().setBaseDir(filesDir).build();
+    IcingSearchEngine icing = new IcingSearchEngine(options);
+    assertThat(icing.initialize().getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
+
+    ResetResultProto resetResultProto = icing.reset();
+    assertThat(resetResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.OK);
   }
 }

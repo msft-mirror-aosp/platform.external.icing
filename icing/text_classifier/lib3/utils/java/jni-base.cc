@@ -15,7 +15,6 @@
 #include "icing/text_classifier/lib3/utils/java/jni-base.h"
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/java/string_utils.h"
 
 namespace libtextclassifier3 {
 
@@ -29,14 +28,6 @@ bool JniExceptionCheckAndClear(JNIEnv* env) {
   if (result) {
     env->ExceptionDescribe();
     env->ExceptionClear();
-  }
-  return result;
-}
-
-StatusOr<std::string> ToStlString(JNIEnv* env, const jstring& str) {
-  std::string result;
-  if (!JStringToUtf8String(env, str, &result)) {
-    return {Status::UNKNOWN};
   }
   return result;
 }

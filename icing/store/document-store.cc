@@ -329,8 +329,21 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
   auto iterator = document_log_->GetIterator();
   auto iterator_status = iterator.Advance();
   while (iterator_status.ok()) {
-    ICING_ASSIGN_OR_RETURN(DocumentWrapper document_wrapper,
-                           document_log_->ReadProto(iterator.GetOffset()));
+    libtextclassifier3::StatusOr<DocumentWrapper> document_wrapper_or =
+        document_log_->ReadProto(iterator.GetOffset());
+
+    if (absl_ports::IsNotFound(document_wrapper_or.status())) {
+      // The erased document still occupies 1 document id.
+      DocumentId new_document_id = document_id_mapper_->num_elements();
+      ICING_RETURN_IF_ERROR(ClearDerivedData(new_document_id));
+      iterator_status = iterator.Advance();
+      continue;
+    } else if (!document_wrapper_or.ok()) {
+      return document_wrapper_or.status();
+    }
+
+    DocumentWrapper document_wrapper =
+        std::move(document_wrapper_or).ValueOrDie();
     if (document_wrapper.deleted()) {
       if (!document_wrapper.document().uri().empty()) {
         // Individual document deletion.
@@ -351,17 +364,22 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
         }
       } else if (!document_wrapper.document().namespace_().empty()) {
         // Namespace deletion.
-        ICING_RETURN_IF_ERROR(UpdateDerivedFilesNamespaceDeleted(
-            document_wrapper.document().namespace_()));
-
+        ICING_ASSIGN_OR_RETURN(
+            NamespaceId namespace_id,
+            namespace_mapper_->Get(document_wrapper.document().namespace_()));
+        // Tombstone indicates it's a soft delete.
+        ICING_RETURN_IF_ERROR(BatchDelete(namespace_id, kInvalidSchemaTypeId,
+                                          /*soft_delete=*/true));
       } else if (!document_wrapper.document().schema().empty()) {
         // SchemaType deletion.
         auto schema_type_id_or = schema_store_->GetSchemaTypeId(
             document_wrapper.document().schema());
 
         if (schema_type_id_or.ok()) {
-          ICING_RETURN_IF_ERROR(UpdateDerivedFilesSchemaTypeDeleted(
-              schema_type_id_or.ValueOrDie()));
+          // Tombstone indicates it's a soft delete.
+          ICING_RETURN_IF_ERROR(BatchDelete(kInvalidNamespaceId,
+                                            schema_type_id_or.ValueOrDie(),
+                                            /*soft_delete=*/true));
         } else {
           // The deleted schema type doesn't have a SchemaTypeId we can refer
           // to in the FilterCache.
@@ -778,6 +796,36 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
   return document_id_or.ValueOrDie();
 }
 
+std::vector<std::string> DocumentStore::GetAllNamespaces() const {
+  std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
+      namespace_mapper_->GetValuesToKeys();
+
+  std::unordered_set<NamespaceId> existing_namespace_ids;
+  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
+       ++document_id) {
+    // filter_cache_->Get can only fail if document_id is < 0
+    // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
+    auto status_or_data = filter_cache_->Get(document_id);
+    if (!status_or_data.ok()) {
+      ICING_LOG(ERROR)
+          << "Error while iterating over filter cache in GetAllNamespaces";
+      return std::vector<std::string>();
+    }
+    const DocumentFilterData* data = status_or_data.ValueOrDie();
+
+    if (DoesDocumentExist(document_id)) {
+      existing_namespace_ids.insert(data->namespace_id());
+    }
+  }
+
+  std::vector<std::string> existing_namespaces;
+  for (auto itr = existing_namespace_ids.begin();
+       itr != existing_namespace_ids.end(); ++itr) {
+    existing_namespaces.push_back(namespace_id_to_namespace.at(*itr));
+  }
+  return existing_namespaces;
+}
+
 libtextclassifier3::StatusOr<int64_t>
 DocumentStore::DoesDocumentExistAndGetFileOffset(DocumentId document_id) const {
   if (!IsDocumentIdValid(document_id)) {
@@ -815,7 +863,8 @@ bool DocumentStore::DoesDocumentExist(DocumentId document_id) const {
 }
 
 libtextclassifier3::Status DocumentStore::Delete(
-    const std::string_view name_space, const std::string_view uri) {
+    const std::string_view name_space, const std::string_view uri,
+    bool soft_delete) {
   // Try to get the DocumentId first
   auto document_id_or = GetDocumentId(name_space, uri);
   if (!document_id_or.ok()) {
@@ -835,25 +884,61 @@ libtextclassifier3::Status DocumentStore::Delete(
                            ", uri: ", uri));
   }
 
+  if (soft_delete) {
+    return SoftDelete(name_space, uri, document_id);
+  } else {
+    uint64_t document_log_offset = file_offset_or.ValueOrDie();
+    return HardDelete(document_id, document_log_offset);
+  }
+}
+
+libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
+                                                 bool soft_delete) {
+  // Copy out the document to get namespace and uri.
+  ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
+                         DoesDocumentExistAndGetFileOffset(document_id));
+
+  if (soft_delete) {
+    auto document_wrapper_or = document_log_->ReadProto(document_log_offset);
+    if (!document_wrapper_or.ok()) {
+      ICING_LOG(ERROR) << document_wrapper_or.status().error_message()
+                       << "Failed to read from document log";
+      return document_wrapper_or.status();
+    }
+    DocumentWrapper document_wrapper =
+        std::move(document_wrapper_or).ValueOrDie();
+
+    return SoftDelete(document_wrapper.document().namespace_(),
+                      document_wrapper.document().uri(), document_id);
+  } else {
+    return HardDelete(document_id, document_log_offset);
+  }
+}
+
+libtextclassifier3::Status DocumentStore::SoftDelete(
+    std::string_view name_space, std::string_view uri, DocumentId document_id) {
   // Update ground truth first.
-  // To delete a proto we don't directly remove it. Instead, we mark it as
-  // deleted first by appending a tombstone of it and actually remove it from
-  // file later in Optimize()
-  // TODO(b/144458732): Implement a more robust version of ICING_RETURN_IF_ERROR
-  // that can support error logging.
+  // Mark the document as deleted by appending a tombstone of it and actually
+  // remove it from file later in Optimize()
+  // TODO(b/144458732): Implement a more robust version of
+  // ICING_RETURN_IF_ERROR that can support error logging.
   libtextclassifier3::Status status =
       document_log_->WriteProto(CreateDocumentTombstone(name_space, uri))
           .status();
   if (!status.ok()) {
     return absl_ports::Annotate(
-        status, absl_ports::StrCat("Failed to delete Document. namespace: ",
+        status, absl_ports::StrCat("Failed to delete Document. namespace:",
                                    name_space, ", uri: ", uri));
   }
 
-  ICING_RETURN_IF_ERROR(
-      document_id_mapper_->Set(document_id_or.ValueOrDie(), kDocDeletedFlag));
+  return document_id_mapper_->Set(document_id, kDocDeletedFlag);
+}
 
-  return libtextclassifier3::Status::OK;
+libtextclassifier3::Status DocumentStore::HardDelete(
+    DocumentId document_id, uint64_t document_log_offset) {
+  // Erases document proto.
+  ICING_RETURN_IF_ERROR(document_log_->EraseProto(document_log_offset));
+  return ClearDerivedData(document_id);
 }
 
 libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
@@ -869,7 +954,14 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
                      << " from score_cache_";
     return score_data_or.status();
   }
-  return *std::move(score_data_or).ValueOrDie();
+
+  DocumentAssociatedScoreData document_associated_score_data =
+      *std::move(score_data_or).ValueOrDie();
+  if (document_associated_score_data.document_score() < 0) {
+    // An negative / invalid score means that the score data has been deleted.
+    return absl_ports::NotFoundError("Document score data not found.");
+  }
+  return document_associated_score_data;
 }
 
 libtextclassifier3::StatusOr<DocumentFilterData>
@@ -880,68 +972,134 @@ DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
                      << " from filter_cache_";
     return filter_data_or.status();
   }
-  return *std::move(filter_data_or).ValueOrDie();
+  DocumentFilterData document_filter_data =
+      *std::move(filter_data_or).ValueOrDie();
+  if (document_filter_data.namespace_id() == kInvalidNamespaceId) {
+    // An invalid namespace id means that the filter data has been deleted.
+    return absl_ports::NotFoundError("Document filter data not found.");
+  }
+  return document_filter_data;
 }
 
 libtextclassifier3::Status DocumentStore::DeleteByNamespace(
-    std::string_view name_space) {
+    std::string_view name_space, bool soft_delete) {
   auto namespace_id_or = namespace_mapper_->Get(name_space);
   if (!namespace_id_or.ok()) {
     return absl_ports::Annotate(
         namespace_id_or.status(),
-        absl_ports::StrCat("Failed to delete by namespace. namespace: ",
-                           name_space));
+        absl_ports::StrCat("Failed to find namespace: ", name_space));
+  }
+  NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+
+  int num_updated_documents = 0;
+  if (soft_delete) {
+    // To delete an entire namespace, we append a tombstone that only contains
+    // the deleted bit and the name of the deleted namespace.
+    // TODO(b/144458732): Implement a more robust version of
+    // ICING_RETURN_IF_ERROR that can support error logging.
+    libtextclassifier3::Status status =
+        document_log_->WriteProto(CreateNamespaceTombstone(name_space))
+            .status();
+    if (!status.ok()) {
+      ICING_LOG(ERROR) << status.error_message()
+                       << "Failed to delete namespace. namespace = "
+                       << name_space;
+      return status;
+    }
   }
 
-  // Update ground truth first.
-  // To delete an entire namespace, we append a tombstone that only contains
-  // the deleted bit and the name of the deleted namespace.
-  // TODO(b/144458732): Implement a more robust version of
-  // ICING_RETURN_IF_ERROR that can support error logging.
-  libtextclassifier3::Status status =
-      document_log_->WriteProto(CreateNamespaceTombstone(name_space)).status();
-  if (!status.ok()) {
-    ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete namespace. namespace = "
-                     << name_space;
-    return status;
-  }
+  ICING_ASSIGN_OR_RETURN(
+      num_updated_documents,
+      BatchDelete(namespace_id, kInvalidSchemaTypeId, soft_delete));
 
-  ICING_ASSIGN_OR_RETURN(bool updated_existing_document,
-                         UpdateDerivedFilesNamespaceDeleted(name_space));
-  if (!updated_existing_document) {
+  if (num_updated_documents <= 0) {
     // Treat the fact that no existing documents had this namespace to be the
     // same as this namespace not existing at all.
     return absl_ports::NotFoundError(
         absl_ports::StrCat("Namespace '", name_space, "' doesn't exist"));
   }
+
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<bool>
-DocumentStore::UpdateDerivedFilesNamespaceDeleted(std::string_view name_space) {
-  auto namespace_id_or = namespace_mapper_->Get(name_space);
-  if (!namespace_id_or.ok()) {
-    return namespace_id_or.status();
+libtextclassifier3::Status DocumentStore::DeleteBySchemaType(
+    std::string_view schema_type, bool soft_delete) {
+  auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema_type);
+  if (!schema_type_id_or.ok()) {
+    return absl_ports::Annotate(
+        schema_type_id_or.status(),
+        absl_ports::StrCat("Failed to find schema type. schema_type: ",
+                           schema_type));
+  }
+  SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+  int num_updated_documents = 0;
+  if (soft_delete) {
+    // To soft-delete an entire schema type, we append a tombstone that only
+    // contains the deleted bit and the name of the deleted schema type.
+    // TODO(b/144458732): Implement a more robust version of
+    // ICING_RETURN_IF_ERROR that can support error logging.
+    libtextclassifier3::Status status =
+        document_log_->WriteProto(CreateSchemaTypeTombstone(schema_type))
+            .status();
+    if (!status.ok()) {
+      ICING_LOG(ERROR) << status.error_message()
+                       << "Failed to delete schema_type. schema_type = "
+                       << schema_type;
+      return status;
+    }
   }
 
-  // Guaranteed to have a NamespaceId now.
-  NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+  ICING_ASSIGN_OR_RETURN(
+      num_updated_documents,
+      BatchDelete(kInvalidNamespaceId, schema_type_id, soft_delete));
 
+  if (num_updated_documents <= 0) {
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "No documents found with schema type '", schema_type, "'"));
+  }
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
+    NamespaceId namespace_id, SchemaTypeId schema_type_id, bool soft_delete) {
   // Tracks if there were any existing documents with this namespace that we
   // will mark as deleted.
-  bool updated_existing_document = false;
+  int num_updated_documents = 0;
 
-  // Traverse FilterCache and delete all docs that match namespace_id
+  // Traverse FilterCache and delete all docs that match namespace_id and
+  // schema_type_id.
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
     // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
     ICING_ASSIGN_OR_RETURN(const DocumentFilterData* data,
                            filter_cache_->Get(document_id));
-    if (data->namespace_id() == namespace_id) {
+
+    // Check namespace only when the input namespace id is valid.
+    if (namespace_id != kInvalidNamespaceId &&
+        (data->namespace_id() == kInvalidNamespaceId ||
+         data->namespace_id() != namespace_id)) {
+      // The document has already been hard-deleted or isn't from the desired
+      // namespace.
+      continue;
+    }
+
+    // Check schema type only when the input schema type id is valid.
+    if (schema_type_id != kInvalidSchemaTypeId &&
+        (data->schema_type_id() == kInvalidSchemaTypeId ||
+         data->schema_type_id() != schema_type_id)) {
+      // The document has already been hard-deleted or doesn't have the
+      // desired schema type.
+      continue;
+    }
+
+    // The document has the desired namespace and schema type, it either exists
+    // or has been soft-deleted / expired.
+    if (soft_delete) {
       if (DoesDocumentExist(document_id)) {
-        updated_existing_document = true;
+        ++num_updated_documents;
       }
 
       // docid_mapper_->Set can only fail if document_id is < 0
@@ -950,65 +1108,21 @@ DocumentStore::UpdateDerivedFilesNamespaceDeleted(std::string_view name_space) {
       // docid_mapper_->num_elements, which SHOULD NEVER HAPPEN.
       ICING_RETURN_IF_ERROR(
           document_id_mapper_->Set(document_id, kDocDeletedFlag));
+    } else {
+      // Hard delete.
+      libtextclassifier3::Status delete_status =
+          Delete(document_id, /*soft_delete=*/false);
+      if (absl_ports::IsNotFound(delete_status)) {
+        continue;
+      } else if (!delete_status.ok()) {
+        // Real error, pass up.
+        return delete_status;
+      }
+      ++num_updated_documents;
     }
   }
 
-  return updated_existing_document;
-}
-
-libtextclassifier3::Status DocumentStore::DeleteBySchemaType(
-    std::string_view schema_type) {
-  auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema_type);
-  if (!schema_type_id_or.ok()) {
-    return absl_ports::Annotate(
-        schema_type_id_or.status(),
-        absl_ports::StrCat("Failed to delete by schema type. schema_type: ",
-                           schema_type));
-  }
-
-  // Update ground truth first.
-  // To delete an entire schema type, we append a tombstone that only contains
-  // the deleted bit and the name of the deleted schema type.
-  // TODO(b/144458732): Implement a more robust version of
-  // ICING_RETURN_IF_ERROR that can support error logging.
-  libtextclassifier3::Status status =
-      document_log_->WriteProto(CreateSchemaTypeTombstone(schema_type))
-          .status();
-  if (!status.ok()) {
-    ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete schema_type. schema_type = "
-                     << schema_type;
-    return status;
-  }
-
-  // Guaranteed to have a SchemaTypeId now
-  SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
-
-  ICING_RETURN_IF_ERROR(UpdateDerivedFilesSchemaTypeDeleted(schema_type_id));
-
-  return libtextclassifier3::Status::OK;
-}
-
-libtextclassifier3::Status DocumentStore::UpdateDerivedFilesSchemaTypeDeleted(
-    SchemaTypeId schema_type_id) {
-  // Traverse FilterCache and delete all docs that match schema_type_id.
-  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
-       ++document_id) {
-    // filter_cache_->Get can only fail if document_id is < 0
-    // or >= filter_cache_->num_elements. So, this error SHOULD NEVER HAPPEN.
-    ICING_ASSIGN_OR_RETURN(const DocumentFilterData* data,
-                           filter_cache_->Get(document_id));
-    if (data->schema_type_id() == schema_type_id) {
-      // docid_mapper_->Set can only fail if document_id is < 0
-      // or >= docid_mapper_->num_elements. So the only possible way to get an
-      // error here would be if filter_cache_->num_elements >
-      // docid_mapper_->num_elements, which SHOULD NEVER HAPPEN.
-      ICING_RETURN_IF_ERROR(
-          document_id_mapper_->Set(document_id, kDocDeletedFlag));
-    }
-  }
-
-  return libtextclassifier3::Status::OK;
+  return num_updated_documents;
 }
 
 libtextclassifier3::Status DocumentStore::PersistToDisk() {
@@ -1296,6 +1410,27 @@ libtextclassifier3::Status DocumentStore::UpdateDocumentAssociatedScoreCache(
 libtextclassifier3::Status DocumentStore::UpdateFilterCache(
     DocumentId document_id, const DocumentFilterData& filter_data) {
   return filter_cache_->Set(document_id, filter_data);
+}
+
+libtextclassifier3::Status DocumentStore::ClearDerivedData(
+    DocumentId document_id) {
+  // We intentionally leave the data in key_mapper_ because locating that data
+  // requires fetching namespace and uri. Leaving data in key_mapper_ should be
+  // fine because the data is hashed.
+
+  ICING_RETURN_IF_ERROR(document_id_mapper_->Set(document_id, kDocDeletedFlag));
+
+  // Resets the score cache entry
+  ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
+      document_id, DocumentAssociatedScoreData(/*document_score=*/-1,
+                                               /*creation_timestamp_ms=*/-1)));
+
+  // Resets the filter cache entry
+  ICING_RETURN_IF_ERROR(UpdateFilterCache(
+      document_id, DocumentFilterData(kInvalidNamespaceId, kInvalidSchemaTypeId,
+                                      /*expiration_timestamp_ms=*/-1)));
+
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

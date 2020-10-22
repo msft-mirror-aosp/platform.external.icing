@@ -15,6 +15,7 @@
 #include "icing/tokenization/icu/icu-language-segmenter.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {

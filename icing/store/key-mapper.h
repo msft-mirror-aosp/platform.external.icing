@@ -84,6 +84,12 @@ class KeyMapper {
   // Returns any encountered IO errors.
   libtextclassifier3::StatusOr<T> Get(std::string_view key) const;
 
+  // Deletes data related to the given key. Returns true on success.
+  bool Delete(std::string_view key);
+
+  // Returns a map of values to keys. Empty map if the mapper is empty.
+  std::unordered_map<T, std::string> GetValuesToKeys() const;
+
   // Count of unique keys stored in the KeyMapper.
   int32_t num_keys() const { return trie_.size(); }
 
@@ -249,6 +255,26 @@ libtextclassifier3::StatusOr<T> KeyMapper<T>::Get(std::string_view key) const {
         "Key not found ", key, " in KeyMapper ", file_prefix_, "."));
   }
   return value;
+}
+
+template <typename T>
+bool KeyMapper<T>::Delete(std::string_view key) {
+  return trie_.Delete(key);
+}
+
+template <typename T>
+std::unordered_map<T, std::string> KeyMapper<T>::GetValuesToKeys() const {
+  std::unordered_map<T, std::string> values_to_keys;
+  for (IcingDynamicTrie::Iterator itr(trie_, /*prefix=*/""); itr.IsValid();
+       itr.Advance()) {
+    if (itr.IsValid()) {
+      T value;
+      memcpy(&value, itr.GetValue(), sizeof(T));
+      values_to_keys.insert({value, itr.GetKey()});
+    }
+  }
+
+  return values_to_keys;
 }
 
 template <typename T>
