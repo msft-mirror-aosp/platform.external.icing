@@ -30,6 +30,7 @@
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/util/logging.h"
+#include "unicode/uloc.h"
 
 // Run on a Linux workstation:
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
@@ -107,8 +108,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -219,8 +221,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -349,8 +352,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 
@@ -464,8 +468,9 @@ void BM_QueryHiragana(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
-      language_segmenter_factory::Create().ValueOrDie();
+      language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   FakeClock fake_clock;
 

@@ -302,6 +302,24 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteBySchemaType(
 }
 
 JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
+    JNIEnv* env, jclass clazz, jlong native_pointer,
+    jbyteArray search_spec_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing::lib::SearchSpecProto search_spec_proto;
+  if (!ParseProtoFromJniByteArray(env, search_spec_bytes, &search_spec_proto)) {
+    ICING_LOG(ERROR) << "Failed to parse SearchSpecProto in nativeSearch";
+    return nullptr;
+  }
+  icing::lib::DeleteResultProto delete_result_proto =
+      icing->DeleteByQuery(search_spec_proto);
+
+  return SerializeProtoToJniByteArray(env, delete_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativePersistToDisk(
     JNIEnv* env, jclass clazz, jlong native_pointer) {
   icing::lib::IcingSearchEngine* icing =
