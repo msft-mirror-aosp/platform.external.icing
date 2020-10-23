@@ -105,33 +105,6 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, EmptyOriginalIterator) {
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
 
-TEST_F(DocHitInfoIteratorDeletedFilterTest, TurnOffDeletedFilterOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(test_document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(test_document3_));
-
-  // Deletes test document 2
-  ICING_ASSERT_OK(document_store_->Delete(test_document2_.namespace_(),
-                                          test_document2_.uri()));
-
-  std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
-                                           DocHitInfo(document_id2),
-                                           DocHitInfo(document_id3)};
-  std::unique_ptr<DocHitInfoIterator> original_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  options_.filter_deleted = false;
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
-
-  EXPECT_THAT(GetDocumentIds(&filtered_iterator),
-              ElementsAre(document_id1, document_id2, document_id3));
-}
-
 TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(test_document1_));

@@ -328,6 +328,27 @@ public final class IcingSearchEngine {
   }
 
   @NonNull
+  public DeleteResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
+    byte[] deleteResultBytes = nativeDeleteByQuery(nativePointer, searchSpec.toByteArray());
+    if (deleteResultBytes == null) {
+      Log.e(TAG, "Received null DeleteResultProto from native.");
+      return DeleteResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return DeleteResultProto.parseFrom(
+          deleteResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing DeleteResultProto.", e);
+      return DeleteResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
   public PersistToDiskResultProto persistToDisk() {
     byte[] persistToDiskResultBytes = nativePersistToDisk(nativePointer);
     if (persistToDiskResultBytes == null) {
@@ -437,6 +458,8 @@ public final class IcingSearchEngine {
   private static native byte[] nativeDeleteByNamespace(long nativePointer, String namespace);
 
   private static native byte[] nativeDeleteBySchemaType(long nativePointer, String schemaType);
+
+  private static native byte[] nativeDeleteByQuery(long nativePointer, byte[] searchSpecBytes);
 
   private static native byte[] nativePersistToDisk(long nativePointer);
 

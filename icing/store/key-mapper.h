@@ -84,6 +84,9 @@ class KeyMapper {
   // Returns any encountered IO errors.
   libtextclassifier3::StatusOr<T> Get(std::string_view key) const;
 
+  // Deletes data related to the given key. Returns true on success.
+  bool Delete(std::string_view key);
+
   // Returns a map of values to keys. Empty map if the mapper is empty.
   std::unordered_map<T, std::string> GetValuesToKeys() const;
 
@@ -252,6 +255,11 @@ libtextclassifier3::StatusOr<T> KeyMapper<T>::Get(std::string_view key) const {
         "Key not found ", key, " in KeyMapper ", file_prefix_, "."));
   }
   return value;
+}
+
+template <typename T>
+bool KeyMapper<T>::Delete(std::string_view key) {
+  return trie_.Delete(key);
 }
 
 template <typename T>
