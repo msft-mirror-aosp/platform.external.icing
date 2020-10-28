@@ -16,6 +16,8 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/status.proto";
+
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 
@@ -51,3 +53,15 @@ message UsageReport {
   optional UsageType usage_type = 4;
 }
 // LINT.ThenChange(//depot/google3/icing/store/usage-store.h:UsageScores)
+
+// Result of a call to IcingSearchEngine.ReportUsage
+// Next tag: 2
+message ReportUsageResultProto {
+  // Status code can be one of:
+  //   OK
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  optional StatusProto status = 1;
+}

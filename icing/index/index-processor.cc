@@ -105,6 +105,26 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
       }
     }
   }
+
+  // Merge if necessary.
+  if (overall_status.ok() && index_->WantsMerge()) {
+    ICING_VLOG(1) << "Merging the index at docid " << document_id << ".";
+    libtextclassifier3::Status merge_status = index_->Merge();
+    if (!merge_status.ok()) {
+      ICING_LOG(ERROR) << "Index merging failed. Clearing index.";
+      if (!index_->Reset().ok()) {
+        return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+            "Unable to reset to clear index after merge failure. Merge "
+            "failure=%d:%s",
+            merge_status.error_code(), merge_status.error_message().c_str()));
+      } else {
+        return absl_ports::DataLossError(IcingStringUtil::StringPrintf(
+            "Forced to reset index after merge failure. Merge failure=%d:%s",
+            merge_status.error_code(), merge_status.error_message().c_str()));
+      }
+    }
+  }
+
   return overall_status;
 }
 

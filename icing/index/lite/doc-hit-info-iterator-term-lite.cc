@@ -21,6 +21,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/schema/section.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -42,7 +43,13 @@ std::string SectionIdMaskToString(SectionIdMask section_id_mask) {
 
 libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
   if (cached_hits_idx_ == -1) {
-    ICING_RETURN_IF_ERROR(RetrieveMoreHits());
+    libtextclassifier3::Status status = RetrieveMoreHits();
+    if (!status.ok()) {
+      ICING_LOG(ERROR) << "Failed to retrieve more hits "
+                       << status.error_message();
+      return absl_ports::ResourceExhaustedError(
+          "No more DocHitInfos in iterator");
+    }
   } else {
     ++cached_hits_idx_;
   }

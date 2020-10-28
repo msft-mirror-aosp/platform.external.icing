@@ -162,13 +162,14 @@ TEST_F(MainIndexMergerTest, PrefixExpansion) {
   //   a. Translate lite term ids to main term ids based on the map
   //   b. Expand 'fool' to have a hit for 'foo'
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<TermIdHitPair> expanded_elts,
+      std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,
                                                   lexicon_outputs));
-  EXPECT_THAT(expanded_elts, UnorderedElementsAre(
-                                 TermIdHitPair(foot_main_term_id, doc0_hit),
-                                 TermIdHitPair(fool_main_term_id, doc1_hit),
-                                 TermIdHitPair(foo_term_id, doc1_prefix_hit)));
+  EXPECT_THAT(
+      expanded_term_id_hit_pairs,
+      UnorderedElementsAre(TermIdHitPair(foot_main_term_id, doc0_hit),
+                           TermIdHitPair(fool_main_term_id, doc1_hit),
+                           TermIdHitPair(foo_term_id, doc1_prefix_hit)));
 }
 
 TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
@@ -223,11 +224,11 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
   //   c. Keep both the exact hit for 'foo' and the prefix hit for 'foot'
   //      because they have different scores.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<TermIdHitPair> expanded_elts,
+      std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,
                                                   lexicon_outputs));
   EXPECT_THAT(
-      expanded_elts,
+      expanded_term_id_hit_pairs,
       UnorderedElementsAre(TermIdHitPair(foot_main_term_id, foot_doc0_hit),
                            TermIdHitPair(foo_main_term_id, foo_doc0_hit),
                            TermIdHitPair(foo_main_term_id, doc0_prefix_hit)));
@@ -281,11 +282,11 @@ TEST_F(MainIndexMergerTest, DedupeWithExactSameScores) {
   //   c. Keep only the exact hit for 'foo' since they both have the same hit
   //      score.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<TermIdHitPair> expanded_elts,
+      std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,
                                                   lexicon_outputs));
   EXPECT_THAT(
-      expanded_elts,
+      expanded_term_id_hit_pairs,
       UnorderedElementsAre(TermIdHitPair(foot_main_term_id, foot_doc0_hit),
                            TermIdHitPair(foo_main_term_id, foo_doc0_hit)));
 }
@@ -351,11 +352,11 @@ TEST_F(MainIndexMergerTest, DedupePrefixExpansion) {
   //   c. Merge the prefix hits from 'foot' and 'fool', taking the best hit
   //      score.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<TermIdHitPair> expanded_elts,
+      std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,
                                                   lexicon_outputs));
   EXPECT_THAT(
-      expanded_elts,
+      expanded_term_id_hit_pairs,
       UnorderedElementsAre(TermIdHitPair(foot_main_term_id, foot_doc0_hit),
                            TermIdHitPair(fool_main_term_id, fool_doc0_hit),
                            TermIdHitPair(foo_term_id, doc0_prefix_hit)));

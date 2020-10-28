@@ -224,6 +224,33 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   }
 }
 
+string ProtoStatusCodeToString(StatusProto::Code code) {
+  switch (code) {
+    case StatusProto::OK:
+      return "OK";
+    case StatusProto::UNKNOWN:
+      return "UNKNOWN";
+    case StatusProto::INVALID_ARGUMENT:
+      return "INVALID_ARGUMENT";
+    case StatusProto::NOT_FOUND:
+      return "NOT_FOUND";
+    case StatusProto::ALREADY_EXISTS:
+      return "ALREADY_EXISTS";
+    case StatusProto::OUT_OF_SPACE:
+      return "OUT_OF_SPACE";
+    case StatusProto::FAILED_PRECONDITION:
+      return "FAILED_PRECONDITION";
+    case StatusProto::ABORTED:
+      return "ABORTED";
+    case StatusProto::INTERNAL:
+      return "INTERNAL";
+    case StatusProto::WARNING_DATA_LOSS:
+      return "WARNING_DATA_LOSS";
+    default:
+      return "";
+  }
+}
+
 MATCHER(IsOk, "") {
   libtextclassifier3::StatusAdapter adapter(arg);
   if (adapter.status().ok()) {
@@ -272,6 +299,38 @@ MATCHER_P2(StatusIs, status_code, error_matcher, "") {
   }
   return ExplainMatchResult(error_matcher, adapter.status().error_message(),
                             result_listener);
+}
+
+MATCHER(ProtoIsOk, "") {
+  if (arg.code() == StatusProto::OK) {
+    return true;
+  }
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected OK, actual was (%s:%s)",
+      ProtoStatusCodeToString(arg.code()).c_str(), arg.message().c_str());
+  return false;
+}
+
+MATCHER_P(ProtoStatusIs, status_code, "") {
+  if (arg.code() == status_code) {
+    return true;
+  }
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected (%s:), actual was (%s:%s)",
+      ProtoStatusCodeToString(status_code).c_str(),
+      ProtoStatusCodeToString(arg.code()).c_str(), arg.message().c_str());
+  return false;
+}
+
+MATCHER_P2(ProtoStatusIs, status_code, error_matcher, "") {
+  if (arg.code() != status_code) {
+    *result_listener << IcingStringUtil::StringPrintf(
+        "Expected (%s:), actual was (%s:%s)",
+        ProtoStatusCodeToString(status_code).c_str(),
+        ProtoStatusCodeToString(arg.code()).c_str(), arg.message().c_str());
+    return false;
+  }
+  return ExplainMatchResult(error_matcher, arg.message(), result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
