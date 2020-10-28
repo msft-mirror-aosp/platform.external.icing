@@ -52,7 +52,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
     // the last cached hit, then go get some more!
     // We hold back the last cached hit because it could have more hits on the
     // next posting list in the chain.
-    ICING_RETURN_IF_ERROR(RetrieveMoreHits());
+    libtextclassifier3::Status status = RetrieveMoreHits();
+    if (!status.ok()) {
+      ICING_LOG(ERROR) << "Failed to retrieve more hits "
+                       << status.error_message();
+      return absl_ports::ResourceExhaustedError(
+          "No more DocHitInfos in iterator");
+    }
   } else {
     ++cached_doc_hit_infos_idx_;
   }

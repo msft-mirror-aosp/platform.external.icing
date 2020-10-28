@@ -225,6 +225,36 @@ TEST_P(ReverseJniLanguageSegmenterTest, WordConnector) {
   EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android:icing"),
               IsOkAndHolds(ElementsAre("com.google.android:icing")));
 
+  // Connectors that don't have valid terms on both sides of it are not
+  // considered connectors.
+  EXPECT_THAT(language_segmenter->GetAllTerms(":bar:baz"),
+              IsOkAndHolds(ElementsAre(":", "bar:baz")));
+
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:"),
+              IsOkAndHolds(ElementsAre("bar:baz", ":")));
+
+  // Connectors that don't have valid terms on both sides of it are not
+  // considered connectors.
+  EXPECT_THAT(language_segmenter->GetAllTerms(" :bar:baz"),
+              IsOkAndHolds(ElementsAre(" ", ":", "bar:baz")));
+
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz: "),
+              IsOkAndHolds(ElementsAre("bar:baz", ":", " ")));
+
+  // Connectors don't connect if one side is an invalid term (？)
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:？"),
+              IsOkAndHolds(ElementsAre("bar:baz", ":")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("？:bar:baz"),
+              IsOkAndHolds(ElementsAre(":", "bar:baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("3:14"),
+              IsOkAndHolds(ElementsAre("3", ":", "14")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("私:は"),
+              IsOkAndHolds(ElementsAre("私", ":", "は")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("我:每"),
+              IsOkAndHolds(ElementsAre("我", ":", "每")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("เดิน:ไป"),
+              IsOkAndHolds(ElementsAre("เดิน:ไป")));
+
   // Any heading and trailing characters are not connecters
   EXPECT_THAT(language_segmenter->GetAllTerms(".com.google.android."),
               IsOkAndHolds(ElementsAre(".", "com.google.android", ".")));
@@ -443,6 +473,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, NotCopyStrings) {
   EXPECT_THAT(word2_address, Eq(word2_result_address));
 }
 
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToStartWordConnector) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto segmenter, language_segmenter_factory::Create(
+                          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+  constexpr std::string_view kText = "com:google:android is package";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "com:google:android is package"
+  //          ^                 ^^ ^^
+  // Bytes:   0              18 19 21 22
+  auto position_or = itr->ResetToStart();
+  EXPECT_THAT(position_or, IsOk());
+  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
+}
+
 TEST_P(ReverseJniLanguageSegmenterTest, NewIteratorResetToStart) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
@@ -509,6 +555,28 @@ TEST_P(ReverseJniLanguageSegmenterTest, IteratorDoneResetToStart) {
   }
   EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
+}
+
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterWordConnector) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto segmenter, language_segmenter_factory::Create(
+                          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+  constexpr std::string_view kText = "package com:google:android name";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "package com:google:android name"
+  //          ^      ^^                 ^^
+  // Bytes:   0      7 8               26 27
+  auto position_or = itr->ResetToTermStartingAfter(8);
+  EXPECT_THAT(position_or, IsOk());
+  EXPECT_THAT(position_or.ValueOrDie(), Eq(26));
+  ASSERT_THAT(itr->GetTerm(), Eq(" "));
+
+  position_or = itr->ResetToTermStartingAfter(7);
+  EXPECT_THAT(position_or, IsOk());
+  EXPECT_THAT(position_or.ValueOrDie(), Eq(8));
+  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterOutOfBounds) {
@@ -844,6 +912,28 @@ TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermAfter) {
 
   EXPECT_THAT(itr->ResetToTermStartingAfter(34), IsOkAndHolds(Eq(42)));
   EXPECT_THAT(itr->GetTerm(), Eq("ทุก"));
+}
+
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeWordConnector) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto segmenter, language_segmenter_factory::Create(
+                          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+  constexpr std::string_view kText = "package name com:google:android!";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "package name com:google:android!"
+  //          ^      ^^   ^^                 ^
+  // Bytes:   0      7 8 12 13               31
+  auto position_or = itr->ResetToTermEndingBefore(31);
+  EXPECT_THAT(position_or, IsOk());
+  EXPECT_THAT(position_or.ValueOrDie(), Eq(13));
+  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
+
+  position_or = itr->ResetToTermEndingBefore(21);
+  EXPECT_THAT(position_or, IsOk());
+  EXPECT_THAT(position_or.ValueOrDie(), Eq(12));
+  ASSERT_THAT(itr->GetTerm(), Eq(" "));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeOutOfBounds) {

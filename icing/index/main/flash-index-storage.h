@@ -136,6 +136,12 @@ class FlashIndexStorage {
     return filesystem_->GetDiskUsage(block_fd_.get());
   }
 
+  // Returns the size of the index file used to contains hits.
+  uint64_t GetElementsSize() const {
+    // Element size is the same as disk size excluding the header block.
+    return GetDiskUsage() - block_size();
+  }
+
   int num_blocks() const { return num_blocks_; }
 
   // Info about the index based on the block size.
@@ -150,6 +156,10 @@ class FlashIndexStorage {
   double min_free_fraction() const {
     return 1.0 - static_cast<double>(num_blocks_) / kMaxBlockIndex;
   }
+
+  libtextclassifier3::Status Reset();
+
+  void GetDebugInfo(int verbosity, std::string* out) const;
 
  private:
   FlashIndexStorage(const std::string& index_filename,
@@ -259,8 +269,12 @@ class FlashIndexStorage {
     //  - NOT_FOUND if there are no free posting lists on this free list.
     libtextclassifier3::StatusOr<PostingListIdentifier> TryPop();
 
+    std::string DebugString() const;
+
    private:
     std::vector<PostingListIdentifier> free_list_;
+    int free_list_size_high_watermark_ = 0;
+    int num_dropped_free_list_entries_ = 0;
   };
   std::vector<FreeList> in_memory_freelists_;
 
