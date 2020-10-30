@@ -105,11 +105,12 @@ IndexBlock::IndexBlock(MemoryMappedFile mmapped_block)
       posting_lists_start_ptr_(mmapped_block.mutable_region() +
                                sizeof(BlockHeader)),
       block_size_in_bytes_(mmapped_block.region_size()),
-      mmapped_block_(std::move(mmapped_block)) {}
+      mmapped_block_(
+          std::make_unique<MemoryMappedFile>(std::move(mmapped_block))) {}
 
 libtextclassifier3::Status IndexBlock::Reset(int posting_list_bytes) {
-  ICING_RETURN_IF_ERROR(ValidatePostingListBytes(posting_list_bytes,
-                                                 mmapped_block_.region_size()));
+  ICING_RETURN_IF_ERROR(ValidatePostingListBytes(
+      posting_list_bytes, mmapped_block_->region_size()));
   header_->free_list_posting_list_index = kInvalidPostingListIndex;
   header_->next_block_index = kInvalidBlockIndex;
   header_->posting_list_bytes = posting_list_bytes;

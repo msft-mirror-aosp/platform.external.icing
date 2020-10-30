@@ -1,0 +1,225 @@
+// Copyright (C) 2019 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "icing/index/main/main-index-merger.h"
+
+#include <cstring>
+#include <memory>
+
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/term-id-codec.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/util/status-macros.h"
+
+namespace icing {
+namespace lib {
+
+namespace {
+
+class HitSelector {
+ public:
+  // Returns whether or not term_id_hit_pair has the same term_id, document_id and section_id
+  // as the previously selected hits.
+  bool IsEquivalentHit(const TermIdHitPair& term_id_hit_pair) {
+    return prev_.term_id() == term_id_hit_pair.term_id() &&
+           prev_.hit().document_id() == term_id_hit_pair.hit().document_id() &&
+           prev_.hit().section_id() == term_id_hit_pair.hit().section_id();
+  }
+
+  // Merges term_id_hit_pair with previously added hits.
+  void SelectIfBetter(const TermIdHitPair& term_id_hit_pair) {
+    if (term_id_hit_pair.hit().is_prefix_hit()) {
+      SelectPrefixHitIfBetter(term_id_hit_pair);
+    } else {
+      SelectExactHitIfBetter(term_id_hit_pair);
+    }
+    prev_ = term_id_hit_pair;
+  }
+
+  // Adds all valid, selected hits to hits starting at position pos in hits.
+  // Returns the offset in hits after the position of the last added hit.
+  // This function may add between 0-2 hits depending on whether the HitSelector
+  // holds both a valid exact hit and a valid prefix hit, one of those or none.
+  size_t InsertSelectedHits(size_t pos, std::vector<TermIdHitPair>* hits) {
+    // Given highest scoring prefix/exact hits for a given
+    // term+docid+sectionid, push needed hits into hits array at offset
+    // pos. Return new pos.
+    if (best_prefix_hit_.hit().is_valid() && best_exact_hit_.hit().is_valid()) {
+      // Output both if scores are unequal. Otherwise only exact hit is
+      // sufficient because 1) they have the same scores and 2) any prefix query
+      // will also accept an exact hit.
+      (*hits)[pos++] = best_exact_hit_;
+      if (best_prefix_hit_.hit().score() != best_exact_hit_.hit().score()) {
+        (*hits)[pos++] = best_prefix_hit_;
+        // Ensure sorted.
+        if (best_prefix_hit_.hit() < best_exact_hit_.hit()) {
+          std::swap((*hits)[pos - 1], (*hits)[pos - 2]);
+        }
+      }
+    } else if (best_prefix_hit_.hit().is_valid()) {
+      (*hits)[pos++] = best_prefix_hit_;
+    } else if (best_exact_hit_.hit().is_valid()) {
+      (*hits)[pos++] = best_exact_hit_;
+    }
+
+    return pos;
+  }
+
+  void Reset() {
+    best_prefix_hit_ = TermIdHitPair();
+    best_exact_hit_ = TermIdHitPair();
+    prev_ = TermIdHitPair();
+  }
+
+ private:
+  void SelectPrefixHitIfBetter(const TermIdHitPair& term_id_hit_pair) {
+    if (!best_prefix_hit_.hit().is_valid() ||
+        best_prefix_hit_.hit().score() < term_id_hit_pair.hit().score()) {
+      best_prefix_hit_ = term_id_hit_pair;
+    }
+  }
+
+  void SelectExactHitIfBetter(const TermIdHitPair& term_id_hit_pair) {
+    if (!best_exact_hit_.hit().is_valid() ||
+        best_exact_hit_.hit().score() < term_id_hit_pair.hit().score()) {
+      best_exact_hit_ = term_id_hit_pair;
+    }
+  }
+
+  TermIdHitPair best_prefix_hit_;
+  TermIdHitPair best_exact_hit_;
+  TermIdHitPair prev_;
+};
+
+// A helper function to dedupe hits stored in hits. Suppose that the lite index
+// contained a single document with two hits in a single prefix section: "foot"
+// and "fool". When expanded, there would be four hits:
+// {"fo", docid0, sectionid0}
+// {"fo", docid0, sectionid0}
+// {"foot", docid0, sectionid0}
+// {"fool", docid0, sectionid0}
+//
+// The first two are duplicates of each other. So, this function will dedupe
+// and shrink hits to be:
+// {"fo", docid0, sectionid0}
+// {"foot", docid0, sectionid0}
+// {"fool", docid0, sectionid0}
+//
+// When duplicates are encountered, we prefer the hit with the highest hit
+// score. If there is both an exact and prefix hit for the same term, we prefer
+// the exact hit, unless they have different scores, in which case we keep both
+// them.
+void DedupeHits(std::vector<TermIdHitPair>* hits) {
+  // Now all terms are grouped together and all hits for a term are sorted.
+  // Merge equivalent hits into one.
+  std::sort(hits->begin(), hits->end(),
+            [](const TermIdHitPair& lhs, const TermIdHitPair& rhs) {
+              return lhs.value() < rhs.value();
+            });
+  size_t current_offset = 0;
+  HitSelector hit_selector;
+  for (const TermIdHitPair& term_id_hit_pair : *hits) {
+    if (!hit_selector.IsEquivalentHit(term_id_hit_pair)) {
+      // We've reached a new hit. Insert the previously selected hits that we
+      // had accumulated and reset to add this new hit.
+      current_offset = hit_selector.InsertSelectedHits(current_offset, hits);
+      hit_selector.Reset();
+    }
+    // Update best exact and prefix hit.
+    hit_selector.SelectIfBetter(term_id_hit_pair);
+  }
+
+  // Push last.
+  current_offset = hit_selector.InsertSelectedHits(current_offset, hits);
+
+  hits->resize(current_offset);
+}
+
+// Based on experiments with full prefix expansion, the multiplier
+// is ~4x.
+constexpr int kAvgPrefixesPerTerm = 4;
+
+}  // namespace
+
+libtextclassifier3::StatusOr<std::vector<TermIdHitPair>>
+MainIndexMerger::TranslateAndExpandLiteHits(
+    const LiteIndex& lite_index, const TermIdCodec& term_id_codec,
+    const MainIndex::LexiconMergeOutputs& lexicon_merge_outputs) {
+  std::vector<TermIdHitPair> hits;
+  if (lite_index.empty()) {
+    return hits;
+  }
+  // Reserve enough space for the average number of prefixes per term and the
+  // terms themselves.
+  hits.reserve(lite_index.size() * (kAvgPrefixesPerTerm + 1));
+
+  // Translate lite tvis to main tvis.
+  for (const TermIdHitPair& term_id_hit_pair : lite_index) {
+    uint32_t cur_term_id = term_id_hit_pair.term_id();
+    ICING_ASSIGN_OR_RETURN(TermIdCodec::DecodedTermInfo cur_decoded_term,
+                           term_id_codec.DecodeTermInfo(cur_term_id));
+    Hit hit(term_id_hit_pair.hit());
+
+    // 1. Translate and push original.
+    auto itr =
+        lexicon_merge_outputs.other_tvi_to_main_tvi.find(cur_decoded_term.tvi);
+    if (itr == lexicon_merge_outputs.other_tvi_to_main_tvi.cend()) {
+      // b/37273773
+      return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+          "Trying to translate lite tvi %u that was never added to the lexicon",
+          cur_decoded_term.tvi));
+    }
+    ICING_ASSIGN_OR_RETURN(uint32_t term_id,
+                           term_id_codec.EncodeTvi(itr->second, TviType::MAIN));
+    hits.emplace_back(term_id, hit);
+
+    // 2. Expand hits in prefix sections.
+    if (hit.is_in_prefix_section()) {
+      // Hit was in a prefix section. Push prefixes. Turn on prefix bit.
+      auto itr_prefixes =
+          lexicon_merge_outputs.other_tvi_to_prefix_main_tvis.find(
+              cur_decoded_term.tvi);
+      if (itr_prefixes ==
+          lexicon_merge_outputs.other_tvi_to_prefix_main_tvis.end()) {
+        ICING_VLOG(1) << "No necessary prefix expansion for " << cur_decoded_term.tvi;
+        continue;
+      }
+      // The tvis of all prefixes of this hit's term that appear in the main
+      // lexicon are between [prefix_tvis_buf[offset],
+      // prefix_tvis_buf[offset+len]).
+      size_t offset = itr_prefixes->second.first;
+      size_t len = itr_prefixes->second.second;
+      Hit prefix_hit(hit.section_id(), hit.document_id(), hit.score(),
+                     /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
+      for (; offset < len; ++offset) {
+        // Take the tvi (in the main lexicon) of each prefix term.
+        uint32_t prefix_main_tvi =
+            lexicon_merge_outputs.prefix_tvis_buf[offset];
+        // Convert it to a term_id.
+        ICING_ASSIGN_OR_RETURN(
+            uint32_t prefix_term_id,
+            term_id_codec.EncodeTvi(prefix_main_tvi, TviType::MAIN));
+        // Create add an element for this prefix TermId and prefix Hit to hits.
+        hits.emplace_back(prefix_term_id, prefix_hit);
+      }
+    }
+  }
+  // 3. Remove any duplicate hits.
+  DedupeHits(&hits);
+  return hits;
+}
+
+}  // namespace lib
+}  // namespace icing

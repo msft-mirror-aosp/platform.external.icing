@@ -24,163 +24,12 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
-
-namespace {
-
-// Returns the lead byte of the UTF-8 character that includes the byte at
-// current_byte_index within it.
-int GetUTF8StartPosition(std::string_view text, int current_byte_index) {
-  while (!i18n_utils::IsLeadUtf8Byte(text[current_byte_index])) {
-    --current_byte_index;
-  }
-  return current_byte_index;
-}
-
-class CharacterIterator {
- public:
-  explicit CharacterIterator(std::string_view text)
-      : CharacterIterator(text, 0, 0) {}
-  CharacterIterator(std::string_view text, int utf8_index, int utf16_index)
-      : text_(text), utf8_index_(utf8_index), utf16_index_(utf16_index) {}
-
-  // Moves from current position to the character that includes the specified
-  // UTF-8 index.
-  // REQUIRES: desired_utf8_index <= text_.length()
-  // desired_utf8_index is allowed to point one index past the end, but no
-  // further.
-  bool AdvanceToUtf8(int desired_utf8_index) {
-    if (desired_utf8_index > text_.length()) {
-      // Enforce the requirement.
-      return false;
-    }
-    // Need to work forwards.
-    while (utf8_index_ < desired_utf8_index) {
-      UChar32 uchar32 =
-          i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
-      if (uchar32 == i18n_utils::kInvalidUChar32) {
-        // Unable to retrieve a valid UTF-32 character at the previous position.
-        return false;
-      }
-      int utf8_length = i18n_utils::GetUtf8Length(uchar32);
-      if (utf8_index_ + utf8_length > desired_utf8_index) {
-        // Ah! Don't go too far!
-        break;
-      }
-      utf8_index_ += utf8_length;
-      utf16_index_ += i18n_utils::GetUtf16Length(uchar32);
-    }
-    return true;
-  }
-
-  // Moves from current position to the character that includes the specified
-  // UTF-8 index.
-  // REQUIRES: 0 <= desired_utf8_index
-  bool RewindToUtf8(int desired_utf8_index) {
-    if (desired_utf8_index < 0) {
-      // Enforce the requirement.
-      return false;
-    }
-    // Need to work backwards.
-    while (utf8_index_ > desired_utf8_index) {
-      --utf8_index_;
-      utf8_index_ = GetUTF8StartPosition(text_, utf8_index_);
-      if (utf8_index_ < 0) {
-        // Somehow, there wasn't a single UTF-8 lead byte at
-        // requested_byte_index or an earlier byte.
-        return false;
-      }
-      // We've found the start of a unicode char!
-      UChar32 uchar32 =
-          i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
-      if (uchar32 == i18n_utils::kInvalidUChar32) {
-        // Unable to retrieve a valid UTF-32 character at the previous position.
-        return false;
-      }
-      utf16_index_ -= i18n_utils::GetUtf16Length(uchar32);
-    }
-    return true;
-  }
-
-  // Advances current position to desired_utf16_index.
-  // REQUIRES: desired_utf16_index <= text_.utf16_length()
-  // desired_utf16_index is allowed to point one index past the end, but no
-  // further.
-  bool AdvanceToUtf16(int desired_utf16_index) {
-    while (utf16_index_ < desired_utf16_index) {
-      UChar32 uchar32 =
-          i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
-      if (uchar32 == i18n_utils::kInvalidUChar32) {
-        // Unable to retrieve a valid UTF-32 character at the previous position.
-        return false;
-      }
-      int utf16_length = i18n_utils::GetUtf16Length(uchar32);
-      if (utf16_index_ + utf16_length > desired_utf16_index) {
-        // Ah! Don't go too far!
-        break;
-      }
-      int utf8_length = i18n_utils::GetUtf8Length(uchar32);
-      if (utf8_index_ + utf8_length > text_.length()) {
-        // Enforce the requirement.
-        return false;
-      }
-      utf8_index_ += utf8_length;
-      utf16_index_ += utf16_length;
-    }
-    return true;
-  }
-
-  // Rewinds current position to desired_utf16_index.
-  // REQUIRES: 0 <= desired_utf16_index
-  bool RewindToUtf16(int desired_utf16_index) {
-    if (desired_utf16_index < 0) {
-      return false;
-    }
-    while (utf16_index_ > desired_utf16_index) {
-      --utf8_index_;
-      utf8_index_ = GetUTF8StartPosition(text_, utf8_index_);
-      // We've found the start of a unicode char!
-      UChar32 uchar32 =
-          i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
-      if (uchar32 == i18n_utils::kInvalidUChar32) {
-        // Unable to retrieve a valid UTF-32 character at the previous position.
-        return false;
-      }
-      utf16_index_ -= i18n_utils::GetUtf16Length(uchar32);
-    }
-    return true;
-  }
-
-  bool IsValidCharacter() const {
-    // Rule 1: all ASCII terms will be returned.
-    // We know it's a ASCII term by checking the first char.
-    if (i18n_utils::IsAscii(text_[utf8_index_])) {
-      return true;
-    }
-
-    // Rule 2: for non-ASCII terms, only the alphabetic terms are returned.
-    // We know it's an alphabetic term by checking the first unicode character.
-    if (i18n_utils::IsAlphabeticAt(text_, utf8_index_)) {
-      return true;
-    }
-
-    return false;
-  }
-
-  int utf8_index() const { return utf8_index_; }
-  int utf16_index() const { return utf16_index_; }
-
- private:
-  std::string_view text_;
-  int utf8_index_;
-  int utf16_index_;
-};
-
-}  // namespace
 
 class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
  public:
@@ -229,7 +78,7 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     // Check if the current term is valid. We consider any term valid if its
     // first character is valid. If it's not valid, then we need to advance to
     // the next term.
-    if (term_start_.IsValidCharacter()) {
+    if (IsValidTerm()) {
       return true;
     }
     return Advance();
@@ -382,8 +231,7 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     // 4. The start and end indices point to a segment, but we need to ensure
     // that this segment is 1) valid and 2) ends before offset. Otherwise, we'll
     // need a segment prior to this one.
-    if (term_end_exclusive_.utf8_index() > offset ||
-        !term_start_.IsValidCharacter()) {
+    if (term_end_exclusive_.utf8_index() > offset || !IsValidTerm()) {
       return ResetToTermEndingBefore(term_start_.utf8_index());
     }
     return term_start_.utf8_index();
@@ -412,6 +260,21 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     term_end_exclusive_ =
         CharacterIterator(text_, /*utf8_index=*/0,
                           /*utf16_index=*/ReverseJniBreakIterator::kDone);
+  }
+
+  bool IsValidTerm() const {
+    // Rule 1: all ASCII terms will be returned.
+    // We know it's a ASCII term by checking the first char.
+    if (i18n_utils::IsAscii(text_[term_start_.utf8_index()])) {
+      return true;
+    }
+
+    // Rule 2: for non-ASCII terms, only the alphabetic terms are returned.
+    // We know it's an alphabetic term by checking the first unicode character.
+    if (i18n_utils::IsAlphabeticAt(text_, term_start_.utf8_index())) {
+      return true;
+    }
+    return false;
   }
 
   // All of ReverseJniBreakIterator's functions return UTF-16 boundaries. So

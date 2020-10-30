@@ -43,8 +43,10 @@ class LanguageSegmenterIteratorTest : public testing::Test {
 };
 
 TEST_F(LanguageSegmenterIteratorTest, AdvanceAndGetTerm) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
@@ -62,8 +64,10 @@ TEST_F(LanguageSegmenterIteratorTest, AdvanceAndGetTerm) {
 
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermStartingAfterWithOffsetInText) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
@@ -77,8 +81,10 @@ TEST_F(LanguageSegmenterIteratorTest,
 
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermStartingAfterWithNegativeOffsetNotOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
@@ -95,8 +101,10 @@ TEST_F(LanguageSegmenterIteratorTest,
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermStartingAfterWithTextLengthOffsetInvalidArgument) {
   std::string text = "foo bar";
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
   EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/text.size()),
@@ -106,8 +114,10 @@ TEST_F(LanguageSegmenterIteratorTest,
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermStartingAfterWithOffsetPastTextLengthInvalidArgument) {
   std::string text = "foo bar";
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
   EXPECT_THAT(iterator->ResetToTermStartingAfter(/*offset=*/100),
@@ -115,8 +125,10 @@ TEST_F(LanguageSegmenterIteratorTest,
 }
 
 TEST_F(LanguageSegmenterIteratorTest, ResetToTermEndingBeforeWithOffsetInText) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
@@ -130,8 +142,10 @@ TEST_F(LanguageSegmenterIteratorTest, ResetToTermEndingBeforeWithOffsetInText) {
 
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermEndingBeforeWithZeroNotFound) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
@@ -142,8 +156,10 @@ TEST_F(LanguageSegmenterIteratorTest,
 
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermEndingBeforeWithNegativeOffsetInvalidArgument) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
                              language_segmenter->Segment("foo bar"));
 
@@ -157,8 +173,10 @@ TEST_F(LanguageSegmenterIteratorTest,
 TEST_F(LanguageSegmenterIteratorTest,
        ResetToTermEndingBeforeWithOffsetPastTextEndInvalidArgument) {
   std::string text = "foo bar";
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
   EXPECT_THAT(iterator->ResetToTermEndingBefore(/*offset=*/text.length()),

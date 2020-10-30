@@ -409,6 +409,71 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, NotCopyStrings) {
   EXPECT_THAT(word2_address, Eq(word2_result_address));
 }
 
+TEST_P(IcuLanguageSegmenterAllLocalesTest, NewIteratorResetToStart) {
+  ICING_ASSERT_OK_AND_ASSIGN(auto segmenter,
+                             language_segmenter_factory::Create(GetOptions()));
+  constexpr std::string_view kText = "How are you你好吗お元気ですか";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "How are you你好吗お元気ですか"
+  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // Bytes:   0  3 4 7 8 11 172023 29 35
+  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->GetTerm(), Eq("How"));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest, IteratorOneAdvanceResetToStart) {
+  ICING_ASSERT_OK_AND_ASSIGN(auto segmenter,
+                             language_segmenter_factory::Create(GetOptions()));
+  constexpr std::string_view kText = "How are you你好吗お元気ですか";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "How are you你好吗お元気ですか"
+  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // Bytes:   0  3 4 7 8 11 172023 29 35
+  ASSERT_TRUE(itr->Advance());  // itr points to 'How'
+  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->GetTerm(), Eq("How"));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest,
+       IteratorMultipleAdvancesResetToStart) {
+  ICING_ASSERT_OK_AND_ASSIGN(auto segmenter,
+                             language_segmenter_factory::Create(GetOptions()));
+  constexpr std::string_view kText = "How are you你好吗お元気ですか";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "How are you你好吗お元気ですか"
+  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // Bytes:   0  3 4 7 8 11 172023 29 35
+  ASSERT_TRUE(itr->Advance());
+  ASSERT_TRUE(itr->Advance());
+  ASSERT_TRUE(itr->Advance());
+  ASSERT_TRUE(itr->Advance());  // itr points to ' '
+  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->GetTerm(), Eq("How"));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest, IteratorDoneResetToStart) {
+  ICING_ASSERT_OK_AND_ASSIGN(auto segmenter,
+                             language_segmenter_factory::Create(GetOptions()));
+  constexpr std::string_view kText = "How are you你好吗お元気ですか";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
+
+  // String: "How are you你好吗お元気ですか"
+  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // Bytes:   0  3 4 7 8 11 172023 29 35
+  while (itr->Advance()) {
+    // Do nothing.
+  }
+  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->GetTerm(), Eq("How"));
+}
+
 TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterOutOfBounds) {
   ICING_ASSERT_OK_AND_ASSIGN(auto segmenter,
                              language_segmenter_factory::Create(GetOptions()));
@@ -990,6 +1055,19 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermBefore) {
 
   EXPECT_THAT(itr->ResetToTermEndingBefore(34), IsOkAndHolds(Eq(21)));
   EXPECT_THAT(itr->GetTerm(), Eq("ไป"));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest, QuerySyntax) {
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create(GetOptions()));
+  // Validates that the input strings are not copied
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<std::string_view> terms,
+      language_segmenter->GetAllTerms(
+          "(-term1 OR term2) AND property1.subproperty2:term3"));
+  EXPECT_THAT(terms, ElementsAre("(", "-", "term1", " ", "OR", " ", "term2",
+                                 ")", " ", "AND", " ", "property1", ".",
+                                 "subproperty2", ":", "term3"));
 }
 
 INSTANTIATE_TEST_SUITE_P(

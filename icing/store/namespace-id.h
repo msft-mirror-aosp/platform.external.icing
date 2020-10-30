@@ -22,6 +22,7 @@ namespace lib {
 
 // Id of unique namespace in DocumentProto. Generated in DocumentStore.
 using NamespaceId = int16_t;
+inline constexpr NamespaceId kInvalidNamespaceId = -1;
 
 }  // namespace lib
 }  // namespace icing
