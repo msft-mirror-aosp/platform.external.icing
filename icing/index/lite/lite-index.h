@@ -30,6 +30,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/legacy/index/icing-array-storage.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -49,49 +50,6 @@ namespace lib {
 class LiteIndex {
  public:
   // An entry in the hit buffer.
-  class Element {
-   public:
-    // Layout bits: 24 termid + 32 hit value + 8 hit score.
-    using Value = uint64_t;
-
-    static constexpr int kTermIdBits = 24;
-    static constexpr int kHitValueBits = sizeof(Hit::Value) * 8;
-    static constexpr int kHitScoreBits = sizeof(Hit::Score) * 8;
-
-    static const Value kInvalidValue;
-
-    explicit Element(Value v = kInvalidValue) : value_(v) {}
-
-    Element(uint32_t term_id, const Hit& hit) {
-      static_assert(
-          kTermIdBits + kHitValueBits + kHitScoreBits <= sizeof(Value) * 8,
-          "LiteIndexElementTooBig");
-
-      value_ = 0;
-      // Term id goes into the most significant bits because it takes
-      // precedent in sorts.
-      bit_util::BitfieldSet(term_id, kHitValueBits + kHitScoreBits, kTermIdBits,
-                            &value_);
-      bit_util::BitfieldSet(hit.value(), kHitScoreBits, kHitValueBits, &value_);
-      bit_util::BitfieldSet(hit.score(), 0, kHitScoreBits, &value_);
-    }
-
-    uint32_t term_id() const {
-      return bit_util::BitfieldGet(value_, kHitValueBits + kHitScoreBits,
-                                   kTermIdBits);
-    }
-
-    Hit hit() const {
-      return Hit(bit_util::BitfieldGet(value_, kHitScoreBits, kHitValueBits),
-                 bit_util::BitfieldGet(value_, 0, kHitScoreBits));
-    }
-
-    Value value() const { return value_; }
-
-   private:
-    Value value_;
-  };
-
   using Options = IcingLiteIndexOptions;
 
   // Updates checksum of subcomponents.
@@ -126,7 +84,7 @@ class LiteIndex {
   Crc32 ComputeChecksum();
 
   // Returns term_id if term found, NOT_FOUND otherwise.
-  libtextclassifier3::StatusOr<uint32_t> FindTerm(
+  libtextclassifier3::StatusOr<uint32_t> GetTermId(
       const std::string& term) const;
 
   // Returns an iterator for all terms for which 'prefix' is a prefix.
@@ -170,25 +128,89 @@ class LiteIndex {
                                                   NamespaceId namespace_id);
 
   // Append hit to buffer. term_id must be encoded using the same term_id_codec
-  // supplied to the index constructor. Returns non-OK if hit cannot be added
-  // (either due to hit buffer or file system capacity reached).
+  // supplied to the index constructor.
+  // RETURNS:
+  //  - OK if hit was successfully added
+  //  - RESOURCE_EXHAUSTED if hit could not be added (either due to hit buffer
+  //    or file system capacity reached).
   libtextclassifier3::Status AddHit(uint32_t term_id, const Hit& hit);
 
   // Add all hits with term_id from the sections specified in section_id_mask,
   // skipping hits in non-prefix sections if only_from_prefix_sections is true,
-  // to hits_out.
-  uint32_t AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
-                      bool only_from_prefix_sections,
-                      std::vector<DocHitInfo>* hits_out);
+  // to hits_out. If hits_out is nullptr, no hits will be added.
+  //
+  // Returns the number of hits that would be added to hits_out.
+  int AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
+                 bool only_from_prefix_sections,
+                 std::vector<DocHitInfo>* hits_out);
 
   // Returns the hit count of the term.
-  uint32_t CountHits(uint32_t term_id);
+  int CountHits(uint32_t term_id);
 
   // Check if buffer has reached its capacity.
   bool is_full() const;
 
+  bool empty() const { return size() == 0; }
+
+  uint32_t size() const { return header_->cur_size(); }
+
+  class const_iterator {
+    friend class LiteIndex;
+
+   public:
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = TermIdHitPair;
+    using reference = const value_type&;
+    using pointer = const value_type*;
+
+    const_iterator() : const_iterator(nullptr, -1, -1) {}
+
+    reference operator*() const { return start_[position_]; }
+
+    pointer operator->() const { return start_ + position_; }
+
+    const_iterator& operator++() {
+      if (++position_ >= end_position_) {
+        start_ = nullptr;
+        position_ = -1;
+        end_position_ = -1;
+      }
+      return *this;
+    }
+
+    const_iterator operator++(int) {
+      auto tmp = *this;
+      ++*this;
+      return tmp;
+    }
+
+    bool operator!=(const const_iterator& rhs) { return !(*this == rhs); }
+
+    bool operator==(const const_iterator& rhs) {
+      return start_ == rhs.start_ && position_ == rhs.position_;
+    }
+
+   private:
+    explicit const_iterator(const TermIdHitPair* start, int position,
+                            int end_position)
+        : start_(start), position_(position), end_position_(end_position) {}
+
+    const TermIdHitPair* start_;
+    int position_;
+    int end_position_;
+  };
+
+  const_iterator begin() const {
+    // If the LiteIndex is empty, just return end().
+    return empty() ? end()
+                   : const_iterator(hit_buffer_.array_cast<TermIdHitPair>(), 0,
+                                    header_->cur_size());
+  }
+
+  const_iterator end() const { return const_iterator(); }
+
   constexpr static uint32_t max_hit_buffer_size() {
-    return std::numeric_limits<uint32_t>::max() / sizeof(LiteIndex::Element);
+    return std::numeric_limits<uint32_t>::max() / sizeof(TermIdHitPair);
   }
 
   // We keep track of the last added document_id. This is always the largest

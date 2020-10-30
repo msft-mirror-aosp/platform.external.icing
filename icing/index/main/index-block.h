@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -94,6 +95,12 @@ class IndexBlock {
   IndexBlock& operator=(const IndexBlock&) = delete;
   IndexBlock(IndexBlock&&) = default;
   IndexBlock& operator=(IndexBlock&&) = default;
+
+  ~IndexBlock() {
+    if (mmapped_block_ != nullptr) {
+      mmapped_block_->PersistToDisk();
+    }
+  }
 
   // Instantiate a PostingListUsed at posting_list_index with the existing
   // content in the IndexBlock.
@@ -206,7 +213,7 @@ class IndexBlock {
   uint32_t block_size_in_bytes_;
 
   // MemoryMappedFile used to interact with the underlying flash block.
-  MemoryMappedFile mmapped_block_;
+  std::unique_ptr<MemoryMappedFile> mmapped_block_;
 };
 
 }  // namespace lib
