@@ -42,6 +42,8 @@
 namespace icing {
 namespace lib {
 
+namespace {
+
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
 using ::testing::Eq;
@@ -53,6 +55,17 @@ using ::testing::IsTrue;
 using ::testing::Not;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
+
+UsageReport CreateUsageReport(std::string name_space, std::string uri,
+                              int64 timestamp_ms,
+                              UsageReport::UsageType usage_type) {
+  UsageReport usage_report;
+  usage_report.set_document_namespace(name_space);
+  usage_report.set_document_uri(uri);
+  usage_report.set_usage_timestamp_ms(timestamp_ms);
+  usage_report.set_usage_type(usage_type);
+  return usage_report;
+}
 
 class DocumentStoreTest : public ::testing::Test {
  protected:
@@ -1297,7 +1310,7 @@ TEST_F(DocumentStoreTest, GetDiskUsage) {
 
   // Bad file system
   MockFilesystem mock_filesystem;
-  ON_CALL(mock_filesystem, GetDiskUsage(A<const char *>()))
+  ON_CALL(mock_filesystem, GetDiskUsage(A<const char*>()))
       .WillByDefault(Return(Filesystem::kBadFileSize));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocumentStore> doc_store_with_mock_filesystem,
@@ -1465,6 +1478,63 @@ TEST_F(DocumentStoreTest, HardDeleteClearsScoreCache) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
+TEST_F(DocumentStoreTest, SoftDeleteDoesNotClearUsageScores) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             doc_store->Put(test_document1_));
+
+  // Report usage with type 1.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
+
+  UsageStore::UsageScores expected_scores;
+  expected_scores.usage_type1_count = 1;
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Soft delete the document.
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/true));
+
+  // The scores should be the same.
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+}
+
+TEST_F(DocumentStoreTest, HardDeleteShouldClearUsageScores) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             doc_store->Put(test_document1_));
+
+  // Report usage with type 1.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
+
+  UsageStore::UsageScores expected_scores;
+  expected_scores.usage_type1_count = 1;
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Hard delete the document.
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/false));
+
+  // The scores should be cleared.
+  expected_scores.usage_type1_count = 0;
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+}
+
 TEST_F(DocumentStoreTest,
        ExpirationTimestampIsSumOfNonZeroTtlAndCreationTimestamp) {
   DocumentProto document = DocumentBuilder()
@@ -1572,7 +1642,7 @@ TEST_F(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
                                 // With default doc score 0
                                 .Build();
   DocumentProto document2 = DocumentBuilder()
-                                .SetKey("icing", "email/1")
+                                .SetKey("icing", "email/2")
                                 .SetSchema("email")
                                 .AddStringProperty("subject", "subject foo")
                                 .SetScore(5)
@@ -2345,6 +2415,322 @@ TEST_F(DocumentStoreTest, GetAllNamespaces) {
   EXPECT_THAT(document_store->GetAllNamespaces(),
               UnorderedElementsAre("namespace1"));
 }
+
+TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store->Put(test_document1_));
+
+  // Report usage with type 1 and time 1.
+  UsageReport usage_report_type1_time1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1_time1));
+
+  UsageStore::UsageScores expected_scores;
+  expected_scores.usage_type1_last_used_timestamp_s = 1;
+  ++expected_scores.usage_type1_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 1 and time 5, time should be updated.
+  UsageReport usage_report_type1_time5 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1_time5));
+
+  expected_scores.usage_type1_last_used_timestamp_s = 5;
+  ++expected_scores.usage_type1_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 2 and time 1.
+  UsageReport usage_report_type2_time1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type2_time1));
+
+  expected_scores.usage_type2_last_used_timestamp_s = 1;
+  ++expected_scores.usage_type2_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 2 and time 5.
+  UsageReport usage_report_type2_time5 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type2_time5));
+
+  expected_scores.usage_type2_last_used_timestamp_s = 5;
+  ++expected_scores.usage_type2_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 3 and time 1.
+  UsageReport usage_report_type3_time1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type3_time1));
+
+  expected_scores.usage_type3_last_used_timestamp_s = 1;
+  ++expected_scores.usage_type3_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 3 and time 5.
+  UsageReport usage_report_type3_time5 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type3_time5));
+
+  expected_scores.usage_type3_last_used_timestamp_s = 5;
+  ++expected_scores.usage_type3_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+}
+
+TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store->Put(test_document1_));
+
+  // Report usage with type 1.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
+
+  UsageStore::UsageScores expected_scores;
+  ++expected_scores.usage_type1_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 2.
+  UsageReport usage_report_type2 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type2));
+
+  ++expected_scores.usage_type2_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Report usage with type 3.
+  UsageReport usage_report_type3 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type3));
+
+  ++expected_scores.usage_type3_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+}
+
+TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
+  UsageStore::UsageScores expected_scores;
+  DocumentId document_id;
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocumentStore> document_store,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(document_id,
+                               document_store->Put(test_document1_));
+
+    // Report usage with type 1.
+    UsageReport usage_report_type1 = CreateUsageReport(
+        /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+        UsageReport::USAGE_TYPE1);
+    ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
+
+    ++expected_scores.usage_type1_count;
+    ASSERT_THAT(document_store->GetUsageScores(document_id),
+                IsOkAndHolds(expected_scores));
+  }
+
+  // Change the DocStore's header combined checksum so that it won't match the
+  // recalculated checksum on initialization. This will force a regeneration of
+  // derived files from ground truth.
+  const std::string header_file =
+      absl_ports::StrCat(document_store_dir_, "/document_store_header");
+  DocumentStore::Header header;
+  header.magic = DocumentStore::Header::kMagic;
+  header.checksum = 10;  // Arbitrary garbage checksum
+  filesystem_.DeleteFile(header_file.c_str());
+  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
+
+  // Successfully recover from a corrupt derived file issue.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  // Usage scores should be the same.
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+}
+
+TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
+  UsageStore::UsageScores expected_scores;
+  DocumentId document_id;
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocumentStore> document_store,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id, document_store->Put(DocumentProto(test_document1_)));
+
+    // Report usage with type 1.
+    UsageReport usage_report_type1 = CreateUsageReport(
+        /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+        UsageReport::USAGE_TYPE1);
+    ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
+
+    ++expected_scores.usage_type1_count;
+    ASSERT_THAT(document_store->GetUsageScores(document_id),
+                IsOkAndHolds(expected_scores));
+  }
+
+  // "Corrupt" the content written in the log by adding non-checksummed data to
+  // it. This will mess up the checksum of the proto log, forcing it to rewind
+  // to the last saved point.
+  DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
+  const std::string serialized_document = document.SerializeAsString();
+
+  const std::string document_log_file =
+      absl_ports::StrCat(document_store_dir_, "/document_log");
+  int64_t file_size = filesystem_.GetFileSize(document_log_file.c_str());
+  filesystem_.PWrite(document_log_file.c_str(), file_size,
+                     serialized_document.data(), serialized_document.size());
+
+  // Successfully recover from a data loss issue.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+
+  // Usage scores should still be available.
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+}
+
+TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store->Put(DocumentProto(test_document1_)));
+
+  // Report usage with type 1.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
+
+  UsageStore::UsageScores expected_scores;
+  ++expected_scores.usage_type1_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Update the document.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId updated_document_id,
+      document_store->Put(DocumentProto(test_document1_)));
+  // We should get a different document id.
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+
+  // Usage scores should be the same.
+  EXPECT_THAT(document_store->GetUsageScores(updated_document_id),
+              IsOkAndHolds(expected_scores));
+}
+
+TEST_F(DocumentStoreTest,
+       UsageScoresShouldNotBeCopiedOverFromOldSoftDeletedDocs) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store->Put(DocumentProto(test_document1_)));
+
+  // Report usage with type 1.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
+
+  UsageStore::UsageScores expected_scores;
+  ++expected_scores.usage_type1_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
+
+  // Soft delete the doc.
+  ICING_ASSERT_OK(document_store->Delete(document_id, /*soft_delete=*/true));
+
+  // Put the same document.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId updated_document_id,
+      document_store->Put(DocumentProto(test_document1_)));
+  // We should get a different document id.
+  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
+
+  // Usage scores should be cleared.
+  EXPECT_THAT(document_store->GetUsageScores(updated_document_id),
+              IsOkAndHolds(UsageStore::UsageScores()));
+}
+
+TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> document_store,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store->Put(DocumentProto(test_document1_)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store->Put(DocumentProto(test_document2_)));
+  ICING_ASSERT_OK(document_store->Delete(document_id1));
+
+  // Report usage of document 2.
+  UsageReport usage_report = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/2", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store->ReportUsage(usage_report));
+
+  UsageStore::UsageScores expected_scores;
+  ++expected_scores.usage_type1_count;
+  ASSERT_THAT(document_store->GetUsageScores(document_id2),
+              IsOkAndHolds(expected_scores));
+
+  // Run optimize
+  std::string optimized_dir = document_store_dir_ + "/optimize_test";
+  filesystem_.CreateDirectoryRecursively(optimized_dir.c_str());
+  ICING_ASSERT_OK(document_store->OptimizeInto(optimized_dir));
+
+  // Get optimized document store
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocumentStore> optimized_document_store,
+      DocumentStore::Create(&filesystem_, optimized_dir, &fake_clock_,
+                            schema_store_.get()));
+
+  // Usage scores should be the same.
+  // The original document_id2 should have become document_id2 - 1.
+  ASSERT_THAT(optimized_document_store->GetUsageScores(document_id2 - 1),
+              IsOkAndHolds(expected_scores));
+}
+
+}  // namespace
 
 }  // namespace lib
 }  // namespace icing

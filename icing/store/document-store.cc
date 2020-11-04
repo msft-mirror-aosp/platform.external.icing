@@ -59,6 +59,7 @@ constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
 constexpr char kFilterCacheFilename[] = "filter_cache";
 constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
+constexpr char kUsageStoreDirectoryName[] = "usage_store";
 
 constexpr int32_t kUriMapperMaxSize = 12 * 1024 * 1024;  // 12 MiB
 
@@ -121,6 +122,10 @@ std::string MakeFilterCacheFilename(const std::string& base_dir) {
 
 std::string MakeNamespaceMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kNamespaceMapperFilename);
+}
+
+std::string MakeUsageStoreDirectoryName(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kUsageStoreDirectoryName);
 }
 
 // TODO(adorokhine): This class internally uses an 8-byte fingerprint of the
@@ -309,6 +314,14 @@ libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
                                      MakeNamespaceMapperFilename(base_dir_),
                                      kNamespaceMapperMaxSize));
 
+  ICING_ASSIGN_OR_RETURN(
+      usage_store_,
+      UsageStore::Create(filesystem_, MakeUsageStoreDirectoryName(base_dir_)));
+
+  // Ensure the usage store is the correct size.
+  ICING_RETURN_IF_ERROR(
+      usage_store_->TruncateTo(document_id_mapper_->num_elements()));
+
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   if (checksum.Get() != header.checksum) {
     return absl_ports::InternalError(
@@ -324,6 +337,12 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
   ICING_RETURN_IF_ERROR(ResetDocumentAssociatedScoreCache());
   ICING_RETURN_IF_ERROR(ResetFilterCache());
   ICING_RETURN_IF_ERROR(ResetNamespaceMapper());
+
+  // Creates a new UsageStore instance. Note that we don't reset the data in
+  // usage store here because we're not able to regenerate the usage scores.
+  ICING_ASSIGN_OR_RETURN(
+      usage_store_,
+      UsageStore::Create(filesystem_, MakeUsageStoreDirectoryName(base_dir_)));
 
   // Iterates through document log
   auto iterator = document_log_->GetIterator();
@@ -477,6 +496,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
     return absl_ports::Annotate(iterator_status,
                                 "Failed to iterate through proto log.");
   }
+
+  // Shrink usage_store_ to the correct size.
+  ICING_RETURN_IF_ERROR(
+      usage_store_->TruncateTo(document_id_mapper_->num_elements()));
 
   // Write the header
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
@@ -727,9 +750,19 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
                                           expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
-    // Mark the old document id as deleted.
-    ICING_RETURN_IF_ERROR(document_id_mapper_->Set(
-        old_document_id_or.ValueOrDie(), kDocDeletedFlag));
+    DocumentId old_document_id = old_document_id_or.ValueOrDie();
+    auto offset_or = DoesDocumentExistAndGetFileOffset(old_document_id);
+
+    if (offset_or.ok()) {
+      // The old document exists, copy over the usage scores.
+      ICING_RETURN_IF_ERROR(
+          usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
+                                         /*to_document_id=*/new_document_id));
+
+      // Hard delete the old document.
+      ICING_RETURN_IF_ERROR(
+          HardDelete(old_document_id, offset_or.ValueOrDie()));
+    }
   }
 
   return new_document_id;
@@ -887,8 +920,7 @@ libtextclassifier3::Status DocumentStore::Delete(
   if (soft_delete) {
     return SoftDelete(name_space, uri, document_id);
   } else {
-    uint64_t document_log_offset = file_offset_or.ValueOrDie();
-    return HardDelete(document_id, document_log_offset);
+    return HardDelete(document_id, file_offset_or.ValueOrDie());
   }
 }
 
@@ -915,6 +947,7 @@ libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
   }
 }
 
+// TODO(b/169969469): Consider removing SoftDelete().
 libtextclassifier3::Status DocumentStore::SoftDelete(
     std::string_view name_space, std::string_view uri, DocumentId document_id) {
   // Update ground truth first.
@@ -935,7 +968,7 @@ libtextclassifier3::Status DocumentStore::SoftDelete(
 }
 
 libtextclassifier3::Status DocumentStore::HardDelete(
-    DocumentId document_id, uint64_t document_log_offset) {
+    DocumentId document_id, int64_t document_log_offset) {
   // Erases document proto.
   ICING_RETURN_IF_ERROR(document_log_->EraseProto(document_log_offset));
   return ClearDerivedData(document_id);
@@ -979,6 +1012,19 @@ DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
     return absl_ports::NotFoundError("Document filter data not found.");
   }
   return document_filter_data;
+}
+
+libtextclassifier3::StatusOr<UsageStore::UsageScores>
+DocumentStore::GetUsageScores(DocumentId document_id) const {
+  return usage_store_->GetUsageScores(document_id);
+}
+
+libtextclassifier3::Status DocumentStore::ReportUsage(
+    const UsageReport& usage_report) {
+  ICING_ASSIGN_OR_RETURN(DocumentId document_id,
+                         GetDocumentId(usage_report.document_namespace(),
+                                       usage_report.document_uri()));
+  return usage_store_->AddUsageReport(usage_report, document_id);
 }
 
 libtextclassifier3::Status DocumentStore::DeleteByNamespace(
@@ -1132,6 +1178,7 @@ libtextclassifier3::Status DocumentStore::PersistToDisk() {
   ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
   ICING_RETURN_IF_ERROR(filter_cache_->PersistToDisk());
   ICING_RETURN_IF_ERROR(namespace_mapper_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(usage_store_->PersistToDisk());
 
   // Update the combined checksum and write to header file.
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
@@ -1334,15 +1381,21 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
 
     // Guaranteed to have a document now.
     DocumentProto document_to_keep = document_or.ValueOrDie();
-    // TODO(b/144458732): Implement a more robust version of
-    // ICING_RETURN_IF_ERROR that can support error logging.
-    libtextclassifier3::Status status =
-        new_doc_store->Put(std::move(document_to_keep)).status();
-    if (!status.ok()) {
-      ICING_LOG(ERROR) << status.error_message()
+    // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+    // that can support error logging.
+    auto new_document_id_or = new_doc_store->Put(std::move(document_to_keep));
+    if (!new_document_id_or.ok()) {
+      ICING_LOG(ERROR) << new_document_id_or.status().error_message()
                        << "Failed to write into new document store";
-      return status;
+      return new_document_id_or.status();
     }
+
+    // Copy over usage scores.
+    ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
+                           usage_store_->GetUsageScores(document_id));
+    DocumentId new_document_id = new_document_id_or.ValueOrDie();
+    ICING_RETURN_IF_ERROR(
+        new_doc_store->SetUsageScores(new_document_id, usage_scores));
   }
 
   ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk());
@@ -1430,7 +1483,13 @@ libtextclassifier3::Status DocumentStore::ClearDerivedData(
       document_id, DocumentFilterData(kInvalidNamespaceId, kInvalidSchemaTypeId,
                                       /*expiration_timestamp_ms=*/-1)));
 
-  return libtextclassifier3::Status::OK;
+  // Clears the usage scores.
+  return usage_store_->DeleteUsageScores(document_id);
+}
+
+libtextclassifier3::Status DocumentStore::SetUsageScores(
+    DocumentId document_id, const UsageStore::UsageScores& usage_scores) {
+  return usage_store_->SetUsageScores(document_id, usage_scores);
 }
 
 }  // namespace lib

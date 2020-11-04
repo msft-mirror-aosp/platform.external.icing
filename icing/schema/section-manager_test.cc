@@ -37,7 +37,6 @@ using ::testing::HasSubstr;
 constexpr char kTypeEmail[] = "EmailMessage";
 constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
-constexpr char kPropertyTimestamp[] = "timestamp";
 constexpr char kPropertyAttachment[] = "attachment";
 constexpr char kPropertyRecipients[] = "recipients";
 // type and property names of Conversation
@@ -60,7 +59,6 @@ class SectionManagerTest : public ::testing::Test {
             .SetSchema(kTypeEmail)
             .AddStringProperty(kPropertySubject, "the subject")
             .AddStringProperty(kPropertyText, "the text")
-            .AddInt64Property(kPropertyTimestamp, 1234567890)
             .AddBytesProperty(kPropertyAttachment, "attachment bytes")
             .AddStringProperty(kPropertyRecipients, "recipient1", "recipient2",
                                "recipient3")
@@ -107,23 +105,10 @@ class SectionManagerTest : public ::testing::Test {
     text->mutable_indexing_config()->set_term_match_type(
         TermMatchType::UNKNOWN);
 
-    auto timestamp = type.add_properties();
-    timestamp->set_property_name(kPropertyTimestamp);
-    timestamp->set_data_type(PropertyConfigProto::DataType::INT64);
-    timestamp->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    timestamp->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    timestamp->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
-
     auto attachment = type.add_properties();
     attachment->set_property_name(kPropertyAttachment);
     attachment->set_data_type(PropertyConfigProto::DataType::BYTES);
     attachment->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    attachment->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    attachment->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
 
     auto recipients = type.add_properties();
     recipients->set_property_name(kPropertyRecipients);
@@ -153,8 +138,6 @@ class SectionManagerTest : public ::testing::Test {
     emails->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
     emails->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
     emails->set_schema_type(kTypeEmail);
-    emails->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
 
     return type;
   }
@@ -183,8 +166,6 @@ TEST_F(SectionManagerTest, CreationWithSchemaInfiniteLoopShouldFail) {
   property1->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
   property1->set_schema_type("type2");  // Here we reference type2
   property1->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property1->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
 
   SchemaTypeConfigProto type_config2;
   type_config2.set_schema_type("type2");
@@ -194,8 +175,6 @@ TEST_F(SectionManagerTest, CreationWithSchemaInfiniteLoopShouldFail) {
   // Here we reference type1, which references type2 causing the infinite loop
   property2->set_schema_type("type1");
   property2->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property2->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
 
   SchemaUtil::TypeConfigMap type_config_map;
   type_config_map.emplace("type1", type_config1);
@@ -223,8 +202,6 @@ TEST_F(SectionManagerTest, CreationWithSchemaSelfReferenceShouldFail) {
   // Here we're referencing our own type, causing an infinite loop
   property2->set_schema_type("type");
   property2->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property2->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
 
   SchemaUtil::TypeConfigMap type_config_map;
   type_config_map.emplace("type", type_config);
@@ -266,8 +243,6 @@ TEST_F(SectionManagerTest, CreationWithUnknownSchemaTypeNameShouldFail) {
   property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
   property->set_schema_type("unknown_name");
   property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
 
   SchemaUtil::TypeConfigMap type_config_map;
   type_config_map.emplace("type", type_config);
@@ -328,10 +303,6 @@ TEST_F(SectionManagerTest, GetSectionContent) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // Test other data types
-  // INT64
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "timestamp"),
-              IsOkAndHolds(ElementsAre("1234567890")));
   // BYTES type can't be indexed, so content won't be returned
   EXPECT_THAT(section_manager->GetSectionContent(email_document_,
                                                  /*section_path*/ "attachment"),
@@ -343,8 +314,7 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   // EmailMessage (section id -> section path):
   SectionId recipients_section_id = 0;
   SectionId subject_section_id = 1;
-  SectionId timestamp_section_id = 2;
-  SectionId invalid_email_section_id = 3;
+  SectionId invalid_email_section_id = 2;
   ICING_ASSERT_OK_AND_ASSIGN(
       content, section_manager->GetSectionContent(email_document_,
                                                   recipients_section_id));
@@ -353,9 +323,6 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   EXPECT_THAT(
       section_manager->GetSectionContent(email_document_, subject_section_id),
       IsOkAndHolds(ElementsAre("the subject")));
-  EXPECT_THAT(
-      section_manager->GetSectionContent(email_document_, timestamp_section_id),
-      IsOkAndHolds(ElementsAre("1234567890")));
 
   EXPECT_THAT(section_manager->GetSectionContent(email_document_,
                                                  invalid_email_section_id),
@@ -364,13 +331,11 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   // Conversation (section id -> section path):
   //   0 -> emails.recipients
   //   1 -> emails.subject
-  //   2 -> emails.timestamp
-  //   3 -> name
+  //   2 -> name
   SectionId emails_recipients_section_id = 0;
   SectionId emails_subject_section_id = 1;
-  SectionId emails_timestamp_section_id = 2;
-  SectionId name_section_id = 3;
-  SectionId invalid_conversation_section_id = 4;
+  SectionId name_section_id = 2;
+  SectionId invalid_conversation_section_id = 3;
   ICING_ASSERT_OK_AND_ASSIGN(
       content, section_manager->GetSectionContent(
                    conversation_document_, emails_recipients_section_id));
@@ -381,11 +346,6 @@ TEST_F(SectionManagerTest, GetSectionContent) {
       content, section_manager->GetSectionContent(conversation_document_,
                                                   emails_subject_section_id));
   EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(conversation_document_,
-                                                  emails_timestamp_section_id));
-  EXPECT_THAT(content, ElementsAre("1234567890", "1234567890"));
 
   EXPECT_THAT(section_manager->GetSectionContent(conversation_document_,
                                                  name_section_id),
@@ -404,7 +364,7 @@ TEST_F(SectionManagerTest, ExtractSections) {
   // Extracts all sections from 'EmailMessage' document
   ICING_ASSERT_OK_AND_ASSIGN(auto sections,
                              section_manager->ExtractSections(email_document_));
-  EXPECT_THAT(sections.size(), Eq(3));
+  EXPECT_THAT(sections.size(), Eq(2));
 
   EXPECT_THAT(sections[0].metadata.id, Eq(0));
   EXPECT_THAT(sections[0].metadata.path, Eq("recipients"));
@@ -415,14 +375,10 @@ TEST_F(SectionManagerTest, ExtractSections) {
   EXPECT_THAT(sections[1].metadata.path, Eq("subject"));
   EXPECT_THAT(sections[1].content, ElementsAre("the subject"));
 
-  EXPECT_THAT(sections[2].metadata.id, Eq(2));
-  EXPECT_THAT(sections[2].metadata.path, Eq("timestamp"));
-  EXPECT_THAT(sections[2].content, ElementsAre("1234567890"));
-
   // Extracts all sections from 'Conversation' document
   ICING_ASSERT_OK_AND_ASSIGN(
       sections, section_manager->ExtractSections(conversation_document_));
-  EXPECT_THAT(sections.size(), Eq(3));
+  EXPECT_THAT(sections.size(), Eq(2));
 
   // Section id 3 (name) not found in document, so the first section id found
   // is 1 below.
@@ -435,10 +391,6 @@ TEST_F(SectionManagerTest, ExtractSections) {
   EXPECT_THAT(sections[1].metadata.id, Eq(1));
   EXPECT_THAT(sections[1].metadata.path, Eq("emails.subject"));
   EXPECT_THAT(sections[1].content, ElementsAre("the subject", "the subject"));
-
-  EXPECT_THAT(sections[2].metadata.id, Eq(2));
-  EXPECT_THAT(sections[2].metadata.path, Eq("emails.timestamp"));
-  EXPECT_THAT(sections[2].content, ElementsAre("1234567890", "1234567890"));
 }
 
 }  // namespace lib

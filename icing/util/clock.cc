@@ -26,8 +26,14 @@ int64_t Clock::GetSystemTimeMilliseconds() const {
       .count();
 }
 
-uint64_t GetSteadyTimeNanoseconds() {
+int64_t GetSteadyTimeNanoseconds() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+int64_t GetSteadyTimeMilliseconds() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
 }

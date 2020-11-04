@@ -23,6 +23,7 @@ option objc_class_prefix = "ICNG";
 
 // Encapsulates the configurations on how Icing should score and rank the search
 // results.
+// TODO(b/170347684): Change all timestamps to seconds.
 // Next tag: 3
 message ScoringSpecProto {
   // OPTIONAL: Indicates how the search results will be ranked.
@@ -37,6 +38,32 @@ message ScoringSpecProto {
 
       // Ranked by document creation timestamps.
       CREATION_TIMESTAMP = 2;
+
+      // The following ranking strategies are based on usage reporting. Please
+      // see usage.proto for more information. If one of the usage ranking
+      // strategy is used but none of result documents have reported usage, the
+      // documents will be returned in the default reverse insertion order.
+
+      // Ranked by count of reports with usage type 1.
+      USAGE_TYPE1_COUNT = 3;
+
+      // Ranked by count of reports with usage type 2.
+      USAGE_TYPE2_COUNT = 4;
+
+      // Ranked by count of reports with usage type 3.
+      USAGE_TYPE3_COUNT = 5;
+
+      // Ranked by last used timestamp with usage type 1. The timestamps are
+      // compared in seconds.
+      USAGE_TYPE1_LAST_USED_TIMESTAMP = 6;
+
+      // Ranked by last used timestamp with usage type 2. The timestamps are
+      // compared in seconds.
+      USAGE_TYPE2_LAST_USED_TIMESTAMP = 7;
+
+      // Ranked by last used timestamp with usage type 3. The timestamps are
+      // compared in seconds.
+      USAGE_TYPE3_LAST_USED_TIMESTAMP = 8;
     }
   }
   optional RankingStrategy.Code rank_by = 1;
