@@ -34,6 +34,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/usage-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/document-validator.h"
@@ -223,6 +224,24 @@ class DocumentStore {
   libtextclassifier3::StatusOr<DocumentFilterData> GetDocumentFilterData(
       DocumentId document_id) const;
 
+  // Gets the usage scores of a document.
+  //
+  // Returns:
+  //   UsageScores on success
+  //   INVALID_ARGUMENT if document_id is invalid
+  //   INTERNAL_ERROR on I/O errors
+  libtextclassifier3::StatusOr<UsageStore::UsageScores> GetUsageScores(
+      DocumentId document_id) const;
+
+  // Reports usage. The corresponding usage scores of the specified document in
+  // the report will be updated.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the [namesapce + uri] key in the report doesn't exist
+  //   INTERNAL_ERROR on I/O errors.
+  libtextclassifier3::Status ReportUsage(const UsageReport& usage_report);
+
   // Deletes all documents belonging to the given namespace. The documents will
   // be marked as deleted if 'soft_delete' is true, otherwise they will be
   // erased immediately.
@@ -391,6 +410,11 @@ class DocumentStore {
   // DocumentStore. Namespaces may be removed from the mapper during compaction.
   std::unique_ptr<KeyMapper<NamespaceId>> namespace_mapper_;
 
+  // A storage class that caches all usage scores. Usage scores are not
+  // considered as ground truth. Usage scores are associated with document ids
+  // so they need to be updated when document ids change.
+  std::unique_ptr<UsageStore> usage_store_;
+
   // Used internally to indicate whether the class has been initialized. This is
   // to guard against cases where the object has been created, but Initialize
   // fails in the constructor. If we have successfully exited the constructor,
@@ -497,7 +521,7 @@ class DocumentStore {
   //   OK on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status HardDelete(DocumentId document_id,
-                                        uint64_t document_log_offset);
+                                        int64_t document_log_offset);
 
   // Helper method to find a DocumentId that is associated with the given
   // namespace and uri.
@@ -539,6 +563,10 @@ class DocumentStore {
 
   // Helper method to clear the derived data of a document
   libtextclassifier3::Status ClearDerivedData(DocumentId document_id);
+
+  // Sets usage scores for the given document.
+  libtextclassifier3::Status SetUsageScores(
+      DocumentId document_id, const UsageStore::UsageScores& usage_scores);
 };
 
 }  // namespace lib
