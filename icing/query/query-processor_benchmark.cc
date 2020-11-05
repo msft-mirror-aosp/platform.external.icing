@@ -73,10 +73,11 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
   ICING_ASSERT_OK(editor.AddHit(token.c_str()));
 }
 
-std::unique_ptr<Index> CreateIndex(const IcingFilesystem& filesystem,
+std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
+                                   const Filesystem& filesystem,
                                    const std::string& index_dir) {
   Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
-  return Index::Create(options, &filesystem).ValueOrDie();
+  return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
@@ -107,7 +108,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -220,7 +222,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -351,7 +354,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -467,7 +471,8 @@ void BM_QueryHiragana(benchmark::State& state) {
     ICING_LOG(ERROR) << "Failed to create test directories";
   }
 
-  std::unique_ptr<Index> index = CreateIndex(icing_filesystem, index_dir);
+  std::unique_ptr<Index> index =
+      CreateIndex(icing_filesystem, filesystem, index_dir);
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
