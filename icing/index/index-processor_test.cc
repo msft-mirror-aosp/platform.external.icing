@@ -166,9 +166,10 @@ class IndexProcessorTest : public Test {
     prop->set_property_name(std::string(name));
     prop->set_data_type(type);
     prop->set_cardinality(cardinality);
-    prop->mutable_indexing_config()->set_term_match_type(term_match_type);
-    prop->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    prop->mutable_string_indexing_config()->set_term_match_type(
+        term_match_type);
+    prop->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
   }
 
   static void AddNonIndexedProperty(std::string_view name, DataType::Code type,
@@ -210,6 +211,7 @@ class IndexProcessorTest : public Test {
     prop->set_data_type(DataType::DOCUMENT);
     prop->set_cardinality(Cardinality::OPTIONAL);
     prop->set_schema_type(std::string(kNestedType));
+    prop->mutable_document_indexing_config()->set_index_nested_properties(true);
 
     // Add nested type
     type_config = schema.add_types();

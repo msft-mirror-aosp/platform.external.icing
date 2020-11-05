@@ -76,10 +76,10 @@ void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
         IcingStringUtil::StringPrintf("p%d", i));  //  p0 - p9
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
   }
 }
 
