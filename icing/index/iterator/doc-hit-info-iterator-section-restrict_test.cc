@@ -64,10 +64,10 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     property->set_property_name(indexed_property_);
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     // First and only indexed property, so it gets the first id of 0
     indexed_section_id_ = 0;

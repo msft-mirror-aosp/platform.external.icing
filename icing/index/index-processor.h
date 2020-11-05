@@ -69,6 +69,9 @@ class IndexProcessor {
   // Indexing a document *may* trigger an index merge. If a merge fails, then
   // all content in the index will be lost.
   //
+  // If put_document_stats is present, the fields related to indexing will be
+  // populated.
+  //
   // Returns:
   //   INVALID_ARGUMENT if document_id is less than the document_id of a
   //   previously indexed document or tokenization fails.
@@ -77,8 +80,9 @@ class IndexProcessor {
   //       cleared as a result.
   //   NOT_FOUND if there is no definition for the document's schema type.
   //   INTERNAL_ERROR if any other errors occur
-  libtextclassifier3::Status IndexDocument(const DocumentProto& document,
-                                           DocumentId document_id);
+  libtextclassifier3::Status IndexDocument(
+      const DocumentProto& document, DocumentId document_id,
+      NativePutDocumentStats* put_document_stats = nullptr);
 
  private:
   IndexProcessor(const SchemaStore* schema_store,

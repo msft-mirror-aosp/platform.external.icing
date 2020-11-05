@@ -32,10 +32,11 @@ namespace lib {
 
 // Used to match Token(Token::Type type, std::string_view text)
 MATCHER_P2(EqualsToken, type, text, "") {
+  std::string arg_string(arg.text.data(), arg.text.length());
   if (arg.type != type || arg.text != text) {
     *result_listener << IcingStringUtil::StringPrintf(
         "(Expected: type=%d, text=\"%s\". Actual: type=%d, text=\"%s\")", type,
-        &text[0], arg.type, arg.text.data());
+        text, arg.type, arg_string.c_str());
     return false;
   }
   return true;

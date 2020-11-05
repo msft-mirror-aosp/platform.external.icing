@@ -28,6 +28,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
@@ -81,8 +82,11 @@ class DocumentStore {
   // previously initialized with this directory, it will reload the files saved
   // by the last instance.
   //
-  // Does not take any ownership, and all pointers must refer to valid objects
-  // that outlive the one constructed.
+  // If initialize_stats is present, the fields related to DocumentStore will be
+  // populated.
+  //
+  // Does not take any ownership, and all pointers except initialize_stats must
+  // refer to valid objects that outlive the one constructed.
   //
   // TODO(cassiewang): Consider returning a status indicating that derived files
   // were regenerated. This may be helpful in logs.
@@ -93,20 +97,28 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock, const SchemaStore* schema_store);
+      const Clock* clock, const SchemaStore* schema_store,
+      NativeInitializeStats* initialize_stats = nullptr);
 
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
   // empty, then kInvalidDocumentId is returned. This does not filter out
-  // DocumentIds of deleted documents.
-  const DocumentId last_added_document_id() const {
+  // DocumentIds of deleted or expired documents.
+  DocumentId last_added_document_id() const {
     if (document_id_mapper_->num_elements() == 0) {
       return kInvalidDocumentId;
     }
     return document_id_mapper_->num_elements() - 1;
   }
 
+  // Returns the number of documents. The result does not filter out DocumentIds
+  // of deleted or expired documents.
+  int num_documents() const { return document_id_mapper_->num_elements(); }
+
   // Puts the document into document store.
+  //
+  // If put_document_stats is present, the fields related to DocumentStore will
+  // be populated.
   //
   // Returns:
   //   A newly generated document id on success
@@ -114,8 +126,12 @@ class DocumentStore {
   //   NOT_FOUND if the schema_type or a property config of the document doesn't
   //     exist in schema
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentId> Put(const DocumentProto& document);
-  libtextclassifier3::StatusOr<DocumentId> Put(DocumentProto&& document);
+  libtextclassifier3::StatusOr<DocumentId> Put(
+      const DocumentProto& document,
+      NativePutDocumentStats* put_document_stats = nullptr);
+  libtextclassifier3::StatusOr<DocumentId> Put(
+      DocumentProto&& document,
+      NativePutDocumentStats* put_document_stats = nullptr);
 
   // Finds and returns the document identified by the given key (namespace +
   // uri)
@@ -422,7 +438,8 @@ class DocumentStore {
   // worry about this field.
   bool initialized_ = false;
 
-  libtextclassifier3::Status Initialize();
+  libtextclassifier3::Status Initialize(
+      NativeInitializeStats* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
   //

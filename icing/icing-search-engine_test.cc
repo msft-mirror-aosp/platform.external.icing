@@ -41,6 +41,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/random-string.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -161,9 +162,10 @@ SchemaProto CreateMessageSchema() {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   return schema;
 }
@@ -177,16 +179,18 @@ SchemaProto CreateEmailSchema() {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   auto* subj = type->add_properties();
   subj->set_property_name("subject");
   subj->set_data_type(PropertyConfigProto::DataType::STRING);
   subj->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  subj->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  subj->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  subj->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  subj->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   return schema;
 }
@@ -423,10 +427,7 @@ TEST_F(IcingSearchEngineTest,
   body->set_schema_type("Person");
   body->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_document_indexing_config()->set_index_nested_properties(true);
 
   type = schema.add_types();
   type->set_schema_type("Person");
@@ -436,10 +437,7 @@ TEST_F(IcingSearchEngineTest,
   body->set_schema_type("Message");
   body->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_document_indexing_config()->set_index_nested_properties(true);
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -735,7 +733,7 @@ TEST_F(IcingSearchEngineTest, SetSchemaTriggersIndexRestorationAndReturnsOk) {
   SchemaProto schema_with_no_indexed_property = CreateMessageSchema();
   schema_with_no_indexed_property.mutable_types(0)
       ->mutable_properties(0)
-      ->clear_indexing_config();
+      ->clear_string_indexing_config();
 
   EXPECT_THAT(icing.SetSchema(schema_with_no_indexed_property).status(),
               ProtoIsOk());
@@ -1775,10 +1773,10 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   property->set_property_name("subject");
   property->set_data_type(PropertyConfigProto::DataType::STRING);
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property->mutable_indexing_config()->set_term_match_type(
+  property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   // Add an message type
   type = schema.add_types();
   type->set_schema_type("message");
@@ -1786,10 +1784,10 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   property->set_property_name("body");
   property->set_data_type(PropertyConfigProto::DataType::STRING);
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property->mutable_indexing_config()->set_term_match_type(
+  property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   DocumentProto document1 =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -2205,20 +2203,20 @@ TEST_F(IcingSearchEngineTest, SetSchemaShouldWorkAfterOptimization) {
   new_property2->set_property_name("property2");
   new_property2->set_data_type(PropertyConfigProto::DataType::STRING);
   new_property2->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  new_property2->mutable_indexing_config()->set_term_match_type(
+  new_property2->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::PREFIX);
-  new_property2->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  new_property2->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   SchemaProto schema3 = SchemaProto(schema2);
   auto new_property3 = schema3.mutable_types(0)->add_properties();
   new_property3->set_property_name("property3");
   new_property3->set_data_type(PropertyConfigProto::DataType::STRING);
   new_property3->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  new_property3->mutable_indexing_config()->set_term_match_type(
+  new_property3->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::PREFIX);
-  new_property3->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  new_property3->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   {
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -2463,9 +2461,10 @@ TEST_F(IcingSearchEngineTest, SearchIncludesDocumentsBeforeTtl) {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "uri")
@@ -2513,9 +2512,10 @@ TEST_F(IcingSearchEngineTest, SearchDoesntIncludeDocumentsPastTtl) {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "uri")
@@ -2613,10 +2613,10 @@ TEST_F(IcingSearchEngineTest, SearchWorksAfterSchemaTypesCompatiblyModified) {
   property->set_property_name("body");
   property->set_data_type(PropertyConfigProto::DataType::STRING);
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property->mutable_indexing_config()->set_term_match_type(
+  property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::PREFIX);
-  property->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -2869,10 +2869,10 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
     property->set_property_name("body");
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::PREFIX);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     property = type->add_properties();
     property->set_property_name("additional");
@@ -2916,19 +2916,19 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
     property->set_property_name("body");
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::PREFIX);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     property = type->add_properties();
     property->set_property_name("additional");
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::PREFIX);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -3705,9 +3705,10 @@ TEST_F(IcingSearchEngineTest, SetSchemaCanDetectPreviousSchemaWasLost) {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   // Make an incompatible schema, a previously OPTIONAL field is REQUIRED
   SchemaProto incompatible_schema = schema;
@@ -4218,10 +4219,10 @@ TEST_F(IcingSearchEngineTest, Hyphens) {
   prop->set_property_name("foo");
   prop->set_data_type(PropertyConfigProto::DataType::STRING);
   prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  prop->mutable_indexing_config()->set_term_match_type(
+  prop->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  prop->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
   DocumentProto document_one =
@@ -4281,7 +4282,7 @@ TEST_F(IcingSearchEngineTest, RestoreIndex) {
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // 2. Delete the index file to trigger RestoreIndex.
+  // 2. Delete the index file to trigger RestoreIndexIfNeeded.
   std::string idx_subdir = GetIndexDir() + "/idx";
   filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str());
 
@@ -4474,7 +4475,7 @@ TEST_F(IcingSearchEngineTest, IndexingDocMergeFailureResets) {
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // 2. Delete the index file to trigger RestoreIndex.
+  // 2. Delete the index file to trigger RestoreIndexIfNeeded.
   std::string idx_subdir = GetIndexDir() + "/idx";
   filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str());
 
@@ -4520,6 +4521,691 @@ TEST_F(IcingSearchEngineTest, IndexingDocMergeFailureResets) {
     ASSERT_THAT(results.results(), SizeIs(1));
     EXPECT_THAT(results.results(0).document().uri(), Eq("fake_type/2"));
   }
+}
+
+TEST_F(IcingSearchEngineTest, InitializeShouldLogFunctionLatency) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats().latency_ms(),
+              Gt(0));
+}
+
+TEST_F(IcingSearchEngineTest, InitializeShouldLogNumberOfDocuments) {
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/1")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", "message body")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/2")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", "message body")
+                                .Build();
+
+  {
+    // Initialize and put a document.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(
+        initialize_result_proto.native_initialize_stats().num_documents(),
+        Eq(0));
+
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(
+        initialize_result_proto.native_initialize_stats().num_documents(),
+        Eq(1));
+
+    // Put another document.
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(
+        initialize_result_proto.native_initialize_stats().num_documents(),
+        Eq(2));
+  }
+}
+
+TEST_F(IcingSearchEngineTest,
+       InitializeShouldNotLogRecoveryCauseForFirstTimeInitialize) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_recovery_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_data_status(),
+              Eq(NativeInitializeStats::NO_DATA_LOSS));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .index_restoration_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .index_restoration_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .schema_store_recovery_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .schema_store_recovery_latency_ms(),
+              Eq(0));
+}
+
+TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCausePartialDataLoss) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+
+  {
+    // Initialize and put a document.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  {
+    // Append a non-checksummed document. This will mess up the checksum of the
+    // proto log, forcing it to rewind and later return a DATA_LOSS error.
+    const std::string serialized_document = document.SerializeAsString();
+    const std::string document_log_file =
+        absl_ports::StrCat(GetDocumentDir(), "/document_log");
+
+    int64_t file_size = filesystem()->GetFileSize(document_log_file.c_str());
+    filesystem()->PWrite(document_log_file.c_str(), file_size,
+                         serialized_document.data(),
+                         serialized_document.size());
+  }
+
+  {
+    // Document store will rewind to previous checkpoint. The cause should be
+    // DATA_LOSS and the data status should be PARTIAL_LOSS.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(NativeInitializeStats::DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Gt(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_data_status(),
+                Eq(NativeInitializeStats::PARTIAL_LOSS));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineTest,
+       InitializeShouldLogRecoveryCauseCompleteDataLoss) {
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/1")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", kIpsumText)
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/2")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", kIpsumText)
+                                .Build();
+
+  {
+    // Initialize and put a document.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  }
+
+  {
+    // Modify the document log checksum to trigger a complete document log
+    // rewind.
+    const std::string document_log_file =
+        absl_ports::StrCat(GetDocumentDir(), "/document_log");
+
+    FileBackedProtoLog<DocumentWrapper>::Header document_log_header;
+    filesystem()->PRead(document_log_file.c_str(), &document_log_header,
+                        sizeof(FileBackedProtoLog<DocumentWrapper>::Header),
+                        /*offset=*/0);
+    // Set a garbage checksum.
+    document_log_header.log_checksum = 10;
+    document_log_header.header_checksum =
+        document_log_header.CalculateHeaderChecksum();
+    filesystem()->PWrite(document_log_file.c_str(), /*offset=*/0,
+                         &document_log_header,
+                         sizeof(FileBackedProtoLog<DocumentWrapper>::Header));
+  }
+
+  {
+    // Document store will completely rewind. The cause should be DATA_LOSS and
+    // the data status should be COMPLETE_LOSS.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(NativeInitializeStats::DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Gt(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_data_status(),
+                Eq(NativeInitializeStats::COMPLETE_LOSS));
+    // The complete rewind of ground truth causes the mismatch of total
+    // checksum, so index should be restored.
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_cause(),
+                Eq(NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH));
+    // Here we don't check index_restoration_latency_ms because the index
+    // restoration is super fast when document store is emtpy. We won't get a
+    // latency that is greater than 1 ms.
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineTest,
+       InitializeShouldLogRecoveryCauseInconsistentWithGroundTruth) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+  {
+    // Initialize and put a document.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  {
+    // Delete the index file to trigger RestoreIndexIfNeeded.
+    std::string idx_subdir = GetIndexDir() + "/idx";
+    filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str());
+  }
+
+  {
+    // Index is empty but ground truth is not. Index should be restored due to
+    // the inconsistency.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_cause(),
+                Eq(NativeInitializeStats::INCONSISTENT_WITH_GROUND_TRUTH));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_latency_ms(),
+                Gt(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Eq(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_data_status(),
+                Eq(NativeInitializeStats::NO_DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineTest,
+       InitializeShouldLogRecoveryCauseTotalChecksumMismatch) {
+  {
+    // Initialize and index some documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    // We need to index enough documents to make
+    // DocumentStore::UpdateSchemaStore() run longer than 1 ms.
+    for (int i = 0; i < 50; ++i) {
+      DocumentProto document =
+          DocumentBuilder()
+              .SetKey("icing", "fake_type/" + std::to_string(i))
+              .SetSchema("Message")
+              .AddStringProperty("body", "message body")
+              .Build();
+      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    }
+  }
+
+  {
+    // Change the header's checksum value to a random value.
+    uint32_t invalid_checksum = 1;
+    filesystem()->PWrite(GetHeaderFilename().c_str(),
+                         offsetof(IcingSearchEngine::Header, checksum),
+                         &invalid_checksum, sizeof(invalid_checksum));
+  }
+
+  {
+    // Both document store and index should be recovered from checksum mismatch.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_cause(),
+                Eq(NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_latency_ms(),
+                Gt(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Gt(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_data_status(),
+                Eq(NativeInitializeStats::NO_DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseIndexIOError) {
+  {
+    // Initialize and index some documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    // We need to index enough documents to make RestoreIndexIfNeeded() run
+    // longer than 1 ms.
+    for (int i = 0; i < 50; ++i) {
+      DocumentProto document =
+          DocumentBuilder()
+              .SetKey("icing", "fake_type/" + std::to_string(i))
+              .SetSchema("Message")
+              .AddStringProperty("body", "message body")
+              .Build();
+      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    }
+  }
+
+  // lambda to fail OpenForWrite on lite index hit buffer once.
+  bool has_failed_already = false;
+  auto open_write_lambda = [this, &has_failed_already](const char* filename) {
+    std::string lite_index_buffer_file_path =
+        absl_ports::StrCat(GetIndexDir(), "/idx/lite.hb");
+    std::string filename_string(filename);
+    if (!has_failed_already && filename_string == lite_index_buffer_file_path) {
+      has_failed_already = true;
+      return -1;
+    }
+    return this->filesystem()->OpenForWrite(filename);
+  };
+
+  auto mock_icing_filesystem = std::make_unique<IcingMockFilesystem>();
+  // This fails Index::Create() once.
+  ON_CALL(*mock_icing_filesystem, OpenForWrite)
+      .WillByDefault(open_write_lambda);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::move(mock_icing_filesystem),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .index_restoration_cause(),
+              Eq(NativeInitializeStats::IO_ERROR));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .index_restoration_latency_ms(),
+              Gt(0));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_recovery_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_data_status(),
+              Eq(NativeInitializeStats::NO_DATA_LOSS));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .schema_store_recovery_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .schema_store_recovery_latency_ms(),
+              Eq(0));
+}
+
+TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseDocStoreIOError) {
+  {
+    // Initialize and index some documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    // We need to index enough documents to make RestoreIndexIfNeeded() run
+    // longer than 1 ms.
+    for (int i = 0; i < 50; ++i) {
+      DocumentProto document =
+          DocumentBuilder()
+              .SetKey("icing", "fake_type/" + std::to_string(i))
+              .SetSchema("Message")
+              .AddStringProperty("body", "message body")
+              .Build();
+      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    }
+  }
+
+  // lambda to fail Read on document store header once.
+  bool has_failed_already = false;
+  auto read_lambda = [this, &has_failed_already](const char* filename,
+                                                 void* buf, size_t buf_size) {
+    std::string document_store_header_file_path =
+        absl_ports::StrCat(GetDocumentDir(), "/document_store_header");
+    std::string filename_string(filename);
+    if (!has_failed_already &&
+        filename_string == document_store_header_file_path) {
+      has_failed_already = true;
+      return false;
+    }
+    return this->filesystem()->Read(filename, buf, buf_size);
+  };
+
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  // This fails DocumentStore::InitializeDerivedFiles() once.
+  ON_CALL(*mock_filesystem, Read(A<const char*>(), _, _))
+      .WillByDefault(read_lambda);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(NativeInitializeStats::IO_ERROR));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_recovery_latency_ms(),
+              Gt(0));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .document_store_data_status(),
+              Eq(NativeInitializeStats::NO_DATA_LOSS));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .index_restoration_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .index_restoration_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .schema_store_recovery_cause(),
+              Eq(NativeInitializeStats::NONE));
+  EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                  .schema_store_recovery_latency_ms(),
+              Eq(0));
+}
+
+TEST_F(IcingSearchEngineTest,
+       InitializeShouldLogRecoveryCauseSchemaStoreIOError) {
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  }
+
+  {
+    // Delete the schema store header file to trigger an I/O error.
+    std::string schema_store_header_file_path =
+        GetSchemaDir() + "/schema_store_header";
+    filesystem()->DeleteFile(schema_store_header_file_path.c_str());
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(NativeInitializeStats::IO_ERROR));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Gt(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Eq(0));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .document_store_data_status(),
+                Eq(NativeInitializeStats::NO_DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_cause(),
+                Eq(NativeInitializeStats::NONE));
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineTest, InitializeShouldLogNumberOfSchemaTypes) {
+  {
+    // Initialize an empty storage.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    // There should be 0 schema types.
+    EXPECT_THAT(
+        initialize_result_proto.native_initialize_stats().num_schema_types(),
+        Eq(0));
+
+    // Set a schema with one type config.
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    // There should be 1 schema type.
+    EXPECT_THAT(
+        initialize_result_proto.native_initialize_stats().num_schema_types(),
+        Eq(1));
+
+    // Create and set a schema with two type configs: Email and Message.
+    SchemaProto schema = CreateEmailSchema();
+
+    auto type = schema.add_types();
+    type->set_schema_type("Message");
+    auto body = type->add_properties();
+    body->set_property_name("body");
+    body->set_data_type(PropertyConfigProto::DataType::STRING);
+    body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+    body->mutable_string_indexing_config()->set_term_match_type(
+        TermMatchType::PREFIX);
+    body->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
+
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  }
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(
+        initialize_result_proto.native_initialize_stats().num_schema_types(),
+        Eq(2));
+  }
+}
+
+TEST_F(IcingSearchEngineTest, PutDocumentShouldLogFunctionLatency) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(put_result_proto.native_put_document_stats().latency_ms(), Gt(0));
+}
+
+TEST_F(IcingSearchEngineTest, PutDocumentShouldLogDocumentStoreStats) {
+  // Create a large enough document so that document_store_latency_ms can be
+  // longer than 1 ms.
+  std::default_random_engine random;
+  std::string random_string_10000 =
+      RandomString(kAlNumAlphabet, /*len=*/10000, &random);
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", random_string_10000)
+                               .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      put_result_proto.native_put_document_stats().document_store_latency_ms(),
+      Gt(0));
+  EXPECT_THAT(put_result_proto.native_put_document_stats().document_size(),
+              Eq(document.ByteSizeLong()));
+}
+
+TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexingStats) {
+  // Create a large enough document so that index_latency_ms can be longer than
+  // 1 ms.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kIpsumText)
+                               .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(put_result_proto.native_put_document_stats().index_latency_ms(),
+              Gt(0));
+  // No merge should happen.
+  EXPECT_THAT(
+      put_result_proto.native_put_document_stats().index_merge_latency_ms(),
+      Eq(0));
+  // Number of tokens should not exceed.
+  EXPECT_FALSE(put_result_proto.native_put_document_stats()
+                   .tokenization_stats()
+                   .exceeded_max_token_num());
+  // kIpsumText has 137 tokens.
+  EXPECT_THAT(put_result_proto.native_put_document_stats()
+                  .tokenization_stats()
+                  .num_tokens_indexed(),
+              Eq(137));
+}
+
+TEST_F(IcingSearchEngineTest, PutDocumentShouldLogWhetherNumTokensExceeds) {
+  // Create a document with 2 tokens.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
+
+  // Create an icing instance with max_tokens_per_doc = 1.
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_max_tokens_per_doc(1);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutResultProto put_result_proto = icing.Put(document);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  // Number of tokens(2) exceeds the max allowed value(1).
+  EXPECT_TRUE(put_result_proto.native_put_document_stats()
+                  .tokenization_stats()
+                  .exceeded_max_token_num());
+  EXPECT_THAT(put_result_proto.native_put_document_stats()
+                  .tokenization_stats()
+                  .num_tokens_indexed(),
+              Eq(1));
+}
+
+TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexMergeLatency) {
+  // Create 2 large enough documents so that index_merge_latency_ms can be
+  // longer than 1 ms.
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/1")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", kIpsumText)
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/2")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", kIpsumText)
+                                .Build();
+
+  // Create an icing instance with index_merge_size = document1's size.
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_index_merge_size(document1.ByteSizeLong());
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Putting document2 should trigger an index merge.
+  PutResultProto put_result_proto = icing.Put(document2);
+  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      put_result_proto.native_put_document_stats().index_merge_latency_ms(),
+      Gt(0));
 }
 
 }  // namespace

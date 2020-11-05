@@ -37,6 +37,7 @@
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/status-macros.h"
+#include "icing/util/timer.h"
 
 namespace icing {
 namespace lib {
@@ -56,7 +57,10 @@ IndexProcessor::Create(const SchemaStore* schema_store,
 }
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
-    const DocumentProto& document, DocumentId document_id) {
+    const DocumentProto& document, DocumentId document_id,
+    NativePutDocumentStats* put_document_stats) {
+  Timer index_timer;
+
   if (index_->last_added_document_id() != kInvalidDocumentId &&
       document_id <= index_->last_added_document_id()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
@@ -80,6 +84,12 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
                              tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
         if (++num_tokens > options_.max_tokens_per_document) {
+          if (put_document_stats != nullptr) {
+            put_document_stats->mutable_tokenization_stats()
+                ->set_exceeded_max_token_num(true);
+            put_document_stats->mutable_tokenization_stats()
+                ->set_num_tokens_indexed(options_.max_tokens_per_document);
+          }
           switch (options_.token_limit_behavior) {
             case Options::TokenLimitBehavior::kReturnError:
               return absl_ports::ResourceExhaustedError(
@@ -106,10 +116,20 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
     }
   }
 
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_index_latency_ms(
+        index_timer.GetElapsedMilliseconds());
+    put_document_stats->mutable_tokenization_stats()->set_num_tokens_indexed(
+        num_tokens);
+  }
+
   // Merge if necessary.
   if (overall_status.ok() && index_->WantsMerge()) {
     ICING_VLOG(1) << "Merging the index at docid " << document_id << ".";
+
+    Timer merge_timer;
     libtextclassifier3::Status merge_status = index_->Merge();
+
     if (!merge_status.ok()) {
       ICING_LOG(ERROR) << "Index merging failed. Clearing index.";
       if (!index_->Reset().ok()) {
@@ -122,6 +142,11 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
             "Forced to reset index after merge failure. Merge failure=%d:%s",
             merge_status.error_code(), merge_status.error_message().c_str()));
       }
+    }
+
+    if (put_document_stats != nullptr) {
+      put_document_stats->set_index_merge_latency_ms(
+          merge_timer.GetElapsedMilliseconds());
     }
   }
 

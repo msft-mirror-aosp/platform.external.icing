@@ -70,10 +70,10 @@ void AddIndexedProperty(SchemaTypeConfigProto* type_config, std::string name) {
   property_config->set_property_name(name);
   property_config->set_data_type(PropertyConfigProto::DataType::STRING);
   property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property_config->mutable_indexing_config()->set_term_match_type(
+  property_config->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property_config->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property_config->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 }
 
 void AddUnindexedProperty(SchemaTypeConfigProto* type_config,
