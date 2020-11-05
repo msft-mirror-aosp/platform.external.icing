@@ -66,11 +66,15 @@ class IndexProcessor {
   // max_tokens_per_document will be added to the index. All tokens of length
   // exceeding max_token_length will be shortened to max_token_length.
   //
+  // Indexing a document *may* trigger an index merge. If a merge fails, then
+  // all content in the index will be lost.
+  //
   // Returns:
   //   INVALID_ARGUMENT if document_id is less than the document_id of a
-  //   previously indexed
-  //                    document or tokenization fails.
+  //   previously indexed document or tokenization fails.
   //   RESOURCE_EXHAUSTED if the index is full and can't add anymore content.
+  //   DATA_LOSS if an attempt to merge the index fails and both indices are
+  //       cleared as a result.
   //   NOT_FOUND if there is no definition for the document's schema type.
   //   INTERNAL_ERROR if any other errors occur
   libtextclassifier3::Status IndexDocument(const DocumentProto& document,

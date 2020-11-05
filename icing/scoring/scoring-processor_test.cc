@@ -35,9 +35,8 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
-using ::testing::Test;
 
-class ScoringProcessorTest : public Test {
+class ScoringProcessorTest : public testing::Test {
  protected:
   ScoringProcessorTest()
       : test_dir_(GetTestTempDir() + "/icing"),
@@ -118,6 +117,17 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
                                       scores.at(i));
   }
   return std::pair(doc_hit_infos, scored_document_hits);
+}
+
+UsageReport CreateUsageReport(std::string name_space, std::string uri,
+                              int64 timestamp_ms,
+                              UsageReport::UsageType usage_type) {
+  UsageReport usage_report;
+  usage_report.set_document_namespace(name_space);
+  usage_report.set_document_uri(uri);
+  usage_report.set_usage_timestamp_ms(timestamp_ms);
+  usage_report.set_usage_type(usage_type);
+  return usage_report;
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullPointerShouldFail) {
@@ -287,6 +297,126 @@ TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit2),
                           EqualsScoredDocumentHit(scored_document_hit3),
                           EqualsScoredDocumentHit(scored_document_hit1)));
+}
+
+TEST_F(ScoringProcessorTest, ShouldScoreByUsageCount) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             document_store()->Put(document3));
+
+  // Report usage for doc1 once and doc2 twice.
+  UsageReport usage_report_doc1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  UsageReport usage_report_doc2 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/2", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc1));
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc2));
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc2));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfo doc_hit_info3(document_id3);
+  ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
+                                         /*score=*/1);
+  ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
+                                         /*score=*/2);
+  ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
+                                         /*score=*/0);
+
+  // Creates a dummy DocHitInfoIterator with 3 results
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT);
+
+  // Creates a ScoringProcessor which ranks in descending order
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit1),
+                          EqualsScoredDocumentHit(scored_document_hit2),
+                          EqualsScoredDocumentHit(scored_document_hit3)));
+}
+
+TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             document_store()->Put(document3));
+
+  // Report usage for doc1 and doc2.
+  UsageReport usage_report_doc1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE1);
+  UsageReport usage_report_doc2 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/2", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc1));
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc2));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfo doc_hit_info3(document_id3);
+  ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
+                                         /*score=*/1);
+  ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
+                                         /*score=*/5);
+  ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
+                                         /*score=*/0);
+
+  // Creates a dummy DocHitInfoIterator with 3 results
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(
+      ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP);
+
+  // Creates a ScoringProcessor which ranks in descending order
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit1),
+                          EqualsScoredDocumentHit(scored_document_hit2),
+                          EqualsScoredDocumentHit(scored_document_hit3)));
 }
 
 TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {

@@ -59,6 +59,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -148,30 +149,31 @@ std::string MakeSchemaDirectoryPath(const std::string& base_dir) {
 
 void TransformStatus(const libtextclassifier3::Status& internal_status,
                      StatusProto* status_proto) {
+  StatusProto::Code code;
   switch (internal_status.CanonicalCode()) {
     case libtextclassifier3::StatusCode::OK:
-      status_proto->set_code(StatusProto::OK);
+      code = StatusProto::OK;
       break;
     case libtextclassifier3::StatusCode::DATA_LOSS:
-      status_proto->set_code(StatusProto::WARNING_DATA_LOSS);
+      code = StatusProto::WARNING_DATA_LOSS;
       break;
     case libtextclassifier3::StatusCode::INVALID_ARGUMENT:
-      status_proto->set_code(StatusProto::INVALID_ARGUMENT);
+      code = StatusProto::INVALID_ARGUMENT;
       break;
     case libtextclassifier3::StatusCode::NOT_FOUND:
-      status_proto->set_code(StatusProto::NOT_FOUND);
+      code = StatusProto::NOT_FOUND;
       break;
     case libtextclassifier3::StatusCode::FAILED_PRECONDITION:
-      status_proto->set_code(StatusProto::FAILED_PRECONDITION);
+      code = StatusProto::FAILED_PRECONDITION;
       break;
     case libtextclassifier3::StatusCode::ABORTED:
-      status_proto->set_code(StatusProto::ABORTED);
+      code = StatusProto::ABORTED;
       break;
     case libtextclassifier3::StatusCode::INTERNAL:
       // TODO(b/147699081): Cleanup our internal use of INTERNAL since it
       // doesn't match with what it *should* indicate as described in
       // go/icing-library-apis.
-      status_proto->set_code(StatusProto::INTERNAL);
+      code = StatusProto::INTERNAL;
       break;
     case libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED:
       // TODO(b/147699081): Note that we don't detect all cases of OUT_OF_SPACE
@@ -179,17 +181,35 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
       // internally to indicate other resources are exhausted (e.g.
       // DocHitInfos) - although none of these are exposed through the API.
       // Consider separating the two cases out more clearly.
-      status_proto->set_code(StatusProto::OUT_OF_SPACE);
+      code = StatusProto::OUT_OF_SPACE;
       break;
-    default:
+    case libtextclassifier3::StatusCode::ALREADY_EXISTS:
+      code = StatusProto::ALREADY_EXISTS;
+      break;
+    case libtextclassifier3::StatusCode::CANCELLED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNKNOWN:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::DEADLINE_EXCEEDED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::PERMISSION_DENIED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::OUT_OF_RANGE:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNIMPLEMENTED:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNAVAILABLE:
+      [[fallthrough]];
+    case libtextclassifier3::StatusCode::UNAUTHENTICATED:
       // Other internal status codes aren't supported externally yet. If it
       // should be supported, add another switch-case above.
-      ICING_LOG(FATAL) << IcingStringUtil::StringPrintf(
+      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
           "Internal status code %d not supported in the external API",
           internal_status.error_code());
+      code = StatusProto::UNKNOWN;
       break;
   }
-
+  status_proto->set_code(code);
   status_proto->set_message(internal_status.error_message());
 }
 
@@ -198,15 +218,17 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
 IcingSearchEngine::IcingSearchEngine(const IcingSearchEngineOptions& options,
                                      std::unique_ptr<const JniCache> jni_cache)
     : IcingSearchEngine(options, std::make_unique<Filesystem>(),
+                        std::make_unique<IcingFilesystem>(),
                         std::make_unique<Clock>(), std::move(jni_cache)) {}
 
 IcingSearchEngine::IcingSearchEngine(
     IcingSearchEngineOptions options,
-    std::unique_ptr<const Filesystem> filesystem, std::unique_ptr<Clock> clock,
-    std::unique_ptr<const JniCache> jni_cache)
+    std::unique_ptr<const Filesystem> filesystem,
+    std::unique_ptr<const IcingFilesystem> icing_filesystem,
+    std::unique_ptr<Clock> clock, std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
       filesystem_(std::move(filesystem)),
-      icing_filesystem_(std::make_unique<IcingFilesystem>()),
+      icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
       result_state_manager_(performance_configuration_.max_num_hits_per_query,
                             performance_configuration_.max_num_cache_results),
@@ -259,14 +281,14 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
         << "IcingSearchEngine in inconsistent state, regenerating all "
            "derived data";
     status = RegenerateDerivedFiles();
-    if (!status.ok()) {
-      TransformStatus(status, result_status);
-      return result_proto;
-    }
+  } else {
+    status = RestoreIndex();
   }
 
-  initialized_ = true;
-  result_status->set_code(StatusProto::OK);
+  if (status.ok() || absl_ports::IsDataLoss(status)) {
+    initialized_ = true;
+  }
+  TransformStatus(status, result_status);
   return result_proto;
 }
 
@@ -340,7 +362,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex() {
   }
   Index::Options index_options(index_dir, options_.index_merge_size());
 
-  auto index_or = Index::Create(index_options, icing_filesystem_.get());
+  auto index_or =
+      Index::Create(index_options, filesystem_.get(), icing_filesystem_.get());
   if (!index_or.ok()) {
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -349,8 +372,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex() {
     }
 
     // Try recreating it from scratch and re-indexing everything.
-    ICING_ASSIGN_OR_RETURN(
-        index_, Index::Create(index_options, icing_filesystem_.get()));
+    ICING_ASSIGN_OR_RETURN(index_,
+                           Index::Create(index_options, filesystem_.get(),
+                                         icing_filesystem_.get()));
     ICING_RETURN_IF_ERROR(RestoreIndex());
   } else {
     // Index was created fine.
@@ -358,7 +382,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex() {
   }
 
   return libtextclassifier3::Status::OK;
-}  // namespace lib
+}
 
 libtextclassifier3::Status IcingSearchEngine::CheckConsistency() {
   if (!HeaderExists()) {
@@ -587,12 +611,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
       std::move(index_processor_or).ValueOrDie();
 
   auto status = index_processor->IndexDocument(document, document_id);
-  if (!status.ok()) {
-    TransformStatus(status, result_status);
-    return result_proto;
-  }
-
-  result_status->set_code(StatusProto::OK);
+  TransformStatus(status, result_status);
   return result_proto;
 }
 
@@ -616,6 +635,19 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
 
   result_status->set_code(StatusProto::OK);
   *result_proto.mutable_document() = std::move(document_or).ValueOrDie();
+  return result_proto;
+}
+
+ReportUsageResultProto IcingSearchEngine::ReportUsage(
+    const UsageReport& usage_report) {
+  ReportUsageResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::unique_lock l(&mutex_);
+
+  libtextclassifier3::Status status =
+      document_store_->ReportUsage(usage_report);
+  TransformStatus(status, result_status);
   return result_proto;
 }
 
@@ -681,12 +713,14 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
   // that can support error logging.
   libtextclassifier3::Status status =
       document_store_->DeleteByNamespace(name_space);
-  TransformStatus(status, result_status);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete Namespace: " << name_space;
+    TransformStatus(status, result_status);
     return delete_result;
   }
+
+  result_status->set_code(StatusProto::OK);
   return delete_result;
 }
 
@@ -707,13 +741,80 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
   // that can support error logging.
   libtextclassifier3::Status status =
       document_store_->DeleteBySchemaType(schema_type);
-  TransformStatus(status, result_status);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete SchemaType: " << schema_type;
+    TransformStatus(status, result_status);
     return delete_result;
   }
+
+  result_status->set_code(StatusProto::OK);
   return delete_result;
+}
+
+DeleteResultProto IcingSearchEngine::DeleteByQuery(
+    const SearchSpecProto& search_spec) {
+  ICING_VLOG(1) << "Deleting documents for query " << search_spec.query()
+                << " from doc store";
+
+  DeleteResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+
+  libtextclassifier3::Status status =
+      ValidateSearchSpec(search_spec, performance_configuration_);
+  if (!status.ok()) {
+    TransformStatus(status, result_status);
+    return result_proto;
+  }
+
+  // Gets unordered results from query processor
+  auto query_processor_or = QueryProcessor::Create(
+      index_.get(), language_segmenter_.get(), normalizer_.get(),
+      document_store_.get(), schema_store_.get(), clock_.get());
+  if (!query_processor_or.ok()) {
+    TransformStatus(query_processor_or.status(), result_status);
+    return result_proto;
+  }
+  std::unique_ptr<QueryProcessor> query_processor =
+      std::move(query_processor_or).ValueOrDie();
+
+  auto query_results_or = query_processor->ParseSearch(search_spec);
+  if (!query_results_or.ok()) {
+    TransformStatus(query_results_or.status(), result_status);
+    return result_proto;
+  }
+  QueryProcessor::QueryResults query_results =
+      std::move(query_results_or).ValueOrDie();
+
+  ICING_LOG(ERROR) << "Deleting the docs that matched the query.";
+  bool found_results = false;
+  while (query_results.root_iterator->Advance().ok()) {
+    ICING_LOG(ERROR)
+        << "Deleting doc "
+        << query_results.root_iterator->doc_hit_info().document_id();
+    found_results = true;
+    status = document_store_->Delete(
+        query_results.root_iterator->doc_hit_info().document_id());
+    if (!status.ok()) {
+      TransformStatus(status, result_status);
+      return result_proto;
+    }
+  }
+  if (found_results) {
+    result_proto.mutable_status()->set_code(StatusProto::OK);
+  } else {
+    result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
+    result_proto.mutable_status()->set_message(
+        "No documents matched the query to delete by!");
+  }
+  return result_proto;
 }
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk() {
@@ -886,11 +987,8 @@ libtextclassifier3::StatusOr<Crc32> IcingSearchEngine::ComputeChecksum() {
   }
   Crc32 document_store_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 index_checksum = index_->ComputeChecksum();
-
   total_checksum.Append(std::to_string(document_store_checksum.Get()));
   total_checksum.Append(std::to_string(schema_store_checksum.Get()));
-  total_checksum.Append(std::to_string(index_checksum.Get()));
 
   return total_checksum;
 }
@@ -1093,8 +1191,8 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   }
 
   result_status->set_code(StatusProto::OK);
-  if (result_proto.results_size() > 0) {
-    result_proto.set_next_page_token(next_page_token);
+  if (page_result_state.next_page_token != kInvalidNextPageToken) {
+    result_proto.set_next_page_token(page_result_state.next_page_token);
   }
   return result_proto;
 }
@@ -1147,6 +1245,9 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
     // Ensures that current directory is still present.
     if (!filesystem_->CreateDirectoryRecursively(
             current_document_dir.c_str())) {
+      // Can't even create the old directory. Mark as uninitialized and return
+      // INTERNAL.
+      initialized_ = false;
       return absl_ports::InternalError(
           "Failed to create file directory for document store");
     }
@@ -1159,6 +1260,9 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
     if (!document_store_or.ok()) {
+      // Unable to create DocumentStore from the old file. Mark as uninitialized
+      // and return INTERNAL.
+      initialized_ = false;
       ICING_LOG(ERROR) << "Failed to create document store instance";
       return absl_ports::Annotate(
           absl_ports::InternalError("Failed to create document store instance"),
@@ -1173,13 +1277,18 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
   }
 
   // Recreates the doc store instance
-  ICING_ASSIGN_OR_RETURN(
-      document_store_,
+  auto document_store_or =
       DocumentStore::Create(filesystem_.get(), current_document_dir,
-                            clock_.get(), schema_store_.get()),
-      absl_ports::InternalError(
-          "Document store has been optimized, but a valid document store "
-          "instance can't be created"));
+                            clock_.get(), schema_store_.get());
+  if (!document_store_or.ok()) {
+    // Unable to create DocumentStore from the new file. Mark as uninitialized
+    // and return INTERNAL.
+    initialized_ = false;
+    return absl_ports::InternalError(
+        "Document store has been optimized, but a valid document store "
+        "instance can't be created");
+  }
+  document_store_ = std::move(document_store_or).ValueOrDie();
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(
@@ -1194,11 +1303,27 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
 libtextclassifier3::Status IcingSearchEngine::RestoreIndex() {
   DocumentId last_stored_document_id =
       document_store_->last_added_document_id();
+  DocumentId last_indexed_document_id = index_->last_added_document_id();
 
   if (last_stored_document_id == kInvalidDocumentId) {
-    // Nothing to index
+    // Nothing to index. Make sure the index is also empty.
+    if (last_indexed_document_id != kInvalidDocumentId) {
+      ICING_RETURN_IF_ERROR(index_->Reset());
+    }
     return libtextclassifier3::Status::OK;
   }
+
+  // TruncateTo ensures that the index does not hold any data that is not
+  // present in the ground truth. If the document store lost some documents,
+  // TruncateTo will ensure that the index does not contain any hits from those
+  // lost documents. If the index does not contain any hits for documents with
+  // document id greater than last_stored_document_id, then TruncateTo will have
+  // no effect.
+  ICING_RETURN_IF_ERROR(index_->TruncateTo(last_stored_document_id));
+  DocumentId first_document_to_reindex =
+      (last_indexed_document_id != kInvalidDocumentId)
+          ? index_->last_added_document_id() + 1
+          : 0;
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<IndexProcessor> index_processor,
@@ -1206,8 +1331,12 @@ libtextclassifier3::Status IcingSearchEngine::RestoreIndex() {
                              normalizer_.get(), index_.get(),
                              CreateIndexProcessorOptions(options_)));
 
-  for (DocumentId document_id = kMinDocumentId;
-       document_id <= last_stored_document_id; document_id++) {
+  ICING_VLOG(1) << "Restoring index by replaying documents from document id "
+                << first_document_to_reindex << " to document id "
+                << last_stored_document_id;
+  libtextclassifier3::Status overall_status;
+  for (DocumentId document_id = first_document_to_reindex;
+       document_id <= last_stored_document_id; ++document_id) {
     libtextclassifier3::StatusOr<DocumentProto> document_or =
         document_store_->Get(document_id);
 
@@ -1222,11 +1351,20 @@ libtextclassifier3::Status IcingSearchEngine::RestoreIndex() {
       }
     }
 
-    ICING_RETURN_IF_ERROR(
-        index_processor->IndexDocument(document_or.ValueOrDie(), document_id));
+    libtextclassifier3::Status status =
+        index_processor->IndexDocument(document_or.ValueOrDie(), document_id);
+    if (!status.ok()) {
+      if (!absl_ports::IsDataLoss(status)) {
+        // Real error. Stop recovering and pass it up.
+        return status;
+      }
+      // Just a data loss. Keep trying to add the remaining docs, but report the
+      // data loss when we're done.
+      overall_status = status;
+    }
   }
 
-  return libtextclassifier3::Status::OK;
+  return overall_status;
 }
 
 libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {

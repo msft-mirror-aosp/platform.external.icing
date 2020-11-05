@@ -37,6 +37,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -128,12 +129,18 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   ALREADY_EXISTS if 'new_schema' contains multiple definitions of the same
+  //     type or contains a type that has multiple properties with the same
+  //     name.
   //   INVALID_ARGUMENT if 'new_schema' is invalid
   //   FAILED_PRECONDITION if 'new_schema' is incompatible, or IcingSearchEngine
   //     has not been initialized yet.
   //   INTERNAL_ERROR if Icing failed to store the new schema or upgrade
   //     existing data based on the new schema. Using Icing beyond this error is
   //     undefined and may cause crashes.
+  //   DATA_LOSS_ERROR if 'new_schema' requires the index to be rebuilt and an
+  //     IO error leads to some documents being excluded from the index. These
+  //     documents will still be retrievable via Get, but won't match queries.
   //
   // TODO(cassiewang) Figure out, document (and maybe even enforce) the best
   // way ordering of calls between Initialize() and SetSchema(), both when
@@ -184,6 +191,9 @@ class IcingSearchEngine {
   //     has not been initialized yet.
   //   NOT_FOUND if there is no SchemaTypeConfig in the SchemaProto that matches
   //     the document's schema
+  //   DATA_LOSS if an IO error occurs while merging document into the index and
+  //     the index is lost. These documents will still be retrievable via Get,
+  //     but won't match queries.
   //   INTERNAL_ERROR on IO error
   PutResultProto Put(DocumentProto&& document) ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -204,6 +214,15 @@ class IcingSearchEngine {
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
   GetResultProto Get(std::string_view name_space, std::string_view uri);
+
+  // Reports usage. The corresponding usage scores of the specified document in
+  // the report will be updated.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the [namesapce + uri] key in the report doesn't exist
+  //   INTERNAL_ERROR on I/O errors.
+  ReportUsageResultProto ReportUsage(const UsageReport& usage_report);
 
   // Returns all the namespaces that have at least one valid document in it.
   //
@@ -256,10 +275,25 @@ class IcingSearchEngine {
   DeleteBySchemaTypeResultProto DeleteBySchemaType(std::string_view schema_type)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Deletes all Documents that match the query specified in search_spec. Delete
+  // changes are automatically applied to disk, callers can also call
+  // PersistToDisk() to flush changes immediately.
+  //
+  // NOTE: Space is not reclaimed for deleted documents until Optimize() is
+  // called.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the query doesn't match any documents
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on IO error
+  DeleteResultProto DeleteByQuery(const SearchSpecProto& search_spec)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Retrieves, scores, ranks, and returns the results according to the specs.
   // Results can be empty. If there're multiple pages of results,
-  // SearchResultProto.next_page_token will be populated and that can be used to
-  // fetch more pages via GetNextPage() method. Clients should call
+  // SearchResultProto.next_page_token will be set to a non-zero token and can
+  // be used to fetch more pages via GetNextPage() method. Clients should call
   // InvalidateNextPageToken() after they get the pages they need to release
   // result cache in memory. Please refer to each proto file for spec
   // definitions.
@@ -276,7 +310,12 @@ class IcingSearchEngine {
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Fetches the next page of results of a previously executed query. Results
-  // can be empty if next-page token is invalid or all pages have been returned.
+  // can be empty if next-page token is invalid. Invalid next page tokens are
+  // tokens that are either zero or were previously passed to
+  // InvalidateNextPageToken. If there are pages of results remaining after the
+  // one retrieved by this call, SearchResultProto.next_page_token will be
+  // set to a non-zero token and can be used to fetch more pages via
+  // GetNextPage() method.
   //
   // Returns a SearchResultProto with status:
   //   OK with results on success
@@ -354,6 +393,7 @@ class IcingSearchEngine {
  protected:
   IcingSearchEngine(IcingSearchEngineOptions options,
                     std::unique_ptr<const Filesystem> filesystem,
+                    std::unique_ptr<const IcingFilesystem> icing_filesystem,
                     std::unique_ptr<Clock> clock,
                     std::unique_ptr<const JniCache> jni_cache = nullptr);
 
