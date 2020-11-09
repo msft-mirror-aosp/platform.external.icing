@@ -12,31 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_RANDOM_STRING_H_
-#define ICING_TESTING_RANDOM_STRING_H_
+#ifndef ICING_UTIL_TIMER_H_
+#define ICING_UTIL_TIMER_H_
 
-#include <random>
-#include <string>
+#include <cstdint>
+
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
 
-inline constexpr std::string_view kAlNumAlphabet =
-    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+// A util class to calculate the elapsed time.
+class Timer {
+ public:
+  // Timer starts.
+  Timer() : start_timestamp_milliseconds_(GetSteadyTimeMilliseconds()) {}
 
-template <typename Gen>
-std::string RandomString(const std::string_view alphabet, size_t len,
-                         Gen* gen) {
-  std::uniform_int_distribution<size_t> uniform(0u, alphabet.size() - 1);
-  std::string result(len, '\0');
-  std::generate(
-      std::begin(result), std::end(result),
-      [&gen, &alphabet, &uniform]() { return alphabet[uniform(*gen)]; });
+  // Returns the elapsed time from when timer started.
+  int64_t GetElapsedMilliseconds() {
+    return GetSteadyTimeMilliseconds() - start_timestamp_milliseconds_;
+  }
 
-  return result;
-}
+ private:
+  int64_t start_timestamp_milliseconds_;
+};
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_RANDOM_STRING_H_
+#endif  // ICING_UTIL_TIMER_H_

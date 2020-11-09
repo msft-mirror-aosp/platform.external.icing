@@ -24,6 +24,7 @@
 #include <unordered_set>
 
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/index/main/index-block.h"
 #include "icing/index/main/posting-list-free.h"
@@ -235,6 +236,27 @@ bool FlashIndexStorage::PersistToDisk() {
 
   // Then sync.
   return filesystem_->DataSync(block_fd_.get());
+}
+
+libtextclassifier3::Status FlashIndexStorage::Reset() {
+  // Reset in-memory members to default values.
+  num_blocks_ = 0;
+  header_block_.reset();
+  block_fd_.reset();
+  in_memory_freelists_.clear();
+
+  // Delete the underlying file.
+  if (!filesystem_->DeleteFile(index_filename_.c_str())) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Unable to delete file: ", index_filename_));
+  }
+
+  // Re-initialize.
+  if (!Init()) {
+    return absl_ports::InternalError(
+        "Unable to successfully read header block!");
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<PostingListHolder>
@@ -481,6 +503,51 @@ void FlashIndexStorage::FlushInMemoryFreeList() {
   }
 }
 
+void FlashIndexStorage::GetDebugInfo(int verbosity, std::string* out) const {
+  // Dump and check integrity of the index block free lists.
+  out->append("Free lists:\n");
+  for (size_t i = 0; i < header_block_->header()->num_index_block_infos; ++i) {
+    // TODO(tjbarron) Port over StringAppendFormat to migrate off of this legacy
+    // util.
+    IcingStringUtil::SStringAppendF(
+        out, 100, "Posting list bytes %u: ",
+        header_block_->header()->index_block_infos[i].posting_list_bytes);
+    uint32_t block_index =
+        header_block_->header()->index_block_infos[i].free_list_block_index;
+    int count = 0;
+    while (block_index != kInvalidBlockIndex) {
+      auto block_or = GetIndexBlock(block_index);
+      IcingStringUtil::SStringAppendF(out, 100, "%u ", block_index);
+      ++count;
+
+      if (block_or.ok()) {
+        block_index = block_or.ValueOrDie().next_block_index();
+      } else {
+        block_index = kInvalidBlockIndex;
+      }
+    }
+    IcingStringUtil::SStringAppendF(out, 100, "(count=%d)\n", count);
+  }
+
+  out->append("In memory free lists:\n");
+  if (in_memory_freelists_.size() ==
+      header_block_->header()->num_index_block_infos) {
+    for (size_t i = 0; i < in_memory_freelists_.size(); ++i) {
+      IcingStringUtil::SStringAppendF(
+          out, 100, "Posting list bytes %u %s\n",
+          header_block_->header()->index_block_infos[i].posting_list_bytes,
+          in_memory_freelists_.at(i).DebugString().c_str());
+    }
+  } else {
+    IcingStringUtil::SStringAppendF(
+        out, 100,
+        "In memory free list size %zu doesn't match index block infos size "
+        "%d\n",
+        in_memory_freelists_.size(),
+        header_block_->header()->num_index_block_infos);
+  }
+}
+
 // FreeList.
 void FlashIndexStorage::FreeList::Push(PostingListIdentifier id) {
   if (free_list_.size() >= kMaxSize) {
@@ -490,10 +557,13 @@ void FlashIndexStorage::FreeList::Push(PostingListIdentifier id) {
         << ") has reached max size. Dropping freed posting list [block_index:"
         << id.block_index()
         << ", posting_list_index:" << id.posting_list_index() << "]";
+    ++num_dropped_free_list_entries_;
     return;
   }
 
   free_list_.push_back(id);
+  free_list_size_high_watermark_ = std::max(
+      free_list_size_high_watermark_, static_cast<int>(free_list_.size()));
 }
 
 libtextclassifier3::StatusOr<PostingListIdentifier>
@@ -505,6 +575,12 @@ FlashIndexStorage::FreeList::TryPop() {
   PostingListIdentifier id = free_list_.back();
   free_list_.pop_back();
   return id;
+}
+
+std::string FlashIndexStorage::FreeList::DebugString() const {
+  return IcingStringUtil::StringPrintf(
+      "size %zu max %d dropped %d", free_list_.size(),
+      free_list_size_high_watermark_, num_dropped_free_list_entries_);
 }
 
 }  // namespace lib

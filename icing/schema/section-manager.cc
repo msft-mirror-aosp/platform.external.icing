@@ -117,35 +117,8 @@ libtextclassifier3::Status AssignSections(
               return p1->property_name() < p2->property_name();
             });
   for (const auto& property_config : sorted_properties) {
-    if (property_config.indexing_config().term_match_type() ==
-        TermMatchType::UNKNOWN) {
-      // No need to create section for current property
-      continue;
-    }
-
-    // Creates section metadata according to data type
-    if (property_config.data_type() == PropertyConfigProto::DataType::STRING ||
-        property_config.data_type() == PropertyConfigProto::DataType::INT64 ||
-        property_config.data_type() == PropertyConfigProto::DataType::DOUBLE) {
-      // Validates next section id, makes sure that section id is the same as
-      // the list index so that we could find any section metadata by id in O(1)
-      // later.
-      auto new_section_id = static_cast<SectionId>(metadata_list->size());
-      if (!IsSectionIdValid(new_section_id)) {
-        // Max number of sections reached
-        return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-            "Too many properties to be indexed, max number of properties "
-            "allowed: %d",
-            kMaxSectionId - kMinSectionId + 1));
-      }
-      // Creates section metadata from property config
-      metadata_list->emplace_back(
-          new_section_id, property_config.indexing_config().term_match_type(),
-          property_config.indexing_config().tokenizer_type(),
-          ConcatenatePath(current_section_path,
-                          property_config.property_name()));
-    } else if (property_config.data_type() ==
-               PropertyConfigProto::DataType::DOCUMENT) {
+    if (property_config.data_type() ==
+        PropertyConfigProto::DataType::DOCUMENT) {
       // Tries to find sections recursively
       auto nested_type_config_iter =
           type_config_map.find(property_config.schema_type());
@@ -161,7 +134,30 @@ libtextclassifier3::Status AssignSections(
                                          property_config.property_name()),
                          type_config_map, visited_states, metadata_list));
     }
-    // NOTE: we don't create sections for BOOLEAN and BYTES data types.
+
+    if (property_config.indexing_config().term_match_type() ==
+        TermMatchType::UNKNOWN) {
+      // No need to create section for current property
+      continue;
+    }
+
+    // Creates section metadata according to data type
+    // Validates next section id, makes sure that section id is the same as
+    // the list index so that we could find any section metadata by id in O(1)
+    // later.
+    auto new_section_id = static_cast<SectionId>(metadata_list->size());
+    if (!IsSectionIdValid(new_section_id)) {
+      // Max number of sections reached
+      return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
+          "Too many properties to be indexed, max number of properties "
+          "allowed: %d",
+          kMaxSectionId - kMinSectionId + 1));
+    }
+    // Creates section metadata from property config
+    metadata_list->emplace_back(
+        new_section_id, property_config.indexing_config().term_match_type(),
+        property_config.indexing_config().tokenizer_type(),
+        ConcatenatePath(current_section_path, property_config.property_name()));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -197,8 +193,7 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
 }
 
 // Helper function to get string content from a property. Repeated values are
-// joined into one string. We only care about STRING, INT64, and DOUBLE data
-// types.
+// joined into one string. We only care about the STRING data type.
 std::vector<std::string> GetPropertyContent(const PropertyProto& property) {
   std::vector<std::string> values;
   if (!property.string_values().empty()) {
