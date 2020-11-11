@@ -111,19 +111,19 @@ class DocumentStoreTest : public ::testing::Test {
     subject->set_property_name("subject");
     subject->set_data_type(PropertyConfigProto::DataType::STRING);
     subject->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    subject->mutable_indexing_config()->set_term_match_type(
+    subject->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    subject->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    subject->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     auto body = type_config->add_properties();
     body->set_property_name("body");
     body->set_data_type(PropertyConfigProto::DataType::STRING);
     body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    body->mutable_indexing_config()->set_term_match_type(
+    body->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    body->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    body->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_));
@@ -1941,10 +1941,10 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   property_config->set_property_name("subject");
   property_config->set_data_type(PropertyConfigProto::DataType::STRING);
   property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property_config->mutable_indexing_config()->set_term_match_type(
+  property_config->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property_config->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property_config->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2168,10 +2168,10 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   property_config->set_property_name("subject");
   property_config->set_data_type(PropertyConfigProto::DataType::STRING);
   property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property_config->mutable_indexing_config()->set_term_match_type(
+  property_config->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property_config->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property_config->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,

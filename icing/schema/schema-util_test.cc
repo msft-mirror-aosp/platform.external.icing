@@ -486,17 +486,17 @@ TEST_F(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
   schema_delta.index_incompatible = true;
 
   // New schema gained a new indexed property.
-  old_property->mutable_indexing_config()->set_term_match_type(
+  old_property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::UNKNOWN);
-  new_property->mutable_indexing_config()->set_term_match_type(
+  new_property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
               Eq(schema_delta));
 
   // New schema lost an indexed property.
-  old_property->mutable_indexing_config()->set_term_match_type(
+  old_property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  new_property->mutable_indexing_config()->set_term_match_type(
+  new_property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::UNKNOWN);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
               Eq(schema_delta));
@@ -527,7 +527,7 @@ TEST_F(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
   new_property->set_property_name("NewIndexedProperty");
   new_property->set_data_type(PropertyConfigProto::DataType::STRING);
   new_property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  new_property->mutable_indexing_config()->set_term_match_type(
+  new_property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
 
   SchemaUtil::SchemaDelta schema_delta;
@@ -583,15 +583,15 @@ TEST_F(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
   prop->set_property_name("Foo");
   prop->set_data_type(PropertyConfigProto::DataType::STRING);
   prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  prop->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   // Error if we don't set a term match type
   EXPECT_THAT(SchemaUtil::Validate(schema),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we set a term match type
-  prop->mutable_indexing_config()->set_term_match_type(
+  prop->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
   EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
 }
@@ -605,7 +605,7 @@ TEST_F(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
   prop->set_property_name("Foo");
   prop->set_data_type(PropertyConfigProto::DataType::STRING);
   prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  prop->mutable_indexing_config()->set_term_match_type(
+  prop->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
 
   // Error if we don't set a tokenizer type
@@ -613,188 +613,9 @@ TEST_F(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Passes once we set a tokenizer type
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  prop->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
-}
-
-TEST_F(SchemaUtilTest, ValidateIntPropertyShouldntHaveIndexingConfig) {
-  SchemaProto schema;
-  auto* type = schema.add_types();
-  type->set_schema_type("MyType");
-
-  auto* prop = type->add_properties();
-  prop->set_property_name("IntProperty");
-  prop->set_data_type(PropertyConfigProto::DataType::INT64);
-  prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  // Passes if it doesn't have indexing config
-  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
-
-  // Fails if we try to set an indexing_config.term_match_type
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing_config.tokenizer_type
-  prop->mutable_indexing_config()->clear_term_match_type();
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing config
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(SchemaUtilTest, ValidateDoublePropertyShouldntHaveIndexingConfig) {
-  SchemaProto schema;
-  auto* type = schema.add_types();
-  type->set_schema_type("MyType");
-
-  auto* prop = type->add_properties();
-  prop->set_property_name("DoubleProperty");
-  prop->set_data_type(PropertyConfigProto::DataType::DOUBLE);
-  prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  // Passes if it doesn't have indexing config
-  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
-
-  // Fails if we try to set an indexing_config.term_match_type
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing_config.tokenizer_type
-  prop->mutable_indexing_config()->clear_term_match_type();
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing config
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(SchemaUtilTest, ValidateBooleanPropertyShouldntHaveIndexingConfig) {
-  SchemaProto schema;
-  auto* type = schema.add_types();
-  type->set_schema_type("MyType");
-
-  auto* prop = type->add_properties();
-  prop->set_property_name("BooleanProperty");
-  prop->set_data_type(PropertyConfigProto::DataType::BOOLEAN);
-  prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  // Passes if it doesn't have indexing config
-  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
-
-  // Fails if we try to set an indexing_config.term_match_type
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing_config.tokenizer_type
-  prop->mutable_indexing_config()->clear_term_match_type();
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing config
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(SchemaUtilTest, ValidateBytesPropertyShouldntHaveIndexingConfig) {
-  SchemaProto schema;
-  auto* type = schema.add_types();
-  type->set_schema_type("MyType");
-
-  auto* prop = type->add_properties();
-  prop->set_property_name("BytesProperty");
-  prop->set_data_type(PropertyConfigProto::DataType::BYTES);
-  prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  // Passes if it doesn't have indexing config
-  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
-
-  // Fails if we try to set an indexing_config.term_match_type
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing_config.tokenizer_type
-  prop->mutable_indexing_config()->clear_term_match_type();
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing config
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(SchemaUtilTest, ValidateDocumentPropertyShouldntHaveIndexingConfig) {
-  SchemaProto schema;
-  auto* type = schema.add_types();
-  type->set_schema_type("OtherType");
-
-  type = schema.add_types();
-  type->set_schema_type("MyType");
-
-  auto* prop = type->add_properties();
-  prop->set_property_name("SubType");
-  prop->set_schema_type("OtherType");
-  prop->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  prop->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  // Passes if it doesn't have indexing config
-  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
-
-  // Fails if we try to set an indexing_config.term_match_type
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing_config.tokenizer_type
-  prop->mutable_indexing_config()->clear_term_match_type();
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-
-  // Fails if we try to set an indexing config
-  prop->mutable_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  prop->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
-  EXPECT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace

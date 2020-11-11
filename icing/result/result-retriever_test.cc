@@ -77,18 +77,18 @@ class ResultRetrieverTest : public testing::Test {
     prop_config->set_property_name("subject");
     prop_config->set_data_type(PropertyConfigProto::DataType::STRING);
     prop_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    prop_config->mutable_indexing_config()->set_term_match_type(
+    prop_config->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::PREFIX);
-    prop_config->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    prop_config->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
     prop_config = type_config->add_properties();
     prop_config->set_property_name("body");
     prop_config->set_data_type(PropertyConfigProto::DataType::STRING);
     prop_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    prop_config->mutable_indexing_config()->set_term_match_type(
+    prop_config->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    prop_config->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    prop_config->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
   }
 

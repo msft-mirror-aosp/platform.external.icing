@@ -44,9 +44,10 @@ SchemaProto SetTypes() {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   return schema;
 }
 

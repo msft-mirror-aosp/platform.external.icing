@@ -119,24 +119,33 @@ libtextclassifier3::Status AssignSections(
   for (const auto& property_config : sorted_properties) {
     if (property_config.data_type() ==
         PropertyConfigProto::DataType::DOCUMENT) {
-      // Tries to find sections recursively
       auto nested_type_config_iter =
           type_config_map.find(property_config.schema_type());
       if (nested_type_config_iter == type_config_map.end()) {
+        // This should never happen because our schema should already be
+        // validated by this point.
         return absl_ports::NotFoundError(absl_ports::StrCat(
-            "type config not found: ", property_config.schema_type()));
+            "Type config not found: ", property_config.schema_type()));
       }
-      const SchemaTypeConfigProto& nested_type_config =
-          nested_type_config_iter->second;
-      ICING_RETURN_IF_ERROR(
-          AssignSections(nested_type_config,
-                         ConcatenatePath(current_section_path,
-                                         property_config.property_name()),
-                         type_config_map, visited_states, metadata_list));
+
+      if (property_config.document_indexing_config()
+              .index_nested_properties()) {
+        // Assign any indexed sections recursively
+        const SchemaTypeConfigProto& nested_type_config =
+            nested_type_config_iter->second;
+        ICING_RETURN_IF_ERROR(
+            AssignSections(nested_type_config,
+                           ConcatenatePath(current_section_path,
+                                           property_config.property_name()),
+                           type_config_map, visited_states, metadata_list));
+      }
     }
 
-    if (property_config.indexing_config().term_match_type() ==
-        TermMatchType::UNKNOWN) {
+    // Only index strings currently.
+    if (property_config.has_data_type() !=
+            PropertyConfigProto::DataType::STRING ||
+        property_config.string_indexing_config().term_match_type() ==
+            TermMatchType::UNKNOWN) {
       // No need to create section for current property
       continue;
     }
@@ -155,8 +164,9 @@ libtextclassifier3::Status AssignSections(
     }
     // Creates section metadata from property config
     metadata_list->emplace_back(
-        new_section_id, property_config.indexing_config().term_match_type(),
-        property_config.indexing_config().tokenizer_type(),
+        new_section_id,
+        property_config.string_indexing_config().term_match_type(),
+        property_config.string_indexing_config().tokenizer_type(),
         ConcatenatePath(current_section_path, property_config.property_name()));
   }
   return libtextclassifier3::Status::OK;
@@ -199,16 +209,6 @@ std::vector<std::string> GetPropertyContent(const PropertyProto& property) {
   if (!property.string_values().empty()) {
     std::copy(property.string_values().begin(), property.string_values().end(),
               std::back_inserter(values));
-  } else if (!property.int64_values().empty()) {
-    std::transform(
-        property.int64_values().begin(), property.int64_values().end(),
-        std::back_inserter(values),
-        [](int64_t i) { return IcingStringUtil::StringPrintf("%" PRId64, i); });
-  } else {
-    std::transform(
-        property.double_values().begin(), property.double_values().end(),
-        std::back_inserter(values),
-        [](double d) { return IcingStringUtil::StringPrintf("%f", d); });
   }
   return values;
 }
@@ -264,9 +264,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
     // Property name not found, it could be one of the following 2 cases:
     // 1. The property is optional and it's not in the document
     // 2. The property name is invalid
-    return absl_ports::NotFoundError(
-        absl_ports::StrCat("Section path ", section_path,
-                           " not found in type config ", document.schema()));
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "Section path '", section_path, "' not found in document."));
   }
 
   if (separator_position == std::string::npos) {
@@ -275,9 +274,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
     if (content.empty()) {
       // The content of property is explicitly set to empty, we'll treat it as
       // NOT_FOUND because the index doesn't care about empty strings.
-      return absl_ports::NotFoundError(
-          absl_ports::StrCat("Section path ", section_path,
-                             " not found in type config ", document.schema()));
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Section path '", section_path, "' content was empty"));
     }
     return content;
   }

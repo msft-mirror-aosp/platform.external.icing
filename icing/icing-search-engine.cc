@@ -35,6 +35,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/reset.pb.h"
@@ -59,6 +60,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include "icing/util/timer.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -150,6 +152,10 @@ std::string MakeSchemaDirectoryPath(const std::string& base_dir) {
 void TransformStatus(const libtextclassifier3::Status& internal_status,
                      StatusProto* status_proto) {
   StatusProto::Code code;
+  if (!internal_status.ok()) {
+    ICING_LOG(WARNING) << "Error: " << internal_status.error_code()
+                       << ", Message: " << internal_status.error_message();
+  }
   switch (internal_status.CanonicalCode()) {
     case libtextclassifier3::StatusCode::OK:
       code = StatusProto::OK;
@@ -257,45 +263,101 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
   ICING_VLOG(1) << "Initializing IcingSearchEngine in dir: "
                 << options_.base_dir();
 
+  // Measure the latency of the initialization process.
+  Timer initialize_timer;
+
   InitializeResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
+  NativeInitializeStats* initialize_stats =
+      result_proto.mutable_native_initialize_stats();
   if (initialized_) {
     // Already initialized.
     result_status->set_code(StatusProto::OK);
+    initialize_stats->set_latency_ms(initialize_timer.GetElapsedMilliseconds());
+    initialize_stats->set_num_documents(document_store_->num_documents());
     return result_proto;
   }
 
   // Releases result / query cache if any
   result_state_manager_.InvalidateAllResultStates();
 
-  libtextclassifier3::Status status = InitializeMembers();
+  libtextclassifier3::Status status = InitializeMembers(initialize_stats);
   if (!status.ok()) {
     TransformStatus(status, result_status);
+    initialize_stats->set_latency_ms(initialize_timer.GetElapsedMilliseconds());
     return result_proto;
   }
 
   // Even if each subcomponent initialized fine independently, we need to
   // check if they're consistent with each other.
   if (!CheckConsistency().ok()) {
-    ICING_VLOG(1)
-        << "IcingSearchEngine in inconsistent state, regenerating all "
-           "derived data";
-    status = RegenerateDerivedFiles();
+    // The total checksum doesn't match the stored value, it could be one of the
+    // following cases:
+    // 1. Icing is initialized the first time in this directory.
+    // 2. Non-checksumed changes have been made to some files.
+    if (index_->last_added_document_id() == kInvalidDocumentId &&
+        document_store_->last_added_document_id() == kInvalidDocumentId &&
+        absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
+      // First time initialize. Not recovering but creating all the files.
+      // We need to explicitly clear the recovery-related fields because some
+      // sub-components may not be able to tell if the storage is being
+      // initialized the first time or has lost some files. Sub-components may
+      // already have set these fields in earlier steps.
+      *initialize_stats = NativeInitializeStats();
+      status = RegenerateDerivedFiles();
+    } else {
+      ICING_VLOG(1)
+          << "IcingSearchEngine in inconsistent state, regenerating all "
+             "derived data";
+      // Total checksum mismatch may not be the root cause of document store
+      // recovery. Preserve the root cause that was set by the document store.
+      bool should_log_document_store_recovery_cause =
+          initialize_stats->document_store_recovery_cause() ==
+          NativeInitializeStats::NONE;
+      if (should_log_document_store_recovery_cause) {
+        initialize_stats->set_document_store_recovery_cause(
+            NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH);
+      }
+      initialize_stats->set_index_restoration_cause(
+          NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH);
+      status = RegenerateDerivedFiles(initialize_stats,
+                                      should_log_document_store_recovery_cause);
+    }
   } else {
-    status = RestoreIndex();
+    DocumentId last_stored_document_id =
+        document_store_->last_added_document_id();
+    DocumentId last_indexed_document_id = index_->last_added_document_id();
+    if (last_stored_document_id != last_indexed_document_id) {
+      if (last_stored_document_id == kInvalidDocumentId) {
+        // Document store is empty but index is not. Reset the index.
+        status = index_->Reset();
+      } else {
+        // Index is inconsistent with the document store, we need to restore the
+        // index.
+        initialize_stats->set_index_restoration_cause(
+            NativeInitializeStats::INCONSISTENT_WITH_GROUND_TRUTH);
+        Timer index_restore_timer;
+        status = RestoreIndexIfNeeded();
+        initialize_stats->set_index_restoration_latency_ms(
+            index_restore_timer.GetElapsedMilliseconds());
+      }
+    }
   }
 
   if (status.ok() || absl_ports::IsDataLoss(status)) {
     initialized_ = true;
   }
   TransformStatus(status, result_status);
+  initialize_stats->set_latency_ms(initialize_timer.GetElapsedMilliseconds());
   return result_proto;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InitializeMembers() {
+libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
+    NativeInitializeStats* initialize_stats) {
+  ICING_RETURN_ERROR_IF_NULL(initialize_stats);
   ICING_RETURN_IF_ERROR(InitializeOptions());
-  ICING_RETURN_IF_ERROR(InitializeSchemaStore());
-  ICING_RETURN_IF_ERROR(InitializeDocumentStore());
+  ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
+  ICING_RETURN_IF_ERROR(InitializeDocumentStore(initialize_stats));
 
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
@@ -306,7 +368,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers() {
   TC3_ASSIGN_OR_RETURN(normalizer_,
                        normalizer_factory::Create(options_.max_token_length()));
 
-  ICING_RETURN_IF_ERROR(InitializeIndex());
+  ICING_RETURN_IF_ERROR(InitializeIndex(initialize_stats));
 
   return libtextclassifier3::Status::OK;
 }
@@ -323,7 +385,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeOptions() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore() {
+libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
+    NativeInitializeStats* initialize_stats) {
+  ICING_RETURN_ERROR_IF_NULL(initialize_stats);
+
   const std::string schema_store_dir =
       MakeSchemaDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
@@ -332,12 +397,16 @@ libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore() {
         absl_ports::StrCat("Could not create directory: ", schema_store_dir));
   }
   ICING_ASSIGN_OR_RETURN(
-      schema_store_, SchemaStore::Create(filesystem_.get(), schema_store_dir));
+      schema_store_, SchemaStore::Create(filesystem_.get(), schema_store_dir,
+                                         initialize_stats));
 
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore() {
+libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
+    NativeInitializeStats* initialize_stats) {
+  ICING_RETURN_ERROR_IF_NULL(initialize_stats);
+
   const std::string document_dir =
       MakeDocumentDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
@@ -348,12 +417,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore() {
   ICING_ASSIGN_OR_RETURN(
       document_store_,
       DocumentStore::Create(filesystem_.get(), document_dir, clock_.get(),
-                            schema_store_.get()));
+                            schema_store_.get(), initialize_stats));
 
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InitializeIndex() {
+libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
+    NativeInitializeStats* initialize_stats) {
+  ICING_RETURN_ERROR_IF_NULL(initialize_stats);
+
   const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
   if (!filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -371,11 +443,18 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex() {
           absl_ports::StrCat("Could not recreate directory: ", index_dir));
     }
 
+    initialize_stats->set_index_restoration_cause(
+        NativeInitializeStats::IO_ERROR);
+
     // Try recreating it from scratch and re-indexing everything.
     ICING_ASSIGN_OR_RETURN(index_,
                            Index::Create(index_options, filesystem_.get(),
                                          icing_filesystem_.get()));
-    ICING_RETURN_IF_ERROR(RestoreIndex());
+
+    Timer restore_timer;
+    ICING_RETURN_IF_ERROR(RestoreIndexIfNeeded());
+    initialize_stats->set_index_restoration_latency_ms(
+        restore_timer.GetElapsedMilliseconds());
   } else {
     // Index was created fine.
     index_ = std::move(index_or).ValueOrDie();
@@ -414,11 +493,25 @@ libtextclassifier3::Status IcingSearchEngine::CheckConsistency() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingSearchEngine::RegenerateDerivedFiles() {
+libtextclassifier3::Status IcingSearchEngine::RegenerateDerivedFiles(
+    NativeInitializeStats* initialize_stats, bool log_document_store_stats) {
+  // Measure the latency of the data recovery. The cause of the recovery should
+  // be logged by the caller.
+  Timer timer;
   ICING_RETURN_IF_ERROR(
       document_store_->UpdateSchemaStore(schema_store_.get()));
+  if (initialize_stats != nullptr && log_document_store_stats) {
+    initialize_stats->set_document_store_recovery_latency_ms(
+        timer.GetElapsedMilliseconds());
+  }
+  // Restart timer.
+  timer = Timer();
   ICING_RETURN_IF_ERROR(index_->Reset());
-  ICING_RETURN_IF_ERROR(RestoreIndex());
+  ICING_RETURN_IF_ERROR(RestoreIndexIfNeeded());
+  if (initialize_stats != nullptr) {
+    initialize_stats->set_index_restoration_latency_ms(
+        timer.GetElapsedMilliseconds());
+  }
 
   const std::string header_file =
       MakeHeaderFilename(options_.base_dir().c_str());
@@ -513,7 +606,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         return result_proto;
       }
 
-      status = RestoreIndex();
+      status = RestoreIndexIfNeeded();
       if (!status.ok()) {
         TransformStatus(status, result_status);
         return result_proto;
@@ -580,8 +673,12 @@ PutResultProto IcingSearchEngine::Put(const DocumentProto& document) {
 PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   ICING_VLOG(1) << "Writing document to document store";
 
+  Timer put_timer;
+
   PutResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
+  NativePutDocumentStats* put_document_stats =
+      result_proto.mutable_native_put_document_stats();
 
   // Lock must be acquired before validation because the DocumentStore uses
   // the schema file to validate, and the schema could be changed in
@@ -590,12 +687,14 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
     return result_proto;
   }
 
-  auto document_id_or = document_store_->Put(document);
+  auto document_id_or = document_store_->Put(document, put_document_stats);
   if (!document_id_or.ok()) {
     TransformStatus(document_id_or.status(), result_status);
+    put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
     return result_proto;
   }
   DocumentId document_id = document_id_or.ValueOrDie();
@@ -605,13 +704,17 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
       index_.get(), CreateIndexProcessorOptions(options_));
   if (!index_processor_or.ok()) {
     TransformStatus(index_processor_or.status(), result_status);
+    put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
     return result_proto;
   }
   std::unique_ptr<IndexProcessor> index_processor =
       std::move(index_processor_or).ValueOrDie();
 
-  auto status = index_processor->IndexDocument(document, document_id);
+  auto status =
+      index_processor->IndexDocument(document, document_id, put_document_stats);
+
   TransformStatus(status, result_status);
+  put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
   return result_proto;
 }
 
@@ -889,7 +992,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     return result_proto;
   }
 
-  libtextclassifier3::Status index_restoration_status = RestoreIndex();
+  libtextclassifier3::Status index_restoration_status = RestoreIndexIfNeeded();
   if (!index_restoration_status.ok()) {
     status = absl_ports::Annotate(
         absl_ports::InternalError(
@@ -1300,17 +1403,19 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingSearchEngine::RestoreIndex() {
+libtextclassifier3::Status IcingSearchEngine::RestoreIndexIfNeeded() {
   DocumentId last_stored_document_id =
       document_store_->last_added_document_id();
   DocumentId last_indexed_document_id = index_->last_added_document_id();
 
-  if (last_stored_document_id == kInvalidDocumentId) {
-    // Nothing to index. Make sure the index is also empty.
-    if (last_indexed_document_id != kInvalidDocumentId) {
-      ICING_RETURN_IF_ERROR(index_->Reset());
-    }
+  if (last_stored_document_id == last_indexed_document_id) {
+    // No need to recover.
     return libtextclassifier3::Status::OK;
+  }
+
+  if (last_stored_document_id == kInvalidDocumentId) {
+    // Document store is empty but index is not. Reset the index.
+    return index_->Reset();
   }
 
   // TruncateTo ensures that the index does not hold any data that is not
@@ -1323,7 +1428,7 @@ libtextclassifier3::Status IcingSearchEngine::RestoreIndex() {
   DocumentId first_document_to_reindex =
       (last_indexed_document_id != kInvalidDocumentId)
           ? index_->last_added_document_id() + 1
-          : 0;
+          : kMinDocumentId;
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<IndexProcessor> index_processor,
