@@ -78,6 +78,23 @@
 namespace icing {
 namespace lib {
 
+namespace {
+
+bool IsEmptyBuffer(const char* buffer, int size) {
+  return std::all_of(buffer, buffer + size,
+                     [](const char byte) { return byte == 0; });
+}
+
+// Helper function to get stored proto size from the metadata.
+// Metadata format: 8 bits magic + 24 bits size
+int GetProtoSize(int metadata) { return metadata & 0x00FFFFFF; }
+
+// Helper function to get stored proto magic from the metadata.
+// Metadata format: 8 bits magic + 24 bits size
+uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
+
+}  // namespace
+
 template <typename ProtoT>
 class FileBackedProtoLog {
  public:
@@ -206,9 +223,18 @@ class FileBackedProtoLog {
   //
   // Returns:
   //   A proto on success
+  //   NOT_FOUND if the proto at the given offset has been erased
   //   OUT_OF_RANGE_ERROR if file_offset exceeds file size
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<ProtoT> ReadProto(int64_t file_offset) const;
+
+  // Erases the data of a proto located at file_offset from the file.
+  //
+  // Returns:
+  //   OK on success
+  //   OUT_OF_RANGE_ERROR if file_offset exceeds file size
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status EraseProto(int64_t file_offset);
 
   // Calculates and returns the disk usage in bytes. Rounds up to the nearest
   // block size.
@@ -239,7 +265,7 @@ class FileBackedProtoLog {
     Iterator(const Filesystem& filesystem, const std::string& file_path,
              int64_t initial_offset);
 
-    // Advances to the position of next proto.
+    // Advances to the position of next proto whether it has been erased or not.
     //
     // Returns:
     //   OK on success
@@ -716,10 +742,15 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
       int metadata, ReadProtoMetadata(&mmapped_file, file_offset, file_size));
 
   // Copy out however many bytes it says the proto is
-  int stored_size = metadata & 0x00FFFFFF;
+  int stored_size = GetProtoSize(metadata);
 
   ICING_RETURN_IF_ERROR(
       mmapped_file.Remap(file_offset + sizeof(metadata), stored_size));
+
+  if (IsEmptyBuffer(mmapped_file.region(), mmapped_file.region_size())) {
+    return absl_ports::NotFoundError("The proto data has been erased.");
+  }
+
   google::protobuf::io::ArrayInputStream proto_stream(
       mmapped_file.mutable_region(), stored_size);
 
@@ -733,6 +764,62 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   }
 
   return proto;
+}
+
+template <typename ProtoT>
+libtextclassifier3::Status FileBackedProtoLog<ProtoT>::EraseProto(
+    int64_t file_offset) {
+  int64_t file_size = filesystem_->GetFileSize(fd_.get());
+  if (file_offset >= file_size) {
+    // file_size points to the next byte to write at, so subtract one to get the
+    // inclusive, actual size of file.
+    return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
+        "Trying to erase data at a location, %lld, "
+        "out of range of the file size, %lld",
+        static_cast<long long>(file_offset),
+        static_cast<long long>(file_size - 1)));
+  }
+
+  MemoryMappedFile mmapped_file(
+      *filesystem_, file_path_,
+      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
+
+  // Read out the metadata
+  ICING_ASSIGN_OR_RETURN(
+      int metadata, ReadProtoMetadata(&mmapped_file, file_offset, file_size));
+
+  ICING_RETURN_IF_ERROR(mmapped_file.Remap(file_offset + sizeof(metadata),
+                                           GetProtoSize(metadata)));
+
+  // We need to update the crc checksum if the erased area is before the rewind
+  // position.
+  if (file_offset + sizeof(metadata) < header_->rewind_offset) {
+    // We need to calculate [original string xor 0s].
+    // The xored string is the same as the original string because 0 xor 0 = 0,
+    // 1 xor 0 = 1.
+    const std::string_view xored_str(mmapped_file.region(),
+                                     mmapped_file.region_size());
+
+    Crc32 crc(header_->log_checksum);
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t new_crc,
+        crc.UpdateWithXor(
+            xored_str,
+            /*full_data_size=*/header_->rewind_offset - sizeof(Header),
+            /*position=*/file_offset + sizeof(metadata) - sizeof(Header)));
+
+    header_->log_checksum = new_crc;
+    header_->header_checksum = header_->CalculateHeaderChecksum();
+
+    if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
+                             sizeof(Header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to update header to: ", file_path_));
+    }
+  }
+
+  memset(mmapped_file.mutable_region(), '\0', mmapped_file.region_size());
+  return libtextclassifier3::Status::OK;
 }
 
 template <typename ProtoT>
@@ -781,8 +868,7 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::Iterator::Advance() {
     ICING_ASSIGN_OR_RETURN(
         int metadata,
         ReadProtoMetadata(&mmapped_file_, current_offset_, file_size_));
-    int proto_size = metadata & 0x00FFFFFF;
-    current_offset_ += sizeof(metadata) + proto_size;
+    current_offset_ += sizeof(metadata) + GetProtoSize(metadata);
   }
 
   if (current_offset_ < file_size_) {
@@ -829,7 +915,7 @@ libtextclassifier3::StatusOr<int> FileBackedProtoLog<ProtoT>::ReadProtoMetadata(
   ICING_RETURN_IF_ERROR(mmapped_file->Remap(file_offset, metadata_size));
   memcpy(&metadata, mmapped_file->region(), metadata_size);
   // Checks magic number
-  uint8_t stored_k_proto_magic = metadata >> 24;
+  uint8_t stored_k_proto_magic = GetProtoMagic(metadata);
   if (stored_k_proto_magic != kProtoMagic) {
     return absl_ports::InternalError(IcingStringUtil::StringPrintf(
         "Failed to read kProtoMagic, expected %d, actual %d", kProtoMagic,
@@ -842,7 +928,7 @@ template <typename ProtoT>
 libtextclassifier3::Status FileBackedProtoLog<ProtoT>::PersistToDisk() {
   int64_t file_size = filesystem_->GetFileSize(file_path_.c_str());
   if (file_size == header_->rewind_offset) {
-    // No changes made, don't need to update the checksum.
+    // No new protos appended, don't need to update the checksum.
     return libtextclassifier3::Status::OK;
   }
 

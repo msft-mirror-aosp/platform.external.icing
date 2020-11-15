@@ -31,65 +31,78 @@ namespace lib {
 
 class IcingMockFilesystem : public IcingFilesystem {
  public:
-  MOCK_CONST_METHOD1(DeleteFile, bool(const char *file_name));
+  MOCK_METHOD(bool, DeleteFile, (const char *file_name), (const, override));
 
-  MOCK_CONST_METHOD1(DeleteDirectory, bool(const char *dir_name));
+  MOCK_METHOD(bool, DeleteDirectory, (const char *dir_name), (const, override));
 
-  MOCK_CONST_METHOD1(DeleteDirectoryRecursively, bool(const char *dir_name));
+  MOCK_METHOD(bool, DeleteDirectoryRecursively, (const char *dir_name),
+              (const, override));
 
-  MOCK_CONST_METHOD1(FileExists, bool(const char *file_name));
+  MOCK_METHOD(bool, FileExists, (const char *file_name), (const, override));
 
-  MOCK_CONST_METHOD1(DirectoryExists, bool(const char *dir_name));
+  MOCK_METHOD(bool, DirectoryExists, (const char *dir_name), (const, override));
 
-  MOCK_CONST_METHOD1(GetBasenameIndex, int(const char *file_name));
+  MOCK_METHOD(int, GetBasenameIndex, (const char *file_name),
+              (const, override));
 
-  MOCK_CONST_METHOD1(GetBasename, std::string(const char *file_name));
+  MOCK_METHOD(std::string, GetBasename, (const char *file_name),
+              (const, override));
 
-  MOCK_CONST_METHOD1(GetDirname, std::string(const char *file_name));
+  MOCK_METHOD(std::string, GetDirname, (const char *file_name),
+              (const, override));
 
-  MOCK_CONST_METHOD2(ListDirectory, bool(const char *dir_name,
-                                         std::vector<std::string> *entries));
+  MOCK_METHOD(bool, ListDirectory,
+              (const char *dir_name, std::vector<std::string> *entries),
+              (const, override));
 
-  MOCK_CONST_METHOD2(GetMatchingFiles,
-                     bool(const char *glob, std::vector<std::string> *matches));
+  MOCK_METHOD(bool, GetMatchingFiles,
+              (const char *glob, std::vector<std::string> *matches),
+              (const, override));
 
-  MOCK_CONST_METHOD1(OpenForWrite, int(const char *file_name));
+  MOCK_METHOD(int, OpenForWrite, (const char *file_name), (const, override));
 
-  MOCK_CONST_METHOD1(OpenForAppend, int(const char *file_name));
+  MOCK_METHOD(int, OpenForAppend, (const char *file_name), (const, override));
 
-  MOCK_CONST_METHOD1(OpenForRead, int(const char *file_name));
+  MOCK_METHOD(int, OpenForRead, (const char *file_name), (const, override));
 
-  MOCK_CONST_METHOD1(GetFileSize, uint64_t(int fd));
+  MOCK_METHOD(uint64_t, GetFileSize, (int fd), (const, override));
 
-  MOCK_CONST_METHOD1(GetFileSize, uint64_t(const char *filename));
+  MOCK_METHOD(uint64_t, GetFileSize, (const char *filename), (const, override));
 
-  MOCK_CONST_METHOD2(Truncate, bool(int fd, uint64_t new_size));
+  MOCK_METHOD(bool, Truncate, (int fd, uint64_t new_size), (const, override));
 
-  MOCK_CONST_METHOD2(Truncate, bool(const char *filename, uint64_t new_size));
+  MOCK_METHOD(bool, Truncate, (const char *filename, uint64_t new_size),
+              (const, override));
 
-  MOCK_CONST_METHOD2(Grow, bool(int fd, uint64_t new_size));
+  MOCK_METHOD(bool, Grow, (int fd, uint64_t new_size), (const, override));
 
-  MOCK_CONST_METHOD3(Write, bool(int fd, const void *data, size_t data_size));
-  MOCK_CONST_METHOD4(PWrite, bool(int fd, off_t offset, const void *data,
-                                  size_t data_size));
+  MOCK_METHOD(bool, Write, (int fd, const void *data, size_t data_size),
+              (const, override));
+  MOCK_METHOD(bool, PWrite,
+              (int fd, off_t offset, const void *data, size_t data_size),
+              (const, override));
 
-  MOCK_CONST_METHOD1(DataSync, bool(int fd));
+  MOCK_METHOD(bool, DataSync, (int fd), (const, override));
 
-  MOCK_CONST_METHOD2(RenameFile,
-                     bool(const char *old_name, const char *new_name));
+  MOCK_METHOD(bool, RenameFile, (const char *old_name, const char *new_name),
+              (const, override));
 
-  MOCK_CONST_METHOD2(SwapFiles, bool(const char *one, const char *two));
+  MOCK_METHOD(bool, SwapFiles, (const char *one, const char *two),
+              (const, override));
 
-  MOCK_CONST_METHOD1(CreateDirectory, bool(const char *dir_name));
+  MOCK_METHOD(bool, CreateDirectory, (const char *dir_name), (const, override));
 
-  MOCK_CONST_METHOD1(CreateDirectoryRecursively, bool(const char *dir_name));
+  MOCK_METHOD(bool, CreateDirectoryRecursively, (const char *dir_name),
+              (const, override));
 
-  MOCK_CONST_METHOD2(CopyFile, bool(const char *src, const char *dst));
+  MOCK_METHOD(bool, CopyFile, (const char *src, const char *dst),
+              (const, override));
 
-  MOCK_CONST_METHOD4(ComputeChecksum, bool(int fd, uint32_t *checksum,
-                                           uint64_t offset, uint64_t length));
+  MOCK_METHOD(bool, ComputeChecksum,
+              (int fd, uint32_t *checksum, uint64_t offset, uint64_t length),
+              (const, override));
 
-  MOCK_CONST_METHOD1(GetDiskUsage, uint64_t(const char *path));
+  MOCK_METHOD(uint64_t, GetDiskUsage, (const char *path), (const, override));
 };
 
 }  // namespace lib

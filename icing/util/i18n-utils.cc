@@ -99,16 +99,17 @@ void SafeTruncateUtf8(std::string* str, int truncate_to_length) {
     return;
   }
 
-  while (truncate_to_length > 0) {
-    if (IsLeadUtf8Byte(str->at(truncate_to_length))) {
-      str->resize(truncate_to_length);
-      return;
-    }
-    truncate_to_length--;
-  }
+  str->resize(SafeTruncateUtf8Length(str->c_str(), truncate_to_length));
+}
 
-  // Truncates to an empty string
-  str->resize(0);
+int SafeTruncateUtf8Length(const char* str, int desired_length) {
+  while (desired_length > 0) {
+    if (IsLeadUtf8Byte(str[desired_length])) {
+      break;
+    }
+    --desired_length;
+  }
+  return desired_length;
 }
 
 bool IsAscii(char c) { return U8_IS_SINGLE((uint8_t)c); }
