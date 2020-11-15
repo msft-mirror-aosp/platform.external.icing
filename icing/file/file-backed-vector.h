@@ -187,7 +187,7 @@ class FileBackedVector {
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if len < 0 or >= num_elements()
-  libtextclassifier3::Status TruncateTo(int32_t len);
+  libtextclassifier3::Status TruncateTo(int32_t new_num_elements);
 
   // Flushes content to underlying file.
   //

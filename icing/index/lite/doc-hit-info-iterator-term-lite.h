@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_H_
-#define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_H_
+#ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
+#define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
 
 #include <cstdint>
 #include <vector>
@@ -28,11 +28,12 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorTerm : public DocHitInfoIterator {
+class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
  public:
-  explicit DocHitInfoIteratorTerm(const TermIdCodec* term_id_codec,
-                                  LiteIndex* lite_index, const std::string term,
-                                  SectionIdMask section_restrict_mask)
+  explicit DocHitInfoIteratorTermLite(const TermIdCodec* term_id_codec,
+                                      LiteIndex* lite_index,
+                                      const std::string& term,
+                                      SectionIdMask section_restrict_mask)
       : term_(term),
         lite_index_(lite_index),
         cached_hits_idx_(-1),
@@ -66,14 +67,14 @@ class DocHitInfoIteratorTerm : public DocHitInfoIterator {
   const SectionIdMask section_restrict_mask_;
 };
 
-class DocHitInfoIteratorTermExact : public DocHitInfoIteratorTerm {
+class DocHitInfoIteratorTermLiteExact : public DocHitInfoIteratorTermLite {
  public:
-  explicit DocHitInfoIteratorTermExact(const TermIdCodec* term_id_codec,
-                                       LiteIndex* lite_index,
-                                       const std::string& term,
-                                       SectionIdMask section_id_mask)
-      : DocHitInfoIteratorTerm(term_id_codec, lite_index, term,
-                               section_id_mask) {}
+  explicit DocHitInfoIteratorTermLiteExact(const TermIdCodec* term_id_codec,
+                                           LiteIndex* lite_index,
+                                           const std::string& term,
+                                           SectionIdMask section_id_mask)
+      : DocHitInfoIteratorTermLite(term_id_codec, lite_index, term,
+                                   section_id_mask) {}
 
   std::string ToString() const override;
 
@@ -81,14 +82,14 @@ class DocHitInfoIteratorTermExact : public DocHitInfoIteratorTerm {
   libtextclassifier3::Status RetrieveMoreHits() override;
 };
 
-class DocHitInfoIteratorTermPrefix : public DocHitInfoIteratorTerm {
+class DocHitInfoIteratorTermLitePrefix : public DocHitInfoIteratorTermLite {
  public:
-  explicit DocHitInfoIteratorTermPrefix(const TermIdCodec* term_id_codec,
-                                        LiteIndex* lite_index,
-                                        const std::string& term,
-                                        SectionIdMask section_id_mask)
-      : DocHitInfoIteratorTerm(term_id_codec, lite_index, term,
-                               section_id_mask) {}
+  explicit DocHitInfoIteratorTermLitePrefix(const TermIdCodec* term_id_codec,
+                                            LiteIndex* lite_index,
+                                            const std::string& term,
+                                            SectionIdMask section_id_mask)
+      : DocHitInfoIteratorTermLite(term_id_codec, lite_index, term,
+                                   section_id_mask) {}
 
   std::string ToString() const override;
 
@@ -105,4 +106,4 @@ class DocHitInfoIteratorTermPrefix : public DocHitInfoIteratorTerm {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_H_
+#endif  // ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
