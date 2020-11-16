@@ -31,9 +31,11 @@ class ExactStringPropertyGenerator {
     prop.set_property_name(name.data(), name.length());
     prop.set_data_type(PropertyConfigProto::DataType::STRING);
     prop.set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    IndexingConfig* indexing_config = prop.mutable_indexing_config();
-    indexing_config->set_term_match_type(TermMatchType::EXACT_ONLY);
-    indexing_config->set_tokenizer_type(IndexingConfig::TokenizerType::PLAIN);
+    StringIndexingConfig* string_indexing_config =
+        prop.mutable_string_indexing_config();
+    string_indexing_config->set_term_match_type(TermMatchType::EXACT_ONLY);
+    string_indexing_config->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
     return prop;
   }
 };

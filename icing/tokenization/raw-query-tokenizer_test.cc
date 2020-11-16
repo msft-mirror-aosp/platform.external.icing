@@ -59,6 +59,10 @@ TEST_F(RawQueryTokenizerTest, Simple) {
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("Hello World!"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
                                        EqualsToken(Token::REGULAR, "World"))));
+
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("hElLo WORLD"),
+              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "hElLo"),
+                                       EqualsToken(Token::REGULAR, "WORLD"))));
 }
 
 TEST_F(RawQueryTokenizerTest, Parentheses) {
@@ -291,6 +295,12 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
       IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
                                EqualsToken(Token::REGULAR, "term1"),
                                EqualsToken(Token::REGULAR, "term2"))));
+
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("property1:今天:天气"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
+                               EqualsToken(Token::REGULAR, "今天"),
+                               EqualsToken(Token::REGULAR, "天气"))));
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("property1:term1-"),

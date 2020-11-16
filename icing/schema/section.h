@@ -54,9 +54,9 @@ struct SectionMetadata {
   // A unique id of property within a type config
   SectionId id;
 
-  // How content in this section should be tokenized. It is invalid for a
-  // section to have tokenizer == 'NONE'.
-  IndexingConfig::TokenizerType::Code tokenizer;
+  // How strings should be tokenized. It is invalid for a section to have
+  // tokenizer == 'NONE'.
+  StringIndexingConfig::TokenizerType::Code tokenizer;
 
   // How tokens in this section should be matched.
   //
@@ -71,7 +71,7 @@ struct SectionMetadata {
   TermMatchType::Code term_match_type = TermMatchType::UNKNOWN;
 
   SectionMetadata(SectionId id_in, TermMatchType::Code term_match_type_in,
-                  IndexingConfig::TokenizerType::Code tokenizer,
+                  StringIndexingConfig::TokenizerType::Code tokenizer,
                   std::string&& path_in)
       : path(std::move(path_in)),
         id(id_in),
