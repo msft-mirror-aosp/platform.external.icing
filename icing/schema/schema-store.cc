@@ -39,6 +39,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include "icing/util/timer.h"
 
 namespace icing {
 namespace lib {
@@ -103,12 +104,13 @@ std::unordered_set<SchemaTypeId> SchemaTypeIdsChanged(
 }  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
-    const Filesystem* filesystem, const std::string& base_dir) {
+    const Filesystem* filesystem, const std::string& base_dir,
+    NativeInitializeStats* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
 
   std::unique_ptr<SchemaStore> schema_store =
       std::unique_ptr<SchemaStore>(new SchemaStore(filesystem, base_dir));
-  ICING_RETURN_IF_ERROR(schema_store->Initialize());
+  ICING_RETURN_IF_ERROR(schema_store->Initialize(initialize_stats));
   return schema_store;
 }
 
@@ -125,7 +127,8 @@ SchemaStore::~SchemaStore() {
   }
 }
 
-libtextclassifier3::Status SchemaStore::Initialize() {
+libtextclassifier3::Status SchemaStore::Initialize(
+    NativeInitializeStats* initialize_stats) {
   auto schema_proto_or = GetSchema();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     // Don't have an existing schema proto, that's fine
@@ -139,10 +142,22 @@ libtextclassifier3::Status SchemaStore::Initialize() {
     ICING_VLOG(3)
         << "Couldn't find derived files or failed to initialize them, "
            "regenerating derived files for SchemaStore.";
+    Timer regenerate_timer;
+    if (initialize_stats != nullptr) {
+      initialize_stats->set_schema_store_recovery_cause(
+          NativeInitializeStats::IO_ERROR);
+    }
     ICING_RETURN_IF_ERROR(RegenerateDerivedFiles());
+    if (initialize_stats != nullptr) {
+      initialize_stats->set_schema_store_recovery_latency_ms(
+          regenerate_timer.GetElapsedMilliseconds());
+    }
   }
 
   initialized_ = true;
+  if (initialize_stats != nullptr) {
+    initialize_stats->set_num_schema_types(type_config_map_.size());
+  }
 
   return libtextclassifier3::Status::OK;
 }

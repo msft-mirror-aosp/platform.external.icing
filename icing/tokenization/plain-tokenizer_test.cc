@@ -43,10 +43,10 @@ class PlainTokenizerTest : public ::testing::Test {
 };
 
 TEST_F(PlainTokenizerTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, /*lang_segmenter=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(tokenizer_factory::CreateIndexingTokenizer(
+                  StringIndexingConfig::TokenizerType::PLAIN,
+                  /*lang_segmenter=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(PlainTokenizerTest, Simple) {
@@ -54,10 +54,10 @@ TEST_F(PlainTokenizerTest, Simple) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   EXPECT_THAT(plain_tokenizer->TokenizeAll(""), IsOkAndHolds(IsEmpty()));
 
@@ -88,10 +88,10 @@ TEST_F(PlainTokenizerTest, Whitespace) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // There're many unicode characters that are whitespaces, here we choose tabs
   // to represent others.
@@ -116,10 +116,10 @@ TEST_F(PlainTokenizerTest, Punctuation) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // Half-width punctuation marks are filtered out.
   EXPECT_THAT(plain_tokenizer->TokenizeAll(
@@ -147,10 +147,10 @@ TEST_F(PlainTokenizerTest, SpecialCharacters) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // Right now we don't have special logic for these characters, just output
   // them as tokens.
@@ -170,10 +170,10 @@ TEST_F(PlainTokenizerTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // In plain tokenizer, CJKT characters are handled the same way as non-CJKT
   // characters, just add these tests as sanity checks.
@@ -224,10 +224,10 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = "f b";
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
@@ -243,10 +243,10 @@ TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = "f b";
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
@@ -262,10 +262,10 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = " foo . bar baz.. bat ";
   EXPECT_THAT(plain_tokenizer->TokenizeAll(kText),
@@ -312,10 +312,10 @@ TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = " foo . bar baz.. bat ";
   EXPECT_THAT(plain_tokenizer->TokenizeAll(kText),

@@ -132,7 +132,7 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   ASSERT_THAT(FileBackedVector<char>::Create(
                   filesystem_, file_path_,
                   MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   // Get it back into an ok state
   filesystem_.PWrite(file_path_.data(),

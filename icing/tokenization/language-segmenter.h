@@ -102,6 +102,23 @@ class LanguageSegmenter {
     virtual libtextclassifier3::StatusOr<int32_t> ResetToTermEndingBefore(
         int32_t offset) = 0;
 
+    // Resets the iterator to point to the first term.
+    // GetTerm will now return that term. For example:
+    //
+    //   language_segmenter = language_segmenter_factory::Create(type);
+    //   iterator = language_segmenter->Segment("foo bar baz");
+    //   iterator.Advance();
+    //   iterator.ResetToStart();
+    //   iterator.GetTerm() // returns "foo";
+    //
+    // Return types of OK and NOT_FOUND indicate that the function call was
+    // valid and the state of the iterator has changed.
+    //
+    // Returns:
+    //   On success, the starting position of the first term.
+    //   NOT_FOUND if an error occurred or there are no valid terms in the text.
+    //   ABORTED if an invalid unicode character is encountered while
+    //   traversing the text.
     virtual libtextclassifier3::StatusOr<int32_t> ResetToStart() = 0;
   };
 

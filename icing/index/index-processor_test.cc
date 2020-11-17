@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
@@ -31,7 +32,9 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
@@ -54,15 +57,32 @@ namespace lib {
 
 namespace {
 
+constexpr std::string_view kIpsumText =
+    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla convallis "
+    "scelerisque orci quis hendrerit. Sed augue turpis, sodales eu gravida "
+    "nec, scelerisque nec leo. Maecenas accumsan interdum commodo. Aliquam "
+    "mattis sapien est, sit amet interdum risus dapibus sed. Maecenas leo "
+    "erat, fringilla in nisl a, venenatis gravida metus. Phasellus venenatis, "
+    "orci in aliquet mattis, lectus sapien volutpat arcu, sed hendrerit ligula "
+    "arcu nec mauris. Integer dolor mi, rhoncus eget gravida et, pulvinar et "
+    "nunc. Aliquam ac sollicitudin nisi. Vivamus sit amet urna vestibulum, "
+    "tincidunt eros sed, efficitur nisl. Fusce non neque accumsan, sagittis "
+    "nisi eget, sagittis turpis. Ut pulvinar nibh eu purus feugiat faucibus. "
+    "Donec tellus nulla, tincidunt vel lacus id, bibendum fermentum turpis. "
+    "Nullam ultrices sed nibh vitae aliquet. Ut risus neque, consectetur "
+    "vehicula posuere vitae, convallis eu lorem. Donec semper augue eu nibh "
+    "placerat semper.";
+
 // type and property names of FakeType
 constexpr std::string_view kFakeType = "FakeType";
 constexpr std::string_view kExactProperty = "exact";
 constexpr std::string_view kPrefixedProperty = "prefixed";
 constexpr std::string_view kUnindexedProperty1 = "unindexed1";
 constexpr std::string_view kUnindexedProperty2 = "unindexed2";
-constexpr std::string_view kSubProperty = "submessage";
-constexpr std::string_view kNestedProperty = "nested";
 constexpr std::string_view kRepeatedProperty = "repeated";
+constexpr std::string_view kSubProperty = "submessage";
+constexpr std::string_view kNestedType = "NestedType";
+constexpr std::string_view kNestedProperty = "nested";
 
 constexpr DocumentId kDocumentId0 = 0;
 constexpr DocumentId kDocumentId1 = 1;
@@ -87,10 +107,10 @@ class IndexProcessorTest : public Test {
         icu_data_file_helper::SetUpICUDataFile(
             GetTestFilePath("icing/icu.dat")));
 
-    index_dir_ = GetTestTempDir() + "/index_test/";
+    index_dir_ = GetTestTempDir() + "/index_test";
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-    ICING_ASSERT_OK_AND_ASSIGN(index_,
-                               Index::Create(options, &icing_filesystem_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -105,8 +125,7 @@ class IndexProcessorTest : public Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_, SchemaStore::Create(&filesystem_, GetTestTempDir()));
-    SchemaProto schema;
-    CreateFakeTypeConfig(schema.add_types());
+    SchemaProto schema = CreateFakeSchema();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     IndexProcessor::Options processor_options;
@@ -119,65 +138,90 @@ class IndexProcessorTest : public Test {
         IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
                                normalizer_.get(), index_.get(),
                                processor_options));
+    mock_icing_filesystem_ = std::make_unique<IcingMockFilesystem>();
   }
 
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
   }
 
-  std::unique_ptr<IndexProcessor> index_processor_;
-  std::unique_ptr<LanguageSegmenter> lang_segmenter_;
-  std::unique_ptr<Normalizer> normalizer_;
-  std::unique_ptr<Index> index_;
-  std::unique_ptr<SchemaStore> schema_store_;
-
- private:
-  static void AddProperty(std::string_view name, DataType::Code type,
-                          Cardinality::Code cardinality,
-                          TermMatchType::Code term_match_type,
-                          SchemaTypeConfigProto* type_config) {
-    auto* prop = type_config->add_properties();
-    prop->set_property_name(std::string(name));
-    prop->set_data_type(type);
-    prop->set_cardinality(cardinality);
-    prop->mutable_indexing_config()->set_term_match_type(term_match_type);
-    prop->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
-  }
-
-  static void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
-    type_config->set_schema_type(std::string(kFakeType));
-
-    AddProperty(std::string(kExactProperty), DataType::STRING,
-                Cardinality::REQUIRED, TermMatchType::EXACT_ONLY, type_config);
-
-    AddProperty(std::string(kPrefixedProperty), DataType::STRING,
-                Cardinality::OPTIONAL, TermMatchType::PREFIX, type_config);
-
-    // Don't set IndexingConfig
-    auto* prop = type_config->add_properties();
-    prop->set_property_name(std::string(kUnindexedProperty1));
-    prop->set_data_type(DataType::STRING);
-    prop->set_cardinality(Cardinality::OPTIONAL);
-
-    AddProperty(std::string(kUnindexedProperty2), DataType::BYTES,
-                Cardinality::OPTIONAL, TermMatchType::UNKNOWN, type_config);
-
-    AddProperty(std::string(kRepeatedProperty), DataType::STRING,
-                Cardinality::REPEATED, TermMatchType::PREFIX, type_config);
-
-    AddProperty(kSubProperty, DataType::DOCUMENT, Cardinality::OPTIONAL,
-                TermMatchType::UNKNOWN, type_config);
-
-    std::string recipients_name =
-        absl_ports::StrCat(kSubProperty, kPropertySeparator, kNestedProperty);
-    AddProperty(recipients_name, DataType::STRING, Cardinality::OPTIONAL,
-                TermMatchType::PREFIX, type_config);
-  }
+  std::unique_ptr<IcingMockFilesystem> mock_icing_filesystem_;
 
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   std::string index_dir_;
+
+  std::unique_ptr<LanguageSegmenter> lang_segmenter_;
+  std::unique_ptr<Normalizer> normalizer_;
+  std::unique_ptr<Index> index_;
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<IndexProcessor> index_processor_;
+
+ private:
+  static void AddStringProperty(std::string_view name, DataType::Code type,
+                                Cardinality::Code cardinality,
+                                TermMatchType::Code term_match_type,
+                                SchemaTypeConfigProto* type_config) {
+    auto* prop = type_config->add_properties();
+    prop->set_property_name(std::string(name));
+    prop->set_data_type(type);
+    prop->set_cardinality(cardinality);
+    prop->mutable_string_indexing_config()->set_term_match_type(
+        term_match_type);
+    prop->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
+  }
+
+  static void AddNonIndexedProperty(std::string_view name, DataType::Code type,
+                                    Cardinality::Code cardinality,
+                                    SchemaTypeConfigProto* type_config) {
+    auto* prop = type_config->add_properties();
+    prop->set_property_name(std::string(name));
+    prop->set_data_type(type);
+    prop->set_cardinality(cardinality);
+  }
+
+  static SchemaProto CreateFakeSchema() {
+    SchemaProto schema;
+
+    // Add top-level type
+    auto* type_config = schema.add_types();
+    type_config->set_schema_type(std::string(kFakeType));
+
+    AddStringProperty(std::string(kExactProperty), DataType::STRING,
+                      Cardinality::REQUIRED, TermMatchType::EXACT_ONLY,
+                      type_config);
+
+    AddStringProperty(std::string(kPrefixedProperty), DataType::STRING,
+                      Cardinality::OPTIONAL, TermMatchType::PREFIX,
+                      type_config);
+
+    AddNonIndexedProperty(std::string(kUnindexedProperty1), DataType::STRING,
+                          Cardinality::OPTIONAL, type_config);
+
+    AddNonIndexedProperty(std::string(kUnindexedProperty2), DataType::BYTES,
+                          Cardinality::OPTIONAL, type_config);
+
+    AddStringProperty(std::string(kRepeatedProperty), DataType::STRING,
+                      Cardinality::REPEATED, TermMatchType::PREFIX,
+                      type_config);
+
+    auto* prop = type_config->add_properties();
+    prop->set_property_name(std::string(kSubProperty));
+    prop->set_data_type(DataType::DOCUMENT);
+    prop->set_cardinality(Cardinality::OPTIONAL);
+    prop->set_schema_type(std::string(kNestedType));
+    prop->mutable_document_indexing_config()->set_index_nested_properties(true);
+
+    // Add nested type
+    type_config = schema.add_types();
+    type_config->set_schema_type(std::string(kNestedType));
+
+    AddStringProperty(kNestedProperty, DataType::STRING, Cardinality::OPTIONAL,
+                      TermMatchType::PREFIX, type_config);
+
+    return schema;
+  }
 };
 
 std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
@@ -608,6 +652,109 @@ TEST_F(IndexProcessorTest,
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
+}
+
+TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
+  // Create the index with a smaller index_merge_size - merging every time we
+  // add 101 documents. This will result in a small LiteIndex, which will be
+  // easier to fill up. The LiteIndex itself will have a size larger than the
+  // index_merge_size because it adds extra buffer to ensure that it always has
+  // room to fit whatever document will trigger the merge.
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kExactProperty), kIpsumText)
+          .Build();
+  Index::Options options(index_dir_,
+                         /*index_merge_size=*/document.ByteSizeLong() * 100);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(),
+                             processor_options));
+  DocumentId doc_id = 0;
+  // Have determined experimentally that indexing 3373 documents with this text
+  // will cause the LiteIndex to fill up. Further indexing will fail unless the
+  // index processor properly merges the LiteIndex into the MainIndex and
+  // empties the LiteIndex.
+  constexpr int kNumDocsLiteIndexExhaustion = 3373;
+  for (; doc_id < kNumDocsLiteIndexExhaustion; ++doc_id) {
+    EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+    EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
+  }
+  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
+}
+
+TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
+  // 1. Setup a mock filesystem to fail to grow the main index.
+  auto open_write_lambda = [this](const char* filename) {
+    std::string main_lexicon_suffix =
+        "/main-lexicon.prop." +
+        std::to_string(GetHasHitsInPrefixSectionPropertyId());
+    std::string filename_string(filename);
+    if (filename_string.length() >= main_lexicon_suffix.length() &&
+        filename_string.substr(
+            filename_string.length() - main_lexicon_suffix.length(),
+            main_lexicon_suffix.length()) == main_lexicon_suffix) {
+      return -1;
+    }
+    return this->filesystem_.OpenForWrite(filename);
+  };
+  ON_CALL(*mock_icing_filesystem_, OpenForWrite)
+      .WillByDefault(open_write_lambda);
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPrefixedProperty), kIpsumText)
+          .Build();
+
+  // 2. Recreate the index with the mock filesystem and a merge size that will
+  // only allow one document to be added before requiring a merge.
+  Index::Options options(index_dir_,
+                         /*index_merge_size=*/document.ByteSizeLong());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_,
+      Index::Create(options, &filesystem_, mock_icing_filesystem_.get()));
+
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(),
+                             processor_options));
+
+  // 3. Index one document. This should fit in the LiteIndex without requiring a
+  // merge.
+  DocumentId doc_id = 0;
+  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
+
+  // 4. Add one more document to trigger a merge, which should fail and result
+  // in a Reset.
+  ++doc_id;
+  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id),
+              StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
+
+  // 5. Indexing a new document should succeed.
+  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 }
 
 }  // namespace

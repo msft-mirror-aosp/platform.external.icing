@@ -34,7 +34,13 @@ class Clock {
 // Returns the current steady time in nanoseconds. The steady clock is different
 // from the system clock. It's monotonic and never returns a lower value than a
 // previous call, while a system clock can be occasionally adjusted.
-uint64_t GetSteadyTimeNanoseconds();
+int64_t GetSteadyTimeNanoseconds();
+
+// Returns the current steady time in Milliseconds. The steady clock is
+// different from the system clock. It's monotonic and never returns a lower
+// value than a previous call, while a system clock can be occasionally
+// adjusted.
+int64_t GetSteadyTimeMilliseconds();
 
 }  // namespace lib
 }  // namespace icing

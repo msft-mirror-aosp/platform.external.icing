@@ -117,51 +117,57 @@ libtextclassifier3::Status AssignSections(
               return p1->property_name() < p2->property_name();
             });
   for (const auto& property_config : sorted_properties) {
-    if (property_config.indexing_config().term_match_type() ==
-        TermMatchType::UNKNOWN) {
+    if (property_config.data_type() ==
+        PropertyConfigProto::DataType::DOCUMENT) {
+      auto nested_type_config_iter =
+          type_config_map.find(property_config.schema_type());
+      if (nested_type_config_iter == type_config_map.end()) {
+        // This should never happen because our schema should already be
+        // validated by this point.
+        return absl_ports::NotFoundError(absl_ports::StrCat(
+            "Type config not found: ", property_config.schema_type()));
+      }
+
+      if (property_config.document_indexing_config()
+              .index_nested_properties()) {
+        // Assign any indexed sections recursively
+        const SchemaTypeConfigProto& nested_type_config =
+            nested_type_config_iter->second;
+        ICING_RETURN_IF_ERROR(
+            AssignSections(nested_type_config,
+                           ConcatenatePath(current_section_path,
+                                           property_config.property_name()),
+                           type_config_map, visited_states, metadata_list));
+      }
+    }
+
+    // Only index strings currently.
+    if (property_config.has_data_type() !=
+            PropertyConfigProto::DataType::STRING ||
+        property_config.string_indexing_config().term_match_type() ==
+            TermMatchType::UNKNOWN) {
       // No need to create section for current property
       continue;
     }
 
     // Creates section metadata according to data type
-    if (property_config.data_type() == PropertyConfigProto::DataType::STRING ||
-        property_config.data_type() == PropertyConfigProto::DataType::INT64 ||
-        property_config.data_type() == PropertyConfigProto::DataType::DOUBLE) {
-      // Validates next section id, makes sure that section id is the same as
-      // the list index so that we could find any section metadata by id in O(1)
-      // later.
-      auto new_section_id = static_cast<SectionId>(metadata_list->size());
-      if (!IsSectionIdValid(new_section_id)) {
-        // Max number of sections reached
-        return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-            "Too many properties to be indexed, max number of properties "
-            "allowed: %d",
-            kMaxSectionId - kMinSectionId + 1));
-      }
-      // Creates section metadata from property config
-      metadata_list->emplace_back(
-          new_section_id, property_config.indexing_config().term_match_type(),
-          property_config.indexing_config().tokenizer_type(),
-          ConcatenatePath(current_section_path,
-                          property_config.property_name()));
-    } else if (property_config.data_type() ==
-               PropertyConfigProto::DataType::DOCUMENT) {
-      // Tries to find sections recursively
-      auto nested_type_config_iter =
-          type_config_map.find(property_config.schema_type());
-      if (nested_type_config_iter == type_config_map.end()) {
-        return absl_ports::NotFoundError(absl_ports::StrCat(
-            "type config not found: ", property_config.schema_type()));
-      }
-      const SchemaTypeConfigProto& nested_type_config =
-          nested_type_config_iter->second;
-      ICING_RETURN_IF_ERROR(
-          AssignSections(nested_type_config,
-                         ConcatenatePath(current_section_path,
-                                         property_config.property_name()),
-                         type_config_map, visited_states, metadata_list));
+    // Validates next section id, makes sure that section id is the same as
+    // the list index so that we could find any section metadata by id in O(1)
+    // later.
+    auto new_section_id = static_cast<SectionId>(metadata_list->size());
+    if (!IsSectionIdValid(new_section_id)) {
+      // Max number of sections reached
+      return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
+          "Too many properties to be indexed, max number of properties "
+          "allowed: %d",
+          kMaxSectionId - kMinSectionId + 1));
     }
-    // NOTE: we don't create sections for BOOLEAN and BYTES data types.
+    // Creates section metadata from property config
+    metadata_list->emplace_back(
+        new_section_id,
+        property_config.string_indexing_config().term_match_type(),
+        property_config.string_indexing_config().tokenizer_type(),
+        ConcatenatePath(current_section_path, property_config.property_name()));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -197,23 +203,12 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
 }
 
 // Helper function to get string content from a property. Repeated values are
-// joined into one string. We only care about STRING, INT64, and DOUBLE data
-// types.
+// joined into one string. We only care about the STRING data type.
 std::vector<std::string> GetPropertyContent(const PropertyProto& property) {
   std::vector<std::string> values;
   if (!property.string_values().empty()) {
     std::copy(property.string_values().begin(), property.string_values().end(),
               std::back_inserter(values));
-  } else if (!property.int64_values().empty()) {
-    std::transform(
-        property.int64_values().begin(), property.int64_values().end(),
-        std::back_inserter(values),
-        [](int64_t i) { return IcingStringUtil::StringPrintf("%" PRId64, i); });
-  } else {
-    std::transform(
-        property.double_values().begin(), property.double_values().end(),
-        std::back_inserter(values),
-        [](double d) { return IcingStringUtil::StringPrintf("%f", d); });
   }
   return values;
 }
@@ -269,9 +264,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
     // Property name not found, it could be one of the following 2 cases:
     // 1. The property is optional and it's not in the document
     // 2. The property name is invalid
-    return absl_ports::NotFoundError(
-        absl_ports::StrCat("Section path ", section_path,
-                           " not found in type config ", document.schema()));
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "Section path '", section_path, "' not found in document."));
   }
 
   if (separator_position == std::string::npos) {
@@ -280,9 +274,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
     if (content.empty()) {
       // The content of property is explicitly set to empty, we'll treat it as
       // NOT_FOUND because the index doesn't care about empty strings.
-      return absl_ports::NotFoundError(
-          absl_ports::StrCat("Section path ", section_path,
-                             " not found in type config ", document.schema()));
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Section path '", section_path, "' content was empty"));
     }
     return content;
   }
