@@ -60,7 +60,6 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
-#include "icing/util/timer.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -264,7 +263,7 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
                 << options_.base_dir();
 
   // Measure the latency of the initialization process.
-  Timer initialize_timer;
+  std::unique_ptr<Timer> initialize_timer = clock_->GetNewTimer();
 
   InitializeResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
@@ -273,7 +272,8 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
   if (initialized_) {
     // Already initialized.
     result_status->set_code(StatusProto::OK);
-    initialize_stats->set_latency_ms(initialize_timer.GetElapsedMilliseconds());
+    initialize_stats->set_latency_ms(
+        initialize_timer->GetElapsedMilliseconds());
     initialize_stats->set_num_documents(document_store_->num_documents());
     return result_proto;
   }
@@ -284,7 +284,8 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
   libtextclassifier3::Status status = InitializeMembers(initialize_stats);
   if (!status.ok()) {
     TransformStatus(status, result_status);
-    initialize_stats->set_latency_ms(initialize_timer.GetElapsedMilliseconds());
+    initialize_stats->set_latency_ms(
+        initialize_timer->GetElapsedMilliseconds());
     return result_proto;
   }
 
@@ -336,10 +337,10 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
         // index.
         initialize_stats->set_index_restoration_cause(
             NativeInitializeStats::INCONSISTENT_WITH_GROUND_TRUTH);
-        Timer index_restore_timer;
+        std::unique_ptr<Timer> index_restore_timer = clock_->GetNewTimer();
         status = RestoreIndexIfNeeded();
         initialize_stats->set_index_restoration_latency_ms(
-            index_restore_timer.GetElapsedMilliseconds());
+            index_restore_timer->GetElapsedMilliseconds());
       }
     }
   }
@@ -348,7 +349,7 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
     initialized_ = true;
   }
   TransformStatus(status, result_status);
-  initialize_stats->set_latency_ms(initialize_timer.GetElapsedMilliseconds());
+  initialize_stats->set_latency_ms(initialize_timer->GetElapsedMilliseconds());
   return result_proto;
 }
 
@@ -398,7 +399,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
   }
   ICING_ASSIGN_OR_RETURN(
       schema_store_, SchemaStore::Create(filesystem_.get(), schema_store_dir,
-                                         initialize_stats));
+                                         clock_.get(), initialize_stats));
 
   return libtextclassifier3::Status::OK;
 }
@@ -415,9 +416,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
         absl_ports::StrCat("Could not create directory: ", document_dir));
   }
   ICING_ASSIGN_OR_RETURN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(filesystem_.get(), document_dir, clock_.get(),
                             schema_store_.get(), initialize_stats));
+  document_store_ = std::move(create_result.document_store);
 
   return libtextclassifier3::Status::OK;
 }
@@ -451,10 +453,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
                            Index::Create(index_options, filesystem_.get(),
                                          icing_filesystem_.get()));
 
-    Timer restore_timer;
+    std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     ICING_RETURN_IF_ERROR(RestoreIndexIfNeeded());
     initialize_stats->set_index_restoration_latency_ms(
-        restore_timer.GetElapsedMilliseconds());
+        restore_timer->GetElapsedMilliseconds());
   } else {
     // Index was created fine.
     index_ = std::move(index_or).ValueOrDie();
@@ -497,20 +499,20 @@ libtextclassifier3::Status IcingSearchEngine::RegenerateDerivedFiles(
     NativeInitializeStats* initialize_stats, bool log_document_store_stats) {
   // Measure the latency of the data recovery. The cause of the recovery should
   // be logged by the caller.
-  Timer timer;
+  std::unique_ptr<Timer> timer = clock_->GetNewTimer();
   ICING_RETURN_IF_ERROR(
       document_store_->UpdateSchemaStore(schema_store_.get()));
   if (initialize_stats != nullptr && log_document_store_stats) {
     initialize_stats->set_document_store_recovery_latency_ms(
-        timer.GetElapsedMilliseconds());
+        timer->GetElapsedMilliseconds());
   }
   // Restart timer.
-  timer = Timer();
+  timer = clock_->GetNewTimer();
   ICING_RETURN_IF_ERROR(index_->Reset());
   ICING_RETURN_IF_ERROR(RestoreIndexIfNeeded());
   if (initialize_stats != nullptr) {
     initialize_stats->set_index_restoration_latency_ms(
-        timer.GetElapsedMilliseconds());
+        timer->GetElapsedMilliseconds());
   }
 
   const std::string header_file =
@@ -673,7 +675,7 @@ PutResultProto IcingSearchEngine::Put(const DocumentProto& document) {
 PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   ICING_VLOG(1) << "Writing document to document store";
 
-  Timer put_timer;
+  std::unique_ptr<Timer> put_timer = clock_->GetNewTimer();
 
   PutResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
@@ -687,24 +689,24 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
-    put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
+    put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
     return result_proto;
   }
 
   auto document_id_or = document_store_->Put(document, put_document_stats);
   if (!document_id_or.ok()) {
     TransformStatus(document_id_or.status(), result_status);
-    put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
+    put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
     return result_proto;
   }
   DocumentId document_id = document_id_or.ValueOrDie();
 
   auto index_processor_or = IndexProcessor::Create(
       schema_store_.get(), language_segmenter_.get(), normalizer_.get(),
-      index_.get(), CreateIndexProcessorOptions(options_));
+      index_.get(), CreateIndexProcessorOptions(options_), clock_.get());
   if (!index_processor_or.ok()) {
     TransformStatus(index_processor_or.status(), result_status);
-    put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
+    put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
     return result_proto;
   }
   std::unique_ptr<IndexProcessor> index_processor =
@@ -714,7 +716,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
       index_processor->IndexDocument(document, document_id, put_document_stats);
 
   TransformStatus(status, result_status);
-  put_document_stats->set_latency_ms(put_timer.GetElapsedMilliseconds());
+  put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
   return result_proto;
 }
 
@@ -1357,21 +1359,21 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
 
     // Tries to rebuild document store if swapping fails, to avoid leaving the
     // system in the broken state for future operations.
-    auto document_store_or =
+    auto create_result_or =
         DocumentStore::Create(filesystem_.get(), current_document_dir,
                               clock_.get(), schema_store_.get());
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
-    if (!document_store_or.ok()) {
+    if (!create_result_or.ok()) {
       // Unable to create DocumentStore from the old file. Mark as uninitialized
       // and return INTERNAL.
       initialized_ = false;
       ICING_LOG(ERROR) << "Failed to create document store instance";
       return absl_ports::Annotate(
           absl_ports::InternalError("Failed to create document store instance"),
-          document_store_or.status().error_message());
+          create_result_or.status().error_message());
     }
-    document_store_ = std::move(document_store_or).ValueOrDie();
+    document_store_ = std::move(create_result_or.ValueOrDie().document_store);
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -1380,10 +1382,10 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
   }
 
   // Recreates the doc store instance
-  auto document_store_or =
+  auto create_result_or =
       DocumentStore::Create(filesystem_.get(), current_document_dir,
                             clock_.get(), schema_store_.get());
-  if (!document_store_or.ok()) {
+  if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
     // and return INTERNAL.
     initialized_ = false;
@@ -1391,7 +1393,7 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
         "Document store has been optimized, but a valid document store "
         "instance can't be created");
   }
-  document_store_ = std::move(document_store_or).ValueOrDie();
+  document_store_ = std::move(create_result_or.ValueOrDie().document_store);
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(
@@ -1432,9 +1434,9 @@ libtextclassifier3::Status IcingSearchEngine::RestoreIndexIfNeeded() {
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<IndexProcessor> index_processor,
-      IndexProcessor::Create(schema_store_.get(), language_segmenter_.get(),
-                             normalizer_.get(), index_.get(),
-                             CreateIndexProcessorOptions(options_)));
+      IndexProcessor::Create(
+          schema_store_.get(), language_segmenter_.get(), normalizer_.get(),
+          index_.get(), CreateIndexProcessorOptions(options_), clock_.get()));
 
   ICING_VLOG(1) << "Restoring index by replaying documents from document id "
                 << first_document_to_reindex << " to document id "

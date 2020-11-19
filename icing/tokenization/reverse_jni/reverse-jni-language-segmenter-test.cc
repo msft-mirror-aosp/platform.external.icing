@@ -423,7 +423,6 @@ TEST_P(ReverseJniLanguageSegmenterTest, LatinLettersWithAccents) {
               IsOkAndHolds(ElementsAre("āăąḃḅḇčćç")));
 }
 
-// TODO(samzheng): test cases for more languages (e.g. top 20 in the world)
 TEST_P(ReverseJniLanguageSegmenterTest, WhitespaceSplitLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
@@ -438,7 +437,6 @@ TEST_P(ReverseJniLanguageSegmenterTest, WhitespaceSplitLanguages) {
       IsOkAndHolds(ElementsAre("나는", " ", "매일", " ", "출근합니다", ".")));
 }
 
-// TODO(samzheng): more mixed languages test cases
 TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,

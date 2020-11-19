@@ -72,6 +72,7 @@
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/zlib.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -172,10 +173,10 @@ class FileBackedProtoLog {
     // happen if the file is corrupted or some previously added data was
     // unpersisted. This may be used to signal that any derived data off of the
     // proto log may need to be regenerated.
-    enum DataStatus { NO_DATA_LOSS, PARTIAL_LOSS, COMPLETE_LOSS } data_status;
+    DataLoss data_loss;
 
     bool has_data_loss() {
-      return data_status == PARTIAL_LOSS || data_status == COMPLETE_LOSS;
+      return data_loss == DataLoss::PARTIAL || data_loss == DataLoss::COMPLETE;
     }
   };
 
@@ -186,11 +187,11 @@ class FileBackedProtoLog {
   // added data was unpersisted, the log will rewind to the last-good state. The
   // log saves these checkpointed "good" states when PersistToDisk() is called
   // or the log is safely destructed. If the log rewinds successfully to the
-  // last-good state, then the returned CreateResult.data_status indicates
+  // last-good state, then the returned CreateResult.data_loss indicates
   // whether it has a data loss and what kind of data loss it is (partial or
   // complete) so that any derived data may know that it needs to be updated. If
   // the log re-initializes successfully without any data loss,
-  // CreateResult.data_status will be NO_DATA_LOSS.
+  // CreateResult.data_loss will be NONE.
   //
   // Params:
   //   filesystem: Handles system level calls
@@ -370,7 +371,7 @@ class FileBackedProtoLog {
   // Initializes a new proto log.
   //
   // Returns:
-  //   std::unique_ptr<FileBackedProtoLog> that can be used immediately
+  //   std::unique_ptr<CreateResult> on success
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<CreateResult> InitializeNewFile(
       const Filesystem* filesystem, const std::string& file_path,
@@ -381,7 +382,7 @@ class FileBackedProtoLog {
   // content will be lost.
   //
   // Returns:
-  //   std::unique_ptr<FileBackedProtoLog> that can be used immediately
+  //   std::unique_ptr<CreateResult> on success
   //   INTERNAL_ERROR on IO error or internal inconsistencies in the file
   //   INVALID_ARGUMENT_ERROR if options aren't consistent with previous
   //     instances
@@ -516,7 +517,7 @@ FileBackedProtoLog<ProtoT>::InitializeNewFile(const Filesystem* filesystem,
       std::unique_ptr<FileBackedProtoLog<ProtoT>>(
           new FileBackedProtoLog<ProtoT>(filesystem, file_path,
                                          std::move(header))),
-      /*data_status=*/CreateResult::NO_DATA_LOSS};
+      /*data_loss=*/DataLoss::NONE};
 
   return create_result;
 }
@@ -566,7 +567,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
   }
   header->max_proto_size = options.max_proto_size;
 
-  typename CreateResult::DataStatus data_status = CreateResult::NO_DATA_LOSS;
+  DataLoss data_loss = DataLoss::NONE;
   ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
                          ComputeChecksum(filesystem, file_path, Crc32(),
                                          sizeof(Header), file_size));
@@ -589,12 +590,12 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
       // Check if it matches our last rewind state. If so, this becomes our last
       // good state and we can safely truncate and recover from here.
       last_known_good = header->rewind_offset;
-      data_status = CreateResult::PARTIAL_LOSS;
+      data_loss = DataLoss::PARTIAL;
     } else {
       // Otherwise, we're going to truncate the entire log and this resets the
       // checksum to an empty log state.
       header->log_checksum = 0;
-      data_status = CreateResult::COMPLETE_LOSS;
+      data_loss = DataLoss::COMPLETE;
     }
 
     if (!filesystem->Truncate(file_path.c_str(), last_known_good)) {
@@ -610,7 +611,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
       std::unique_ptr<FileBackedProtoLog<ProtoT>>(
           new FileBackedProtoLog<ProtoT>(filesystem, file_path,
                                          std::move(header))),
-      data_status};
+      data_loss};
 
   return create_result;
 }

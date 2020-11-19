@@ -39,6 +39,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -95,17 +96,17 @@ class QueryProcessorTest : public Test {
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
 
-#ifndef ICING_REVERSE_JNI_SEGMENTATION
-    // If we've specified using the reverse-JNI method for segmentation (i.e.
-    // not ICU), then we won't have the ICU data file included to set up.
-    // Technically, we could choose to use reverse-JNI for segmentation AND
-    // include an ICU data file, but that seems unlikely and our current BUILD
-    // setup doesn't do this.
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
-#endif  // ICING_REVERSE_JNI_SEGMENTATION
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      // If we've specified using the reverse-JNI method for segmentation (i.e.
+      // not ICU), then we won't have the ICU data file included to set up.
+      // Technically, we could choose to use reverse-JNI for segmentation AND
+      // include an ICU data file, but that seems unlikely and our current BUILD
+      // setup doesn't do this.
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024);
@@ -188,14 +189,16 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
@@ -235,14 +238,16 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
@@ -282,14 +287,16 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -338,14 +345,16 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -391,14 +400,16 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -444,18 +455,20 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -500,18 +513,20 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -556,18 +571,20 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -612,18 +629,20 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -674,18 +693,20 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -736,18 +757,20 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -797,18 +820,20 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -891,8 +916,8 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
   }
 
   {
-    // OR gets precedence over AND, this is parsed as (kitten AND ((foo OR bar)
-    // OR cat))
+    // OR gets precedence over AND, this is parsed as (kitten AND ((foo OR
+    // bar) OR cat))
     SearchSpecProto search_spec;
     search_spec.set_query("kitten foo OR bar OR cat");
     search_spec.set_term_match_type(term_match_type);
@@ -914,18 +939,20 @@ TEST_F(QueryProcessorTest, OneGroup) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -985,18 +1012,20 @@ TEST_F(QueryProcessorTest, TwoGroups) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1057,18 +1086,20 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1128,18 +1159,20 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that the DocHitInfoIterators will see that the
-  // document exists and not filter out the DocumentId as deleted.
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that the DocHitInfoIterators will see
+  // that the document exists and not filter out the DocumentId as deleted.
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1199,18 +1232,20 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that they'll bump the last_added_document_id,
-  // which will give us the proper exclusion results
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that they'll bump the
+  // last_added_document_id, which will give us the proper exclusion results
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1247,9 +1282,9 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
                              query_processor->ParseSearch(search_spec));
 
-  // We don't know have the section mask to indicate what section "world" came.
-  // It doesn't matter which section it was in since the query doesn't care.  It
-  // just wanted documents that didn't have "hello"
+  // We don't know have the section mask to indicate what section "world"
+  // came. It doesn't matter which section it was in since the query doesn't
+  // care.  It just wanted documents that didn't have "hello"
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(DocHitInfo(document_id2, kSectionIdMaskNone)));
   EXPECT_THAT(results.query_terms, IsEmpty());
@@ -1260,18 +1295,20 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that they'll bump the last_added_document_id,
-  // which will give us the proper exclusion results
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that they'll bump the
+  // last_added_document_id, which will give us the proper exclusion results
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1319,18 +1356,20 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that they'll bump the last_added_document_id,
-  // which will give us the proper exclusion results
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that they'll bump the
+  // last_added_document_id, which will give us the proper exclusion results
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1375,8 +1414,8 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
                                query_processor->ParseSearch(search_spec));
 
-    // The query is interpreted as "exclude all documents that have animal, and
-    // exclude all documents that have cat". Since both documents contain
+    // The query is interpreted as "exclude all documents that have animal,
+    // and exclude all documents that have cat". Since both documents contain
     // animal, there are no results.
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
     EXPECT_THAT(results.query_terms, IsEmpty());
@@ -1390,8 +1429,8 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
     ICING_ASSERT_OK_AND_ASSIGN(QueryProcessor::QueryResults results,
                                query_processor->ParseSearch(search_spec));
 
-    // The query is interpreted as "exclude all documents that have animal, and
-    // include all documents that have cat". Since both documents contain
+    // The query is interpreted as "exclude all documents that have animal,
+    // and include all documents that have cat". Since both documents contain
     // animal, there are no results.
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
     EXPECT_THAT(results.query_terms, SizeIs(1));
@@ -1404,18 +1443,20 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
-  // These documents don't actually match to the tokens in the index. We're just
-  // inserting the documents so that they'll bump the last_added_document_id,
-  // which will give us the proper exclusion results
+  // These documents don't actually match to the tokens in the index. We're
+  // just inserting the documents so that they'll bump the
+  // last_added_document_id, which will give us the proper exclusion results
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
                                                       .SetKey("namespace", "1")
@@ -1491,14 +1532,16 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1560,14 +1603,16 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1630,14 +1675,16 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
   AddSchemaType(&schema, "email");
   AddSchemaType(&schema, "message");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1699,14 +1746,16 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
   AddIndexedProperty(email_type, "subject");
   int subject_section_id = 0;
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1752,24 +1801,28 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
   // Create the schema and document store
   SchemaProto schema;
   SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(email_type, "a");  // Section "a" would get sectionId 0
   AddIndexedProperty(email_type, "foo");
   int email_foo_section_id = 1;
 
   SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(message_type, "foo");
   int message_foo_section_id = 0;
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1829,23 +1882,27 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
   // Create the schema and document store
   SchemaProto schema;
   SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(email_type, "foo");
   int email_foo_section_id = 0;
 
   SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(message_type, "foo");
   int message_foo_section_id = 0;
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1883,8 +1940,8 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
                              schema_store_.get(), &fake_clock_));
 
   SearchSpecProto search_spec;
-  // Create a section filter '<section name>:<query term>', but only look within
-  // documents of email schema
+  // Create a section filter '<section name>:<query term>', but only look
+  // within documents of email schema
   search_spec.set_query("foo:animal");
   search_spec.add_schema_type_filters("email");
   search_spec.set_term_match_type(term_match_type);
@@ -1905,23 +1962,27 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
   // Create the schema and document store
   SchemaProto schema;
   SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(email_type, "foo");
   int email_foo_section_id = 0;
 
   SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(message_type, "bar");
   int message_foo_section_id = 0;
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -1946,9 +2007,9 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Message document has content "animal", but put in in the same section id as
-  // the indexed email section id, the same id as indexed property "foo" in the
-  // message type
+  // Message document has content "animal", but put in in the same section id
+  // as the indexed email section id, the same id as indexed property "foo" in
+  // the message type
   ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
                               term_match_type, "animal"),
               IsOk());
@@ -1961,8 +2022,8 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
                              schema_store_.get(), &fake_clock_));
 
   SearchSpecProto search_spec;
-  // Create a section filter '<section name>:<query term>', but only look within
-  // documents of email schema
+  // Create a section filter '<section name>:<query term>', but only look
+  // within documents of email schema
   search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
 
@@ -1983,14 +2044,16 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2017,8 +2080,8 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
                              schema_store_.get(), &fake_clock_));
 
   SearchSpecProto search_spec;
-  // Create a section filter '<section name>:<query term>', but only look within
-  // documents of email schema
+  // Create a section filter '<section name>:<query term>', but only look
+  // within documents of email schema
   search_spec.set_query("nonexistent:animal");
   search_spec.set_term_match_type(term_match_type);
 
@@ -2039,14 +2102,16 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
   AddUnindexedProperty(email_type, "foo");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2073,8 +2138,8 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
                              schema_store_.get(), &fake_clock_));
 
   SearchSpecProto search_spec;
-  // Create a section filter '<section name>:<query term>', but only look within
-  // documents of email schema
+  // Create a section filter '<section name>:<query term>', but only look
+  // within documents of email schema
   search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
 
@@ -2092,23 +2157,27 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
   // Create the schema and document store
   SchemaProto schema;
   SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(email_type, "foo");
   int email_foo_section_id = 0;
 
   SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type, alphabetically.
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
   AddIndexedProperty(message_type, "foo");
   int message_foo_section_id = 0;
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2172,14 +2241,16 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              document_store_->Put(DocumentBuilder()
@@ -2226,14 +2297,16 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   SchemaProto schema;
   AddSchemaType(&schema, "email");
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      document_store_,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                             schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              document_store_->Put(DocumentBuilder()
