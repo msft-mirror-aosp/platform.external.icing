@@ -83,7 +83,7 @@ class FileBackedProto {
   //
   // TODO(cassiewang) The implementation today loses old data if Write() fails.
   // We should write to a tmp file first and rename the file to fix this.
-  // TODO(samzheng) Change to Write(ProtoT&& proto)
+  // TODO(cassiewang) Change to Write(ProtoT&& proto)
   libtextclassifier3::Status Write(std::unique_ptr<ProtoT> proto)
       ICING_LOCKS_EXCLUDED(mutex_);
 

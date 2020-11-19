@@ -63,14 +63,16 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
     auto type_config = schema.add_types();
     type_config->set_schema_type("email");
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -228,14 +230,16 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
     auto type_config = schema.add_types();
     type_config->set_schema_type("email");
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -383,14 +387,16 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
     type_config = schema.add_types();
     type_config->set_schema_type(schema3_);
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -521,14 +527,16 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
     auto type_config = schema.add_types();
     type_config->set_schema_type(email_schema_);
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -711,14 +719,16 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
     type_config = schema.add_types();
     type_config->set_schema_type(schema2_);
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {

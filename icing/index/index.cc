@@ -71,7 +71,7 @@ IcingDynamicTrie::Options GetMainLexiconOptions() {
 }
 
 // Helper function to check if a term is in the given namespaces.
-// TODO(samzheng): Implement a method PropertyReadersAll.HasAnyProperty().
+// TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
 bool IsTermInNamespaces(
     const IcingDynamicTrie::PropertyReadersAll& property_reader,
     uint32_t value_index, const std::vector<NamespaceId>& namespace_ids) {

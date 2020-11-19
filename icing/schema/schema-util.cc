@@ -272,7 +272,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
     const SchemaTypeConfigProto& type_config) {
   ParsedPropertyConfigs parsed_property_configs;
 
-  // TODO(samzheng): consider caching property_config_map for some properties,
+  // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
   for (const PropertyConfigProto& property_config : type_config.properties()) {
     parsed_property_configs.property_config_map.emplace(
