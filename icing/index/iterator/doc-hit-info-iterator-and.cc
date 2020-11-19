@@ -38,8 +38,6 @@ namespace {
 
 // When combining ANDed iterators, n-ary operator has better performance when
 // number of operands > 3 according to benchmark cl/243720660
-// TODO (samzheng): Tune this number when it's necessary, e.g. implementation
-// changes.
 inline constexpr int kBinaryAndIteratorPerformanceThreshold = 3;
 
 // The minimum number of iterators needed to construct a And iterator. The And

@@ -101,7 +101,6 @@ libtextclassifier3::Status DocumentValidator::Validate(
     const PropertyConfigProto& property_config = *property_iter->second;
 
     // Get the property value size according to data type.
-    // TODO (samzheng): make sure values of other data types are empty.
     int value_size = 0;
     if (property_config.data_type() == PropertyConfigProto::DataType::STRING) {
       value_size = property.string_values_size();

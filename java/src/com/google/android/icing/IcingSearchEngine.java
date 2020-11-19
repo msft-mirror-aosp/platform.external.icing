@@ -30,6 +30,7 @@ import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PutResultProto;
+import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
 import com.google.android.icing.proto.ResultSpecProto;
 import com.google.android.icing.proto.SchemaProto;
@@ -38,6 +39,7 @@ import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StatusProto;
+import com.google.android.icing.proto.UsageReport;
 import com.google.android.icing.protobuf.ExtensionRegistryLite;
 import com.google.android.icing.protobuf.InvalidProtocolBufferException;
 
@@ -48,7 +50,7 @@ public final class IcingSearchEngine {
   private static final ExtensionRegistryLite EXTENSION_REGISTRY_LITE =
       ExtensionRegistryLite.getEmptyRegistry();
 
-  private final long nativePointer;
+  private long nativePointer;
 
   static {
     // NOTE: This can fail with an UnsatisfiedLinkError
@@ -186,6 +188,26 @@ public final class IcingSearchEngine {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing GetResultProto.", e);
       return GetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
+  public ReportUsageResultProto reportUsage(@NonNull UsageReport usageReport) {
+    byte[] reportUsageResultBytes = nativeReportUsage(nativePointer, usageReport.toByteArray());
+    if (reportUsageResultBytes == null) {
+      Log.e(TAG, "Received null ReportUsageResultProto from native.");
+      return ReportUsageResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return ReportUsageResultProto.parseFrom(reportUsageResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing ReportUsageResultProto.", e);
+      return ReportUsageResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
@@ -338,8 +360,7 @@ public final class IcingSearchEngine {
     }
 
     try {
-      return DeleteResultProto.parseFrom(
-          deleteResultBytes, EXTENSION_REGISTRY_LITE);
+      return DeleteResultProto.parseFrom(deleteResultBytes, EXTENSION_REGISTRY_LITE);
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing DeleteResultProto.", e);
       return DeleteResultProto.newBuilder()
@@ -429,7 +450,16 @@ public final class IcingSearchEngine {
     }
   }
 
+  public void destroy() {
+    if (nativePointer != 0) {
+      nativeDestroy(nativePointer);
+    }
+    nativePointer = 0;
+  }
+
   private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
+
+  private static native void nativeDestroy(long nativePointer);
 
   private static native byte[] nativeInitialize(long nativePointer);
 
@@ -443,6 +473,8 @@ public final class IcingSearchEngine {
   private static native byte[] nativePut(long nativePointer, byte[] documentBytes);
 
   private static native byte[] nativeGet(long nativePointer, String namespace, String uri);
+
+  private static native byte[] nativeReportUsage(long nativePointer, byte[] usageReportBytes);
 
   private static native byte[] nativeGetAllNamespaces(long nativePointer);
 

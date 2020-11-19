@@ -29,8 +29,6 @@ namespace {
 
 // When combining Or iterators, n-ary operator has better performance when
 // number of operands > 2 according to benchmark cl/243321264
-// TODO (samzheng): Tune this number when it's necessary, e.g. implementation
-// changes.
 constexpr int kBinaryOrIteratorPerformanceThreshold = 2;
 
 }  // namespace

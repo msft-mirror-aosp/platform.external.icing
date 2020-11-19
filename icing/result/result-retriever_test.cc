@@ -30,6 +30,7 @@
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -56,17 +57,20 @@ class ResultRetrieverTest : public testing::Test {
   }
 
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
         language_segmenter_factory::Create(std::move(options)));
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
 
@@ -129,9 +133,11 @@ TEST_F(ResultRetrieverTest, CreationWithNullPointerShouldFail) {
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
 
   EXPECT_THAT(
       ResultRetriever::Create(doc_store.get(), /*schema_store=*/nullptr,
@@ -149,9 +155,12 @@ TEST_F(ResultRetrieverTest, CreationWithNullPointerShouldFail) {
 
 TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -190,9 +199,12 @@ TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
 
 TEST_F(ResultRetrieverTest, IgnoreErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -228,9 +240,12 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
 
 TEST_F(ResultRetrieverTest, NotIgnoreErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -272,9 +287,12 @@ TEST_F(ResultRetrieverTest, IOErrorShouldReturnInternalError) {
   ON_CALL(mock_filesystem, OpenForRead(_)).WillByDefault(Return(false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&mock_filesystem, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -303,9 +321,12 @@ TEST_F(ResultRetrieverTest, IOErrorShouldReturnInternalError) {
 
 TEST_F(ResultRetrieverTest, DefaultSnippetSpecShouldDisableSnippeting) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -343,9 +364,12 @@ TEST_F(ResultRetrieverTest, DefaultSnippetSpecShouldDisableSnippeting) {
 
 TEST_F(ResultRetrieverTest, SimpleSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -408,9 +432,12 @@ TEST_F(ResultRetrieverTest, SimpleSnippeted) {
 
 TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -461,9 +488,12 @@ TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
 
 TEST_F(ResultRetrieverTest, ShouldSnippetAllResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -503,9 +533,12 @@ TEST_F(ResultRetrieverTest, ShouldSnippetAllResults) {
 
 TEST_F(ResultRetrieverTest, ShouldSnippetSomeResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -544,9 +577,12 @@ TEST_F(ResultRetrieverTest, ShouldSnippetSomeResults) {
 
 TEST_F(ResultRetrieverTest, ShouldNotSnippetAnyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> doc_store,
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                             schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              doc_store->Put(CreateDocument(/*id=*/1)));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,

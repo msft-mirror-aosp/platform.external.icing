@@ -20,10 +20,6 @@
 namespace icing {
 namespace lib {
 
-// TODO(samzheng) Add group id support if needed. Right now in raw query we
-// don't need group ids since all our query operators (OR, Exclusion, Property
-// Restriction) only apply to the token right after them (vs. applying to
-// multiple tokens after them). The "groups" of tokens can be easily recognized.
 struct Token {
   enum Type {
     // Common types

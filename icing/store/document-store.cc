@@ -44,9 +44,9 @@
 #include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
-#include "icing/util/timer.h"
 
 namespace icing {
 namespace lib {
@@ -200,21 +200,26 @@ DocumentStore::~DocumentStore() {
   }
 }
 
-libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>>
-DocumentStore::Create(const Filesystem* filesystem, const std::string& base_dir,
-                      const Clock* clock, const SchemaStore* schema_store,
-                      NativeInitializeStats* initialize_stats) {
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store,
+    NativeInitializeStats* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   auto document_store = std::unique_ptr<DocumentStore>(
       new DocumentStore(filesystem, base_dir, clock, schema_store));
-  ICING_RETURN_IF_ERROR(document_store->Initialize(initialize_stats));
-  return document_store;
+  ICING_ASSIGN_OR_RETURN(DataLoss data_loss,
+                         document_store->Initialize(initialize_stats));
+
+  CreateResult create_result;
+  create_result.document_store = std::move(document_store);
+  create_result.data_loss = data_loss;
+  return create_result;
 }
 
-libtextclassifier3::Status DocumentStore::Initialize(
+libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     NativeInitializeStats* initialize_stats) {
   auto create_result_or = FileBackedProtoLog<DocumentWrapper>::Create(
       filesystem_, MakeDocumentLogFilename(base_dir_),
@@ -238,8 +243,7 @@ libtextclassifier3::Status DocumentStore::Initialize(
       initialize_stats->set_document_store_recovery_cause(
           NativeInitializeStats::DATA_LOSS);
 
-      if (create_result.data_status ==
-          FileBackedProtoLog<DocumentWrapper>::CreateResult::PARTIAL_LOSS) {
+      if (create_result.data_loss == DataLoss::PARTIAL) {
         // Ground truth is partially lost.
         initialize_stats->set_document_store_data_status(
             NativeInitializeStats::PARTIAL_LOSS);
@@ -249,11 +253,11 @@ libtextclassifier3::Status DocumentStore::Initialize(
             NativeInitializeStats::COMPLETE_LOSS);
       }
     }
-    Timer document_recovery_timer;
+    std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
     libtextclassifier3::Status status = RegenerateDerivedFiles();
     if (initialize_stats != nullptr) {
       initialize_stats->set_document_store_recovery_latency_ms(
-          document_recovery_timer.GetElapsedMilliseconds());
+          document_recovery_timer->GetElapsedMilliseconds());
     }
     if (!status.ok()) {
       ICING_LOG(ERROR)
@@ -269,11 +273,11 @@ libtextclassifier3::Status DocumentStore::Initialize(
         initialize_stats->set_document_store_recovery_cause(
             NativeInitializeStats::IO_ERROR);
       }
-      Timer document_recovery_timer;
+      std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
       libtextclassifier3::Status status = RegenerateDerivedFiles();
       if (initialize_stats != nullptr) {
         initialize_stats->set_document_store_recovery_latency_ms(
-            document_recovery_timer.GetElapsedMilliseconds());
+            document_recovery_timer->GetElapsedMilliseconds());
       }
       if (!status.ok()) {
         ICING_LOG(ERROR)
@@ -288,7 +292,7 @@ libtextclassifier3::Status DocumentStore::Initialize(
     initialize_stats->set_num_documents(document_id_mapper_->num_elements());
   }
 
-  return libtextclassifier3::Status::OK;
+  return create_result.data_loss;
 }
 
 libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
@@ -726,7 +730,7 @@ libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     DocumentProto&& document, NativePutDocumentStats* put_document_stats) {
-  Timer put_timer;
+  std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
   if (put_document_stats != nullptr) {
@@ -808,7 +812,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
 
   if (put_document_stats != nullptr) {
     put_document_stats->set_document_store_latency_ms(
-        put_timer.GetElapsedMilliseconds());
+        put_timer->GetElapsedMilliseconds());
   }
 
   return new_document_id;
@@ -1406,9 +1410,11 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
         "New directory is the same as the current one.");
   }
 
-  ICING_ASSIGN_OR_RETURN(auto new_doc_store,
+  ICING_ASSIGN_OR_RETURN(auto doc_store_create_result,
                          DocumentStore::Create(filesystem_, new_directory,
                                                &clock_, schema_store_));
+  std::unique_ptr<DocumentStore> new_doc_store =
+      std::move(doc_store_create_result.document_store);
 
   // Writes all valid docs into new document store (new directory)
   int size = document_id_mapper_->num_elements();
