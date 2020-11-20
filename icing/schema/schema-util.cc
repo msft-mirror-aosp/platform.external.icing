@@ -87,8 +87,8 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
          IsCardinalityCompatible(old_property, new_property);
 }
 
-bool IsTermMatchTypeCompatible(const IndexingConfig& old_indexed,
-                               const IndexingConfig& new_indexed) {
+bool IsTermMatchTypeCompatible(const StringIndexingConfig& old_indexed,
+                               const StringIndexingConfig& new_indexed) {
   return old_indexed.term_match_type() == new_indexed.term_match_type() &&
          old_indexed.tokenizer_type() == new_indexed.tokenizer_type();
 }
@@ -146,7 +146,7 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
               validated_status,
               absl_ports::StrCat("Field 'schema_type' is required for DOCUMENT "
                                  "data_types in schema property '",
-                                 schema_type, " ", property_name, "'"));
+                                 schema_type, ".", property_name, "'"));
         }
 
         // Need to make sure we eventually see/validate this schema_type
@@ -158,8 +158,11 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
                                                 schema_type, property_name));
 
-      ICING_RETURN_IF_ERROR(
-          ValidateIndexingConfig(property_config.indexing_config(), data_type));
+      if (data_type == PropertyConfigProto::DataType::STRING) {
+        ICING_RETURN_IF_ERROR(ValidateStringIndexingConfig(
+            property_config.string_indexing_config(), data_type, schema_type,
+            property_name));
+      }
     }
   }
 
@@ -214,7 +217,7 @@ libtextclassifier3::Status SchemaUtil::ValidateDataType(
   if (data_type == PropertyConfigProto::DataType::UNKNOWN) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         "Field 'data_type' cannot be UNKNOWN for schema property '",
-        schema_type, " ", property_name, "'"));
+        schema_type, ".", property_name, "'"));
   }
 
   return libtextclassifier3::Status::OK;
@@ -228,23 +231,32 @@ libtextclassifier3::Status SchemaUtil::ValidateCardinality(
   if (cardinality == PropertyConfigProto::Cardinality::UNKNOWN) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         "Field 'cardinality' cannot be UNKNOWN for schema property '",
-        schema_type, " ", property_name, "'"));
+        schema_type, ".", property_name, "'"));
   }
 
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status SchemaUtil::ValidateIndexingConfig(
-    const IndexingConfig& config,
-    PropertyConfigProto::DataType::Code data_type) {
-  if (data_type == PropertyConfigProto::DataType::DOCUMENT) {
-    return libtextclassifier3::Status::OK;
+libtextclassifier3::Status SchemaUtil::ValidateStringIndexingConfig(
+    const StringIndexingConfig& config,
+    PropertyConfigProto::DataType::Code data_type, std::string_view schema_type,
+    std::string_view property_name) {
+  if (config.term_match_type() == TermMatchType::UNKNOWN &&
+      config.tokenizer_type() != StringIndexingConfig::TokenizerType::NONE) {
+    // They set a tokenizer type, but no term match type.
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Indexed string property '", schema_type, ".", property_name,
+        "' cannot have a term match type UNKNOWN"));
   }
+
   if (config.term_match_type() != TermMatchType::UNKNOWN &&
-      config.tokenizer_type() == IndexingConfig::TokenizerType::NONE) {
+      config.tokenizer_type() == StringIndexingConfig::TokenizerType::NONE) {
+    // They set a term match type, but no tokenizer type
     return absl_ports::InvalidArgumentError(
-        "TermMatchType properties cannot have a tokenizer type of NONE");
+        absl_ports::StrCat("Indexed string property '", property_name,
+                           "' cannot have a tokenizer type of NONE"));
   }
+
   return libtextclassifier3::Status::OK;
 }
 
@@ -272,7 +284,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
 
     // A non-default term_match_type indicates that this property is meant to be
     // indexed.
-    if (property_config.indexing_config().term_match_type() !=
+    if (property_config.string_indexing_config().term_match_type() !=
         TermMatchType::UNKNOWN) {
       parsed_property_configs.num_indexed_properties++;
     }
@@ -297,9 +309,9 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     if (new_schema_type_and_config == new_type_config_map.end()) {
       // Didn't find the old schema type in the new schema, all the old
       // documents of this schema type are invalid without the schema
-      ICING_VLOG(1) << absl_ports::StrCat("Previously defined schema type ",
+      ICING_VLOG(1) << absl_ports::StrCat("Previously defined schema type '",
                                           old_type_config.schema_type(),
-                                          " was not defined in new schema");
+                                          "' was not defined in new schema");
       schema_delta.schema_types_deleted.insert(old_type_config.schema_type());
       continue;
     }
@@ -320,10 +332,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       if (new_property_name_and_config ==
           new_parsed_property_configs.property_config_map.end()) {
         // Didn't find the old property
-        ICING_VLOG(1) << absl_ports::StrCat("Previously defined property type ",
-                                            old_type_config.schema_type(), ".",
-                                            old_property_config.property_name(),
-                                            " was not defined in new schema");
+        ICING_VLOG(1) << absl_ports::StrCat(
+            "Previously defined property type '", old_type_config.schema_type(),
+            ".", old_property_config.property_name(),
+            "' was not defined in new schema");
         schema_delta.schema_types_incompatible.insert(
             old_type_config.schema_type());
         continue;
@@ -334,8 +346,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
 
       if (!IsPropertyCompatible(old_property_config, *new_property_config)) {
         ICING_VLOG(1) << absl_ports::StrCat(
-            "Property ", old_type_config.schema_type(), ".",
-            old_property_config.property_name(), " is incompatible.");
+            "Property '", old_type_config.schema_type(), ".",
+            old_property_config.property_name(), "' is incompatible.");
         schema_delta.schema_types_incompatible.insert(
             old_type_config.schema_type());
       }
@@ -347,14 +359,15 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
 
       // A non-default term_match_type indicates that this property is meant to
       // be indexed.
-      if (old_property_config.indexing_config().term_match_type() !=
+      if (old_property_config.string_indexing_config().term_match_type() !=
           TermMatchType::UNKNOWN) {
         ++old_indexed_properties;
       }
 
       // Any change in the indexed property requires a reindexing
-      if (!IsTermMatchTypeCompatible(old_property_config.indexing_config(),
-                                     new_property_config->indexing_config())) {
+      if (!IsTermMatchTypeCompatible(
+              old_property_config.string_indexing_config(),
+              new_property_config->string_indexing_config())) {
         schema_delta.index_incompatible = true;
       }
     }
@@ -367,8 +380,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     if (new_parsed_property_configs.num_required_properties >
         old_required_properties) {
       ICING_VLOG(1) << absl_ports::StrCat(
-          "New schema ", old_type_config.schema_type(),
-          " has REQUIRED properties that are not "
+          "New schema '", old_type_config.schema_type(),
+          "' has REQUIRED properties that are not "
           "present in the previously defined schema");
       schema_delta.schema_types_incompatible.insert(
           old_type_config.schema_type());

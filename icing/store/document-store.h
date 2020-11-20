@@ -28,12 +28,14 @@
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/usage-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/document-validator.h"
@@ -80,8 +82,11 @@ class DocumentStore {
   // previously initialized with this directory, it will reload the files saved
   // by the last instance.
   //
-  // Does not take any ownership, and all pointers must refer to valid objects
-  // that outlive the one constructed.
+  // If initialize_stats is present, the fields related to DocumentStore will be
+  // populated.
+  //
+  // Does not take any ownership, and all pointers except initialize_stats must
+  // refer to valid objects that outlive the one constructed.
   //
   // TODO(cassiewang): Consider returning a status indicating that derived files
   // were regenerated. This may be helpful in logs.
@@ -92,20 +97,28 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock, const SchemaStore* schema_store);
+      const Clock* clock, const SchemaStore* schema_store,
+      NativeInitializeStats* initialize_stats = nullptr);
 
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
   // empty, then kInvalidDocumentId is returned. This does not filter out
-  // DocumentIds of deleted documents.
-  const DocumentId last_added_document_id() const {
+  // DocumentIds of deleted or expired documents.
+  DocumentId last_added_document_id() const {
     if (document_id_mapper_->num_elements() == 0) {
       return kInvalidDocumentId;
     }
     return document_id_mapper_->num_elements() - 1;
   }
 
+  // Returns the number of documents. The result does not filter out DocumentIds
+  // of deleted or expired documents.
+  int num_documents() const { return document_id_mapper_->num_elements(); }
+
   // Puts the document into document store.
+  //
+  // If put_document_stats is present, the fields related to DocumentStore will
+  // be populated.
   //
   // Returns:
   //   A newly generated document id on success
@@ -113,8 +126,12 @@ class DocumentStore {
   //   NOT_FOUND if the schema_type or a property config of the document doesn't
   //     exist in schema
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentId> Put(const DocumentProto& document);
-  libtextclassifier3::StatusOr<DocumentId> Put(DocumentProto&& document);
+  libtextclassifier3::StatusOr<DocumentId> Put(
+      const DocumentProto& document,
+      NativePutDocumentStats* put_document_stats = nullptr);
+  libtextclassifier3::StatusOr<DocumentId> Put(
+      DocumentProto&& document,
+      NativePutDocumentStats* put_document_stats = nullptr);
 
   // Finds and returns the document identified by the given key (namespace +
   // uri)
@@ -222,6 +239,24 @@ class DocumentStore {
   //   NOT_FOUND if no filter data is found
   libtextclassifier3::StatusOr<DocumentFilterData> GetDocumentFilterData(
       DocumentId document_id) const;
+
+  // Gets the usage scores of a document.
+  //
+  // Returns:
+  //   UsageScores on success
+  //   INVALID_ARGUMENT if document_id is invalid
+  //   INTERNAL_ERROR on I/O errors
+  libtextclassifier3::StatusOr<UsageStore::UsageScores> GetUsageScores(
+      DocumentId document_id) const;
+
+  // Reports usage. The corresponding usage scores of the specified document in
+  // the report will be updated.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the [namesapce + uri] key in the report doesn't exist
+  //   INTERNAL_ERROR on I/O errors.
+  libtextclassifier3::Status ReportUsage(const UsageReport& usage_report);
 
   // Deletes all documents belonging to the given namespace. The documents will
   // be marked as deleted if 'soft_delete' is true, otherwise they will be
@@ -391,6 +426,11 @@ class DocumentStore {
   // DocumentStore. Namespaces may be removed from the mapper during compaction.
   std::unique_ptr<KeyMapper<NamespaceId>> namespace_mapper_;
 
+  // A storage class that caches all usage scores. Usage scores are not
+  // considered as ground truth. Usage scores are associated with document ids
+  // so they need to be updated when document ids change.
+  std::unique_ptr<UsageStore> usage_store_;
+
   // Used internally to indicate whether the class has been initialized. This is
   // to guard against cases where the object has been created, but Initialize
   // fails in the constructor. If we have successfully exited the constructor,
@@ -398,7 +438,8 @@ class DocumentStore {
   // worry about this field.
   bool initialized_ = false;
 
-  libtextclassifier3::Status Initialize();
+  libtextclassifier3::Status Initialize(
+      NativeInitializeStats* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
   //
@@ -497,7 +538,7 @@ class DocumentStore {
   //   OK on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status HardDelete(DocumentId document_id,
-                                        uint64_t document_log_offset);
+                                        int64_t document_log_offset);
 
   // Helper method to find a DocumentId that is associated with the given
   // namespace and uri.
@@ -539,6 +580,10 @@ class DocumentStore {
 
   // Helper method to clear the derived data of a document
   libtextclassifier3::Status ClearDerivedData(DocumentId document_id);
+
+  // Sets usage scores for the given document.
+  libtextclassifier3::Status SetUsageScores(
+      DocumentId document_id, const UsageStore::UsageScores& usage_scores);
 };
 
 }  // namespace lib

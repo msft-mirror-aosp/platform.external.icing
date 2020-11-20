@@ -99,6 +99,7 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
 
   if (!state_iterator->second.HasMoreResults()) {
     InternalInvalidateResultState(next_page_token);
+    next_page_token = kInvalidNextPageToken;
   }
 
   return PageResultState(result_of_page, next_page_token,

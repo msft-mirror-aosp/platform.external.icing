@@ -52,32 +52,51 @@ using ::testing::IsTrue;
 using ::testing::Ne;
 using ::testing::NiceMock;
 using ::testing::Not;
+using ::testing::Return;
 using ::testing::SizeIs;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
+
+int GetBlockSize() { return getpagesize(); }
 
 class IndexTest : public Test {
  protected:
   void SetUp() override {
     index_dir_ = GetTestTempDir() + "/index_test/";
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-    ICING_ASSERT_OK_AND_ASSIGN(index_, Index::Create(options, &filesystem_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
   }
 
   void TearDown() override {
-    filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
+    icing_filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
   }
 
   std::unique_ptr<Index> index_;
   std::string index_dir_;
-  IcingFilesystem filesystem_;
+  IcingFilesystem icing_filesystem_;
+  Filesystem filesystem_;
 };
 
 constexpr DocumentId kDocumentId0 = 0;
 constexpr DocumentId kDocumentId1 = 1;
 constexpr DocumentId kDocumentId2 = 2;
+constexpr DocumentId kDocumentId3 = 3;
+constexpr DocumentId kDocumentId4 = 4;
+constexpr DocumentId kDocumentId5 = 5;
+constexpr DocumentId kDocumentId6 = 6;
+constexpr DocumentId kDocumentId7 = 7;
 constexpr SectionId kSectionId2 = 2;
 constexpr SectionId kSectionId3 = 3;
+
+// The value returned by IndexBlock::ApproximateFullPostingListHitsForBlock(
+//    GetBlockSize(),
+//    GetPostingListIndexBits(posting_list_utils::min_posting_list_size()));
+constexpr int kMinSizePlApproxHits = 3;
+// The value returned by IndexBlock::ApproximateFullPostingListHitsForBlock(
+//    GetBlockSize(),
+//    GetPostingListIndexBits(2 * posting_list_utils::min_posting_list_size()));
+constexpr int kSecondSmallestPlApproxHits = 7;
 
 std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
   std::vector<DocHitInfo> infos;
@@ -112,29 +131,50 @@ MATCHER_P2(EqualsTermMetadata, content, hit_count, "") {
 
 TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-  EXPECT_THAT(Index::Create(options, /*filesystem=*/nullptr),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      Index::Create(options, &filesystem_, /*icing_filesystem=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      Index::Create(options, /*filesystem=*/nullptr, &icing_filesystem_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(IndexTest, EmptyIndex) {
-  // Assert
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
+}
+
+TEST_F(IndexTest, EmptyIndexAfterMerge) {
+  // Merging an empty index should succeed, but have no effects.
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
   EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
 }
 
 TEST_F(IndexTest, AdvancePastEnd) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
@@ -143,7 +183,32 @@ TEST_F(IndexTest, AdvancePastEnd) {
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("bar", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(itr->doc_hit_info(),
+              EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(itr->Advance(), IsOk());
+  EXPECT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(itr->doc_hit_info(),
+              EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
+}
+
+TEST_F(IndexTest, AdvancePastEndAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("bar", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(itr->doc_hit_info(),
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
 
@@ -158,12 +223,27 @@ TEST_F(IndexTest, AdvancePastEnd) {
 }
 
 TEST_F(IndexTest, SingleHitSingleTermIndex) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, SingleHitSingleTermIndexAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
@@ -175,13 +255,29 @@ TEST_F(IndexTest, SingleHitSingleTermIndex) {
 }
 
 TEST_F(IndexTest, SingleHitMultiTermIndex) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
   EXPECT_THAT(edit.AddHit("bar"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, SingleHitMultiTermIndexAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
@@ -193,23 +289,36 @@ TEST_F(IndexTest, SingleHitMultiTermIndex) {
 }
 
 TEST_F(IndexTest, NoHitMultiTermIndex) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
   EXPECT_THAT(edit.AddHit("bar"), IsOk());
 
-  // Assert
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, NoHitMultiTermIndexAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
 TEST_F(IndexTest, MultiHitMultiTermIndex) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
@@ -222,7 +331,32 @@ TEST_F(IndexTest, MultiHitMultiTermIndex) {
                       /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId2})));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId2));
+}
+
+TEST_F(IndexTest, MultiHitMultiTermIndexAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
@@ -235,7 +369,6 @@ TEST_F(IndexTest, MultiHitMultiTermIndex) {
 }
 
 TEST_F(IndexTest, MultiHitSectionRestrict) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
@@ -244,7 +377,28 @@ TEST_F(IndexTest, MultiHitSectionRestrict) {
                       /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
 
-  // Assert
+  SectionIdMask desired_section = 1U << kSectionId2;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", desired_section, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
+}
+
+TEST_F(IndexTest, MultiHitSectionRestrictAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   SectionIdMask desired_section = 1U << kSectionId2;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -257,18 +411,17 @@ TEST_F(IndexTest, MultiHitSectionRestrict) {
 }
 
 TEST_F(IndexTest, SingleHitDedupeIndex) {
-  Crc32 empty_crc = index_->ComputeChecksum();
-  // Act
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t size, index_->GetElementsSize());
+  EXPECT_THAT(size, Eq(0));
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  Crc32 first_hit_crc = index_->ComputeChecksum();
-  EXPECT_THAT(first_hit_crc.Get(), Ne(empty_crc.Get()));
+  ICING_ASSERT_OK_AND_ASSIGN(size, index_->GetElementsSize());
+  EXPECT_THAT(size, Gt(0));
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  Crc32 second_hit_crc = index_->ComputeChecksum();
-  EXPECT_THAT(second_hit_crc.Get(), Eq(first_hit_crc.Get()));
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t new_size, index_->GetElementsSize());
+  EXPECT_THAT(new_size, Eq(size));
 
-  // Assert
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
@@ -280,12 +433,27 @@ TEST_F(IndexTest, SingleHitDedupeIndex) {
 }
 
 TEST_F(IndexTest, PrefixHit) {
-  // Act
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
   ASSERT_THAT(edit.AddHit("fool"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, PrefixHitAfterMerge) {
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
@@ -297,7 +465,6 @@ TEST_F(IndexTest, PrefixHit) {
 }
 
 TEST_F(IndexTest, MultiPrefixHit) {
-  // Act
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
   ASSERT_THAT(edit.AddHit("fool"), IsOk());
@@ -306,7 +473,29 @@ TEST_F(IndexTest, MultiPrefixHit) {
                       /*namespace_id=*/0);
   ASSERT_THAT(edit.AddHit("foo"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
+}
+
+TEST_F(IndexTest, MultiPrefixHitAfterMerge) {
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
@@ -320,7 +509,6 @@ TEST_F(IndexTest, MultiPrefixHit) {
 }
 
 TEST_F(IndexTest, NoExactHitInPrefixQuery) {
-  // Act
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   ASSERT_THAT(edit.AddHit("fool"), IsOk());
@@ -329,7 +517,26 @@ TEST_F(IndexTest, NoExactHitInPrefixQuery) {
                       /*namespace_id=*/0);
   ASSERT_THAT(edit.AddHit("foo"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId3})));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
+}
+
+TEST_F(IndexTest, NoExactHitInPrefixQueryAfterMerge) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
@@ -340,13 +547,28 @@ TEST_F(IndexTest, NoExactHitInPrefixQuery) {
 }
 
 TEST_F(IndexTest, PrefixHitDedupe) {
-  // Act
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
   ASSERT_THAT(edit.AddHit("foo"), IsOk());
   ASSERT_THAT(edit.AddHit("fool"), IsOk());
 
-  // Assert
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, PrefixHitDedupeAfterMerge) {
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
@@ -361,15 +583,18 @@ TEST_F(IndexTest, PrefixToString) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", id_mask, TermMatchType::PREFIX));
-  EXPECT_THAT(itr->ToString(), Eq("0000000000001100:foo*"));
+  EXPECT_THAT(itr->ToString(),
+              Eq("(0000000000001100:foo* OR 0000000000001100:foo*)"));
 
   ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("foo", kSectionIdMaskAll,
                                                       TermMatchType::PREFIX));
-  EXPECT_THAT(itr->ToString(), Eq("1111111111111111:foo*"));
+  EXPECT_THAT(itr->ToString(),
+              Eq("(1111111111111111:foo* OR 1111111111111111:foo*)"));
 
   ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("foo", kSectionIdMaskNone,
                                                       TermMatchType::PREFIX));
-  EXPECT_THAT(itr->ToString(), Eq("0000000000000000:foo*"));
+  EXPECT_THAT(itr->ToString(),
+              Eq("(0000000000000000:foo* OR 0000000000000000:foo*)"));
 }
 
 TEST_F(IndexTest, ExactToString) {
@@ -377,17 +602,20 @@ TEST_F(IndexTest, ExactToString) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("foo", id_mask, TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(itr->ToString(), Eq("0000000000001100:foo"));
+  EXPECT_THAT(itr->ToString(),
+              Eq("(0000000000001100:foo OR 0000000000001100:foo)"));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr,
       index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(itr->ToString(), Eq("1111111111111111:foo"));
+  EXPECT_THAT(itr->ToString(),
+              Eq("(1111111111111111:foo OR 1111111111111111:foo)"));
 
   ICING_ASSERT_OK_AND_ASSIGN(itr,
                              index_->GetIterator("foo", kSectionIdMaskNone,
                                                  TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(itr->ToString(), Eq("0000000000000000:foo"));
+  EXPECT_THAT(itr->ToString(),
+              Eq("(0000000000000000:foo OR 0000000000000000:foo)"));
 }
 
 TEST_F(IndexTest, NonAsciiTerms) {
@@ -411,26 +639,52 @@ TEST_F(IndexTest, NonAsciiTerms) {
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
 }
 
+TEST_F(IndexTest, NonAsciiTermsAfterMerge) {
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("こんにちは"), IsOk());
+  ASSERT_THAT(edit.AddHit("あなた"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("こんに", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("あなた", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+}
+
 TEST_F(IndexTest, FullIndex) {
   // Make a smaller index so that it's easier to fill up.
   Index::Options options(index_dir_, /*index_merge_size=*/1024);
-  ICING_ASSERT_OK_AND_ASSIGN(index_, Index::Create(options, &filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+
   std::default_random_engine random;
-  libtextclassifier3::Status status = libtextclassifier3::Status::OK;
-  constexpr int kTokenSize = 5;
-  DocumentId document_id = 0;
   std::vector<std::string> query_terms;
+  for (int i = 0; i < 2600; ++i) {
+    constexpr int kTokenSize = 5;
+    query_terms.push_back(RandomString(kAlNumAlphabet, kTokenSize, &random));
+  }
+
+  DocumentId document_id = 0;
+  libtextclassifier3::Status status = libtextclassifier3::Status::OK;
+  std::uniform_int_distribution<size_t> uniform(0u, query_terms.size() - 1);
   while (status.ok()) {
     for (int i = 0; i < 100; ++i) {
       Index::Editor edit =
           index_->Edit(document_id, kSectionId2, TermMatchType::EXACT_ONLY,
                        /*namespace_id=*/0);
-      std::string term = RandomString(kAlNumAlphabet, kTokenSize, &random);
-      status = edit.AddHit(term.c_str());
-      if (i % 50 == 0) {
-        // Remember one out of every fifty terms to query for later.
-        query_terms.push_back(std::move(term));
-      }
+      size_t idx = uniform(random);
+      status = edit.AddHit(query_terms.at(idx).c_str());
       if (!status.ok()) {
         break;
       }
@@ -438,7 +692,6 @@ TEST_F(IndexTest, FullIndex) {
     ++document_id;
   }
 
-  // Assert
   // Adding more hits should fail.
   Index::Editor edit =
       index_->Edit(document_id + 1, kSectionId2, TermMatchType::EXACT_ONLY,
@@ -450,10 +703,10 @@ TEST_F(IndexTest, FullIndex) {
   EXPECT_THAT(edit.AddHit("baz"),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
-  for (const std::string& term : query_terms) {
+  for (int i = 0; i < query_terms.size(); i += 25) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> itr,
-        index_->GetIterator(term.c_str(), kSectionIdMaskAll,
+        index_->GetIterator(query_terms.at(i).c_str(), kSectionIdMaskAll,
                             TermMatchType::EXACT_ONLY));
     // Each query term should contain at least one hit - there may have been
     // other hits for this term that were added.
@@ -462,12 +715,74 @@ TEST_F(IndexTest, FullIndex) {
   EXPECT_THAT(index_->last_added_document_id(), Eq(document_id - 1));
 }
 
+TEST_F(IndexTest, FullIndexMerge) {
+  // Make a smaller index so that it's easier to fill up.
+  Index::Options options(index_dir_, /*index_merge_size=*/1024);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+
+  std::default_random_engine random;
+  std::vector<std::string> query_terms;
+  for (int i = 0; i < 2600; ++i) {
+    constexpr int kTokenSize = 5;
+    query_terms.push_back(RandomString(kAlNumAlphabet, kTokenSize, &random));
+  }
+
+  DocumentId document_id = 0;
+  libtextclassifier3::Status status = libtextclassifier3::Status::OK;
+  std::uniform_int_distribution<size_t> uniform(0u, query_terms.size() - 1);
+  while (status.ok()) {
+    for (int i = 0; i < 100; ++i) {
+      Index::Editor edit =
+          index_->Edit(document_id, kSectionId2, TermMatchType::EXACT_ONLY,
+                       /*namespace_id=*/0);
+      size_t idx = uniform(random);
+      status = edit.AddHit(query_terms.at(idx).c_str());
+      if (!status.ok()) {
+        break;
+      }
+    }
+    ++document_id;
+  }
+  EXPECT_THAT(status,
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+
+  // Adding more hits should fail.
+  Index::Editor edit =
+      index_->Edit(document_id + 1, kSectionId2, TermMatchType::EXACT_ONLY,
+                   /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(edit.AddHit("bar"),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(edit.AddHit("baz"),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(document_id - 1));
+
+  // After merging with the main index. Adding more hits should succeed now.
+  ICING_ASSERT_OK(index_->Merge());
+  edit =
+      index_->Edit(document_id + 1, kSectionId2, TermMatchType::EXACT_ONLY, 0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.AddHit("baz"), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("bar", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  // We know that "bar" should have at least one hit because we just added it!
+  EXPECT_THAT(itr->Advance(), IsOk());
+  EXPECT_THAT(itr->doc_hit_info().document_id(), Eq(document_id + 1));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(document_id + 1));
+}
+
 TEST_F(IndexTest, IndexCreateIOFailure) {
   // Create the index with mock filesystem. By default, Mock will return false,
   // so the first attempted file operation will fail.
-  NiceMock<IcingMockFilesystem> mock_filesystem;
+  NiceMock<IcingMockFilesystem> mock_icing_filesystem;
+  ON_CALL(mock_icing_filesystem, CreateDirectoryRecursively)
+      .WillByDefault(Return(false));
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-  EXPECT_THAT(Index::Create(options, &mock_filesystem),
+  EXPECT_THAT(Index::Create(options, &filesystem_, &mock_icing_filesystem),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
@@ -483,20 +798,21 @@ TEST_F(IndexTest, IndexCreateCorruptionFailure) {
 
   // Corrrupt the index file.
   std::string hit_buffer_filename = index_dir_ + "/idx/lite.hb";
-  ScopedFd sfd(filesystem_.OpenForWrite(hit_buffer_filename.c_str()));
+  ScopedFd sfd(icing_filesystem_.OpenForWrite(hit_buffer_filename.c_str()));
   ASSERT_THAT(sfd.is_valid(), IsTrue());
 
   constexpr std::string_view kCorruptBytes = "ffffffffffffffffffffff";
   // The first page of the hit_buffer is taken up by the header. Overwrite the
   // first page of content.
-  constexpr int kHitBufferStartOffset = 4096;
-  ASSERT_THAT(filesystem_.PWrite(sfd.get(), kHitBufferStartOffset,
-                                 kCorruptBytes.data(), kCorruptBytes.length()),
-              IsTrue());
+  int hit_buffer_start_offset = GetBlockSize();
+  ASSERT_THAT(
+      icing_filesystem_.PWrite(sfd.get(), hit_buffer_start_offset,
+                               kCorruptBytes.data(), kCorruptBytes.length()),
+      IsTrue());
 
   // Recreate the index.
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-  EXPECT_THAT(Index::Create(options, &filesystem_),
+  EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_),
               StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
 }
 
@@ -513,7 +829,36 @@ TEST_F(IndexTest, IndexPersistence) {
 
   // Recreate the index.
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-  ICING_ASSERT_OK_AND_ASSIGN(index_, Index::Create(options, &filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+
+  // Check that the hits are present.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, IndexPersistenceAfterMerge) {
+  // Add some content to the index
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.AddHit("bar"), IsOk());
+  ICING_ASSERT_OK(index_->Merge());
+  EXPECT_THAT(index_->PersistToDisk(), IsOk());
+
+  // Close the index.
+  index_.reset();
+
+  // Recreate the index.
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
   // Check that the hits are present.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -529,49 +874,8 @@ TEST_F(IndexTest, IndexPersistence) {
 TEST_F(IndexTest, InvalidHitBufferSize) {
   Index::Options options(
       index_dir_, /*index_merge_size=*/std::numeric_limits<uint32_t>::max());
-  EXPECT_THAT(Index::Create(options, &filesystem_),
+  EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(IndexTest, ComputeChecksumSameBetweenCalls) {
-  // Add some content to the index.
-  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
-                                    TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-
-  Crc32 checksum = index_->ComputeChecksum();
-  // Calling it again shouldn't change the checksum
-  EXPECT_THAT(index_->ComputeChecksum(), Eq(checksum));
-}
-
-TEST_F(IndexTest, ComputeChecksumSameAcrossInstances) {
-  // Add some content to the index.
-  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
-                                    TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-
-  Crc32 checksum = index_->ComputeChecksum();
-
-  // Recreate the index, checksum should still be the same across instances
-  index_.reset();
-  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
-  ICING_ASSERT_OK_AND_ASSIGN(index_, Index::Create(options, &filesystem_));
-
-  EXPECT_THAT(index_->ComputeChecksum(), Eq(checksum));
-}
-
-TEST_F(IndexTest, ComputeChecksumChangesOnModification) {
-  // Add some content to the index.
-  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
-                                    TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-
-  Crc32 checksum = index_->ComputeChecksum();
-
-  // Modifying the index changes the checksum;
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
-
-  EXPECT_THAT(index_->ComputeChecksum(), Not(Eq(checksum)));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
@@ -582,7 +886,15 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo", /*namespace_ids=*/{0},
                                         /*num_to_return=*/0),
               IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/-1),
+              IsOkAndHolds(IsEmpty()));
 
+  ICING_ASSERT_OK(index_->Merge());
+
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/0),
+              IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo", /*namespace_ids=*/{0},
                                         /*num_to_return=*/-1),
               IsOkAndHolds(IsEmpty()));
@@ -598,6 +910,14 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"b", /*namespace_ids=*/{0},
                                         /*num_to_return=*/10),
               IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("bar", 1))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // "b" should only match "bar" but not "foo".
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"b", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("bar", kMinSizePlApproxHits))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldRespectNumToReturn) {
@@ -606,6 +926,13 @@ TEST_F(IndexTest, FindTermByPrefixShouldRespectNumToReturn) {
   EXPECT_THAT(edit.AddHit("fo"), IsOk());
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
   EXPECT_THAT(edit.AddHit("fool"), IsOk());
+
+  // We have 3 results but only 2 should be returned.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/2),
+              IsOkAndHolds(SizeIs(2)));
+
+  ICING_ASSERT_OK(index_->Merge());
 
   // We have 3 results but only 2 should be returned.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
@@ -630,12 +957,25 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInOneNamespace) {
                                         /*num_to_return=*/10),
               IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
                                                 EqualsTermMetadata("foo", 1))));
-
   // namespace with id 1 has 1 result.
   EXPECT_THAT(
       index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{1},
                                 /*num_to_return=*/10),
       IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fool", 1))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // namespace with id 0 has 2 results.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("fo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits))));
+  // namespace with id 1 has 1 result.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{1},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("fool", kMinSizePlApproxHits))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInMultipleNamespaces) {
@@ -660,6 +1000,15 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInMultipleNamespaces) {
                                 /*num_to_return=*/10),
       IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
                                         EqualsTermMetadata("fool", 1))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{1, 2},
+                                /*num_to_return=*/10),
+      IsOkAndHolds(UnorderedElementsAre(
+          EqualsTermMetadata("foo", kMinSizePlApproxHits),
+          EqualsTermMetadata("fool", kMinSizePlApproxHits))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
@@ -684,6 +1033,16 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
               IsOkAndHolds(UnorderedElementsAre(
                   EqualsTermMetadata("fo", 1), EqualsTermMetadata("foo", 1),
                   EqualsTermMetadata("fool", 1))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // Should return "fo", "foo" and "fool" across all namespaces.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("fo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", kMinSizePlApproxHits))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
@@ -704,17 +1063,477 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
                                 /*num_to_return=*/10),
       IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
                                         EqualsTermMetadata("fool", 2))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // foo's one hit should fit on a min-sized pl, fool's two hits should also fit
+  // on a min-sized pl.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", kMinSizePlApproxHits))));
+}
+
+TEST_F(IndexTest, FindTermByPrefixShouldReturnApproximateHitCountForMain) {
+  Index::Editor edit =
+      index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
+                   /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId4, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId5, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId6, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId7, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+
+  // 'foo' has 1 hit, 'fool' has 8 hits.
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                /*num_to_return=*/10),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 8))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // foo's hits should fit on a single pl. fool's hits will need two pls.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", kSecondSmallestPlApproxHits))));
+}
+
+TEST_F(IndexTest, FindTermByPrefixShouldReturnCombinedHitCount) {
+  Index::Editor edit =
+      index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
+                   /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+
+  // 'foo' has 1 hit in the main index, 'fool' has 1 hit in the main index and
+  // 1 hit in the lite index.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", kMinSizePlApproxHits + 1))));
+}
+
+TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
+  Index::Editor edit =
+      index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
+                   /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+
+  // 'foo' has 1 hit in the main index, 'fool' has 1 hit in the lite index.
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, GetElementsSize) {
   // Check empty index.
-  EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(Eq(0)));
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t size, index_->GetElementsSize());
+  EXPECT_THAT(size, Eq(0));
 
   // Add an element.
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
   EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(Gt(0)));
+  ICING_ASSERT_OK_AND_ASSIGN(size, index_->GetElementsSize());
+  EXPECT_THAT(size, Gt(0));
+
+  ASSERT_THAT(index_->Merge(), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(size, index_->GetElementsSize());
+  EXPECT_THAT(size, Gt(0));
+}
+
+TEST_F(IndexTest, ExactResultsFromLiteAndMain) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foot"), IsOk());
+  ICING_ASSERT_OK(index_->Merge());
+
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("footer"), IsOk());
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId2));
+}
+
+TEST_F(IndexTest, PrefixResultsFromLiteAndMain) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foot"), IsOk());
+  ICING_ASSERT_OK(index_->Merge());
+
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("footer"), IsOk());
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId2));
+}
+
+TEST_F(IndexTest, GetDebugInfo) {
+  // Add two documents to the lite index, merge them into the main index and
+  // then add another doc to the lite index.
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ICING_ASSERT_OK(index_->Merge());
+
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("footer"), IsOk());
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+
+  std::string out0;
+  index_->GetDebugInfo(/*verbosity=*/0, &out0);
+  EXPECT_THAT(out0, Not(IsEmpty()));
+
+  std::string out1;
+  index_->GetDebugInfo(/*verbosity=*/1, &out1);
+  EXPECT_THAT(out1, SizeIs(Gt(out0.size())));
+
+  // Add one more doc to the lite index. Debug strings should change.
+  edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("far"), IsOk());
+
+  std::string out2;
+  index_->GetDebugInfo(/*verbosity=*/0, &out2);
+  EXPECT_THAT(out2, Ne(out0));
+
+  std::string out3;
+  index_->GetDebugInfo(/*verbosity=*/1, &out3);
+  EXPECT_THAT(out3, Ne(out1));
+
+  // Merge into the man index. Debuug strings should change again.
+  ICING_ASSERT_OK(index_->Merge());
+
+  std::string out4;
+  index_->GetDebugInfo(/*verbosity=*/0, &out4);
+  EXPECT_THAT(out4, Ne(out0));
+  EXPECT_THAT(out4, Ne(out2));
+
+  std::string out5;
+  index_->GetDebugInfo(/*verbosity=*/1, &out5);
+  EXPECT_THAT(out5, Ne(out1));
+  EXPECT_THAT(out5, Ne(out3));
+}
+
+TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {
+  // Add two documents to the lite index, merge them into the main index and
+  // then add another doc to the lite index.
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  edit = index_->Edit(kDocumentId0, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+
+  // After this merge the index should have posting lists for
+  // "fool" {(doc0,sec3)},
+  // "foot" {(doc1,sec3)},
+  // "foo"  {(doc1,sec3),(doc0,sec3),(doc0,sec2)}
+  ICING_ASSERT_OK(index_->Merge());
+
+  // Add one more doc to the lite index.
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("far"), IsOk());
+
+  // After this merge the index should add a posting list for "far" and a
+  // backfill branch point for "f". In addition to the posting lists described
+  // above, which are unaffected, the new posting lists should be
+  // "far" {(doc2,sec2)},
+  // "f"   {(doc1,sec3),(doc0,sec3)}
+  // Multiple pre-existing hits should be added to the new backfill branch
+  // point.
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId3})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId2));
+}
+
+TEST_F(IndexTest, BackfillingNewTermsSucceeds) {
+  // Add two documents to the lite index, merge them into the main index and
+  // then add another doc to the lite index.
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  // After this merge the index should have posting lists for
+  // "fool" {(doc0,sec2)},
+  // "foot" {(doc1,sec3)},
+  // "foo"  {(doc1,sec3),(doc0,sec2)}
+  ICING_ASSERT_OK(index_->Merge());
+
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("footer"), IsOk());
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  // Add one more doc to the lite index. Debug strings should change.
+  edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("far"), IsOk());
+
+  // After this merge the index should add posting lists for "far" and "footer"
+  // and a backfill branch point for "f". The new posting lists should be
+  // "fool"    {(doc0,sec2)},
+  // "foot"    {(doc1,sec3)},
+  // "foo"     {(doc2,sec3),(doc1,sec3),(doc0,sec2)}
+  // "footer"  {(doc2,sec2)},
+  // "far"     {(doc3,sec2)},
+  // "f"       {(doc2,sec3),(doc1,sec3)}
+  // Multiple pre-existing hits should be added to the new backfill branch
+  // point.
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId3));
+}
+
+TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
+  ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
+  EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+
+  // Add one document to the lite index
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  // Clipping to invalid should have no effect.
+  ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  // Clipping to invalid should still have no effect even if hits are in main.
+  ICING_ASSERT_OK(index_->Merge());
+  ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+
+  // Clipping to invalid should still have no effect even if both indices have
+  // hits.
+  ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
+}
+
+TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
+  ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
+  EXPECT_THAT(index_->GetElementsSize(), IsOkAndHolds(0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+
+  // Add one document to the lite index
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
+  // Clipping to invalid should have no effect.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  // Clipping to invalid should still have no effect even if hits are in main.
+  ICING_ASSERT_OK(index_->Merge());
+  ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+
+  // Clipping to invalid should still have no effect even if both indices have
+  // hits.
+  ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
+}
+
+TEST_F(IndexTest, TruncateToThrowsOutLiteIndex) {
+  // Add one document to the lite index and merge it into main.
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // Add another document to the lite index.
+  edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+
+  EXPECT_THAT(index_->TruncateTo(kDocumentId0), IsOk());
+
+  // Clipping to document 0 should toss out the lite index, but keep the main.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kSectionId2})));
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexTest, TruncateToThrowsOutBothIndices) {
+  // Add two documents to the lite index and merge them into main.
+  Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
+                                    TermMatchType::PREFIX, /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foul"), IsOk());
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  // Add another document to the lite index.
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
+                      /*namespace_id=*/0);
+  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+
+  EXPECT_THAT(index_->TruncateTo(kDocumentId0), IsOk());
+
+  // Clipping to document 0 should toss out both indices.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("f", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
 }
 
 }  // namespace

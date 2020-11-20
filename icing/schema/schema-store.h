@@ -27,6 +27,7 @@
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
@@ -104,12 +105,16 @@ class SchemaStore {
   // outlive the created SchemaStore instance. The base_dir must already exist.
   // There does not need to be an existing schema already.
   //
+  // If initialize_stats is present, the fields related to SchemaStore will be
+  // populated.
+  //
   // Returns:
   //   A SchemaStore on success
   //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
-      const Filesystem* filesystem, const std::string& base_dir);
+      const Filesystem* filesystem, const std::string& base_dir,
+      NativeInitializeStats* initialize_stats = nullptr);
 
   // Not copyable
   SchemaStore(const SchemaStore&) = delete;
@@ -229,7 +234,8 @@ class SchemaStore {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status Initialize();
+  libtextclassifier3::Status Initialize(
+      NativeInitializeStats* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
   //

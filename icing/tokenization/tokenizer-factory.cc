@@ -31,14 +31,14 @@ namespace lib {
 namespace tokenizer_factory {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>>
-CreateIndexingTokenizer(IndexingConfig::TokenizerType::Code type,
+CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
                         const LanguageSegmenter* lang_segmenter) {
   ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
 
   switch (type) {
-    case IndexingConfig::TokenizerType::PLAIN:
+    case StringIndexingConfig::TokenizerType::PLAIN:
       return std::make_unique<PlainTokenizer>(lang_segmenter);
-    case IndexingConfig::TokenizerType::NONE:
+    case StringIndexingConfig::TokenizerType::NONE:
       [[fallthrough]];
     default:
       // This should never happen.
