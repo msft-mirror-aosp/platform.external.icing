@@ -27,6 +27,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/util/status-macros.h"
 
 namespace {
@@ -94,6 +95,14 @@ Java_com_google_android_icing_IcingSearchEngine_nativeCreate(
   icing::lib::IcingSearchEngine* icing =
       new icing::lib::IcingSearchEngine(options, std::move(jni_cache));
   return reinterpret_cast<jlong>(icing);
+}
+
+JNIEXPORT void JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeDestroy(
+    JNIEnv* env, jclass clazz, jlong native_pointer) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+  delete icing;
 }
 
 JNIEXPORT jbyteArray JNICALL
@@ -188,6 +197,25 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGet(
 }
 
 JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeReportUsage(
+    JNIEnv* env, jclass clazz, jlong native_pointer,
+    jbyteArray usage_report_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(native_pointer);
+
+  icing::lib::UsageReport usage_report;
+  if (!ParseProtoFromJniByteArray(env, usage_report_bytes, &usage_report)) {
+    ICING_LOG(ERROR) << "Failed to parse UsageReport in nativeReportUsage";
+    return nullptr;
+  }
+
+  icing::lib::ReportUsageResultProto report_usage_result_proto =
+      icing->ReportUsage(usage_report);
+
+  return SerializeProtoToJniByteArray(env, report_usage_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
     JNIEnv* env, jclass clazz, jlong native_pointer) {
   icing::lib::IcingSearchEngine* icing =
@@ -201,8 +229,7 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jlong next_page_token) {
+    JNIEnv* env, jclass clazz, jlong native_pointer, jlong next_page_token) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(native_pointer);
 
@@ -214,8 +241,7 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
 
 JNIEXPORT void JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeInvalidateNextPageToken(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jlong next_page_token) {
+    JNIEnv* env, jclass clazz, jlong native_pointer, jlong next_page_token) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(native_pointer);
 

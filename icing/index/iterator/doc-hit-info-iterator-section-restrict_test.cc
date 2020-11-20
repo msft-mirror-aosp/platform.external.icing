@@ -72,14 +72,16 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     // First and only indexed property, so it gets the first id of 0
     indexed_section_id_ = 0;
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {

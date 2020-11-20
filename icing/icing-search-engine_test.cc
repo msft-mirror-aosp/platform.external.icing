@@ -41,6 +41,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
@@ -99,17 +100,19 @@ std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
 class IcingSearchEngineTest : public testing::Test {
  protected:
   void SetUp() override {
-#ifndef ICING_REVERSE_JNI_SEGMENTATION
-    // If we've specified using the reverse-JNI method for segmentation (i.e.
-    // not ICU), then we won't have the ICU data file included to set up.
-    // Technically, we could choose to use reverse-JNI for segmentation AND
-    // include an ICU data file, but that seems unlikely and our current BUILD
-    // setup doesn't do this.
-    // File generated via icu_data_file rule in //icing/BUILD.
-    std::string icu_data_file_path =
-        GetTestFilePath("icing/icu.dat");
-    ICING_ASSERT_OK(icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
-#endif  // ICING_REVERSE_JNI_SEGMENTATION
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      // If we've specified using the reverse-JNI method for segmentation (i.e.
+      // not ICU), then we won't have the ICU data file included to set up.
+      // Technically, we could choose to use reverse-JNI for segmentation AND
+      // include an ICU data file, but that seems unlikely and our current BUILD
+      // setup doesn't do this.
+      // File generated via icu_data_file rule in //icing/BUILD.
+      std::string icu_data_file_path =
+          GetTestFilePath("icing/icu.dat");
+      ICING_ASSERT_OK(
+          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+    }
+
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
 
@@ -2930,9 +2933,10 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
     property->mutable_string_indexing_config()->set_tokenizer_type(
         StringIndexingConfig::TokenizerType::PLAIN);
 
+    FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir()));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
     ICING_EXPECT_OK(schema_store->SetSchema(new_schema));
   }  // Will persist new schema
 
@@ -2989,17 +2993,20 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentDocumentStore) {
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   {
+    FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
-        SchemaStore::Create(filesystem(), GetSchemaDir()));
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
     ICING_EXPECT_OK(schema_store->SetSchema(CreateMessageSchema()));
 
     // Puts a second document into DocumentStore but doesn't index it.
-    FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<DocumentStore> document_store,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
                               schema_store.get()));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+
     ICING_EXPECT_OK(document_store->Put(document2));
   }
 
@@ -4524,11 +4531,16 @@ TEST_F(IcingSearchEngineTest, IndexingDocMergeFailureResets) {
 }
 
 TEST_F(IcingSearchEngineTest, InitializeShouldLogFunctionLatency) {
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(initialize_result_proto.native_initialize_stats().latency_ms(),
-              Gt(0));
+              Eq(10));
 }
 
 TEST_F(IcingSearchEngineTest, InitializeShouldLogNumberOfDocuments) {
@@ -4580,7 +4592,14 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogNumberOfDocuments) {
 
 TEST_F(IcingSearchEngineTest,
        InitializeShouldNotLogRecoveryCauseForFirstTimeInitialize) {
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  // Even though the fake timer will return 10, all the latency numbers related
+  // to recovery / restoration should be 0 during the first-time initialization.
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(initialize_result_proto.native_initialize_stats()
@@ -4637,7 +4656,12 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCausePartialDataLoss) {
   {
     // Document store will rewind to previous checkpoint. The cause should be
     // DATA_LOSS and the data status should be PARTIAL_LOSS.
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
@@ -4645,7 +4669,7 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCausePartialDataLoss) {
                 Eq(NativeInitializeStats::DATA_LOSS));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_recovery_latency_ms(),
-                Gt(0));
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_data_status(),
                 Eq(NativeInitializeStats::PARTIAL_LOSS));
@@ -4669,21 +4693,14 @@ TEST_F(IcingSearchEngineTest,
   DocumentProto document1 = DocumentBuilder()
                                 .SetKey("icing", "fake_type/1")
                                 .SetSchema("Message")
-                                .AddStringProperty("body", kIpsumText)
+                                .AddStringProperty("body", "message body")
                                 .Build();
-  DocumentProto document2 = DocumentBuilder()
-                                .SetKey("icing", "fake_type/2")
-                                .SetSchema("Message")
-                                .AddStringProperty("body", kIpsumText)
-                                .Build();
-
   {
     // Initialize and put a document.
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(document2).status(), ProtoIsOk());
   }
 
   {
@@ -4708,7 +4725,12 @@ TEST_F(IcingSearchEngineTest,
   {
     // Document store will completely rewind. The cause should be DATA_LOSS and
     // the data status should be COMPLETE_LOSS.
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
@@ -4716,7 +4738,7 @@ TEST_F(IcingSearchEngineTest,
                 Eq(NativeInitializeStats::DATA_LOSS));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_recovery_latency_ms(),
-                Gt(0));
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_data_status(),
                 Eq(NativeInitializeStats::COMPLETE_LOSS));
@@ -4725,9 +4747,9 @@ TEST_F(IcingSearchEngineTest,
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .index_restoration_cause(),
                 Eq(NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH));
-    // Here we don't check index_restoration_latency_ms because the index
-    // restoration is super fast when document store is emtpy. We won't get a
-    // latency that is greater than 1 ms.
+    EXPECT_THAT(initialize_result_proto.native_initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .schema_store_recovery_cause(),
                 Eq(NativeInitializeStats::NONE));
@@ -4761,7 +4783,12 @@ TEST_F(IcingSearchEngineTest,
   {
     // Index is empty but ground truth is not. Index should be restored due to
     // the inconsistency.
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
@@ -4769,7 +4796,7 @@ TEST_F(IcingSearchEngineTest,
                 Eq(NativeInitializeStats::INCONSISTENT_WITH_GROUND_TRUTH));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .index_restoration_latency_ms(),
-                Gt(0));
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_recovery_cause(),
                 Eq(NativeInitializeStats::NONE));
@@ -4790,23 +4817,17 @@ TEST_F(IcingSearchEngineTest,
 
 TEST_F(IcingSearchEngineTest,
        InitializeShouldLogRecoveryCauseTotalChecksumMismatch) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
   {
-    // Initialize and index some documents.
+    // Initialize and put one document.
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-
-    // We need to index enough documents to make
-    // DocumentStore::UpdateSchemaStore() run longer than 1 ms.
-    for (int i = 0; i < 50; ++i) {
-      DocumentProto document =
-          DocumentBuilder()
-              .SetKey("icing", "fake_type/" + std::to_string(i))
-              .SetSchema("Message")
-              .AddStringProperty("body", "message body")
-              .Build();
-      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
-    }
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
   {
@@ -4819,7 +4840,12 @@ TEST_F(IcingSearchEngineTest,
 
   {
     // Both document store and index should be recovered from checksum mismatch.
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
@@ -4827,13 +4853,13 @@ TEST_F(IcingSearchEngineTest,
                 Eq(NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .index_restoration_latency_ms(),
-                Gt(0));
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_recovery_cause(),
                 Eq(NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_recovery_latency_ms(),
-                Gt(0));
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_data_status(),
                 Eq(NativeInitializeStats::NO_DATA_LOSS));
@@ -4847,23 +4873,17 @@ TEST_F(IcingSearchEngineTest,
 }
 
 TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseIndexIOError) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
   {
-    // Initialize and index some documents.
+    // Initialize and put one document.
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-
-    // We need to index enough documents to make RestoreIndexIfNeeded() run
-    // longer than 1 ms.
-    for (int i = 0; i < 50; ++i) {
-      DocumentProto document =
-          DocumentBuilder()
-              .SetKey("icing", "fake_type/" + std::to_string(i))
-              .SetSchema("Message")
-              .AddStringProperty("body", "message body")
-              .Build();
-      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
-    }
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
   // lambda to fail OpenForWrite on lite index hit buffer once.
@@ -4884,10 +4904,12 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseIndexIOError) {
   ON_CALL(*mock_icing_filesystem, OpenForWrite)
       .WillByDefault(open_write_lambda);
 
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
                               std::make_unique<Filesystem>(),
                               std::move(mock_icing_filesystem),
-                              std::make_unique<FakeClock>(), GetTestJniCache());
+                              std::move(fake_clock), GetTestJniCache());
 
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
@@ -4896,7 +4918,7 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseIndexIOError) {
               Eq(NativeInitializeStats::IO_ERROR));
   EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                   .index_restoration_latency_ms(),
-              Gt(0));
+              Eq(10));
   EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                   .document_store_recovery_cause(),
               Eq(NativeInitializeStats::NONE));
@@ -4915,23 +4937,17 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseIndexIOError) {
 }
 
 TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseDocStoreIOError) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .Build();
   {
-    // Initialize and index some documents.
+    // Initialize and put one document.
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-
-    // We need to index enough documents to make RestoreIndexIfNeeded() run
-    // longer than 1 ms.
-    for (int i = 0; i < 50; ++i) {
-      DocumentProto document =
-          DocumentBuilder()
-              .SetKey("icing", "fake_type/" + std::to_string(i))
-              .SetSchema("Message")
-              .AddStringProperty("body", "message body")
-              .Build();
-      ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
-    }
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
   // lambda to fail Read on document store header once.
@@ -4954,10 +4970,12 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseDocStoreIOError) {
   ON_CALL(*mock_filesystem, Read(A<const char*>(), _, _))
       .WillByDefault(read_lambda);
 
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
                               std::move(mock_filesystem),
                               std::make_unique<IcingFilesystem>(),
-                              std::make_unique<FakeClock>(), GetTestJniCache());
+                              std::move(fake_clock), GetTestJniCache());
 
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
@@ -4966,7 +4984,7 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCauseDocStoreIOError) {
               Eq(NativeInitializeStats::IO_ERROR));
   EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                   .document_store_recovery_latency_ms(),
-              Gt(0));
+              Eq(10));
   EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                   .document_store_data_status(),
               Eq(NativeInitializeStats::NO_DATA_LOSS));
@@ -5000,7 +5018,12 @@ TEST_F(IcingSearchEngineTest,
   }
 
   {
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
@@ -5008,7 +5031,7 @@ TEST_F(IcingSearchEngineTest,
                 Eq(NativeInitializeStats::IO_ERROR));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .schema_store_recovery_latency_ms(),
-                Gt(0));
+                Eq(10));
     EXPECT_THAT(initialize_result_proto.native_initialize_stats()
                     .document_store_recovery_cause(),
                 Eq(NativeInitializeStats::NONE));
@@ -5085,28 +5108,34 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogFunctionLatency) {
                                .AddStringProperty("body", "message body")
                                .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
 
   PutResultProto put_result_proto = icing.Put(document);
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
-  EXPECT_THAT(put_result_proto.native_put_document_stats().latency_ms(), Gt(0));
+  EXPECT_THAT(put_result_proto.native_put_document_stats().latency_ms(),
+              Eq(10));
 }
 
 TEST_F(IcingSearchEngineTest, PutDocumentShouldLogDocumentStoreStats) {
-  // Create a large enough document so that document_store_latency_ms can be
-  // longer than 1 ms.
-  std::default_random_engine random;
-  std::string random_string_10000 =
-      RandomString(kAlNumAlphabet, /*len=*/10000, &random);
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
-                               .AddStringProperty("body", random_string_10000)
+                               .AddStringProperty("body", "message body")
                                .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
 
@@ -5114,28 +5143,31 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogDocumentStoreStats) {
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(
       put_result_proto.native_put_document_stats().document_store_latency_ms(),
-      Gt(0));
+      Eq(10));
   EXPECT_THAT(put_result_proto.native_put_document_stats().document_size(),
               Eq(document.ByteSizeLong()));
 }
 
 TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexingStats) {
-  // Create a large enough document so that index_latency_ms can be longer than
-  // 1 ms.
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
-                               .AddStringProperty("body", kIpsumText)
+                               .AddStringProperty("body", "message body")
                                .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
 
   PutResultProto put_result_proto = icing.Put(document);
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(put_result_proto.native_put_document_stats().index_latency_ms(),
-              Gt(0));
+              Eq(10));
   // No merge should happen.
   EXPECT_THAT(
       put_result_proto.native_put_document_stats().index_merge_latency_ms(),
@@ -5144,11 +5176,11 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexingStats) {
   EXPECT_FALSE(put_result_proto.native_put_document_stats()
                    .tokenization_stats()
                    .exceeded_max_token_num());
-  // kIpsumText has 137 tokens.
+  // The input document has 2 tokens.
   EXPECT_THAT(put_result_proto.native_put_document_stats()
                   .tokenization_stats()
                   .num_tokens_indexed(),
-              Eq(137));
+              Eq(2));
 }
 
 TEST_F(IcingSearchEngineTest, PutDocumentShouldLogWhetherNumTokensExceeds) {
@@ -5179,8 +5211,6 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogWhetherNumTokensExceeds) {
 }
 
 TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexMergeLatency) {
-  // Create 2 large enough documents so that index_merge_latency_ms can be
-  // longer than 1 ms.
   DocumentProto document1 = DocumentBuilder()
                                 .SetKey("icing", "fake_type/1")
                                 .SetSchema("Message")
@@ -5195,7 +5225,12 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexMergeLatency) {
   // Create an icing instance with index_merge_size = document1's size.
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
   icing_options.set_index_merge_size(document1.ByteSizeLong());
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -5205,7 +5240,7 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexMergeLatency) {
   EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(
       put_result_proto.native_put_document_stats().index_merge_latency_ms(),
-      Gt(0));
+      Eq(10));
 }
 
 }  // namespace

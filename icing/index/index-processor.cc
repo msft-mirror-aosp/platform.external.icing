@@ -37,7 +37,6 @@
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/status-macros.h"
-#include "icing/util/timer.h"
 
 namespace icing {
 namespace lib {
@@ -46,20 +45,22 @@ libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>>
 IndexProcessor::Create(const SchemaStore* schema_store,
                        const LanguageSegmenter* lang_segmenter,
                        const Normalizer* normalizer, Index* index,
-                       const IndexProcessor::Options& options) {
+                       const IndexProcessor::Options& options,
+                       const Clock* clock) {
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(index);
+  ICING_RETURN_ERROR_IF_NULL(clock);
 
   return std::unique_ptr<IndexProcessor>(new IndexProcessor(
-      schema_store, lang_segmenter, normalizer, index, options));
+      schema_store, lang_segmenter, normalizer, index, options, clock));
 }
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const DocumentProto& document, DocumentId document_id,
     NativePutDocumentStats* put_document_stats) {
-  Timer index_timer;
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (index_->last_added_document_id() != kInvalidDocumentId &&
       document_id <= index_->last_added_document_id()) {
@@ -118,7 +119,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
 
   if (put_document_stats != nullptr) {
     put_document_stats->set_index_latency_ms(
-        index_timer.GetElapsedMilliseconds());
+        index_timer->GetElapsedMilliseconds());
     put_document_stats->mutable_tokenization_stats()->set_num_tokens_indexed(
         num_tokens);
   }
@@ -127,7 +128,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
   if (overall_status.ok() && index_->WantsMerge()) {
     ICING_VLOG(1) << "Merging the index at docid " << document_id << ".";
 
-    Timer merge_timer;
+    std::unique_ptr<Timer> merge_timer = clock_.GetNewTimer();
     libtextclassifier3::Status merge_status = index_->Merge();
 
     if (!merge_status.ok()) {
@@ -146,7 +147,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
 
     if (put_document_stats != nullptr) {
       put_document_stats->set_index_merge_latency_ms(
-          merge_timer.GetElapsedMilliseconds());
+          merge_timer->GetElapsedMilliseconds());
     }
   }
 
