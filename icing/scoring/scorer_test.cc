@@ -36,9 +36,8 @@ namespace lib {
 
 namespace {
 using ::testing::Eq;
-using ::testing::Test;
 
-class ScorerTest : public Test {
+class ScorerTest : public testing::Test {
  protected:
   ScorerTest()
       : test_dir_(GetTestTempDir() + "/icing"),
@@ -95,6 +94,17 @@ class ScorerTest : public Test {
   FakeClock fake_clock1_;
   FakeClock fake_clock2_;
 };
+
+UsageReport CreateUsageReport(std::string name_space, std::string uri,
+                              int64 timestamp_ms,
+                              UsageReport::UsageType usage_type) {
+  UsageReport usage_report;
+  usage_report.set_document_namespace(name_space);
+  usage_report.set_document_uri(uri);
+  usage_report.set_usage_timestamp_ms(timestamp_ms);
+  usage_report.set_usage_type(usage_type);
+  return usage_report;
+}
 
 TEST_F(ScorerTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
@@ -185,6 +195,303 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
               Eq(fake_clock1().GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(document_id2),
               Eq(fake_clock2().GetSystemTimeMilliseconds()));
+}
+
+TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  // Create 3 scorers for 3 different usage types.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT,
+                     /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer2,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT,
+                     /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer3,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
+                     /*default_score=*/0, document_store()));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report a type1 usage.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1));
+
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(1));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+}
+
+TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  // Create 3 scorers for 3 different usage types.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT,
+                     /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer2,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT,
+                     /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer3,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
+                     /*default_score=*/0, document_store()));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report a type2 usage.
+  UsageReport usage_report_type2 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2));
+
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(1));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+}
+
+TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  // Create 3 scorers for 3 different usage types.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT,
+                     /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer2,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT,
+                     /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer3,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
+                     /*default_score=*/0, document_store()));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report a type1 usage.
+  UsageReport usage_report_type3 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3));
+
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(1));
+}
+
+TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  // Create 3 scorers for 3 different usage types.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer2,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer3,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  UsageReport usage_report_type1_time1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time1));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(1));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report usage with timestamp = 5000ms, score should be updated.
+  UsageReport usage_report_type1_time5 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time5));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(5));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report usage with timestamp = 3000ms, score should not be updated.
+  UsageReport usage_report_type1_time3 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time3));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(5));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+}
+
+TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  // Create 3 scorers for 3 different usage types.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer2,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer3,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  UsageReport usage_report_type2_time1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time1));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(1));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report usage with timestamp = 5000ms, score should be updated.
+  UsageReport usage_report_type2_time5 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time5));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(5));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  // Report usage with timestamp = 3000ms, score should not be updated.
+  UsageReport usage_report_type2_time3 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time3));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(5));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+}
+
+TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  // Create 3 scorers for 3 different usage types.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer2,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer3,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+
+  UsageReport usage_report_type3_time1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time1));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(1));
+
+  // Report usage with timestamp = 5000ms, score should be updated.
+  UsageReport usage_report_type3_time5 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time5));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(5));
+
+  // Report usage with timestamp = 3000ms, score should not be updated.
+  UsageReport usage_report_type3_time3 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time3));
+  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(document_id), Eq(5));
 }
 
 TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {

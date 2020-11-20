@@ -56,10 +56,10 @@ class SchemaStoreTest : public ::testing::Test {
     property->set_property_name("subject");
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
   }
 
   void TearDown() override {
@@ -444,10 +444,10 @@ TEST_F(SchemaStoreTest, SetSchemaThatRequiresReindexingOk) {
 
   // Make a previously unindexed property indexed
   property = schema.mutable_types(0)->mutable_properties(0);
-  property->mutable_indexing_config()->set_term_match_type(
+  property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   // With a new indexed property, we'll need to reindex
   result.index_incompatible = true;

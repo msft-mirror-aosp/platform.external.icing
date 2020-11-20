@@ -191,8 +191,8 @@ message SearchResultProto {
 
   // An opaque token used internally to keep track of information needed for
   // pagination. A valid pagination token is required to fetch other pages of
-  // results. The default value 0 means that there're no more pages.
+  // results. A value 0 means that there're no more pages.
   // LINT.IfChange(next_page_token)
-  optional uint64 next_page_token = 4 [default = 0];
+  optional uint64 next_page_token = 4;
   // LINT.ThenChange(//depot/google3/icing/result/result-state-manager.h:kInvalidNextPageToken)
 }

@@ -67,6 +67,46 @@ class DocumentCreationTimestampScorer : public Scorer {
   double default_score_;
 };
 
+// A scorer which assigns scores to documents based on usage reports.
+class UsageScorer : public Scorer {
+ public:
+  UsageScorer(const DocumentStore* document_store,
+              ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+              double default_score)
+      : document_store_(*document_store),
+        ranking_strategy_(ranking_strategy),
+        default_score_(default_score) {}
+
+  double GetScore(DocumentId document_id) override {
+    ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
+                           document_store_.GetUsageScores(document_id),
+                           default_score_);
+
+    switch (ranking_strategy_) {
+      case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:
+        return usage_scores.usage_type1_count;
+      case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT:
+        return usage_scores.usage_type2_count;
+      case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT:
+        return usage_scores.usage_type3_count;
+      case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP:
+        return usage_scores.usage_type1_last_used_timestamp_s;
+      case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
+        return usage_scores.usage_type2_last_used_timestamp_s;
+      case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
+        return usage_scores.usage_type3_last_used_timestamp_s;
+      default:
+        // This shouldn't happen if this scorer is used correctly.
+        return default_score_;
+    }
+  }
+
+ private:
+  const DocumentStore& document_store_;
+  ScoringSpecProto::RankingStrategy::Code ranking_strategy_;
+  double default_score_;
+};
+
 // A special scorer which does nothing but assigns the default score to each
 // document. This is used especially when no scoring is required in a query.
 class NoScorer : public Scorer {
@@ -91,6 +131,19 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP:
       return std::make_unique<DocumentCreationTimestampScorer>(document_store,
                                                                default_score);
+    case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:
+      [[fallthrough]];
+    case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT:
+      [[fallthrough]];
+    case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT:
+      [[fallthrough]];
+    case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP:
+      [[fallthrough]];
+    case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
+      [[fallthrough]];
+    case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
+      return std::make_unique<UsageScorer>(document_store, rank_by,
+                                           default_score);
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);
   }
