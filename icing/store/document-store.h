@@ -38,6 +38,7 @@
 #include "icing/store/usage-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/document-validator.h"
 
 namespace icing {
@@ -70,6 +71,17 @@ class DocumentStore {
     int32_t optimizable_docs = 0;
   };
 
+  struct CreateResult {
+    // A successfully initialized document store.
+    std::unique_ptr<DocumentStore> document_store;
+
+    // The data status after initializing from a previous state. Data loss can
+    // happen if the file is corrupted or some previously added data was
+    // unpersisted. This may be used to signal that any derived data off of the
+    // document store may need to be regenerated.
+    DataLoss data_loss;
+  };
+
   // Not copyable
   DocumentStore(const DocumentStore&) = delete;
   DocumentStore& operator=(const DocumentStore&) = delete;
@@ -92,10 +104,10 @@ class DocumentStore {
   // were regenerated. This may be helpful in logs.
   //
   // Returns:
-  //   A DocumentStore on success
+  //   A DocumentStore::CreateResult on success
   //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on IO error
-  static libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>> Create(
+  static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
       NativeInitializeStats* initialize_stats = nullptr);
@@ -306,7 +318,7 @@ class DocumentStore {
   //   Disk usage on success
   //   INTERNAL_ERROR on IO error
   //
-  // TODO(samzheng): consider returning a struct which has the breakdown of each
+  // TODO(tjbarron): consider returning a struct which has the breakdown of each
   // component.
   libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
 
@@ -438,7 +450,7 @@ class DocumentStore {
   // worry about this field.
   bool initialized_ = false;
 
-  libtextclassifier3::Status Initialize(
+  libtextclassifier3::StatusOr<DataLoss> Initialize(
       NativeInitializeStats* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.

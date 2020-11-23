@@ -39,7 +39,6 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
-#include "icing/util/timer.h"
 
 namespace icing {
 namespace lib {
@@ -105,18 +104,21 @@ std::unordered_set<SchemaTypeId> SchemaTypeIdsChanged(
 
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
-    NativeInitializeStats* initialize_stats) {
+    const Clock* clock, NativeInitializeStats* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
+  ICING_RETURN_ERROR_IF_NULL(clock);
 
-  std::unique_ptr<SchemaStore> schema_store =
-      std::unique_ptr<SchemaStore>(new SchemaStore(filesystem, base_dir));
+  std::unique_ptr<SchemaStore> schema_store = std::unique_ptr<SchemaStore>(
+      new SchemaStore(filesystem, base_dir, clock));
   ICING_RETURN_IF_ERROR(schema_store->Initialize(initialize_stats));
   return schema_store;
 }
 
-SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir)
+SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
+                         const Clock* clock)
     : filesystem_(*filesystem),
       base_dir_(std::move(base_dir)),
+      clock_(*clock),
       schema_file_(*filesystem, MakeSchemaFilename(base_dir_)) {}
 
 SchemaStore::~SchemaStore() {
@@ -142,7 +144,7 @@ libtextclassifier3::Status SchemaStore::Initialize(
     ICING_VLOG(3)
         << "Couldn't find derived files or failed to initialize them, "
            "regenerating derived files for SchemaStore.";
-    Timer regenerate_timer;
+    std::unique_ptr<Timer> regenerate_timer = clock_.GetNewTimer();
     if (initialize_stats != nullptr) {
       initialize_stats->set_schema_store_recovery_cause(
           NativeInitializeStats::IO_ERROR);
@@ -150,7 +152,7 @@ libtextclassifier3::Status SchemaStore::Initialize(
     ICING_RETURN_IF_ERROR(RegenerateDerivedFiles());
     if (initialize_stats != nullptr) {
       initialize_stats->set_schema_store_recovery_latency_ms(
-          regenerate_timer.GetElapsedMilliseconds());
+          regenerate_timer->GetElapsedMilliseconds());
     }
   }
 
