@@ -54,9 +54,9 @@ message SchemaTypeConfigProto {
   reserved 2, 3;
 }
 
-// Describes how a single property should be indexed.
+// Describes how a string property should be indexed.
 // Next tag: 3
-message IndexingConfig {
+message StringIndexingConfig {
   // Indicates how the content of this property should be matched in the index.
   //
   // TermMatchType.Code=UNKNOWN
@@ -87,10 +87,22 @@ message IndexingConfig {
   optional TokenizerType.Code tokenizer_type = 2;
 }
 
+// Describes how a document property should be indexed.
+// Next tag: 2
+message DocumentIndexingConfig {
+  // OPTIONAL: Whether nested properties within the document property should be
+  // indexed. If true, then the nested properties will be indexed according to
+  // the property's own indexing configurations. If false, nested documents'
+  // properties will not be indexed even if they have an indexing configuration.
+  //
+  // The default value is false.
+  optional bool index_nested_properties = 1;
+}
+
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 6
+// Next tag: 7
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -161,11 +173,12 @@ message PropertyConfigProto {
   }
   optional Cardinality.Code cardinality = 4;
 
-  // OPTIONAL: Properties that do not set the indexing config will not be
-  // indexed.  DOCUMENT data types shouldn't set an indexing config; Icing lib
-  // will recurse and check the nested schema type's properties' indexing
-  // configs themselves.
-  optional IndexingConfig indexing_config = 5;
+  // OPTIONAL: Describes how string properties should be indexed. String
+  // properties that do not set the indexing config will not be indexed.
+  optional StringIndexingConfig string_indexing_config = 5;
+
+  // OPTIONAL: Describes how document properties should be indexed.
+  optional DocumentIndexingConfig document_indexing_config = 6;
 }
 
 // List of all supported types constitutes the schema used by Icing.

@@ -37,10 +37,6 @@ namespace lib {
 
 namespace {
 
-// Data types that can be indexed. This follows rule 11 of SchemaUtil::Validate
-static std::unordered_set<PropertyConfigProto::DataType::Code>
-    kIndexableDataTypes = {PropertyConfigProto::DataType::STRING};
-
 bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
                              const PropertyConfigProto& new_property) {
   if (old_property.cardinality() < new_property.cardinality()) {
@@ -91,8 +87,8 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
          IsCardinalityCompatible(old_property, new_property);
 }
 
-bool IsTermMatchTypeCompatible(const IndexingConfig& old_indexed,
-                               const IndexingConfig& new_indexed) {
+bool IsTermMatchTypeCompatible(const StringIndexingConfig& old_indexed,
+                               const StringIndexingConfig& new_indexed) {
   return old_indexed.term_match_type() == new_indexed.term_match_type() &&
          old_indexed.tokenizer_type() == new_indexed.tokenizer_type();
 }
@@ -162,9 +158,11 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
                                                 schema_type, property_name));
 
-      ICING_RETURN_IF_ERROR(
-          ValidateIndexingConfig(property_config.indexing_config(), data_type,
-                                 schema_type, property_name));
+      if (data_type == PropertyConfigProto::DataType::STRING) {
+        ICING_RETURN_IF_ERROR(ValidateStringIndexingConfig(
+            property_config.string_indexing_config(), data_type, schema_type,
+            property_name));
+      }
     }
   }
 
@@ -239,31 +237,24 @@ libtextclassifier3::Status SchemaUtil::ValidateCardinality(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status SchemaUtil::ValidateIndexingConfig(
-    const IndexingConfig& config, PropertyConfigProto::DataType::Code data_type,
-    std::string_view schema_type, std::string_view property_name) {
+libtextclassifier3::Status SchemaUtil::ValidateStringIndexingConfig(
+    const StringIndexingConfig& config,
+    PropertyConfigProto::DataType::Code data_type, std::string_view schema_type,
+    std::string_view property_name) {
   if (config.term_match_type() == TermMatchType::UNKNOWN &&
-      config.tokenizer_type() != IndexingConfig::TokenizerType::NONE) {
+      config.tokenizer_type() != StringIndexingConfig::TokenizerType::NONE) {
     // They set a tokenizer type, but no term match type.
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Indexed property '", schema_type, ".", property_name,
+        "Indexed string property '", schema_type, ".", property_name,
         "' cannot have a term match type UNKNOWN"));
   }
 
   if (config.term_match_type() != TermMatchType::UNKNOWN &&
-      config.tokenizer_type() == IndexingConfig::TokenizerType::NONE) {
+      config.tokenizer_type() == StringIndexingConfig::TokenizerType::NONE) {
     // They set a term match type, but no tokenizer type
     return absl_ports::InvalidArgumentError(
-        absl_ports::StrCat("Indexed property '", property_name,
+        absl_ports::StrCat("Indexed string property '", property_name,
                            "' cannot have a tokenizer type of NONE"));
-  }
-
-  if (config.term_match_type() != TermMatchType::UNKNOWN &&
-      kIndexableDataTypes.find(data_type) == kIndexableDataTypes.end()) {
-    // They want this section indexed, but it's not an indexable data type.
-    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Cannot index non-string data type for schema property '", schema_type,
-        ".", property_name, "'"));
   }
 
   return libtextclassifier3::Status::OK;
@@ -281,7 +272,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
     const SchemaTypeConfigProto& type_config) {
   ParsedPropertyConfigs parsed_property_configs;
 
-  // TODO(samzheng): consider caching property_config_map for some properties,
+  // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
   for (const PropertyConfigProto& property_config : type_config.properties()) {
     parsed_property_configs.property_config_map.emplace(
@@ -293,7 +284,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
 
     // A non-default term_match_type indicates that this property is meant to be
     // indexed.
-    if (property_config.indexing_config().term_match_type() !=
+    if (property_config.string_indexing_config().term_match_type() !=
         TermMatchType::UNKNOWN) {
       parsed_property_configs.num_indexed_properties++;
     }
@@ -368,14 +359,15 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
 
       // A non-default term_match_type indicates that this property is meant to
       // be indexed.
-      if (old_property_config.indexing_config().term_match_type() !=
+      if (old_property_config.string_indexing_config().term_match_type() !=
           TermMatchType::UNKNOWN) {
         ++old_indexed_properties;
       }
 
       // Any change in the indexed property requires a reindexing
-      if (!IsTermMatchTypeCompatible(old_property_config.indexing_config(),
-                                     new_property_config->indexing_config())) {
+      if (!IsTermMatchTypeCompatible(
+              old_property_config.string_indexing_config(),
+              new_property_config->string_indexing_config())) {
         schema_delta.index_incompatible = true;
       }
     }

@@ -35,6 +35,7 @@
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
@@ -43,6 +44,7 @@
 #include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -185,8 +187,8 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       document_validator_(schema_store) {}
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
-    const DocumentProto& document) {
-  return Put(DocumentProto(document));
+    const DocumentProto& document, NativePutDocumentStats* put_document_stats) {
+  return Put(DocumentProto(document), put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -198,20 +200,27 @@ DocumentStore::~DocumentStore() {
   }
 }
 
-libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>>
-DocumentStore::Create(const Filesystem* filesystem, const std::string& base_dir,
-                      const Clock* clock, const SchemaStore* schema_store) {
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store,
+    NativeInitializeStats* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   auto document_store = std::unique_ptr<DocumentStore>(
       new DocumentStore(filesystem, base_dir, clock, schema_store));
-  ICING_RETURN_IF_ERROR(document_store->Initialize());
-  return document_store;
+  ICING_ASSIGN_OR_RETURN(DataLoss data_loss,
+                         document_store->Initialize(initialize_stats));
+
+  CreateResult create_result;
+  create_result.document_store = std::move(document_store);
+  create_result.data_loss = data_loss;
+  return create_result;
 }
 
-libtextclassifier3::Status DocumentStore::Initialize() {
+libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
+    NativeInitializeStats* initialize_stats) {
   auto create_result_or = FileBackedProtoLog<DocumentWrapper>::Create(
       filesystem_, MakeDocumentLogFilename(base_dir_),
       FileBackedProtoLog<DocumentWrapper>::Options(
@@ -227,10 +236,29 @@ libtextclassifier3::Status DocumentStore::Initialize() {
       std::move(create_result_or).ValueOrDie();
   document_log_ = std::move(create_result.proto_log);
 
-  if (create_result.data_loss) {
+  if (create_result.has_data_loss()) {
     ICING_LOG(WARNING)
         << "Data loss in document log, regenerating derived files.";
+    if (initialize_stats != nullptr) {
+      initialize_stats->set_document_store_recovery_cause(
+          NativeInitializeStats::DATA_LOSS);
+
+      if (create_result.data_loss == DataLoss::PARTIAL) {
+        // Ground truth is partially lost.
+        initialize_stats->set_document_store_data_status(
+            NativeInitializeStats::PARTIAL_LOSS);
+      } else {
+        // Ground truth is completely lost.
+        initialize_stats->set_document_store_data_status(
+            NativeInitializeStats::COMPLETE_LOSS);
+      }
+    }
+    std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
     libtextclassifier3::Status status = RegenerateDerivedFiles();
+    if (initialize_stats != nullptr) {
+      initialize_stats->set_document_store_recovery_latency_ms(
+          document_recovery_timer->GetElapsedMilliseconds());
+    }
     if (!status.ok()) {
       ICING_LOG(ERROR)
           << "Failed to regenerate derived files for DocumentStore";
@@ -241,7 +269,16 @@ libtextclassifier3::Status DocumentStore::Initialize() {
       ICING_VLOG(1)
           << "Couldn't find derived files or failed to initialize them, "
              "regenerating derived files for DocumentStore.";
+      if (initialize_stats != nullptr) {
+        initialize_stats->set_document_store_recovery_cause(
+            NativeInitializeStats::IO_ERROR);
+      }
+      std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
       libtextclassifier3::Status status = RegenerateDerivedFiles();
+      if (initialize_stats != nullptr) {
+        initialize_stats->set_document_store_recovery_latency_ms(
+            document_recovery_timer->GetElapsedMilliseconds());
+      }
       if (!status.ok()) {
         ICING_LOG(ERROR)
             << "Failed to regenerate derived files for DocumentStore";
@@ -251,8 +288,11 @@ libtextclassifier3::Status DocumentStore::Initialize() {
   }
 
   initialized_ = true;
+  if (initialize_stats != nullptr) {
+    initialize_stats->set_num_documents(document_id_mapper_->num_elements());
+  }
 
-  return libtextclassifier3::Status::OK;
+  return create_result.data_loss;
 }
 
 libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
@@ -689,8 +729,13 @@ libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
-    DocumentProto&& document) {
+    DocumentProto&& document, NativePutDocumentStats* put_document_stats) {
+  std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_document_size(document.ByteSizeLong());
+  }
 
   // Copy fields needed before they are moved
   std::string name_space = document.namespace_();
@@ -763,6 +808,11 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
       ICING_RETURN_IF_ERROR(
           HardDelete(old_document_id, offset_or.ValueOrDie()));
     }
+  }
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_document_store_latency_ms(
+        put_timer->GetElapsedMilliseconds());
   }
 
   return new_document_id;
@@ -1360,9 +1410,11 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
         "New directory is the same as the current one.");
   }
 
-  ICING_ASSIGN_OR_RETURN(auto new_doc_store,
+  ICING_ASSIGN_OR_RETURN(auto doc_store_create_result,
                          DocumentStore::Create(filesystem_, new_directory,
                                                &clock_, schema_store_));
+  std::unique_ptr<DocumentStore> new_doc_store =
+      std::move(doc_store_create_result.document_store);
 
   // Writes all valid docs into new document store (new directory)
   int size = document_id_mapper_->num_elements();
