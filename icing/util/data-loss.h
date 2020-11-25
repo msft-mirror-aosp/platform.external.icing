@@ -12,32 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_TIMER_H_
-#define ICING_UTIL_TIMER_H_
-
-#include <cstdint>
-
-#include "icing/util/clock.h"
+#ifndef ICING_UTIL_DATA_LOSS_H_
+#define ICING_UTIL_DATA_LOSS_H_
 
 namespace icing {
 namespace lib {
 
-// A util class to calculate the elapsed time.
-class Timer {
- public:
-  // Timer starts.
-  Timer() : start_timestamp_milliseconds_(GetSteadyTimeMilliseconds()) {}
+enum DataLoss {
+  // No data loss happened. Everything initialized correctly.
+  NONE,
 
-  // Returns the elapsed time from when timer started.
-  int64_t GetElapsedMilliseconds() {
-    return GetSteadyTimeMilliseconds() - start_timestamp_milliseconds_;
-  }
+  // Anything changes made after a persist to disk call were lost. This includes
+  // adding new data, removing old data, and modifying existing data.
+  PARTIAL,
 
- private:
-  int64_t start_timestamp_milliseconds_;
+  // All data is lost. IcingSearchEngine has completely reset.
+  COMPLETE
 };
 
-}  // namespace lib
+}
 }  // namespace icing
 
-#endif  // ICING_UTIL_TIMER_H_
+#endif  // ICING_UTIL_DATA_LOSS_H_

@@ -14,22 +14,18 @@
  * limitations under the License.
  */
 
-import org.anarres.gradle.plugin.jarjar.JarjarTask
-
 import static androidx.build.SupportConfig.*
 import static androidx.build.dependencies.DependenciesKt.*
 
 buildscript {
     dependencies {
         classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.13')
-        classpath('org.anarres.jarjar:jarjar-gradle:1.0.1')
     }
 }
 
 plugins {
     id('com.android.library')
     id('com.google.protobuf')
-    id('org.anarres.jarjar')
 }
 
 android {
@@ -82,43 +78,26 @@ protobuf {
     }
 }
 
-// Create jarjar artifact for all variants (debug/release)
+// Create export artifact for all variants (debug/release) for JarJaring
 android.libraryVariants.all { variant ->
     def variantName = variant.name
     def suffix = variantName.capitalize()
-    def jarjarTask = tasks.create("jarjar${suffix}", JarjarTask) {
-        destinationName "icing-java-${variantName}-jarjar.jar"
+    def exportJarTask = tasks.register("exportJar${suffix}", Jar) {
+        archiveBaseName.set("icing-${variantName}")
 
-
-        dependsOn protoLiteJarWithoutProtoFiles
-        from files(protoLiteJarWithoutProtoFiles.archiveFile.get().getAsFile())    
+        // The proto-lite dependency includes .proto files, which are not used by icing. When apps
+        // depend on appsearch as well as proto-lite directly, these files conflict since jarjar
+        // only renames the java classes. Remove them here since they are unused.
+        // Expand the jar and remove any .proto files.
+        from(zipTree(configurations.detachedConfiguration(
+                dependencies.create(PROTOBUF_LITE)).getSingleFile())) {
+            exclude("**/*.proto")
+        }
 
         from files(variant.javaCompileProvider.get().destinationDir)
         dependsOn variant.javaCompileProvider.get()
-        classRename 'com.google.protobuf.**', 'com.google.android.icing.protobuf.@1'
     }
 
-    def jarjarConf = configurations.register("jarjar${suffix}")
-    artifacts.add("${jarjarConf.name}", jarjarTask.destinationPath) {
-        name "icing-java-${variantName}-jarjar"
-        type 'jar'
-        builtBy jarjarTask
-    }
+    def exportConfiguration = configurations.register("export${suffix}")
+    artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
 }
-
-// The proto-lite dependency includes .proto files, which are not used by icing. When apps depend on
-// appsearch as well as proto-lite directly, these files conflict since jarjar only renames the java
-// classes. Remove them here since they are unused.
-tasks.register("protoLiteJarWithoutProtoFiles", Jar){
-    // Get proto lite dependency as a jar file:
-    def jarFile = configurations.detachedConfiguration(
-      dependencies.create('com.google.protobuf:protobuf-javalite:3.10.0')).getSingleFile()
-
-    // Expand the jar and remove any .proto files.
-    from(zipTree(jarFile)) {
-      exclude("**/*.proto")
-    }
-
-    into 'icing-proto-lite-dep-stripped'
-}
-

@@ -99,14 +99,17 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
   filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, base_dir));
-
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> document_store,
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, base_dir, &clock));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem, document_store_dir, &clock,
                             schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
 
@@ -198,14 +201,17 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
   filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, base_dir));
-
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> document_store,
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, base_dir, &clock));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem, document_store_dir, &clock,
                             schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
 
@@ -298,14 +304,17 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
   filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem, base_dir));
-
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocumentStore> document_store,
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem, base_dir, &clock));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem, document_store_dir, &clock,
                             schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
 
   ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
 
