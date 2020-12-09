@@ -45,7 +45,6 @@ static_assert(
     kMaxSectionId < 8 * sizeof(SectionIdMask),
     "SectionIdMask is not large enough to represent all section values!");
 
-// TODO(samzheng): add more metadata when needed, e.g. tokenizer type,
 struct SectionMetadata {
   // Dot-joined property names, representing the location of section inside an
   // document. E.g. "property1.property2"
