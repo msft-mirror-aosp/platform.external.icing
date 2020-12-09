@@ -55,11 +55,15 @@ class Hit {
 
   // A score reflecting the "quality" of this hit. The higher the score, the
   // higher quality the hit.
+  // The score is being repurposed for term frequency.
+  // TODO(b/173156700): refactor Score to TermFrequency.
   using Score = uint8_t;
-  // By default, hits are given the highest possible score.
+  // Max Score is 255.
   static constexpr Score kMaxHitScore = std::numeric_limits<Score>::max();
+  // Default value of term frequency is 1.
+  static constexpr Score kDefaultHitScore = 1;
 
-  explicit Hit(Value value = kInvalidValue, Score score = kMaxHitScore)
+  explicit Hit(Value value = kInvalidValue, Score score = kDefaultHitScore)
       : value_(value), score_(score) {}
   Hit(SectionId section_id, DocumentId document_id, Score score,
       bool is_in_prefix_section = false, bool is_prefix_hit = false);
@@ -68,8 +72,7 @@ class Hit {
   Value value() const { return value_; }
   DocumentId document_id() const;
   SectionId section_id() const;
-  // Whether or not the hit contains a non-default score. Hits with non-default
-  // score are considered to be of lower quality.
+  // Whether or not the hit contains a non-default score.
   bool has_score() const;
   Score score() const { return score_; }
   bool is_prefix_hit() const;

@@ -128,7 +128,8 @@ class QueryProcessorTest : public Test {
       TermMatchType::Code term_match_type, const std::string& token) {
     Index::Editor editor = index_->Edit(document_id, section_id,
                                         term_match_type, /*namespace_id=*/0);
-    return editor.AddHit(token.c_str());
+    auto status = editor.BufferTerm(token.c_str());
+    return status.ok() ? editor.IndexAllBufferedTerms() : status;
   }
 
   void TearDown() override {

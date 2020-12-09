@@ -36,9 +36,9 @@ static constexpr SectionId kSomeSectionid = 5;
 static constexpr Hit::Score kSomeHitScore = 57;
 
 TEST(HitTest, HasScoreFlag) {
-  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore);
+  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore);
   EXPECT_THAT(h1.has_score(), IsFalse());
-  EXPECT_THAT(h1.score(), Eq(Hit::kMaxHitScore));
+  EXPECT_THAT(h1.score(), Eq(Hit::kDefaultHitScore));
 
   Hit h2(kSomeSectionid, kSomeDocumentId, kSomeHitScore);
   EXPECT_THAT(h2.has_score(), IsTrue());
@@ -46,33 +46,33 @@ TEST(HitTest, HasScoreFlag) {
 }
 
 TEST(HitTest, IsPrefixHitFlag) {
-  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore);
+  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore);
   EXPECT_THAT(h1.is_prefix_hit(), IsFalse());
 
-  Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
+  Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore,
          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false);
   EXPECT_THAT(h2.is_prefix_hit(), IsFalse());
 
-  Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
+  Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore,
          /*is_in_prefix_section=*/false, /*is_prefix_hit=*/true);
   EXPECT_THAT(h3.is_prefix_hit(), IsTrue());
 }
 
 TEST(HitTest, IsInPrefixSectionFlag) {
-  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore);
+  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore);
   EXPECT_THAT(h1.is_in_prefix_section(), IsFalse());
 
-  Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
+  Hit h2(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore,
          /*is_in_prefix_section=*/false);
   EXPECT_THAT(h2.is_in_prefix_section(), IsFalse());
 
-  Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore,
+  Hit h3(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore,
          /*is_in_prefix_section=*/true);
   EXPECT_THAT(h3.is_in_prefix_section(), IsTrue());
 }
 
 TEST(HitTest, Accessors) {
-  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kMaxHitScore);
+  Hit h1(kSomeSectionid, kSomeDocumentId, Hit::kDefaultHitScore);
   EXPECT_THAT(h1.document_id(), Eq(kSomeDocumentId));
   EXPECT_THAT(h1.section_id(), Eq(kSomeSectionid));
 }
@@ -102,18 +102,19 @@ TEST(HitTest, Valid) {
 }
 
 TEST(HitTest, Comparison) {
-  Hit hit(1, 243, Hit::kMaxHitScore);
+  Hit hit(1, 243, Hit::kDefaultHitScore);
   // DocumentIds are sorted in ascending order. So a hit with a lower
   // document_id should be considered greater than one with a higher
   // document_id.
-  Hit higher_document_id_hit(1, 2409, Hit::kMaxHitScore);
-  Hit higher_section_id_hit(15, 243, Hit::kMaxHitScore);
+  Hit higher_document_id_hit(1, 2409, Hit::kDefaultHitScore);
+  Hit higher_section_id_hit(15, 243, Hit::kDefaultHitScore);
   // Whether or not a hit score was set is considered, but the score itself is
   // not.
   Hit hitscore_hit(1, 243, 12);
-  Hit prefix_hit(1, 243, Hit::kMaxHitScore, /*is_in_prefix_section=*/false,
+  Hit prefix_hit(1, 243, Hit::kDefaultHitScore,
+                 /*is_in_prefix_section=*/false,
                  /*is_prefix_hit=*/true);
-  Hit hit_in_prefix_section(1, 243, Hit::kMaxHitScore,
+  Hit hit_in_prefix_section(1, 243, Hit::kDefaultHitScore,
                             /*is_in_prefix_section=*/true,
                             /*is_prefix_hit=*/false);
 

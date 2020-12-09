@@ -194,6 +194,56 @@ SchemaProto CreateEmailSchema() {
       TermMatchType::PREFIX);
   subj->mutable_string_indexing_config()->set_tokenizer_type(
       StringIndexingConfig::TokenizerType::PLAIN);
+  return schema;
+}
+
+SchemaProto CreatePersonAndEmailSchema() {
+  SchemaProto schema;
+
+  auto* person_type = schema.add_types();
+  person_type->set_schema_type("Person");
+  auto* name = person_type->add_properties();
+  name->set_property_name("name");
+  name->set_data_type(PropertyConfigProto::DataType::STRING);
+  name->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  name->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  name->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
+  auto* address = person_type->add_properties();
+  address->set_property_name("emailAddress");
+  address->set_data_type(PropertyConfigProto::DataType::STRING);
+  address->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  address->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  address->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
+
+  auto* type = schema.add_types();
+  type->set_schema_type("Email");
+
+  auto* body = type->add_properties();
+  body->set_property_name("body");
+  body->set_data_type(PropertyConfigProto::DataType::STRING);
+  body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
+  auto* subj = type->add_properties();
+  subj->set_property_name("subject");
+  subj->set_data_type(PropertyConfigProto::DataType::STRING);
+  subj->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  subj->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  subj->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
+  auto* sender = type->add_properties();
+  sender->set_property_name("sender");
+  sender->set_schema_type("Person");
+  sender->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  sender->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  sender->mutable_document_indexing_config()->set_index_nested_properties(true);
 
   return schema;
 }
@@ -5241,6 +5291,194 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexMergeLatency) {
   EXPECT_THAT(
       put_result_proto.native_put_document_stats().index_merge_latency_ms(),
       Eq(10));
+}
+
+TEST_F(IcingSearchEngineTest, SearchWithProjectionEmptyFieldPath) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "shopgirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query that will match those documents and use an empty field
+  // mask to request NO properties.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("hello");
+
+  ResultSpecProto result_spec;
+  // Retrieve only one result at a time to make sure that projection works when
+  // retrieving all pages.
+  result_spec.set_num_per_page(1);
+  ResultSpecProto::TypePropertyMask* email_field_mask =
+      result_spec.add_type_property_masks();
+  email_field_mask->set_schema_type("Email");
+  email_field_mask->add_paths("");
+
+  SearchResultProto results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that the returned results contain no properties.
+  DocumentProto projected_document_two = DocumentBuilder()
+                                             .SetKey("namespace", "uri2")
+                                             .SetCreationTimestampMs(1000)
+                                             .SetSchema("Email")
+                                             .Build();
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(projected_document_two));
+
+  results = icing.GetNextPage(results.next_page_token());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  DocumentProto projected_document_one = DocumentBuilder()
+                                             .SetKey("namespace", "uri1")
+                                             .SetCreationTimestampMs(1000)
+                                             .SetSchema("Email")
+                                             .Build();
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(projected_document_one));
+}
+
+TEST_F(IcingSearchEngineTest, SearchWithProjectionMultipleFieldPaths) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "shopgirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query that will match those documents and request only
+  // 'sender.name' and 'subject' properties.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("hello");
+
+  ResultSpecProto result_spec;
+  // Retrieve only one result at a time to make sure that projection works when
+  // retrieving all pages.
+  result_spec.set_num_per_page(1);
+  ResultSpecProto::TypePropertyMask* email_field_mask =
+      result_spec.add_type_property_masks();
+  email_field_mask->set_schema_type("Email");
+  email_field_mask->add_paths("sender.name");
+  email_field_mask->add_paths("subject");
+
+  SearchResultProto results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that the returned results only contain the 'sender.name'
+  // property.
+  DocumentProto projected_document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty("sender",
+                               DocumentBuilder()
+                                   .SetKey("namespace", "uri2")
+                                   .SetSchema("Person")
+                                   .AddStringProperty("name", "Tom Hanks")
+                                   .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .Build();
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(projected_document_two));
+
+  results = icing.GetNextPage(results.next_page_token());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  DocumentProto projected_document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty("sender",
+                               DocumentBuilder()
+                                   .SetKey("namespace", "uri1")
+                                   .SetSchema("Person")
+                                   .AddStringProperty("name", "Meg Ryan")
+                                   .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .Build();
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(projected_document_one));
 }
 
 }  // namespace

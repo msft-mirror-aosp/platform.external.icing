@@ -80,7 +80,7 @@ TEST(PostingListTest, PostingListUsedPrependHitNotFull) {
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit0)));
 
-  Hit hit1(/*section_id=*/0, 1, Hit::kMaxHitScore);
+  Hit hit1(/*section_id=*/0, 1, Hit::kDefaultHitScore);
   pl_used.PrependHit(hit1);
   // Size = sizeof(uncompressed hit1)
   //        + sizeof(hit0-hit1) + sizeof(hit0::score)
@@ -97,7 +97,7 @@ TEST(PostingListTest, PostingListUsedPrependHitNotFull) {
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
 
-  Hit hit3(/*section_id=*/0, 3, Hit::kMaxHitScore);
+  Hit hit3(/*section_id=*/0, 3, Hit::kDefaultHitScore);
   pl_used.PrependHit(hit3);
   // Size = sizeof(uncompressed hit3)
   //        + sizeof(hit2-hit3) + sizeof(hit2::score)
@@ -122,7 +122,7 @@ TEST(PostingListTest, PostingListUsedPrependHitAlmostFull) {
   // Adding hit0: EMPTY -> NOT_FULL
   // Adding hit1: NOT_FULL -> NOT_FULL
   // Adding hit2: NOT_FULL -> NOT_FULL
-  Hit hit0(/*section_id=*/0, 0, Hit::kMaxHitScore);
+  Hit hit0(/*section_id=*/0, 0, Hit::kDefaultHitScore);
   Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/2);
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/2);
   ICING_EXPECT_OK(pl_used.PrependHit(hit0));
@@ -227,7 +227,7 @@ TEST(PostingListTest, PostingListPrependHitArrayMinSizePostingList) {
                                  static_cast<void *>(hits_buf.get()), size));
 
   std::vector<HitElt> hits_in;
-  hits_in.emplace_back(Hit(1, 0, Hit::kMaxHitScore));
+  hits_in.emplace_back(Hit(1, 0, Hit::kDefaultHitScore));
   hits_in.emplace_back(
       CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
   hits_in.emplace_back(
@@ -268,7 +268,7 @@ TEST(PostingListTest, PostingListPrependHitArrayPostingList) {
                                  static_cast<void *>(hits_buf.get()), size));
 
   std::vector<HitElt> hits_in;
-  hits_in.emplace_back(Hit(1, 0, Hit::kMaxHitScore));
+  hits_in.emplace_back(Hit(1, 0, Hit::kDefaultHitScore));
   hits_in.emplace_back(
       CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
   hits_in.emplace_back(

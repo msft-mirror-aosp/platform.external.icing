@@ -195,18 +195,6 @@ TEST_F(DocumentValidatorTest, ValidateNonexistentPropertyNotFound) {
                        HasSubstr("'WrongPropertyName' not found")));
 }
 
-TEST_F(DocumentValidatorTest, ValidateAllCustomPropertyOk) {
-  DocumentProto email =
-      SimpleEmailBuilder()
-          // A nonexistent property, would've triggered a NotFound message
-          .AddCustomStringProperty("WrongPropertyName", kDefaultString)
-          // 'subject' property should've been a string according to the schema
-          .AddCustomBooleanProperty(kPropertySubject, false, true)
-          .Build();
-
-  EXPECT_THAT(document_validator_->Validate(email), IsOk());
-}
-
 TEST_F(DocumentValidatorTest, ValidateExactlyOneRequiredValueOk) {
   // Required property should have exactly 1 value
   DocumentProto email =

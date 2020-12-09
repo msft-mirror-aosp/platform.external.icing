@@ -18,7 +18,6 @@ package icing.lib;
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
 // Encapsulates the configurations on how Icing should score and rank the search
@@ -64,6 +63,12 @@ message ScoringSpecProto {
       // Ranked by last used timestamp with usage type 3. The timestamps are
       // compared in seconds.
       USAGE_TYPE3_LAST_USED_TIMESTAMP = 8;
+
+      // Placeholder for ranking by relevance score, currently computed as BM25F
+      // score.
+      // TODO(b/173156803): one the implementation is ready, rename to
+      // RELEVANCE_SCORE.
+      RELEVANCE_SCORE_NONFUNCTIONAL_PLACEHOLDER = 9;
     }
   }
   optional RankingStrategy.Code rank_by = 1;

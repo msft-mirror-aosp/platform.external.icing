@@ -14,15 +14,57 @@
 
 #include "icing/result/result-retriever.h"
 
+#include <string_view>
+#include <utility>
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/result/page-result-state.h"
+#include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
+namespace {
+
+void Project(
+    const std::vector<ProjectionTree::Node>& projection_tree,
+    google::protobuf::RepeatedPtrField<PropertyProto>* properties) {
+  int num_kept = 0;
+  for (int cur_pos = 0; cur_pos < properties->size(); ++cur_pos) {
+    PropertyProto* prop = properties->Mutable(cur_pos);
+    auto itr = std::find_if(projection_tree.begin(), projection_tree.end(),
+                            [&prop](const ProjectionTree::Node& node) {
+                              return node.name == prop->name();
+                            });
+    if (itr == projection_tree.end()) {
+      // Property is not present in the projection tree. Just skip it.
+      continue;
+    }
+    // This property should be kept.
+    properties->SwapElements(num_kept, cur_pos);
+    ++num_kept;
+    if (itr->children.empty()) {
+      // A field mask does refer to this property, but it has no children. So
+      // we should take the entire property, with all of its
+      // subproperties/values
+      continue;
+    }
+    // The field mask refers to children of this property. Recurse through the
+    // document values that this property holds and project the children
+    // requested by this field mask.
+    for (DocumentProto& subproperty : *(prop->mutable_document_values())) {
+      Project(itr->children, subproperty.mutable_properties());
+    }
+  }
+  properties->DeleteSubrange(num_kept, properties->size() - num_kept);
+}
+
+}  // namespace
+
 libtextclassifier3::StatusOr<std::unique_ptr<ResultRetriever>>
 ResultRetriever::Create(const DocumentStore* doc_store,
                         const SchemaStore* schema_store,
@@ -72,6 +114,14 @@ ResultRetriever::RetrieveResults(
       } else {
         return document_or.status();
       }
+    }
+
+    // Apply projection
+    auto itr = page_result_state.projection_tree_map.find(
+        document_or.ValueOrDie().schema());
+    if (itr != page_result_state.projection_tree_map.end()) {
+      Project(itr->second.root().children,
+              document_or.ValueOrDie().mutable_properties());
     }
 
     SearchResultProto::ResultProto result;

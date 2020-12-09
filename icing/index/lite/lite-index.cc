@@ -448,7 +448,7 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
   // Binary search for our term_id.  Make sure we get the first
   // element.  Using kBeginSortValue ensures this for the hit value.
   TermIdHitPair term_id_hit_pair(
-      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kMaxHitScore));
+      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultHitScore));
 
   const TermIdHitPair::Value* array =
       hit_buffer_.array_cast<TermIdHitPair::Value>();
