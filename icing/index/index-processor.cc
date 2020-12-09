@@ -85,6 +85,8 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
                              tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
         if (++num_tokens > options_.max_tokens_per_document) {
+          // Index all tokens buffered so far.
+          editor.IndexAllBufferedTerms();
           if (put_document_stats != nullptr) {
             put_document_stats->mutable_tokenization_stats()
                 ->set_exceeded_max_token_num(true);
@@ -96,16 +98,16 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
               return absl_ports::ResourceExhaustedError(
                   "Max number of tokens reached!");
             case Options::TokenLimitBehavior::kSuppressError:
-              return libtextclassifier3::Status::OK;
+              return overall_status;
           }
         }
         std::string term = normalizer_.NormalizeTerm(itr->GetToken().text);
-        // Add this term to the index. Even if adding this hit fails, we keep
+        // Add this term to Hit buffer. Even if adding this hit fails, we keep
         // trying to add more hits because it's possible that future hits could
         // still be added successfully. For instance if the lexicon is full, we
         // might fail to add a hit for a new term, but should still be able to
         // add hits for terms that are already in the index.
-        auto status = editor.AddHit(term.c_str());
+        auto status = editor.BufferTerm(term.c_str());
         if (overall_status.ok() && !status.ok()) {
           // If we've succeeded to add everything so far, set overall_status to
           // represent this new failure. If we've already failed, no need to
@@ -114,6 +116,15 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
           overall_status = status;
         }
       }
+    }
+    // Add all the seen terms to the index with their term frequency.
+    auto status = editor.IndexAllBufferedTerms();
+    if (overall_status.ok() && !status.ok()) {
+      // If we've succeeded so far, set overall_status to
+      // represent this new failure. If we've already failed, no need to
+      // update the status - we're already going to return a resource
+      // exhausted error.
+      overall_status = status;
     }
   }
 

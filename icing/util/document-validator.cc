@@ -96,7 +96,8 @@ libtextclassifier3::Status DocumentValidator::Validate(
     if (property_iter == parsed_property_configs.property_config_map.end()) {
       return absl_ports::NotFoundError(absl_ports::StrCat(
           "Property config '", property.name(), "' not found for key: (",
-          document.namespace_(), ", ", document.uri(), ")."));
+          document.namespace_(), ", ", document.uri(),
+          ") of type: ", document.schema(), "."));
     }
     const PropertyConfigProto& property_config = *property_iter->second;
 

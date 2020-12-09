@@ -163,67 +163,6 @@ TEST_F(SectionManagerTest, CreationWithNullPointerShouldFail) {
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(SectionManagerTest, CreationWithSchemaInfiniteLoopShouldFail) {
-  // Creates 2 type configs that reference each other
-  SchemaTypeConfigProto type_config1;
-  type_config1.set_schema_type("type1");
-  auto property1 = type_config1.add_properties();
-  property1->set_property_name("property1");
-  property1->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  property1->set_schema_type("type2");  // Here we reference type2
-  property1->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property1->mutable_document_indexing_config()->set_index_nested_properties(
-      true);
-
-  SchemaTypeConfigProto type_config2;
-  type_config2.set_schema_type("type2");
-  auto property2 = type_config2.add_properties();
-  property2->set_property_name("property2");
-  property2->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  // Here we reference type1, which references type2 causing the infinite loop
-  property2->set_schema_type("type1");
-  property2->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property2->mutable_document_indexing_config()->set_index_nested_properties(
-      true);
-
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace("type1", type_config1);
-  type_config_map.emplace("type2", type_config2);
-
-  EXPECT_THAT(
-      SectionManager::Create(type_config_map, schema_type_mapper_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-               HasSubstr("Infinite loop detected")));
-}
-
-TEST_F(SectionManagerTest, CreationWithSchemaSelfReferenceShouldFail) {
-  // Creates a type config that has a section and references to self.
-  SchemaTypeConfigProto type_config;
-  type_config.set_schema_type("type");
-  auto property1 = type_config.add_properties();
-  property1->set_property_name("property1");
-  property1->set_data_type(PropertyConfigProto::DataType::STRING);
-  property1->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property1->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  auto property2 = type_config.add_properties();
-  property2->set_property_name("property2");
-  property2->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  property2->mutable_document_indexing_config()->set_index_nested_properties(
-      true);
-  // Here we're referencing our own type, causing an infinite loop
-  property2->set_schema_type("type");
-  property2->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace("type", type_config);
-
-  EXPECT_THAT(
-      SectionManager::Create(type_config_map, schema_type_mapper_.get()),
-      StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE,
-               HasSubstr("Too many properties")));
-}
-
 TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
   SchemaTypeConfigProto type_config;
   type_config.set_schema_type("type");

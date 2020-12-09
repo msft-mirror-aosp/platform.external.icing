@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/scoring/scored-document-hit.h"
 
@@ -29,10 +30,12 @@ struct PageResultState {
   PageResultState(std::vector<ScoredDocumentHit> scored_document_hits_in,
                   uint64_t next_page_token_in,
                   SnippetContext snippet_context_in,
+                  std::unordered_map<std::string, ProjectionTree> tree_map,
                   int num_previously_returned_in)
       : scored_document_hits(std::move(scored_document_hits_in)),
         next_page_token(next_page_token_in),
         snippet_context(std::move(snippet_context_in)),
+        projection_tree_map(std::move(tree_map)),
         num_previously_returned(num_previously_returned_in) {}
 
   // Results of one page
@@ -43,6 +46,9 @@ struct PageResultState {
 
   // Information needed for snippeting.
   SnippetContext snippet_context;
+
+  // Information needed for projection.
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map;
 
   // Number of results that have been returned in previous pages.
   int num_previously_returned;
