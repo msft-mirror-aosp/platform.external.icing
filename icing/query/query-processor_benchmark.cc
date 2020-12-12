@@ -70,7 +70,8 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
                      const std::string& token) {
   Index::Editor editor =
       index->Edit(document_id, section_id, term_match_type, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.AddHit(token.c_str()));
+  ICING_ASSERT_OK(editor.BufferTerm(token.c_str()));
+  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
 }
 
 std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,

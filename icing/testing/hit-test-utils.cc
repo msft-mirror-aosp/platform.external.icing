@@ -42,8 +42,8 @@ std::vector<Hit> CreateHits(DocumentId start_docid, int num_hits,
   if (num_hits < 1) {
     return hits;
   }
-  hits.push_back(
-      Hit(/*section_id=*/1, /*document_id=*/start_docid, Hit::kMaxHitScore));
+  hits.push_back(Hit(/*section_id=*/1, /*document_id=*/start_docid,
+                     Hit::kDefaultHitScore));
   while (hits.size() < num_hits) {
     hits.push_back(CreateHit(hits.back(), desired_byte_length));
   }
