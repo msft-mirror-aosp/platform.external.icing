@@ -36,7 +36,7 @@ class DocHitInfo {
                       SectionIdMask hit_section_ids_mask = kSectionIdMaskNone)
       : document_id_(document_id_in),
         hit_section_ids_mask_(hit_section_ids_mask) {
-    memset(max_hit_score_, Hit::kMaxHitScore, sizeof(max_hit_score_));
+    memset(max_hit_score_, Hit::kDefaultHitScore, sizeof(max_hit_score_));
   }
 
   DocumentId document_id() const { return document_id_; }

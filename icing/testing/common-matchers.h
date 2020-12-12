@@ -58,6 +58,44 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
          actual.hit_section_ids_mask() == section_mask;
 }
 
+// Used to match a DocHitInfo
+MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
+           section_ids_to_term_frequencies_map, "") {
+  const DocHitInfo& actual = arg;
+  SectionIdMask section_mask = kSectionIdMaskNone;
+
+  bool term_frequency_as_expected = true;
+  std::vector<Hit::Score> expected_tfs;
+  std::vector<Hit::Score> actual_tfs;
+  for (auto itr = section_ids_to_term_frequencies_map.begin();
+       itr != section_ids_to_term_frequencies_map.end(); itr++) {
+    SectionId section_id = itr->first;
+    section_mask |= 1U << section_id;
+    expected_tfs.push_back(itr->second);
+    actual_tfs.push_back(actual.max_hit_score(section_id));
+    if (actual.max_hit_score(section_id) != itr->second) {
+      term_frequency_as_expected = false;
+    }
+  }
+  std::string actual_term_frequencies = absl_ports::StrCat(
+      "[", absl_ports::StrJoin(actual_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  std::string expected_term_frequencies = absl_ports::StrCat(
+      "[",
+      absl_ports::StrJoin(expected_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  *result_listener << IcingStringUtil::StringPrintf(
+      "(actual is {document_id=%d, section_mask=%d, term_frequencies=%s}, but "
+      "expected was "
+      "{document_id=%d, section_mask=%d, term_frequencies=%s}.)",
+      actual.document_id(), actual.hit_section_ids_mask(),
+      actual_term_frequencies.c_str(), document_id, section_mask,
+      expected_term_frequencies.c_str());
+  return actual.document_id() == document_id &&
+         actual.hit_section_ids_mask() == section_mask &&
+         term_frequency_as_expected;
+}
+
 // Used to match a ScoredDocumentHit
 MATCHER_P(EqualsScoredDocumentHit, expected_scored_document_hit, "") {
   if (arg.document_id() != expected_scored_document_hit.document_id() ||

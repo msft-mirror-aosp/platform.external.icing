@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -292,9 +293,10 @@ TEST_F(IndexProcessorTest, OneDoc) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("hello", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(GetHits(std::move(itr)),
-              ElementsAre(EqualsDocHitInfo(
-                  kDocumentId0, std::vector<SectionId>{kExactSectionId})));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::Score> expectedMap{{kExactSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expectedMap)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("hello", 1U << kPrefixedSectionId,
@@ -313,12 +315,18 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
+  std::string coffeeRepeatedString = "coffee";
+  for (int i = 0; i < Hit::kMaxHitScore + 1; i++) {
+    coffeeRepeatedString += " coffee";
+  }
+
   document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/2")
           .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kExactProperty), "pitbull")
-          .AddStringProperty(std::string(kPrefixedProperty), "mr. world wide")
+          .AddStringProperty(std::string(kExactProperty), coffeeRepeatedString)
+          .AddStringProperty(std::string(kPrefixedProperty),
+                             "mr. world world wide")
           .Build();
   EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId1), IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
@@ -326,19 +334,31 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("world", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::Score> expectedMap1{
+      {kPrefixedSectionId, 2}};
+  std::unordered_map<SectionId, Hit::Score> expectedMap2{{kExactSectionId, 1}};
   EXPECT_THAT(
-      GetHits(std::move(itr)),
-      ElementsAre(EqualsDocHitInfo(kDocumentId1,
-                                   std::vector<SectionId>{kPrefixedSectionId}),
-                  EqualsDocHitInfo(kDocumentId0,
-                                   std::vector<SectionId>{kExactSectionId})));
+      hits, ElementsAre(
+                EqualsDocHitInfoWithTermFrequency(kDocumentId1, expectedMap1),
+                EqualsDocHitInfoWithTermFrequency(kDocumentId0, expectedMap2)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("world", 1U << kPrefixedSectionId,
                                TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(GetHits(std::move(itr)),
-              ElementsAre(EqualsDocHitInfo(
-                  kDocumentId1, std::vector<SectionId>{kPrefixedSectionId})));
+  hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::Score> expectedMap{
+      {kPrefixedSectionId, 2}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId1, expectedMap)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("coffee", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  hits = GetHits(std::move(itr));
+  expectedMap = {{kExactSectionId, Hit::kMaxHitScore}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId1, expectedMap)));
 }
 
 TEST_F(IndexProcessorTest, DocWithNestedProperty) {

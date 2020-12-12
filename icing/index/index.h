@@ -197,14 +197,16 @@ class Index {
           namespace_id_(namespace_id),
           section_id_(section_id) {}
 
-    libtextclassifier3::Status AddHit(const char* term,
-                                      Hit::Score score = Hit::kMaxHitScore);
+    // Buffer the term in seen_tokens_.
+    libtextclassifier3::Status BufferTerm(const char* term);
+    // Index all the terms stored in seen_tokens_.
+    libtextclassifier3::Status IndexAllBufferedTerms();
 
    private:
     // The Editor is able to store previously seen terms as TermIds. This is
     // is more efficient than a client doing this externally because TermIds are
     // not exposed to clients.
-    std::unordered_set<uint32_t> seen_tokens_;
+    std::unordered_map<uint32_t, Hit::Score> seen_tokens_;
     const TermIdCodec* term_id_codec_;
     LiteIndex* lite_index_;
     DocumentId document_id_;

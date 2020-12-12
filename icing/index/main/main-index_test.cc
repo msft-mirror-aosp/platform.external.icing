@@ -145,7 +145,7 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForPrefixReturnsValidAccessor) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foot_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
@@ -182,7 +182,7 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForExactReturnsValidAccessor) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foot_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
@@ -219,18 +219,18 @@ TEST_F(MainIndexTest, MergeIndexToEmpty) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t far_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc0_hit));
 
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kMaxHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc1_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
-  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kMaxHitScore,
+  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc2_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc2_hit));
@@ -292,18 +292,18 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t far_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc0_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc0_hit));
 
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kMaxHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc1_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
-  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kMaxHitScore,
+  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc2_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(far_term_id, doc2_hit));
@@ -345,14 +345,14 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t fall_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc3_hit(/*section_id=*/0, /*document_id=*/3, Hit::kMaxHitScore,
+  Hit doc3_hit(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc3_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(four_term_id, doc3_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(foul_term_id, doc3_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(fall_term_id, doc3_hit));
 
-  Hit doc4_hit(/*section_id=*/0, /*document_id=*/4, Hit::kMaxHitScore,
+  Hit doc4_hit(/*section_id=*/0, /*document_id=*/4, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(four_term_id, doc4_hit));
   ICING_ASSERT_OK(lite_index_->AddHit(foul_term_id, doc4_hit));
@@ -404,15 +404,15 @@ TEST_F(MainIndexTest, ExactRetrievedInPrefixSearch) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kMaxHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc1_hit));
 
-  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kMaxHitScore,
+  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc2_hit));
 
@@ -453,15 +453,15 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
 
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kMaxHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc1_hit));
 
-  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kMaxHitScore,
+  Hit doc2_hit(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc2_hit));
 
@@ -500,17 +500,17 @@ TEST_F(MainIndexTest, SearchChainedPostingLists) {
 
   for (DocumentId document_id = 0; document_id < 2048; ++document_id) {
     Hit doc_hit0(/*section_id=*/0, /*document_id=*/document_id,
-                 Hit::kMaxHitScore,
+                 Hit::kDefaultHitScore,
                  /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit0));
 
     Hit doc_hit1(/*section_id=*/1, /*document_id=*/document_id,
-                 Hit::kMaxHitScore,
+                 Hit::kDefaultHitScore,
                  /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit1));
 
     Hit doc_hit2(/*section_id=*/2, /*document_id=*/document_id,
-                 Hit::kMaxHitScore,
+                 Hit::kDefaultHitScore,
                  /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit2));
   }
@@ -543,7 +543,7 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t fool_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kMaxHitScore,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc0_hit));
 
@@ -570,7 +570,7 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foot_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kMaxHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc1_hit));
 
