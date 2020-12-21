@@ -30,7 +30,7 @@ enum FlagOffset {
   // This hit represents a prefix of a longer term. If exact matches are
   // required, then this hit should be ignored.
   kPrefixHit = 1,
-  // Whether or not the hit has a hit score other than kMaxHitScore.
+  // Whether or not the hit has a hit score other than kDefaultHitScore.
   kHasScore = 2,
   kNumFlags = 3,
 };
@@ -64,7 +64,7 @@ Hit::Hit(SectionId section_id, DocumentId document_id, Hit::Score score,
                         kSectionIdBits + kNumFlags, kDocumentIdBits,
                         &temp_value);
   bit_util::BitfieldSet(section_id, kNumFlags, kSectionIdBits, &temp_value);
-  bit_util::BitfieldSet(score != kMaxHitScore, kHasScore, 1, &temp_value);
+  bit_util::BitfieldSet(score != kDefaultHitScore, kHasScore, 1, &temp_value);
   bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, 1, &temp_value);
   bit_util::BitfieldSet(is_in_prefix_section, kInPrefixSection, 1, &temp_value);
   value_ = temp_value;

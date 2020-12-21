@@ -80,11 +80,18 @@ class SchemaUtil {
   //   9. PropertyConfigProtos.schema_type's must correspond to a
   //      SchemaTypeConfigProto.schema_type
   //  10. Property names can only be alphanumeric.
-  //  11. Only STRING data types are indexed
+  //  11. Any STRING data types have a valid string_indexing_config
+  //  12. A SchemaTypeConfigProto cannot have a property whose schema_type is
+  //      itself, thus creating an infinite loop.
+  //  13. Two SchemaTypeConfigProtos cannot have properties that reference each
+  //      other's schema_type, thus creating an infinite loop.
+  //
+  //  TODO(b/171996137): Clarify 12 and 13 are only for indexed properties, once
+  //  document properties can be opted out of indexing.
   //
   // Returns:
   //   ALREADY_EXISTS for case 1 and 2
-  //   INVALID_ARGUMENT for 3-11
+  //   INVALID_ARGUMENT for 3-13
   //   OK otherwise
   static libtextclassifier3::Status Validate(const SchemaProto& schema);
 
@@ -137,6 +144,20 @@ class SchemaUtil {
   static const SchemaDelta ComputeCompatibilityDelta(
       const SchemaProto& old_schema, const SchemaProto& new_schema);
 
+  // Validates the 'property_name' field.
+  //   1. Can't be an empty string
+  //   2. Can only contain alphanumeric characters
+  //
+  // NOTE: schema_type is only used for logging. It is not necessary to populate
+  // it.
+  //
+  // RETURNS:
+  //   - OK if property_name is valid
+  //   - INVALID_ARGUMENT if property name is empty or contains an
+  //     non-alphabetic character.
+  static libtextclassifier3::Status ValidatePropertyName(
+      std::string_view property_name, std::string_view schema_type = "");
+
  private:
   // Validates the 'schema_type' field
   //
@@ -145,16 +166,6 @@ class SchemaUtil {
   //   OK on success
   static libtextclassifier3::Status ValidateSchemaType(
       std::string_view schema_type);
-
-  // Validates the 'property_name' field.
-  //   1. Can't be an empty string
-  //   2. Can only contain alphanumeric characters
-  //
-  // Returns:
-  //   INVALID_ARGUMENT if any of the rules are not followed
-  //   OK on success
-  static libtextclassifier3::Status ValidatePropertyName(
-      std::string_view property_name, std::string_view schema_type);
 
   // Validates the 'data_type' field.
   //
@@ -174,15 +185,15 @@ class SchemaUtil {
       PropertyConfigProto::Cardinality::Code cardinality,
       std::string_view schema_type, std::string_view property_name);
 
-  // Checks that the 'indexing_config' satisfies the following rules:
+  // Checks that the 'string_indexing_config' satisfies the following rules:
   //   1. Only STRING data types can be indexed
   //   2. An indexed property must have a valid tokenizer type
   //
   // Returns:
   //   INVALID_ARGUMENT if any of the rules are not followed
   //   OK on success
-  static libtextclassifier3::Status ValidateIndexingConfig(
-      const IndexingConfig& config,
+  static libtextclassifier3::Status ValidateStringIndexingConfig(
+      const StringIndexingConfig& config,
       PropertyConfigProto::DataType::Code data_type,
       std::string_view schema_type, std::string_view property_name);
 };

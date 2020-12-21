@@ -451,10 +451,12 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   RESOURCE_EXHAUSTED if the index runs out of storage
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL on any I/O errors
-  libtextclassifier3::Status InitializeMembers()
+  libtextclassifier3::Status InitializeMembers(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any validation/setup required for the given IcingSearchEngineOptions
@@ -470,8 +472,10 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeSchemaStore()
+  libtextclassifier3::Status InitializeSchemaStore(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create a DocumentStore
@@ -479,8 +483,10 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeDocumentStore()
+  libtextclassifier3::Status InitializeDocumentStore(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create a DocumentStore
@@ -488,10 +494,12 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   RESOURCE_EXHAUSTED if the index runs out of storage
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeIndex()
+  libtextclassifier3::Status InitializeIndex(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
@@ -514,7 +522,9 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on any IO errors
-  libtextclassifier3::Status RegenerateDerivedFiles()
+  libtextclassifier3::Status RegenerateDerivedFiles(
+      NativeInitializeStats* initialize_stats = nullptr,
+      bool log_document_store_stats = false)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Optimizes the DocumentStore by removing any unneeded documents (i.e.
@@ -543,7 +553,7 @@ class IcingSearchEngine {
   //   RESOURCE_EXHAUSTED if the index fills up before finishing indexing
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL_ERROR on any IO errors
-  libtextclassifier3::Status RestoreIndex()
+  libtextclassifier3::Status RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Computes the combined checksum of the IcingSearchEngine - includes all its

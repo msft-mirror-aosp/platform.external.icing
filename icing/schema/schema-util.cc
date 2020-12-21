@@ -37,10 +37,6 @@ namespace lib {
 
 namespace {
 
-// Data types that can be indexed. This follows rule 11 of SchemaUtil::Validate
-static std::unordered_set<PropertyConfigProto::DataType::Code>
-    kIndexableDataTypes = {PropertyConfigProto::DataType::STRING};
-
 bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
                              const PropertyConfigProto& new_property) {
   if (old_property.cardinality() < new_property.cardinality()) {
@@ -91,8 +87,8 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
          IsCardinalityCompatible(old_property, new_property);
 }
 
-bool IsTermMatchTypeCompatible(const IndexingConfig& old_indexed,
-                               const IndexingConfig& new_indexed) {
+bool IsTermMatchTypeCompatible(const StringIndexingConfig& old_indexed,
+                               const StringIndexingConfig& new_indexed) {
   return old_indexed.term_match_type() == new_indexed.term_match_type() &&
          old_indexed.tokenizer_type() == new_indexed.tokenizer_type();
 }
@@ -111,6 +107,21 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
   // already.
   std::unordered_set<std::string_view> known_property_names;
 
+  // Tracks which schemas reference other schemas. This is used to detect
+  // infinite loops between indexed schema references (e.g. A -> B -> C -> A).
+  // We could get into an infinite loop while trying to assign section ids.
+  //
+  // The key is the "child" schema that is being referenced within another
+  // schema.
+  // The value is a set of all the direct/indirect "parent" schemas that
+  // reference the "child" schema.
+  //
+  // For example, if A has a nested document property of type B, then A is the
+  // "parent" and B is the "child" and so schema_references will contain
+  // schema_references[B] == {A}.
+  std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
+      schema_references;
+
   for (const auto& type_config : schema.types()) {
     std::string_view schema_type(type_config.schema_type());
     ICING_RETURN_IF_ERROR(ValidateSchemaType(schema_type));
@@ -124,6 +135,7 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
 
     // We only care about properties being unique within one type_config
     known_property_names.clear();
+
     for (const auto& property_config : type_config.properties()) {
       std::string_view property_name(property_config.property_name());
       ICING_RETURN_IF_ERROR(ValidatePropertyName(property_name, schema_type));
@@ -153,22 +165,69 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
                                  schema_type, ".", property_name, "'"));
         }
 
+        if (property_schema_type == schema_type) {
+          // The schema refers to itself. This also causes a infinite loop.
+          //
+          // TODO(b/171996137): When clients can opt out of indexing document
+          // properties, then we don't need to do this if the document property
+          // isn't indexed. We only care about infinite loops while we're trying
+          // to assign section ids for indexing.
+          return absl_ports::InvalidArgumentError(
+              absl_ports::StrCat("Infinite loop detected in type configs. '",
+                                 schema_type, "' references itself."));
+        }
+
         // Need to make sure we eventually see/validate this schema_type
         if (known_schema_types.count(property_schema_type) == 0) {
           unknown_schema_types.insert(property_schema_type);
         }
+
+        // Start tracking the parent schemas that references this nested schema
+        // for infinite loop detection.
+        //
+        // TODO(b/171996137): When clients can opt out of indexing document
+        // properties, then we don't need to do this if the document property
+        // isn't indexed. We only care about infinite loops while we're trying
+        // to assign section ids for indexing.
+        std::unordered_set<std::string_view> parent_schemas;
+        parent_schemas.insert(schema_type);
+
+        for (const auto& parent : parent_schemas) {
+          // Check for any indirect parents
+          auto indirect_parents_iter = schema_references.find(parent);
+          if (indirect_parents_iter == schema_references.end()) {
+            continue;
+          }
+
+          // Our "parent" schema has parents as well. They're our indirect
+          // parents now.
+          for (const std::string_view& indirect_parent :
+               indirect_parents_iter->second) {
+            if (indirect_parent == property_schema_type) {
+              // We're our own indirect parent! Infinite loop found.
+              return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+                  "Infinite loop detected in type configs. '",
+                  property_schema_type, "' references itself."));
+            }
+            parent_schemas.insert(indirect_parent);
+          }
+        }
+
+        schema_references.insert({property_schema_type, parent_schemas});
       }
 
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
                                                 schema_type, property_name));
 
-      ICING_RETURN_IF_ERROR(
-          ValidateIndexingConfig(property_config.indexing_config(), data_type,
-                                 schema_type, property_name));
+      if (data_type == PropertyConfigProto::DataType::STRING) {
+        ICING_RETURN_IF_ERROR(ValidateStringIndexingConfig(
+            property_config.string_indexing_config(), data_type, schema_type,
+            property_name));
+      }
     }
   }
 
-  // An Document property claimed to be of a schema_type that we never
+  // A Document property claimed to be of a schema_type that we never
   // saw/validated
   if (!unknown_schema_types.empty()) {
     return absl_ports::UnknownError(
@@ -239,31 +298,24 @@ libtextclassifier3::Status SchemaUtil::ValidateCardinality(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status SchemaUtil::ValidateIndexingConfig(
-    const IndexingConfig& config, PropertyConfigProto::DataType::Code data_type,
-    std::string_view schema_type, std::string_view property_name) {
+libtextclassifier3::Status SchemaUtil::ValidateStringIndexingConfig(
+    const StringIndexingConfig& config,
+    PropertyConfigProto::DataType::Code data_type, std::string_view schema_type,
+    std::string_view property_name) {
   if (config.term_match_type() == TermMatchType::UNKNOWN &&
-      config.tokenizer_type() != IndexingConfig::TokenizerType::NONE) {
+      config.tokenizer_type() != StringIndexingConfig::TokenizerType::NONE) {
     // They set a tokenizer type, but no term match type.
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Indexed property '", schema_type, ".", property_name,
+        "Indexed string property '", schema_type, ".", property_name,
         "' cannot have a term match type UNKNOWN"));
   }
 
   if (config.term_match_type() != TermMatchType::UNKNOWN &&
-      config.tokenizer_type() == IndexingConfig::TokenizerType::NONE) {
+      config.tokenizer_type() == StringIndexingConfig::TokenizerType::NONE) {
     // They set a term match type, but no tokenizer type
     return absl_ports::InvalidArgumentError(
-        absl_ports::StrCat("Indexed property '", property_name,
+        absl_ports::StrCat("Indexed string property '", property_name,
                            "' cannot have a tokenizer type of NONE"));
-  }
-
-  if (config.term_match_type() != TermMatchType::UNKNOWN &&
-      kIndexableDataTypes.find(data_type) == kIndexableDataTypes.end()) {
-    // They want this section indexed, but it's not an indexable data type.
-    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Cannot index non-string data type for schema property '", schema_type,
-        ".", property_name, "'"));
   }
 
   return libtextclassifier3::Status::OK;
@@ -281,7 +333,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
     const SchemaTypeConfigProto& type_config) {
   ParsedPropertyConfigs parsed_property_configs;
 
-  // TODO(samzheng): consider caching property_config_map for some properties,
+  // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
   for (const PropertyConfigProto& property_config : type_config.properties()) {
     parsed_property_configs.property_config_map.emplace(
@@ -293,7 +345,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
 
     // A non-default term_match_type indicates that this property is meant to be
     // indexed.
-    if (property_config.indexing_config().term_match_type() !=
+    if (property_config.string_indexing_config().term_match_type() !=
         TermMatchType::UNKNOWN) {
       parsed_property_configs.num_indexed_properties++;
     }
@@ -368,14 +420,15 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
 
       // A non-default term_match_type indicates that this property is meant to
       // be indexed.
-      if (old_property_config.indexing_config().term_match_type() !=
+      if (old_property_config.string_indexing_config().term_match_type() !=
           TermMatchType::UNKNOWN) {
         ++old_indexed_properties;
       }
 
       // Any change in the indexed property requires a reindexing
-      if (!IsTermMatchTypeCompatible(old_property_config.indexing_config(),
-                                     new_property_config->indexing_config())) {
+      if (!IsTermMatchTypeCompatible(
+              old_property_config.string_indexing_config(),
+              new_property_config->string_indexing_config())) {
         schema_delta.index_incompatible = true;
       }
     }

@@ -48,39 +48,6 @@ namespace {
 using TypeSectionMap =
     std::unordered_map<std::string, const std::vector<SectionMetadata>>;
 
-// This state helps detect infinite loops (e.g. two type configs referencing
-// each other) when assigning sections. The combination of 'number of section
-// assigned' and 'current schema name' represents a unique state in the
-// section-assign process. If the same state is seen the second time, that means
-// an infinite loop.
-struct SectionAssigningState {
-  size_t num_sections_assigned;
-  std::string current_schema_name;
-
-  SectionAssigningState(size_t num_sections_assigned_in,
-                        std::string&& current_schema_name_in)
-      : num_sections_assigned(num_sections_assigned_in),
-        current_schema_name(std::move(current_schema_name_in)) {}
-};
-
-// Provides a hash value of this struct so that it can be stored in a hash
-// set.
-struct SectionAssigningStateHasher {
-  size_t operator()(const SectionAssigningState& state) const {
-    size_t str_hash = std::hash<std::string>()(state.current_schema_name);
-    size_t int_hash = std::hash<size_t>()(state.num_sections_assigned);
-    // Combine the two hashes by taking the upper 16-bits of the string hash and
-    // the lower 16-bits of the int hash.
-    return (str_hash & 0xFFFF0000) | (int_hash & 0x0000FFFF);
-  }
-};
-
-bool operator==(const SectionAssigningState& lhs,
-                const SectionAssigningState& rhs) {
-  return lhs.num_sections_assigned == rhs.num_sections_assigned &&
-         lhs.current_schema_name == rhs.current_schema_name;
-}
-
 // Helper function to concatenate a path and a property name
 std::string ConcatenatePath(const std::string& path,
                             const std::string& next_property_name) {
@@ -90,28 +57,14 @@ std::string ConcatenatePath(const std::string& path,
   return absl_ports::StrCat(path, kPropertySeparator, next_property_name);
 }
 
-// Helper function to recursively identify sections from a type config and add
-// them to a section metadata list
 libtextclassifier3::Status AssignSections(
-    const SchemaTypeConfigProto& type_config,
+    const SchemaTypeConfigProto& current_type_config,
     const std::string& current_section_path,
     const SchemaUtil::TypeConfigMap& type_config_map,
-    std::unordered_set<SectionAssigningState, SectionAssigningStateHasher>*
-        visited_states,
     std::vector<SectionMetadata>* metadata_list) {
-  if (!visited_states
-           ->emplace(metadata_list->size(),
-                     std::string(type_config.schema_type()))
-           .second) {
-    // Failed to insert, the same state has been seen before, there's an
-    // infinite loop in type configs
-    return absl_ports::InvalidArgumentError(
-        "Infinite loop detected in type configs");
-  }
-
   // Sorts properties by name's alphabetical order so that order doesn't affect
   // section assigning.
-  auto sorted_properties = type_config.properties();
+  auto sorted_properties = current_type_config.properties();
   std::sort(sorted_properties.pointer_begin(), sorted_properties.pointer_end(),
             [](const PropertyConfigProto* p1, const PropertyConfigProto* p2) {
               return p1->property_name() < p2->property_name();
@@ -119,24 +72,33 @@ libtextclassifier3::Status AssignSections(
   for (const auto& property_config : sorted_properties) {
     if (property_config.data_type() ==
         PropertyConfigProto::DataType::DOCUMENT) {
-      // Tries to find sections recursively
       auto nested_type_config_iter =
           type_config_map.find(property_config.schema_type());
       if (nested_type_config_iter == type_config_map.end()) {
+        // This should never happen because our schema should already be
+        // validated by this point.
         return absl_ports::NotFoundError(absl_ports::StrCat(
-            "type config not found: ", property_config.schema_type()));
+            "Type config not found: ", property_config.schema_type()));
       }
-      const SchemaTypeConfigProto& nested_type_config =
-          nested_type_config_iter->second;
-      ICING_RETURN_IF_ERROR(
-          AssignSections(nested_type_config,
-                         ConcatenatePath(current_section_path,
-                                         property_config.property_name()),
-                         type_config_map, visited_states, metadata_list));
+
+      if (property_config.document_indexing_config()
+              .index_nested_properties()) {
+        // Assign any indexed sections recursively
+        const SchemaTypeConfigProto& nested_type_config =
+            nested_type_config_iter->second;
+        ICING_RETURN_IF_ERROR(
+            AssignSections(nested_type_config,
+                           ConcatenatePath(current_section_path,
+                                           property_config.property_name()),
+                           type_config_map, metadata_list));
+      }
     }
 
-    if (property_config.indexing_config().term_match_type() ==
-        TermMatchType::UNKNOWN) {
+    // Only index strings currently.
+    if (property_config.has_data_type() !=
+            PropertyConfigProto::DataType::STRING ||
+        property_config.string_indexing_config().term_match_type() ==
+            TermMatchType::UNKNOWN) {
       // No need to create section for current property
       continue;
     }
@@ -153,10 +115,12 @@ libtextclassifier3::Status AssignSections(
           "allowed: %d",
           kMaxSectionId - kMinSectionId + 1));
     }
+
     // Creates section metadata from property config
     metadata_list->emplace_back(
-        new_section_id, property_config.indexing_config().term_match_type(),
-        property_config.indexing_config().tokenizer_type(),
+        new_section_id,
+        property_config.string_indexing_config().term_match_type(),
+        property_config.string_indexing_config().tokenizer_type(),
         ConcatenatePath(current_section_path, property_config.property_name()));
   }
   return libtextclassifier3::Status::OK;
@@ -172,17 +136,14 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
   std::vector<std::vector<SectionMetadata>> section_metadata_cache(
       schema_type_mapper.num_keys());
 
-  std::unordered_set<SectionAssigningState, SectionAssigningStateHasher>
-      visited_states;
   for (const auto& name_and_type : type_config_map) {
     // Assigns sections for each type config
-    visited_states.clear();
     const std::string& type_config_name = name_and_type.first;
     const SchemaTypeConfigProto& type_config = name_and_type.second;
     std::vector<SectionMetadata> metadata_list;
-    ICING_RETURN_IF_ERROR(
-        AssignSections(type_config, /*current_section_path*/ "",
-                       type_config_map, &visited_states, &metadata_list));
+    ICING_RETURN_IF_ERROR(AssignSections(type_config,
+                                         /*current_section_path*/ "",
+                                         type_config_map, &metadata_list));
 
     // Insert the section metadata list at the index of the type's SchemaTypeId
     ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
@@ -199,16 +160,6 @@ std::vector<std::string> GetPropertyContent(const PropertyProto& property) {
   if (!property.string_values().empty()) {
     std::copy(property.string_values().begin(), property.string_values().end(),
               std::back_inserter(values));
-  } else if (!property.int64_values().empty()) {
-    std::transform(
-        property.int64_values().begin(), property.int64_values().end(),
-        std::back_inserter(values),
-        [](int64_t i) { return IcingStringUtil::StringPrintf("%" PRId64, i); });
-  } else {
-    std::transform(
-        property.double_values().begin(), property.double_values().end(),
-        std::back_inserter(values),
-        [](double d) { return IcingStringUtil::StringPrintf("%f", d); });
   }
   return values;
 }
@@ -264,9 +215,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
     // Property name not found, it could be one of the following 2 cases:
     // 1. The property is optional and it's not in the document
     // 2. The property name is invalid
-    return absl_ports::NotFoundError(
-        absl_ports::StrCat("Section path ", section_path,
-                           " not found in type config ", document.schema()));
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "Section path '", section_path, "' not found in document."));
   }
 
   if (separator_position == std::string::npos) {
@@ -275,9 +225,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
     if (content.empty()) {
       // The content of property is explicitly set to empty, we'll treat it as
       // NOT_FOUND because the index doesn't care about empty strings.
-      return absl_ports::NotFoundError(
-          absl_ports::StrCat("Section path ", section_path,
-                             " not found in type config ", document.schema()));
+      return absl_ports::NotFoundError(absl_ports::StrCat(
+          "Section path '", section_path, "' content was empty"));
     }
     return content;
   }

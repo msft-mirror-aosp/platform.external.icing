@@ -64,7 +64,7 @@ message SearchSpecProto {
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 4
+// Next tag: 5
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -96,6 +96,22 @@ message ResultSpecProto {
     optional int32 max_window_bytes = 3;
   }
   optional SnippetSpecProto snippet_spec = 3;
+
+  // How to specify a subset of properties to retrieve. If no type property mask
+  // has been specified for a schema type, then *all* properties of that schema
+  // type will be retrieved.
+  // Next tag: 3
+  message TypePropertyMask {
+    // The schema type to which these property masks should apply.
+    optional string schema_type = 1;
+
+    // The property masks specifying the property to be retrieved. Property
+    // masks must be composed only of property names, property separators (the
+    // '.' character). For example, "subject", "recipients.name". Specifying no
+    // property masks will result in *no* properties being retrieved.
+    repeated string paths = 2;
+  }
+  repeated TypePropertyMask type_property_masks = 4;
 }
 
 // The representation of a single match within a DocumentProto property.

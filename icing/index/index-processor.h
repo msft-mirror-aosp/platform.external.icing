@@ -59,7 +59,8 @@ class IndexProcessor {
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
       const SchemaStore* schema_store, const LanguageSegmenter* lang_segmenter,
-      const Normalizer* normalizer, Index* index, const Options& options);
+      const Normalizer* normalizer, Index* index, const Options& options,
+      const Clock* clock);
 
   // Add document to the index, associated with document_id. If the number of
   // tokens in the document exceeds max_tokens_per_document, then only the first
@@ -69,6 +70,9 @@ class IndexProcessor {
   // Indexing a document *may* trigger an index merge. If a merge fails, then
   // all content in the index will be lost.
   //
+  // If put_document_stats is present, the fields related to indexing will be
+  // populated.
+  //
   // Returns:
   //   INVALID_ARGUMENT if document_id is less than the document_id of a
   //   previously indexed document or tokenization fails.
@@ -77,19 +81,21 @@ class IndexProcessor {
   //       cleared as a result.
   //   NOT_FOUND if there is no definition for the document's schema type.
   //   INTERNAL_ERROR if any other errors occur
-  libtextclassifier3::Status IndexDocument(const DocumentProto& document,
-                                           DocumentId document_id);
+  libtextclassifier3::Status IndexDocument(
+      const DocumentProto& document, DocumentId document_id,
+      NativePutDocumentStats* put_document_stats = nullptr);
 
  private:
   IndexProcessor(const SchemaStore* schema_store,
                  const LanguageSegmenter* lang_segmenter,
                  const Normalizer* normalizer, Index* index,
-                 const Options& options)
+                 const Options& options, const Clock* clock)
       : schema_store_(*schema_store),
         lang_segmenter_(*lang_segmenter),
         normalizer_(*normalizer),
         index_(index),
-        options_(options) {}
+        options_(options),
+        clock_(*clock) {}
 
   std::string NormalizeToken(const Token& token);
 
@@ -98,6 +104,7 @@ class IndexProcessor {
   const Normalizer& normalizer_;
   Index* const index_;
   const Options options_;
+  const Clock& clock_;
 };
 
 }  // namespace lib

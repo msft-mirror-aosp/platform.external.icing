@@ -34,17 +34,17 @@ constexpr DocumentId kSomeOtherDocumentId = 54;
 TEST(DocHitInfoTest, InitialMaxHitScores) {
   DocHitInfo info(kSomeDocumentId);
   for (SectionId i = 0; i <= kMaxSectionId; ++i) {
-    EXPECT_THAT(info.max_hit_score(i), Eq(Hit::kMaxHitScore));
+    EXPECT_THAT(info.max_hit_score(i), Eq(Hit::kDefaultHitScore));
   }
 }
 
 TEST(DocHitInfoTest, UpdateHitScores) {
   DocHitInfo info(kSomeDocumentId);
-  ASSERT_THAT(info.max_hit_score(3), Eq(Hit::kMaxHitScore));
+  ASSERT_THAT(info.max_hit_score(3), Eq(Hit::kDefaultHitScore));
 
   // Updating a section for the first time, should change its max hit score,
   // even though the hit score (16) may be lower than the current value returned
-  // by info.max_hit_score(3) (kMaxHitScore)
+  // by info.max_hit_score(3) (kDefaultHitScore)
   info.UpdateSection(3, 16);
   EXPECT_THAT(info.max_hit_score(3), Eq(16));
 
@@ -56,6 +56,12 @@ TEST(DocHitInfoTest, UpdateHitScores) {
   // Updating a section with a hit score higher than the previously set one
   // should update the max hit score.
   info.UpdateSection(3, 17);
+  EXPECT_THAT(info.max_hit_score(3), Eq(17));
+
+  // Updating a section with kDefaultHitScore should *never* set the
+  // max_hit_score to kDefaultHitScore (unless it already was kDefaultHitScore)
+  // because kDefaultHitScore is the lowest possible valid hit score.
+  info.UpdateSection(3, Hit::kDefaultHitScore);
   EXPECT_THAT(info.max_hit_score(3), Eq(17));
 
   // Updating a section with kMaxHitScore should *always* set the max hit
@@ -150,7 +156,7 @@ TEST(DocHitInfoTest, Comparison) {
 
   DocHitInfo high_section_id_info(kDocumentId);
   high_section_id_info.UpdateSection(1, 12);
-  high_section_id_info.UpdateSection(6, Hit::kMaxHitScore);
+  high_section_id_info.UpdateSection(6, Hit::kDefaultHitScore);
 
   std::vector<DocHitInfo> infos{info, high_document_id_info,
                                 high_section_id_info};

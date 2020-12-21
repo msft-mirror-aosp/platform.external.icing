@@ -23,6 +23,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -57,7 +58,8 @@ class DocumentValidatorTest : public ::testing::Test {
     CreateConversationTypeConfig(type_config);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, GetTestTempDir()));
+        schema_store_,
+        SchemaStore::Create(&filesystem_, GetTestTempDir(), &fake_clock_));
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
     document_validator_ =
@@ -121,6 +123,7 @@ class DocumentValidatorTest : public ::testing::Test {
   std::unique_ptr<DocumentValidator> document_validator_;
   std::unique_ptr<SchemaStore> schema_store_;
   Filesystem filesystem_;
+  FakeClock fake_clock_;
 };
 
 TEST_F(DocumentValidatorTest, ValidateSimpleSchemasOk) {
@@ -190,18 +193,6 @@ TEST_F(DocumentValidatorTest, ValidateNonexistentPropertyNotFound) {
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                        HasSubstr("'WrongPropertyName' not found")));
-}
-
-TEST_F(DocumentValidatorTest, ValidateAllCustomPropertyOk) {
-  DocumentProto email =
-      SimpleEmailBuilder()
-          // A nonexistent property, would've triggered a NotFound message
-          .AddCustomStringProperty("WrongPropertyName", kDefaultString)
-          // 'subject' property should've been a string according to the schema
-          .AddCustomBooleanProperty(kPropertySubject, false, true)
-          .Build();
-
-  EXPECT_THAT(document_validator_->Validate(email), IsOk());
 }
 
 TEST_F(DocumentValidatorTest, ValidateExactlyOneRequiredValueOk) {
@@ -334,7 +325,7 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
   // Set a schema with only the 'Email' type
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, custom_schema_dir));
+      SchemaStore::Create(&filesystem_, custom_schema_dir, &fake_clock_));
   ASSERT_THAT(schema_store->SetSchema(email_schema), IsOk());
 
   DocumentValidator document_validator(schema_store.get());

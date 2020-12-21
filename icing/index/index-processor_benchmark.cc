@@ -76,10 +76,10 @@ void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
         IcingStringUtil::StringPrintf("p%d", i));  //  p0 - p9
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
   }
 }
 
@@ -147,10 +147,10 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
       .ValueOrDie();
 }
 
-std::unique_ptr<SchemaStore> CreateSchemaStore() {
+std::unique_ptr<SchemaStore> CreateSchemaStore(const Clock* clock) {
   Filesystem filesystem;
   std::unique_ptr<SchemaStore> schema_store =
-      SchemaStore::Create(&filesystem, GetTestTempDir()).ValueOrDie();
+      SchemaStore::Create(&filesystem, GetTestTempDir(), clock).ValueOrDie();
 
   SchemaProto schema;
   CreateFakeTypeConfig(schema.add_types());
@@ -170,14 +170,14 @@ void CleanUp(const Filesystem& filesystem, const std::string& index_dir) {
 std::unique_ptr<IndexProcessor> CreateIndexProcessor(
     const SchemaStore* schema_store,
     const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
-    Index* index) {
+    Index* index, const Clock* clock) {
   IndexProcessor::Options processor_options{};
   processor_options.max_tokens_per_document = 1024 * 1024 * 10;
   processor_options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
   return IndexProcessor::Create(schema_store, language_segmenter, normalizer,
-                                index, processor_options)
+                                index, processor_options, clock)
       .ValueOrDie();
 }
 
@@ -200,10 +200,11 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
   std::unique_ptr<IndexProcessor> index_processor =
       CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+                           normalizer.get(), index.get(), &clock);
 
   DocumentProto input_document = CreateDocumentWithOneProperty(state.range(0));
 
@@ -250,10 +251,11 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
   std::unique_ptr<IndexProcessor> index_processor =
       CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+                           normalizer.get(), index.get(), &clock);
 
   DocumentProto input_document =
       CreateDocumentWithTenProperties(state.range(0));
@@ -301,10 +303,11 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
   std::unique_ptr<IndexProcessor> index_processor =
       CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+                           normalizer.get(), index.get(), &clock);
 
   DocumentProto input_document =
       CreateDocumentWithDiacriticLetters(state.range(0));
@@ -352,10 +355,11 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore();
+  Clock clock;
+  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
   std::unique_ptr<IndexProcessor> index_processor =
       CreateIndexProcessor(schema_store.get(), language_segmenter.get(),
-                           normalizer.get(), index.get());
+                           normalizer.get(), index.get(), &clock);
 
   DocumentProto input_document = CreateDocumentWithHiragana(state.range(0));
 

@@ -53,12 +53,14 @@ class ScorerTest : public testing::Test {
     fake_clock2_.SetSystemTimeMilliseconds(1572200000000);
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_));
+        schema_store_,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock1_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock1_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
     SchemaProto test_email_schema;
