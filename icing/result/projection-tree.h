@@ -26,6 +26,8 @@ namespace lib {
 
 class ProjectionTree {
  public:
+  static constexpr std::string_view kSchemaTypeWildcard = "*";
+
   struct Node {
     explicit Node(std::string_view name = "") : name(name) {}
 

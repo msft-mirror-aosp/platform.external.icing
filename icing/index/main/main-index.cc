@@ -579,7 +579,8 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     }
 
     // A backfill hit is a prefix hit in a prefix section.
-    const Hit backfill_hit(hit.section_id(), hit.document_id(), hit.score(),
+    const Hit backfill_hit(hit.section_id(), hit.document_id(),
+                           hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
                            /*is_prefix_hit=*/true);
     if (backfill_hit == last_added_hit) {

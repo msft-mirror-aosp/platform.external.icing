@@ -31,7 +31,7 @@ namespace lib {
 namespace {
 
 void Project(const std::vector<ProjectionTree::Node>& projection_tree,
-             proto2::RepeatedPtrField<PropertyProto>* properties) {
+             google::protobuf::RepeatedPtrField<PropertyProto>* properties) {
   int num_kept = 0;
   for (int cur_pos = 0; cur_pos < properties->size(); ++cur_pos) {
     PropertyProto* prop = properties->Mutable(cur_pos);
@@ -97,6 +97,9 @@ ResultRetriever::RetrieveResults(
     remaining_num_to_snippet = 0;
   }
 
+  auto wildcard_projection_tree_itr =
+      page_result_state.projection_tree_map.find(
+          std::string(ProjectionTree::kSchemaTypeWildcard));
   for (const auto& scored_document_hit :
        page_result_state.scored_document_hits) {
     libtextclassifier3::StatusOr<DocumentProto> document_or =
@@ -118,8 +121,13 @@ ResultRetriever::RetrieveResults(
     // Apply projection
     auto itr = page_result_state.projection_tree_map.find(
         document_or.ValueOrDie().schema());
+
     if (itr != page_result_state.projection_tree_map.end()) {
       Project(itr->second.root().children,
+              document_or.ValueOrDie().mutable_properties());
+    } else if (wildcard_projection_tree_itr !=
+               page_result_state.projection_tree_map.end()) {
+      Project(wildcard_projection_tree_itr->second.root().children,
               document_or.ValueOrDie().mutable_properties());
     }
 

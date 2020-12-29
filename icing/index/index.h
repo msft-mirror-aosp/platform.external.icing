@@ -206,7 +206,7 @@ class Index {
     // The Editor is able to store previously seen terms as TermIds. This is
     // is more efficient than a client doing this externally because TermIds are
     // not exposed to clients.
-    std::unordered_map<uint32_t, Hit::Score> seen_tokens_;
+    std::unordered_map<uint32_t, Hit::TermFrequency> seen_tokens_;
     const TermIdCodec* term_id_codec_;
     LiteIndex* lite_index_;
     DocumentId document_id_;

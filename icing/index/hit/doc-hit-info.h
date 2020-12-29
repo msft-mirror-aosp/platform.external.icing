@@ -26,17 +26,18 @@ namespace icing {
 namespace lib {
 
 // DocHitInfo provides a collapsed view of all hits for a specific term and doc.
-// Hits contain a document_id, section_id and a hit score. The information in
-// multiple hits is collapse into a DocHitInfo by providing a SectionIdMask of
-// all sections that contained a hit for this term as well as the highest hit
-// score of any hit for each section.
+// Hits contain a document_id, section_id and a term frequency. The
+// information in multiple hits is collapse into a DocHitInfo by providing a
+// SectionIdMask of all sections that contained a hit for this term as well as
+// the highest term frequency of any hit for each section.
 class DocHitInfo {
  public:
   explicit DocHitInfo(DocumentId document_id_in = kInvalidDocumentId,
                       SectionIdMask hit_section_ids_mask = kSectionIdMaskNone)
       : document_id_(document_id_in),
         hit_section_ids_mask_(hit_section_ids_mask) {
-    memset(max_hit_score_, Hit::kDefaultHitScore, sizeof(max_hit_score_));
+    memset(hit_term_frequency_, Hit::kDefaultTermFrequency,
+           sizeof(hit_term_frequency_));
   }
 
   DocumentId document_id() const { return document_id_; }
@@ -49,8 +50,8 @@ class DocHitInfo {
     hit_section_ids_mask_ = section_id_mask;
   }
 
-  Hit::Score max_hit_score(SectionId section_id) const {
-    return max_hit_score_[section_id];
+  Hit::TermFrequency hit_term_frequency(SectionId section_id) const {
+    return hit_term_frequency_[section_id];
   }
 
   bool operator<(const DocHitInfo& other) const;
@@ -58,12 +59,14 @@ class DocHitInfo {
     return (*this < other) == (other < *this);
   }
 
-  // Updates the hit_section_ids_mask and max_hit_score for the section, if
-  // necessary.
-  void UpdateSection(SectionId section_id, Hit::Score hit_score);
+  // Updates the hit_section_ids_mask and hit_term_frequency for the
+  // section, if necessary.
+  void UpdateSection(SectionId section_id,
+                     Hit::TermFrequency hit_term_frequency);
 
-  // Merges the sections of other into this. The hit_section_ids_masks are or'd
-  // and the max hit score for each section between the two is set.
+  // Merges the sections of other into this. The hit_section_ids_masks are or'd;
+  // if this.hit_term_frequency_[sectionId] has already been defined,
+  // other.hit_term_frequency_[sectionId] value is ignored.
   //
   // This does not affect the DocumentId of this or other. If callers care about
   // only merging sections for DocHitInfos with the same DocumentId, callers
@@ -73,14 +76,15 @@ class DocHitInfo {
  private:
   DocumentId document_id_;
   SectionIdMask hit_section_ids_mask_;
-  Hit::Score max_hit_score_[kMaxSectionId + 1];
+  Hit::TermFrequency hit_term_frequency_[kMaxSectionId + 1];
 } __attribute__((packed));
 static_assert(sizeof(DocHitInfo) == 22, "");
 // TODO(b/138991332) decide how to remove/replace all is_packed_pod assertions.
 static_assert(icing_is_packed_pod<DocHitInfo>::value, "go/icing-ubsan");
-static_assert(sizeof(Hit::Score) == 1,
-              "Change how max_hit_score_ is initialized if changing the type "
-              "of Hit::Score");
+static_assert(
+    sizeof(Hit::TermFrequency) == 1,
+    "Change how hit_term_frequency_ is initialized if changing the type "
+    "of Hit::TermFrequency");
 
 }  // namespace lib
 }  // namespace icing
