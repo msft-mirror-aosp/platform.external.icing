@@ -294,7 +294,8 @@ TEST_F(IndexProcessorTest, OneDoc) {
                              index_->GetIterator("hello", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfo> hits = GetHits(std::move(itr));
-  std::unordered_map<SectionId, Hit::Score> expectedMap{{kExactSectionId, 1}};
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+      {kExactSectionId, 1}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expectedMap)));
 
@@ -316,7 +317,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   std::string coffeeRepeatedString = "coffee";
-  for (int i = 0; i < Hit::kMaxHitScore + 1; i++) {
+  for (int i = 0; i < Hit::kMaxTermFrequency + 1; i++) {
     coffeeRepeatedString += " coffee";
   }
 
@@ -335,9 +336,10 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
                              index_->GetIterator("world", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
   std::vector<DocHitInfo> hits = GetHits(std::move(itr));
-  std::unordered_map<SectionId, Hit::Score> expectedMap1{
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap1{
       {kPrefixedSectionId, 2}};
-  std::unordered_map<SectionId, Hit::Score> expectedMap2{{kExactSectionId, 1}};
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap2{
+      {kExactSectionId, 1}};
   EXPECT_THAT(
       hits, ElementsAre(
                 EqualsDocHitInfoWithTermFrequency(kDocumentId1, expectedMap1),
@@ -347,7 +349,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
       itr, index_->GetIterator("world", 1U << kPrefixedSectionId,
                                TermMatchType::EXACT_ONLY));
   hits = GetHits(std::move(itr));
-  std::unordered_map<SectionId, Hit::Score> expectedMap{
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId1, expectedMap)));
@@ -356,7 +358,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
                              index_->GetIterator("coffee", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
   hits = GetHits(std::move(itr));
-  expectedMap = {{kExactSectionId, Hit::kMaxHitScore}};
+  expectedMap = {{kExactSectionId, Hit::kMaxTermFrequency}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId1, expectedMap)));
 }

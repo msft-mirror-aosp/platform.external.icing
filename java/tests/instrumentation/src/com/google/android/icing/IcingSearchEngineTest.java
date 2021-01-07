@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
+import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
@@ -116,7 +117,7 @@ public final class IcingSearchEngineTest {
 
   @After
   public void tearDown() throws Exception {
-    icingSearchEngine.destroy();
+    icingSearchEngine.close();
   }
 
   @Test
@@ -373,7 +374,7 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
 
-    DeleteResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
+    DeleteByQueryResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
     assertStatusOk(deleteResultProto.getStatus());
 
     GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri1");

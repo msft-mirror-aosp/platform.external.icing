@@ -114,7 +114,8 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
         hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
       cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
     }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(), hit.score());
+    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(),
+                                               hit.term_frequency());
   }
   return libtextclassifier3::Status::OK;
 }
@@ -162,7 +163,8 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
         hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
       cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
     }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(), hit.score());
+    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(),
+                                               hit.term_frequency());
   }
   return libtextclassifier3::Status::OK;
 }

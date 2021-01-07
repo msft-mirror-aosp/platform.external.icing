@@ -143,7 +143,7 @@ message GetAllNamespacesResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 2
+// Next tag: 3
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -156,10 +156,13 @@ message DeleteResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 2
+// Next tag: 3
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -172,10 +175,13 @@ message DeleteByNamespaceResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 2
+// Next tag: 3
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -188,4 +194,26 @@ message DeleteBySchemaTypeResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
+}
+
+// Result of a call to IcingSearchEngine.DeleteByQuery
+// Next tag: 3
+message DeleteByQueryResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
 }

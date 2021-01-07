@@ -36,17 +36,22 @@ int64_t GetSteadyTimeMilliseconds();
 class Timer {
  public:
   // Creates and starts the timer.
-  Timer() : start_timestamp_milliseconds_(GetSteadyTimeMilliseconds()) {}
+  Timer() : start_timestamp_nanoseconds_(GetSteadyTimeNanoseconds()) {}
 
   virtual ~Timer() = default;
 
   // Returns the elapsed time from when timer started.
   virtual int64_t GetElapsedMilliseconds() {
-    return GetSteadyTimeMilliseconds() - start_timestamp_milliseconds_;
+    return GetElapsedNanoseconds() / 1000000;
+  }
+
+  // Returns the elapsed time from when timer started.
+  virtual int64_t GetElapsedNanoseconds() {
+    return GetSteadyTimeNanoseconds() - start_timestamp_nanoseconds_;
   }
 
  private:
-  int64_t start_timestamp_milliseconds_;
+  int64_t start_timestamp_nanoseconds_;
 };
 
 // Wrapper around real-time clock functions. This is separated primarily so

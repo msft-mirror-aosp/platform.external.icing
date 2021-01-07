@@ -39,6 +39,7 @@ ResultStateManager::RankAndPaginate(ResultState result_state) {
   // Gets the number before calling GetNextPage() because num_returned() may
   // change after returning more results.
   int num_previously_returned = result_state.num_returned();
+  int num_per_page = result_state.num_per_page();
 
   std::vector<ScoredDocumentHit> page_result_document_hits =
       result_state.GetNextPage();
@@ -52,7 +53,7 @@ ResultStateManager::RankAndPaginate(ResultState result_state) {
     return PageResultState(
         std::move(page_result_document_hits), kInvalidNextPageToken,
         std::move(snippet_context_copy), std::move(projection_tree_map_copy),
-        num_previously_returned);
+        num_previously_returned, num_per_page);
   }
 
   absl_ports::unique_lock l(&mutex_);
@@ -63,7 +64,7 @@ ResultStateManager::RankAndPaginate(ResultState result_state) {
   return PageResultState(std::move(page_result_document_hits), next_page_token,
                          std::move(snippet_context_copy),
                          std::move(projection_tree_map_copy),
-                         num_previously_returned);
+                         num_previously_returned, num_per_page);
 }
 
 uint64_t ResultStateManager::Add(ResultState result_state) {
@@ -88,6 +89,7 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
   }
 
   int num_returned = state_iterator->second.num_returned();
+  int num_per_page = state_iterator->second.num_per_page();
   std::vector<ScoredDocumentHit> result_of_page =
       state_iterator->second.GetNextPage();
   if (result_of_page.empty()) {
@@ -110,9 +112,9 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
     next_page_token = kInvalidNextPageToken;
   }
 
-  return PageResultState(result_of_page, next_page_token,
-                         std::move(snippet_context_copy),
-                         std::move(projection_tree_map_copy), num_returned);
+  return PageResultState(
+      result_of_page, next_page_token, std::move(snippet_context_copy),
+      std::move(projection_tree_map_copy), num_returned, num_per_page);
 }
 
 void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {

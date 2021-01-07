@@ -15,6 +15,7 @@
 #ifndef ICING_RESULT_RESULT_STATE_H_
 #define ICING_RESULT_RESULT_STATE_H_
 
+#include <iostream>
 #include <vector>
 
 #include "icing/proto/scoring.pb.h"
@@ -59,6 +60,8 @@ class ResultState {
       const {
     return projection_tree_map_;
   }
+
+  int num_per_page() const { return num_per_page_; }
 
   // The number of results that have already been returned. This number is
   // increased when GetNextPage() is called.
