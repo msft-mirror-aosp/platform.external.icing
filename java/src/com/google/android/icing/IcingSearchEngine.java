@@ -17,6 +17,7 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
+import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
@@ -42,15 +43,24 @@ import com.google.android.icing.proto.StatusProto;
 import com.google.android.icing.proto.UsageReport;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.InvalidProtocolBufferException;
+import java.io.Closeable;
 
-/** Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h */
-public final class IcingSearchEngine {
+/**
+ * Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h
+ *
+ * <p>If this instance has been closed, the instance is no longer usable.
+ *
+ * <p>NOTE: This class is NOT thread-safe.
+ */
+public final class IcingSearchEngine implements Closeable {
 
   private static final String TAG = "IcingSearchEngine";
   private static final ExtensionRegistryLite EXTENSION_REGISTRY_LITE =
       ExtensionRegistryLite.getEmptyRegistry();
 
   private long nativePointer;
+
+  private boolean closed = false;
 
   static {
     // NOTE: This can fail with an UnsatisfiedLinkError
@@ -66,9 +76,34 @@ public final class IcingSearchEngine {
     }
   }
 
+  private void throwIfClosed() {
+    if (closed) {
+      throw new IllegalStateException("Trying to use a closed IcingSearchEngine instance.");
+    }
+  }
+
+  @Override
+  public void close() {
+    throwIfClosed();
+
+    if (nativePointer != 0) {
+      nativeDestroy(this);
+    }
+    nativePointer = 0;
+    closed = true;
+  }
+
+  @Override
+  protected void finalize() throws Throwable {
+    super.finalize();
+    close();
+  }
+
   @NonNull
   public InitializeResultProto initialize() {
-    byte[] initializeResultBytes = nativeInitialize(nativePointer);
+    throwIfClosed();
+
+    byte[] initializeResultBytes = nativeInitialize(this);
     if (initializeResultBytes == null) {
       Log.e(TAG, "Received null InitializeResult from native.");
       return InitializeResultProto.newBuilder()
@@ -94,8 +129,10 @@ public final class IcingSearchEngine {
   @NonNull
   public SetSchemaResultProto setSchema(
       @NonNull SchemaProto schema, boolean ignoreErrorsAndDeleteDocuments) {
+    throwIfClosed();
+
     byte[] setSchemaResultBytes =
-        nativeSetSchema(nativePointer, schema.toByteArray(), ignoreErrorsAndDeleteDocuments);
+        nativeSetSchema(this, schema.toByteArray(), ignoreErrorsAndDeleteDocuments);
     if (setSchemaResultBytes == null) {
       Log.e(TAG, "Received null SetSchemaResultProto from native.");
       return SetSchemaResultProto.newBuilder()
@@ -115,7 +152,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public GetSchemaResultProto getSchema() {
-    byte[] getSchemaResultBytes = nativeGetSchema(nativePointer);
+    throwIfClosed();
+
+    byte[] getSchemaResultBytes = nativeGetSchema(this);
     if (getSchemaResultBytes == null) {
       Log.e(TAG, "Received null GetSchemaResultProto from native.");
       return GetSchemaResultProto.newBuilder()
@@ -135,7 +174,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public GetSchemaTypeResultProto getSchemaType(@NonNull String schemaType) {
-    byte[] getSchemaTypeResultBytes = nativeGetSchemaType(nativePointer, schemaType);
+    throwIfClosed();
+
+    byte[] getSchemaTypeResultBytes = nativeGetSchemaType(this, schemaType);
     if (getSchemaTypeResultBytes == null) {
       Log.e(TAG, "Received null GetSchemaTypeResultProto from native.");
       return GetSchemaTypeResultProto.newBuilder()
@@ -155,7 +196,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public PutResultProto put(@NonNull DocumentProto document) {
-    byte[] putResultBytes = nativePut(nativePointer, document.toByteArray());
+    throwIfClosed();
+
+    byte[] putResultBytes = nativePut(this, document.toByteArray());
     if (putResultBytes == null) {
       Log.e(TAG, "Received null PutResultProto from native.");
       return PutResultProto.newBuilder()
@@ -175,7 +218,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public GetResultProto get(@NonNull String namespace, @NonNull String uri) {
-    byte[] getResultBytes = nativeGet(nativePointer, namespace, uri);
+    throwIfClosed();
+
+    byte[] getResultBytes = nativeGet(this, namespace, uri);
     if (getResultBytes == null) {
       Log.e(TAG, "Received null GetResultProto from native.");
       return GetResultProto.newBuilder()
@@ -195,7 +240,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public ReportUsageResultProto reportUsage(@NonNull UsageReport usageReport) {
-    byte[] reportUsageResultBytes = nativeReportUsage(nativePointer, usageReport.toByteArray());
+    throwIfClosed();
+
+    byte[] reportUsageResultBytes = nativeReportUsage(this, usageReport.toByteArray());
     if (reportUsageResultBytes == null) {
       Log.e(TAG, "Received null ReportUsageResultProto from native.");
       return ReportUsageResultProto.newBuilder()
@@ -215,7 +262,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public GetAllNamespacesResultProto getAllNamespaces() {
-    byte[] getAllNamespacesResultBytes = nativeGetAllNamespaces(nativePointer);
+    throwIfClosed();
+
+    byte[] getAllNamespacesResultBytes = nativeGetAllNamespaces(this);
     if (getAllNamespacesResultBytes == null) {
       Log.e(TAG, "Received null GetAllNamespacesResultProto from native.");
       return GetAllNamespacesResultProto.newBuilder()
@@ -239,12 +288,11 @@ public final class IcingSearchEngine {
       @NonNull SearchSpecProto searchSpec,
       @NonNull ScoringSpecProto scoringSpec,
       @NonNull ResultSpecProto resultSpec) {
+    throwIfClosed();
+
     byte[] searchResultBytes =
         nativeSearch(
-            nativePointer,
-            searchSpec.toByteArray(),
-            scoringSpec.toByteArray(),
-            resultSpec.toByteArray());
+            this, searchSpec.toByteArray(), scoringSpec.toByteArray(), resultSpec.toByteArray());
     if (searchResultBytes == null) {
       Log.e(TAG, "Received null SearchResultProto from native.");
       return SearchResultProto.newBuilder()
@@ -264,7 +312,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public SearchResultProto getNextPage(long nextPageToken) {
-    byte[] searchResultBytes = nativeGetNextPage(nativePointer, nextPageToken);
+    throwIfClosed();
+
+    byte[] searchResultBytes = nativeGetNextPage(this, nextPageToken);
     if (searchResultBytes == null) {
       Log.e(TAG, "Received null SearchResultProto from native.");
       return SearchResultProto.newBuilder()
@@ -284,12 +334,16 @@ public final class IcingSearchEngine {
 
   @NonNull
   public void invalidateNextPageToken(long nextPageToken) {
-    nativeInvalidateNextPageToken(nativePointer, nextPageToken);
+    throwIfClosed();
+
+    nativeInvalidateNextPageToken(this, nextPageToken);
   }
 
   @NonNull
   public DeleteResultProto delete(@NonNull String namespace, @NonNull String uri) {
-    byte[] deleteResultBytes = nativeDelete(nativePointer, namespace, uri);
+    throwIfClosed();
+
+    byte[] deleteResultBytes = nativeDelete(this, namespace, uri);
     if (deleteResultBytes == null) {
       Log.e(TAG, "Received null DeleteResultProto from native.");
       return DeleteResultProto.newBuilder()
@@ -309,7 +363,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public DeleteByNamespaceResultProto deleteByNamespace(@NonNull String namespace) {
-    byte[] deleteByNamespaceResultBytes = nativeDeleteByNamespace(nativePointer, namespace);
+    throwIfClosed();
+
+    byte[] deleteByNamespaceResultBytes = nativeDeleteByNamespace(this, namespace);
     if (deleteByNamespaceResultBytes == null) {
       Log.e(TAG, "Received null DeleteByNamespaceResultProto from native.");
       return DeleteByNamespaceResultProto.newBuilder()
@@ -330,7 +386,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public DeleteBySchemaTypeResultProto deleteBySchemaType(@NonNull String schemaType) {
-    byte[] deleteBySchemaTypeResultBytes = nativeDeleteBySchemaType(nativePointer, schemaType);
+    throwIfClosed();
+
+    byte[] deleteBySchemaTypeResultBytes = nativeDeleteBySchemaType(this, schemaType);
     if (deleteBySchemaTypeResultBytes == null) {
       Log.e(TAG, "Received null DeleteBySchemaTypeResultProto from native.");
       return DeleteBySchemaTypeResultProto.newBuilder()
@@ -350,20 +408,22 @@ public final class IcingSearchEngine {
   }
 
   @NonNull
-  public DeleteResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
-    byte[] deleteResultBytes = nativeDeleteByQuery(nativePointer, searchSpec.toByteArray());
+  public DeleteByQueryResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
+    throwIfClosed();
+
+    byte[] deleteResultBytes = nativeDeleteByQuery(this, searchSpec.toByteArray());
     if (deleteResultBytes == null) {
       Log.e(TAG, "Received null DeleteResultProto from native.");
-      return DeleteResultProto.newBuilder()
+      return DeleteByQueryResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
 
     try {
-      return DeleteResultProto.parseFrom(deleteResultBytes, EXTENSION_REGISTRY_LITE);
+      return DeleteByQueryResultProto.parseFrom(deleteResultBytes, EXTENSION_REGISTRY_LITE);
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing DeleteResultProto.", e);
-      return DeleteResultProto.newBuilder()
+      return DeleteByQueryResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
@@ -371,7 +431,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public PersistToDiskResultProto persistToDisk() {
-    byte[] persistToDiskResultBytes = nativePersistToDisk(nativePointer);
+    throwIfClosed();
+
+    byte[] persistToDiskResultBytes = nativePersistToDisk(this);
     if (persistToDiskResultBytes == null) {
       Log.e(TAG, "Received null PersistToDiskResultProto from native.");
       return PersistToDiskResultProto.newBuilder()
@@ -391,7 +453,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public OptimizeResultProto optimize() {
-    byte[] optimizeResultBytes = nativeOptimize(nativePointer);
+    throwIfClosed();
+
+    byte[] optimizeResultBytes = nativeOptimize(this);
     if (optimizeResultBytes == null) {
       Log.e(TAG, "Received null OptimizeResultProto from native.");
       return OptimizeResultProto.newBuilder()
@@ -411,7 +475,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public GetOptimizeInfoResultProto getOptimizeInfo() {
-    byte[] getOptimizeInfoResultBytes = nativeGetOptimizeInfo(nativePointer);
+    throwIfClosed();
+
+    byte[] getOptimizeInfoResultBytes = nativeGetOptimizeInfo(this);
     if (getOptimizeInfoResultBytes == null) {
       Log.e(TAG, "Received null GetOptimizeInfoResultProto from native.");
       return GetOptimizeInfoResultProto.newBuilder()
@@ -432,7 +498,9 @@ public final class IcingSearchEngine {
 
   @NonNull
   public ResetResultProto reset() {
-    byte[] resetResultBytes = nativeReset(nativePointer);
+    throwIfClosed();
+
+    byte[] resetResultBytes = nativeReset(this);
     if (resetResultBytes == null) {
       Log.e(TAG, "Received null ResetResultProto from native.");
       return ResetResultProto.newBuilder()
@@ -450,54 +518,56 @@ public final class IcingSearchEngine {
     }
   }
 
-  public void destroy() {
-    if (nativePointer != 0) {
-      nativeDestroy(nativePointer);
-    }
-    nativePointer = 0;
-  }
-
   private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
 
-  private static native void nativeDestroy(long nativePointer);
+  private static native void nativeDestroy(IcingSearchEngine instance);
 
-  private static native byte[] nativeInitialize(long nativePointer);
+  private static native byte[] nativeInitialize(IcingSearchEngine instance);
 
   private static native byte[] nativeSetSchema(
-      long nativePointer, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
+      IcingSearchEngine instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
 
-  private static native byte[] nativeGetSchema(long nativePointer);
+  private static native byte[] nativeGetSchema(IcingSearchEngine instance);
 
-  private static native byte[] nativeGetSchemaType(long nativePointer, String schemaType);
+  private static native byte[] nativeGetSchemaType(IcingSearchEngine instance, String schemaType);
 
-  private static native byte[] nativePut(long nativePointer, byte[] documentBytes);
+  private static native byte[] nativePut(IcingSearchEngine instance, byte[] documentBytes);
 
-  private static native byte[] nativeGet(long nativePointer, String namespace, String uri);
+  private static native byte[] nativeGet(IcingSearchEngine instance, String namespace, String uri);
 
-  private static native byte[] nativeReportUsage(long nativePointer, byte[] usageReportBytes);
+  private static native byte[] nativeReportUsage(
+      IcingSearchEngine instance, byte[] usageReportBytes);
 
-  private static native byte[] nativeGetAllNamespaces(long nativePointer);
+  private static native byte[] nativeGetAllNamespaces(IcingSearchEngine instance);
 
   private static native byte[] nativeSearch(
-      long nativePointer, byte[] searchSpecBytes, byte[] scoringSpecBytes, byte[] resultSpecBytes);
+      IcingSearchEngine instance,
+      byte[] searchSpecBytes,
+      byte[] scoringSpecBytes,
+      byte[] resultSpecBytes);
 
-  private static native byte[] nativeGetNextPage(long nativePointer, long nextPageToken);
+  private static native byte[] nativeGetNextPage(IcingSearchEngine instance, long nextPageToken);
 
-  private static native void nativeInvalidateNextPageToken(long nativePointer, long nextPageToken);
+  private static native void nativeInvalidateNextPageToken(
+      IcingSearchEngine instance, long nextPageToken);
 
-  private static native byte[] nativeDelete(long nativePointer, String namespace, String uri);
+  private static native byte[] nativeDelete(
+      IcingSearchEngine instance, String namespace, String uri);
 
-  private static native byte[] nativeDeleteByNamespace(long nativePointer, String namespace);
+  private static native byte[] nativeDeleteByNamespace(
+      IcingSearchEngine instance, String namespace);
 
-  private static native byte[] nativeDeleteBySchemaType(long nativePointer, String schemaType);
+  private static native byte[] nativeDeleteBySchemaType(
+      IcingSearchEngine instance, String schemaType);
 
-  private static native byte[] nativeDeleteByQuery(long nativePointer, byte[] searchSpecBytes);
+  private static native byte[] nativeDeleteByQuery(
+      IcingSearchEngine instance, byte[] searchSpecBytes);
 
-  private static native byte[] nativePersistToDisk(long nativePointer);
+  private static native byte[] nativePersistToDisk(IcingSearchEngine instance);
 
-  private static native byte[] nativeOptimize(long nativePointer);
+  private static native byte[] nativeOptimize(IcingSearchEngine instance);
 
-  private static native byte[] nativeGetOptimizeInfo(long nativePointer);
+  private static native byte[] nativeGetOptimizeInfo(IcingSearchEngine instance);
 
-  private static native byte[] nativeReset(long nativePointer);
+  private static native byte[] nativeReset(IcingSearchEngine instance);
 }

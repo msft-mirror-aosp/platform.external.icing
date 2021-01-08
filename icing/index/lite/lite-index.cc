@@ -365,7 +365,7 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
       last_document_id = document_id;
     }
     if (hits_out != nullptr) {
-      hits_out->back().UpdateSection(hit.section_id(), hit.score());
+      hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
     }
   }
   return count;
@@ -448,7 +448,7 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
   // Binary search for our term_id.  Make sure we get the first
   // element.  Using kBeginSortValue ensures this for the hit value.
   TermIdHitPair term_id_hit_pair(
-      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultHitScore));
+      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultTermFrequency));
 
   const TermIdHitPair::Value* array =
       hit_buffer_.array_cast<TermIdHitPair::Value>();

@@ -31,18 +31,17 @@ namespace lib {
 // - a SectionId
 // referring to the document and section that the hit corresponds to, as well as
 // metadata about the hit:
-// - whether the Hit has a Score other than the default value
+// - whether the Hit has a TermFrequency other than the default value
 // - whether the Hit does not appear exactly in the document, but instead
 //   represents a term that is a prefix of a term in the document
 // - whether the Hit came from a section that has prefix expansion enabled
-// and a score for the hit. Ranging from [0,255] a higher score indicates a
-// higher quality hit.
+// and a term frequency for the hit.
 // The hit is the most basic unit of the index and, when grouped together by
 // term, can be used to encode what terms appear in what documents.
 class Hit {
  public:
   // The datatype used to encode Hit information: the document_id, section_id
-  // and the has_score, prefix hit and in prefix section flags.
+  // and the has_term_frequency, prefix hit and in prefix section flags.
   using Value = uint32_t;
 
   // WARNING: Changing this value will invalidate any pre-existing posting lists
@@ -53,28 +52,27 @@ class Hit {
   // the max in a descending sort.
   static constexpr Value kMaxDocumentIdSortValue = 0;
 
-  // A score reflecting the "quality" of this hit. The higher the score, the
-  // higher quality the hit.
-  // The score is being repurposed for term frequency.
-  // TODO(b/173156700): refactor Score to TermFrequency.
-  using Score = uint8_t;
-  // Max Score is 255.
-  static constexpr Score kMaxHitScore = std::numeric_limits<Score>::max();
-  // Default value of term frequency is 1.
-  static constexpr Score kDefaultHitScore = 1;
+  // The Term Frequency of a Hit.
+  using TermFrequency = uint8_t;
+  // Max TermFrequency is 255.
+  static constexpr TermFrequency kMaxTermFrequency =
+      std::numeric_limits<TermFrequency>::max();
+  static constexpr TermFrequency kDefaultTermFrequency = 1;
 
-  explicit Hit(Value value = kInvalidValue, Score score = kDefaultHitScore)
-      : value_(value), score_(score) {}
-  Hit(SectionId section_id, DocumentId document_id, Score score,
-      bool is_in_prefix_section = false, bool is_prefix_hit = false);
+  explicit Hit(Value value = kInvalidValue,
+               TermFrequency term_frequency = kDefaultTermFrequency)
+      : value_(value), term_frequency_(term_frequency) {}
+  Hit(SectionId section_id, DocumentId document_id,
+      TermFrequency term_frequency, bool is_in_prefix_section = false,
+      bool is_prefix_hit = false);
 
   bool is_valid() const { return value() != kInvalidValue; }
   Value value() const { return value_; }
   DocumentId document_id() const;
   SectionId section_id() const;
-  // Whether or not the hit contains a non-default score.
-  bool has_score() const;
-  Score score() const { return score_; }
+  // Whether or not the hit contains a valid term frequency.
+  bool has_term_frequency() const;
+  TermFrequency term_frequency() const { return term_frequency_; }
   bool is_prefix_hit() const;
   bool is_in_prefix_section() const;
 
@@ -86,10 +84,10 @@ class Hit {
   };
 
  private:
-  // Value and score must be in this order.
+  // Value and TermFrequency must be in this order.
   // Value bits layout: 5 unused + 20 document_id + 4 section id + 3 flags.
   Value value_;
-  Score score_;
+  TermFrequency term_frequency_;
 } __attribute__((packed));
 static_assert(sizeof(Hit) == 5, "");
 // TODO(b/138991332) decide how to remove/replace all is_packed_pod assertions.

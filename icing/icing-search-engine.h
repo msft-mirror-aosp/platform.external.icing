@@ -287,7 +287,7 @@ class IcingSearchEngine {
   //   NOT_FOUND if the query doesn't match any documents
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
-  DeleteResultProto DeleteByQuery(const SearchSpecProto& search_spec)
+  DeleteByQueryResultProto DeleteByQuery(const SearchSpecProto& search_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves, scores, ranks, and returns the results according to the specs.
@@ -404,15 +404,18 @@ class IcingSearchEngine {
   bool initialized_ ICING_GUARDED_BY(mutex_) = false;
 
   // Abstraction for accessing time values.
-  std::unique_ptr<Clock> clock_;
+  const std::unique_ptr<const Clock> clock_;
 
   // Provides key thresholds that affects the running time and memory of major
   // components in Icing search engine.
-  PerformanceConfiguration performance_configuration_;
+  const PerformanceConfiguration performance_configuration_;
 
-  // Used to manage pagination state of query results. A lock is not needed here
-  // because ResultStateManager has its own reader-writer lock.
-  ResultStateManager result_state_manager_;
+  // Used to manage pagination state of query results. Even though
+  // ResultStateManager has its own reader-writer lock, mutex_ must still be
+  // acquired first in order to adhere to the global lock ordering:
+  //   1. mutex_
+  //   2. result_state_manager_.lock_
+  ResultStateManager result_state_manager_ ICING_GUARDED_BY(mutex_);
 
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;

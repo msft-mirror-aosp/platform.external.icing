@@ -86,10 +86,10 @@ TEST_F(MainIndexMergerTest, TranslateTermNotAdded) {
       uint32_t fool_term_id,
       term_id_codec_->EncodeTvi(fool_tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/57,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
@@ -125,10 +125,10 @@ TEST_F(MainIndexMergerTest, PrefixExpansion) {
       uint32_t fool_term_id,
       term_id_codec_->EncodeTvi(fool_tvi, TviType::LITE));
 
-  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/57,
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
                /*is_in_prefix_section=*/false);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc0_hit));
-  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultHitScore,
+  Hit doc1_hit(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
                /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, doc1_hit));
 
@@ -139,7 +139,7 @@ TEST_F(MainIndexMergerTest, PrefixExpansion) {
       uint32_t foo_term_id,
       term_id_codec_->EncodeTvi(foo_main_tvi, TviType::MAIN));
   Hit doc1_prefix_hit(/*section_id=*/0, /*document_id=*/1,
-                      Hit::kDefaultHitScore,
+                      Hit::kDefaultTermFrequency,
                       /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
 
   uint32_t foot_main_tvi = 5;
@@ -173,7 +173,7 @@ TEST_F(MainIndexMergerTest, PrefixExpansion) {
                            TermIdHitPair(foo_term_id, doc1_prefix_hit)));
 }
 
-TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
+TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentTermFrequencies) {
   // 1. Index one doc in the Lite Index:
   // - Doc0 {"foot" "foo" is_in_prefix_section=TRUE}
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -188,10 +188,11 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
 
-  Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/57,
+  Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
                     /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, foot_doc0_hit));
-  Hit foo_doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
+  Hit foo_doc0_hit(/*section_id=*/0, /*document_id=*/0,
+                   Hit::kDefaultTermFrequency,
                    /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, foo_doc0_hit));
 
@@ -201,9 +202,10 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       uint32_t foo_main_term_id,
       term_id_codec_->EncodeTvi(foo_main_tvi, TviType::MAIN));
-  // The prefix hit for 'foot' should have the same score as the exact hit for
-  // 'foot'. The final prefix hit has score equal to 58.
-  Hit doc0_prefix_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/58,
+  // The prefix hit for 'foot' should have the same term frequency as the exact
+  // hit for 'foot'. The final prefix hit has term frequency equal to 58.
+  Hit doc0_prefix_hit(/*section_id=*/0, /*document_id=*/0,
+                      /*term_frequency=*/58,
                       /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
 
   uint32_t foot_main_tvi = 5;
@@ -223,7 +225,7 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
   //   a. Translate lite term ids to main term ids based on the map
   //   b. Expand 'foot' to have a hit for 'foo'
   //   c. Keep both the exact hit for 'foo' and the prefix hit for 'foot', the
-  //   latter with score as the sum of the scores.
+  //   latter with term frequency as the sum of the term frequencies.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,
@@ -235,7 +237,7 @@ TEST_F(MainIndexMergerTest, DedupePrefixAndExactWithDifferentScores) {
                            TermIdHitPair(foo_main_term_id, doc0_prefix_hit)));
 }
 
-TEST_F(MainIndexMergerTest, DedupeWithExactSameScores) {
+TEST_F(MainIndexMergerTest, DedupeWithExactSameTermFrequencies) {
   // 1. Index one doc in the Lite Index:
   // - Doc0 {"foot" "foo" is_in_prefix_section=TRUE}
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -250,14 +252,15 @@ TEST_F(MainIndexMergerTest, DedupeWithExactSameScores) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
 
-  Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/57,
+  Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
                     /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, foot_doc0_hit));
-  Hit foo_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/57,
+  Hit foo_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/57,
                    /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, foo_doc0_hit));
-  // The prefix hit should take the sum as score - 114.
-  Hit prefix_foo_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*score=*/114,
+  // The prefix hit should take the sum as term_frequency - 114.
+  Hit prefix_foo_doc0_hit(/*section_id=*/0, /*document_id=*/0,
+                          /*term_frequency=*/114,
                           /*is_in_prefix_section=*/true,
                           /*is_prefix_hit=*/true);
 
@@ -285,7 +288,7 @@ TEST_F(MainIndexMergerTest, DedupeWithExactSameScores) {
   //   a. Translate lite term ids to main term ids based on the map
   //   b. Expand 'foot' to have a hit for 'foo'
   //   c. Keep both the exact hit for 'foo' and the prefix hit for 'foot', the
-  //   latter with score as the sum of the scores.
+  //   latter with term frequency as the sum of the term frequencies.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,
@@ -314,10 +317,11 @@ TEST_F(MainIndexMergerTest, DedupePrefixExpansion) {
       term_id_codec_->EncodeTvi(fool_tvi, TviType::LITE));
 
   Hit foot_doc0_hit(/*section_id=*/0, /*document_id=*/0,
-                    /*score=*/Hit::kMaxHitScore,
+                    /*term_frequency=*/Hit::kMaxTermFrequency,
                     /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, foot_doc0_hit));
-  Hit fool_doc0_hit(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultHitScore,
+  Hit fool_doc0_hit(/*section_id=*/0, /*document_id=*/0,
+                    Hit::kDefaultTermFrequency,
                     /*is_in_prefix_section=*/true);
   ICING_ASSERT_OK(lite_index_->AddHit(fool_term_id, fool_doc0_hit));
 
@@ -327,9 +331,10 @@ TEST_F(MainIndexMergerTest, DedupePrefixExpansion) {
   ICING_ASSERT_OK_AND_ASSIGN(
       uint32_t foo_term_id,
       term_id_codec_->EncodeTvi(foo_main_tvi, TviType::MAIN));
-  // The prefix hit should take the sum as score - 256, capped at kMaxHitScore.
+  // The prefix hit should take the sum as term frequency - 256, capped at
+  // kMaxTermFrequency.
   Hit doc0_prefix_hit(/*section_id=*/0, /*document_id=*/0,
-                      /*score=*/Hit::kMaxHitScore,
+                      /*term_frequency=*/Hit::kMaxTermFrequency,
                       /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
 
   uint32_t foot_main_tvi = 5;
@@ -356,8 +361,8 @@ TEST_F(MainIndexMergerTest, DedupePrefixExpansion) {
   // 3. TranslateAndExpand should;
   //   a. Translate lite term ids to main term ids based on the map
   //   b. Expand 'foot' and 'fool' to have hits for 'foo'
-  //   c. Merge the prefix hits from 'foot' and 'fool', taking the sum as hit
-  //      score.
+  //   c. Merge the prefix hits from 'foot' and 'fool', taking the sum as
+  //      term frequency.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermIdHitPair> expanded_term_id_hit_pairs,
       MainIndexMerger::TranslateAndExpandLiteHits(*lite_index_, *term_id_codec_,

@@ -397,22 +397,26 @@ TEST_F(IcingSearchEngineTest, MaxTokenLenReturnsOkAndTruncatesTokens) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document;
 
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // The query token is also truncated to length of 1, so "me"->"m" matches "m"
   search_spec.set_query("me");
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // The query token is still truncated to length of 1, so "massage"->"m"
   // matches "m"
   search_spec.set_query("massage");
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -445,9 +449,11 @@ TEST_F(IcingSearchEngineTest,
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, FailToCreateDocStore) {
@@ -801,9 +807,10 @@ TEST_F(IcingSearchEngineTest, SetSchemaTriggersIndexRestorationAndReturnsOk) {
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
 
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(empty_result));
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStats(empty_result));
 
   SchemaProto schema_with_indexed_property = CreateMessageSchema();
   // Index restoration should be triggered here because new schema requires more
@@ -815,9 +822,10 @@ TEST_F(IcingSearchEngineTest, SetSchemaTriggersIndexRestorationAndReturnsOk) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       CreateMessageDocument("namespace", "uri");
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
@@ -1093,9 +1101,11 @@ TEST_F(IcingSearchEngineTest, SearchReturnsValidResults) {
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchReturnsOneResult) {
@@ -1127,7 +1137,8 @@ TEST_F(IcingSearchEngineTest, SearchReturnsOneResult) {
   // The token is a random number so we don't verify it.
   expected_search_result_proto.set_next_page_token(
       search_result_proto.next_page_token());
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchZeroResultLimitReturnsEmptyResults) {
@@ -1143,8 +1154,10 @@ TEST_F(IcingSearchEngineTest, SearchZeroResultLimitReturnsEmptyResults) {
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(), result_spec),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchNegativeResultLimitReturnsInvalidArgument) {
@@ -1163,8 +1176,10 @@ TEST_F(IcingSearchEngineTest, SearchNegativeResultLimitReturnsInvalidArgument) {
       StatusProto::INVALID_ARGUMENT);
   expected_search_result_proto.mutable_status()->set_message(
       "ResultSpecProto.num_per_page cannot be negative.");
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(), result_spec),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchWithPersistenceReturnsValidResults) {
@@ -1205,17 +1220,19 @@ TEST_F(IcingSearchEngineTest, SearchWithPersistenceReturnsValidResults) {
     *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
         CreateMessageDocument("namespace", "uri");
 
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto actual_results =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(actual_results,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
     search_spec.set_query("foo");
 
     SearchResultProto empty_result;
     empty_result.mutable_status()->set_code(StatusProto::OK);
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(empty_result));
+    actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                  ResultSpecProto::default_instance());
+    EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStats(empty_result));
   }
 }
 
@@ -1236,7 +1253,8 @@ TEST_F(IcingSearchEngineTest, SearchShouldReturnEmpty) {
       icing.Search(search_spec, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
 
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchShouldReturnMultiplePages) {
@@ -1276,7 +1294,8 @@ TEST_F(IcingSearchEngineTest, SearchShouldReturnMultiplePages) {
   uint64_t next_page_token = search_result_proto.next_page_token();
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Second page, 2 results
   expected_search_result_proto.clear_results();
@@ -1284,8 +1303,9 @@ TEST_F(IcingSearchEngineTest, SearchShouldReturnMultiplePages) {
       document3;
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Third page, 1 result
   expected_search_result_proto.clear_results();
@@ -1294,13 +1314,15 @@ TEST_F(IcingSearchEngineTest, SearchShouldReturnMultiplePages) {
   // Because there are no more results, we should not return the next page
   // token.
   expected_search_result_proto.clear_next_page_token();
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // No more results
   expected_search_result_proto.clear_results();
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchWithNoScoringShouldReturnMultiplePages) {
@@ -1343,7 +1365,8 @@ TEST_F(IcingSearchEngineTest, SearchWithNoScoringShouldReturnMultiplePages) {
   uint64_t next_page_token = search_result_proto.next_page_token();
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Second page, 2 results
   expected_search_result_proto.clear_results();
@@ -1351,8 +1374,9 @@ TEST_F(IcingSearchEngineTest, SearchWithNoScoringShouldReturnMultiplePages) {
       document3;
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Third page, 1 result
   expected_search_result_proto.clear_results();
@@ -1361,13 +1385,15 @@ TEST_F(IcingSearchEngineTest, SearchWithNoScoringShouldReturnMultiplePages) {
   // Because there are no more results, we should not return the next page
   // token.
   expected_search_result_proto.clear_next_page_token();
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // No more results
   expected_search_result_proto.clear_results();
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, ShouldReturnMultiplePagesWithSnippets) {
@@ -1479,7 +1505,8 @@ TEST_F(IcingSearchEngineTest, ShouldInvalidateNextPageToken) {
   uint64_t next_page_token = search_result_proto.next_page_token();
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
   // Now document1 is still to be fetched.
 
   // Invalidates token
@@ -1488,8 +1515,9 @@ TEST_F(IcingSearchEngineTest, ShouldInvalidateNextPageToken) {
   // Tries to fetch the second page, no result since it's invalidated
   expected_search_result_proto.clear_results();
   expected_search_result_proto.clear_next_page_token();
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -1521,7 +1549,8 @@ TEST_F(IcingSearchEngineTest,
   uint64_t next_page_token = search_result_proto.next_page_token();
   // Since the token is a random number, we don't need to verify
   expected_search_result_proto.set_next_page_token(next_page_token);
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
   // Now document1 is still to be fetched.
 
   OptimizeResultProto optimize_result_proto;
@@ -1533,8 +1562,9 @@ TEST_F(IcingSearchEngineTest,
   // invalidated during Optimize()
   expected_search_result_proto.clear_results();
   expected_search_result_proto.clear_next_page_token();
-  EXPECT_THAT(icing.GetNextPage(next_page_token),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.GetNextPage(next_page_token);
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, OptimizationShouldRemoveDeletedDocs) {
@@ -1855,7 +1885,13 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
           .AddStringProperty("subject", "message body2")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(7);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -1873,7 +1909,14 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
 
   // Delete the first type. The first doc should be irretrievable. The
   // second should still be present.
-  EXPECT_THAT(icing.DeleteBySchemaType("message").status(), ProtoIsOk());
+  DeleteBySchemaTypeResultProto result_proto =
+      icing.DeleteBySchemaType("message");
+  EXPECT_THAT(result_proto.status(), ProtoIsOk());
+  NativeDeleteStats exp_stats;
+  exp_stats.set_delete_type(NativeDeleteStats::DeleteType::SCHEMA_TYPE);
+  exp_stats.set_latency_ms(7);
+  exp_stats.set_num_documents_deleted(1);
+  EXPECT_THAT(result_proto.delete_stats(), EqualsProto(exp_stats));
 
   expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
   expected_get_result_proto.mutable_status()->set_message(
@@ -1896,9 +1939,11 @@ TEST_F(IcingSearchEngineTest, DeleteBySchemaType) {
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec.set_query("message");
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteSchemaTypeByQuery) {
@@ -1965,9 +2010,11 @@ TEST_F(IcingSearchEngineTest, DeleteSchemaTypeByQuery) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
@@ -1993,7 +2040,12 @@ TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(7);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -2016,7 +2068,14 @@ TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
 
   // Delete namespace1. Document1 and document2 should be irretrievable.
   // Document3 should still be present.
-  EXPECT_THAT(icing.DeleteByNamespace("namespace1").status(), ProtoIsOk());
+  DeleteByNamespaceResultProto result_proto =
+      icing.DeleteByNamespace("namespace1");
+  EXPECT_THAT(result_proto.status(), ProtoIsOk());
+  NativeDeleteStats exp_stats;
+  exp_stats.set_delete_type(NativeDeleteStats::DeleteType::NAMESPACE);
+  exp_stats.set_latency_ms(7);
+  exp_stats.set_num_documents_deleted(2);
+  EXPECT_THAT(result_proto.delete_stats(), EqualsProto(exp_stats));
 
   expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
   expected_get_result_proto.mutable_status()->set_message(
@@ -2046,9 +2105,11 @@ TEST_F(IcingSearchEngineTest, DeleteByNamespace) {
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec.set_query("message");
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteNamespaceByQuery) {
@@ -2110,9 +2171,11 @@ TEST_F(IcingSearchEngineTest, DeleteNamespaceByQuery) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteByQuery) {
@@ -2131,7 +2194,12 @@ TEST_F(IcingSearchEngineTest, DeleteByQuery) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(7);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
   EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -2152,7 +2220,13 @@ TEST_F(IcingSearchEngineTest, DeleteByQuery) {
   SearchSpecProto search_spec;
   search_spec.set_query("body1");
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-  EXPECT_THAT(icing.DeleteByQuery(search_spec).status(), ProtoIsOk());
+  DeleteByQueryResultProto result_proto = icing.DeleteByQuery(search_spec);
+  EXPECT_THAT(result_proto.status(), ProtoIsOk());
+  NativeDeleteStats exp_stats;
+  exp_stats.set_delete_type(NativeDeleteStats::DeleteType::QUERY);
+  exp_stats.set_latency_ms(7);
+  exp_stats.set_num_documents_deleted(1);
+  EXPECT_THAT(result_proto.delete_stats(), EqualsProto(exp_stats));
 
   expected_get_result_proto.mutable_status()->set_code(StatusProto::NOT_FOUND);
   expected_get_result_proto.mutable_status()->set_message(
@@ -2175,9 +2249,11 @@ TEST_F(IcingSearchEngineTest, DeleteByQuery) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteByQueryNotFound) {
@@ -2242,9 +2318,11 @@ TEST_F(IcingSearchEngineTest, DeleteByQueryNotFound) {
       document2;
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document1;
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SetSchemaShouldWorkAfterOptimization) {
@@ -2304,16 +2382,20 @@ TEST_F(IcingSearchEngineTest, SearchShouldWorkAfterOptimization) {
     ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
 
     // Validates that Search() works right after Optimize()
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // Destroys IcingSearchEngine to make sure nothing is cached.
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, IcingShouldWorkFineIfOptimizationIsAborted) {
@@ -2364,9 +2446,11 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFineIfOptimizationIsAborted) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document1;
 
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -2422,9 +2506,11 @@ TEST_F(IcingSearchEngineTest,
 
   // Searching old content returns nothing because original file directory is
   // missing
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   search_spec.set_query("n");
 
@@ -2432,9 +2518,10 @@ TEST_F(IcingSearchEngineTest,
       new_document;
 
   // Searching new content returns the new document
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                     ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, OptimizationShouldRecoverIfDataFilesAreMissing) {
@@ -2490,9 +2577,11 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldRecoverIfDataFilesAreMissing) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
 
   // Searching old content returns nothing because original files are missing
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   search_spec.set_query("n");
 
@@ -2500,9 +2589,10 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldRecoverIfDataFilesAreMissing) {
       new_document;
 
   // Searching new content returns the new document
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                     ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchIncludesDocumentsBeforeTtl) {
@@ -2551,9 +2641,11 @@ TEST_F(IcingSearchEngineTest, SearchIncludesDocumentsBeforeTtl) {
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
   // Check that the document is returned as part of search results
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchDoesntIncludeDocumentsPastTtl) {
@@ -2600,9 +2692,11 @@ TEST_F(IcingSearchEngineTest, SearchDoesntIncludeDocumentsPastTtl) {
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
   // Check that the document is not returned as part of search results
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchWorksAfterSchemaTypesCompatiblyModified) {
@@ -2637,9 +2731,11 @@ TEST_F(IcingSearchEngineTest, SearchWorksAfterSchemaTypesCompatiblyModified) {
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
 
   // The message isn't indexed, so we get nothing
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // With just the schema type filter, we can search for the message
   search_spec.Clear();
@@ -2648,9 +2744,10 @@ TEST_F(IcingSearchEngineTest, SearchWorksAfterSchemaTypesCompatiblyModified) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       message_document;
 
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                     ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Since SchemaTypeIds are assigned based on order in the SchemaProto, this
   // will force a change in the DocumentStore's cached SchemaTypeIds
@@ -2679,9 +2776,10 @@ TEST_F(IcingSearchEngineTest, SearchWorksAfterSchemaTypesCompatiblyModified) {
   search_spec.add_schema_type_filters("message");
 
   // We can still search for the message document
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  search_result_proto = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                     ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, RecoverFromMissingHeaderFile) {
@@ -2708,9 +2806,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromMissingHeaderFile) {
                 ProtoIsOk());
     EXPECT_THAT(icing.Get("namespace", "uri"),
                 EqualsProto(expected_get_result_proto));
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   EXPECT_TRUE(filesystem()->DeleteFile(GetHeaderFilename().c_str()));
@@ -2724,9 +2824,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromMissingHeaderFile) {
               EqualsProto(expected_get_result_proto));
 
   // Checks that the index is still ok so we can search over it
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Checks that Schema is still since it'll be needed to validate the document
   EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
@@ -2757,9 +2859,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInvalidHeaderMagic) {
                 ProtoIsOk());
     EXPECT_THAT(icing.Get("namespace", "uri"),
                 EqualsProto(expected_get_result_proto));
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   // Change the header's magic value
@@ -2777,9 +2881,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInvalidHeaderMagic) {
               EqualsProto(expected_get_result_proto));
 
   // Checks that the index is still ok so we can search over it
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Checks that Schema is still since it'll be needed to validate the document
   EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
@@ -2810,9 +2916,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInvalidHeaderChecksum) {
                 ProtoIsOk());
     EXPECT_THAT(icing.Get("namespace", "uri"),
                 EqualsProto(expected_get_result_proto));
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   // Change the header's checksum value
@@ -2831,9 +2939,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInvalidHeaderChecksum) {
               EqualsProto(expected_get_result_proto));
 
   // Checks that the index is still ok so we can search over it
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 
   // Checks that Schema is still since it'll be needed to validate the document
   EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
@@ -2945,9 +3055,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
 
     SearchResultProto expected_search_result_proto;
     expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   {
@@ -3025,9 +3137,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2_with_additional_property;
 
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, RecoverFromInconsistentDocumentStore) {
@@ -3090,9 +3204,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentDocumentStore) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document1;
 
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, RecoverFromInconsistentIndex) {
@@ -3112,9 +3228,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentIndex) {
     EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
                 ProtoIsOk());
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   // Pretend we lost the entire index
@@ -3125,9 +3243,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentIndex) {
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   // Check that our index is ok by searching over the restored index
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, RecoverFromCorruptIndex) {
@@ -3147,9 +3267,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromCorruptIndex) {
     EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
                 ProtoIsOk());
-    EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   // Pretend index is corrupted
@@ -3162,9 +3284,11 @@ TEST_F(IcingSearchEngineTest, RecoverFromCorruptIndex) {
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   // Check that our index is ok by searching over the restored index
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByDocumentScore) {
@@ -3222,9 +3346,10 @@ TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByDocumentScore) {
 
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchShouldAllowNoScoring) {
@@ -3280,9 +3405,10 @@ TEST_F(IcingSearchEngineTest, SearchShouldAllowNoScoring) {
   // order.
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByCreationTimestamp) {
@@ -3335,9 +3461,10 @@ TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByCreationTimestamp) {
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByUsageCount) {
@@ -3405,9 +3532,10 @@ TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByUsageCount) {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -3462,9 +3590,10 @@ TEST_F(IcingSearchEngineTest,
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByUsageTimestamp) {
@@ -3531,9 +3660,10 @@ TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedByUsageTimestamp) {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -3588,9 +3718,10 @@ TEST_F(IcingSearchEngineTest,
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, OlderUsageTimestampShouldNotOverrideNewerOnes) {
@@ -3656,9 +3787,10 @@ TEST_F(IcingSearchEngineTest, OlderUsageTimestampShouldNotOverrideNewerOnes) {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedAscendingly) {
@@ -3717,9 +3849,10 @@ TEST_F(IcingSearchEngineTest, SearchResultShouldBeRankedAscendingly) {
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   scoring_spec.set_order_by(ScoringSpecProto::Order::ASC);
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec,
-                           ResultSpecProto::default_instance()),
-              EqualsProto(expected_search_result_proto));
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -3797,9 +3930,11 @@ TEST_F(IcingSearchEngineTest, SetSchemaCanDetectPreviousSchemaWasLost) {
     expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
     *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
         CreateMessageDocument("namespace", "uri");
-    ASSERT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                             ResultSpecProto::default_instance()),
-                EqualsProto(expected_search_result_proto));
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto,
+                EqualsSearchResultIgnoreStats(expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
   ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(GetSchemaDir().c_str()));
@@ -3821,9 +3956,10 @@ TEST_F(IcingSearchEngineTest, SetSchemaCanDetectPreviousSchemaWasLost) {
   // Can't search for it
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
-  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
-                           ResultSpecProto::default_instance()),
-              EqualsProto(empty_result));
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStats(empty_result));
 }
 
 TEST_F(IcingSearchEngineTest, PersistToDisk) {
@@ -5479,6 +5615,101 @@ TEST_F(IcingSearchEngineTest, SearchWithProjectionMultipleFieldPaths) {
           .Build();
   EXPECT_THAT(results.results(0).document(),
               EqualsProto(projected_document_one));
+}
+
+TEST_F(IcingSearchEngineTest, NativeQueryStatsTest) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(5);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates and inserts 5 documents
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+  DocumentProto document4 = CreateMessageDocument("namespace", "uri4");
+  DocumentProto document5 = CreateMessageDocument("namespace", "uri5");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.add_namespace_filters("namespace");
+  search_spec.add_schema_type_filters(document1.schema());
+  search_spec.set_query("message");
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(2);
+  result_spec.mutable_snippet_spec()->set_max_window_bytes(64);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(1);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(3);
+
+  ScoringSpecProto scoring_spec;
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+
+  // Searches and gets the first page, 2 results with 2 snippets
+  SearchResultProto search_result =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), SizeIs(2));
+  ASSERT_THAT(search_result.next_page_token(), Ne(kInvalidNextPageToken));
+
+  // Check the stats
+  NativeQueryStats exp_stats;
+  exp_stats.set_num_terms(1);
+  exp_stats.set_num_namespaces_filtered(1);
+  exp_stats.set_num_schema_types_filtered(1);
+  exp_stats.set_ranking_strategy(
+      ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+  exp_stats.set_is_first_page(true);
+  exp_stats.set_requested_page_size(2);
+  exp_stats.set_num_results_returned_current_page(2);
+  exp_stats.set_num_documents_scored(5);
+  exp_stats.set_num_results_snippeted(2);
+  exp_stats.set_latency_ms(5);
+  exp_stats.set_parse_query_latency_ms(5);
+  exp_stats.set_scoring_latency_ms(5);
+  exp_stats.set_ranking_latency_ms(5);
+  exp_stats.set_document_retrieval_latency_ms(5);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Second page, 2 result with 1 snippet
+  search_result = icing.GetNextPage(search_result.next_page_token());
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), SizeIs(2));
+  ASSERT_THAT(search_result.next_page_token(), Gt(kInvalidNextPageToken));
+
+  exp_stats = NativeQueryStats();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_requested_page_size(2);
+  exp_stats.set_num_results_returned_current_page(2);
+  exp_stats.set_num_results_snippeted(1);
+  exp_stats.set_latency_ms(5);
+  exp_stats.set_document_retrieval_latency_ms(5);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Third page, 1 result with 0 snippets
+  search_result = icing.GetNextPage(search_result.next_page_token());
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), SizeIs(1));
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  exp_stats = NativeQueryStats();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_requested_page_size(2);
+  exp_stats.set_num_results_returned_current_page(1);
+  exp_stats.set_num_results_snippeted(0);
+  exp_stats.set_latency_ms(5);
+  exp_stats.set_document_retrieval_latency_ms(5);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 
 }  // namespace
