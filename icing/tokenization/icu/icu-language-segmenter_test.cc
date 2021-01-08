@@ -395,7 +395,6 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, LatinLettersWithAccents) {
               IsOkAndHolds(ElementsAre("āăąḃḅḇčćç")));
 }
 
-// TODO(samzheng): test cases for more languages (e.g. top 20 in the world)
 TEST_P(IcuLanguageSegmenterAllLocalesTest, WhitespaceSplitLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
                              language_segmenter_factory::Create(GetOptions()));
@@ -408,7 +407,6 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WhitespaceSplitLanguages) {
       IsOkAndHolds(ElementsAre("나는", " ", "매일", " ", "출근합니다", ".")));
 }
 
-// TODO(samzheng): more mixed languages test cases
 TEST_P(IcuLanguageSegmenterAllLocalesTest, MixedLanguages) {
   ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
                              language_segmenter_factory::Create(GetOptions()));

@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,8 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -102,10 +105,12 @@ using ::testing::Test;
 class IndexProcessorTest : public Test {
  protected:
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
 
     index_dir_ = GetTestTempDir() + "/index_test";
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
@@ -120,11 +125,11 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         normalizer_,
         normalizer_factory::Create(
-
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, GetTestTempDir()));
+        schema_store_,
+        SchemaStore::Create(&filesystem_, GetTestTempDir(), &fake_clock_));
     SchemaProto schema = CreateFakeSchema();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
@@ -137,7 +142,7 @@ class IndexProcessorTest : public Test {
         index_processor_,
         IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
                                normalizer_.get(), index_.get(),
-                               processor_options));
+                               processor_options, &fake_clock_));
     mock_icing_filesystem_ = std::make_unique<IcingMockFilesystem>();
   }
 
@@ -149,6 +154,7 @@ class IndexProcessorTest : public Test {
 
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
+  FakeClock fake_clock_;
   std::string index_dir_;
 
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
@@ -238,24 +244,26 @@ TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
   processor_options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
-  EXPECT_THAT(IndexProcessor::Create(/*schema_store=*/nullptr,
-                                     lang_segmenter_.get(), normalizer_.get(),
-                                     index_.get(), processor_options),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      IndexProcessor::Create(/*schema_store=*/nullptr, lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(IndexProcessor::Create(
-                  schema_store_.get(), /*lang_segmenter=*/nullptr,
-                  normalizer_.get(), index_.get(), processor_options),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      IndexProcessor::Create(schema_store_.get(), /*lang_segmenter=*/nullptr,
+                             normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
                                      /*normalizer=*/nullptr, index_.get(),
-                                     processor_options),
+                                     processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
                                      normalizer_.get(), /*index=*/nullptr,
-                                     processor_options),
+                                     processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -285,9 +293,11 @@ TEST_F(IndexProcessorTest, OneDoc) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("hello", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(GetHits(std::move(itr)),
-              ElementsAre(EqualsDocHitInfo(
-                  kDocumentId0, std::vector<SectionId>{kExactSectionId})));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+      {kExactSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expectedMap)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("hello", 1U << kPrefixedSectionId,
@@ -306,12 +316,18 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
+  std::string coffeeRepeatedString = "coffee";
+  for (int i = 0; i < Hit::kMaxTermFrequency + 1; i++) {
+    coffeeRepeatedString += " coffee";
+  }
+
   document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/2")
           .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kExactProperty), "pitbull")
-          .AddStringProperty(std::string(kPrefixedProperty), "mr. world wide")
+          .AddStringProperty(std::string(kExactProperty), coffeeRepeatedString)
+          .AddStringProperty(std::string(kPrefixedProperty),
+                             "mr. world world wide")
           .Build();
   EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId1), IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
@@ -319,19 +335,32 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("world", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap1{
+      {kPrefixedSectionId, 2}};
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap2{
+      {kExactSectionId, 1}};
   EXPECT_THAT(
-      GetHits(std::move(itr)),
-      ElementsAre(EqualsDocHitInfo(kDocumentId1,
-                                   std::vector<SectionId>{kPrefixedSectionId}),
-                  EqualsDocHitInfo(kDocumentId0,
-                                   std::vector<SectionId>{kExactSectionId})));
+      hits, ElementsAre(
+                EqualsDocHitInfoWithTermFrequency(kDocumentId1, expectedMap1),
+                EqualsDocHitInfoWithTermFrequency(kDocumentId0, expectedMap2)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("world", 1U << kPrefixedSectionId,
                                TermMatchType::EXACT_ONLY));
-  EXPECT_THAT(GetHits(std::move(itr)),
-              ElementsAre(EqualsDocHitInfo(
-                  kDocumentId1, std::vector<SectionId>{kPrefixedSectionId})));
+  hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+      {kPrefixedSectionId, 2}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId1, expectedMap)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("coffee", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  hits = GetHits(std::move(itr));
+  expectedMap = {{kExactSectionId, Hit::kMaxTermFrequency}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId1, expectedMap)));
 }
 
 TEST_F(IndexProcessorTest, DocWithNestedProperty) {
@@ -389,7 +418,8 @@ TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
       IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), options));
+                             normalizer_.get(), index_.get(), options,
+                             &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -428,7 +458,8 @@ TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
       IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), options));
+                             normalizer_.get(), index_.get(), options,
+                             &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -468,7 +499,8 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
       IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer.get(), index_.get(), options));
+                             normalizer.get(), index_.get(), options,
+                             &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -590,6 +622,23 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
 }
 
 TEST_F(IndexProcessorTest, NonAsciiIndexing) {
+  language_segmenter_factory::SegmenterOptions segmenter_options(
+      ULOC_SIMPLIFIED_CHINESE);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      lang_segmenter_,
+      language_segmenter_factory::Create(std::move(segmenter_options)));
+
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
+                             normalizer_.get(), index_.get(),
+                             processor_options, &fake_clock_));
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -618,8 +667,8 @@ TEST_F(IndexProcessorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
       IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(),
-                             processor_options));
+                             normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
 
   // This is the maximum token length that an empty lexicon constructed for a
   // lite index with merge size of 1MiB can support.
@@ -679,8 +728,8 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
       IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(),
-                             processor_options));
+                             normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
   DocumentId doc_id = 0;
   // Have determined experimentally that indexing 3373 documents with this text
   // will cause the LiteIndex to fill up. Further indexing will fail unless the
@@ -736,8 +785,8 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
       IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(),
-                             processor_options));
+                             normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
 
   // 3. Index one document. This should fit in the LiteIndex without requiring a
   // merge.

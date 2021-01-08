@@ -247,7 +247,7 @@ std::string_view GetErrorMessage(ActionOrError maybe_error) {
 //
 // NOTE: Please update the state transition table above if this is updated.
 //
-// TODO(samzheng): support syntax "-property1:term1", right now we don't allow
+// TODO(tjbarron): support syntax "-property1:term1", right now we don't allow
 // exclusion and property restriction applied on the same term.
 // TODO(b/141007791): figure out how we'd like to support special characters
 // like "+", "&", "@", "#" in indexing and query tokenizers.

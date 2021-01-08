@@ -37,7 +37,6 @@
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/status-macros.h"
-#include "icing/util/timer.h"
 
 namespace icing {
 namespace lib {
@@ -46,20 +45,22 @@ libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>>
 IndexProcessor::Create(const SchemaStore* schema_store,
                        const LanguageSegmenter* lang_segmenter,
                        const Normalizer* normalizer, Index* index,
-                       const IndexProcessor::Options& options) {
+                       const IndexProcessor::Options& options,
+                       const Clock* clock) {
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(index);
+  ICING_RETURN_ERROR_IF_NULL(clock);
 
   return std::unique_ptr<IndexProcessor>(new IndexProcessor(
-      schema_store, lang_segmenter, normalizer, index, options));
+      schema_store, lang_segmenter, normalizer, index, options, clock));
 }
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const DocumentProto& document, DocumentId document_id,
     NativePutDocumentStats* put_document_stats) {
-  Timer index_timer;
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (index_->last_added_document_id() != kInvalidDocumentId &&
       document_id <= index_->last_added_document_id()) {
@@ -84,6 +85,8 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
                              tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
         if (++num_tokens > options_.max_tokens_per_document) {
+          // Index all tokens buffered so far.
+          editor.IndexAllBufferedTerms();
           if (put_document_stats != nullptr) {
             put_document_stats->mutable_tokenization_stats()
                 ->set_exceeded_max_token_num(true);
@@ -95,16 +98,16 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
               return absl_ports::ResourceExhaustedError(
                   "Max number of tokens reached!");
             case Options::TokenLimitBehavior::kSuppressError:
-              return libtextclassifier3::Status::OK;
+              return overall_status;
           }
         }
         std::string term = normalizer_.NormalizeTerm(itr->GetToken().text);
-        // Add this term to the index. Even if adding this hit fails, we keep
+        // Add this term to Hit buffer. Even if adding this hit fails, we keep
         // trying to add more hits because it's possible that future hits could
         // still be added successfully. For instance if the lexicon is full, we
         // might fail to add a hit for a new term, but should still be able to
         // add hits for terms that are already in the index.
-        auto status = editor.AddHit(term.c_str());
+        auto status = editor.BufferTerm(term.c_str());
         if (overall_status.ok() && !status.ok()) {
           // If we've succeeded to add everything so far, set overall_status to
           // represent this new failure. If we've already failed, no need to
@@ -114,11 +117,20 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
         }
       }
     }
+    // Add all the seen terms to the index with their term frequency.
+    auto status = editor.IndexAllBufferedTerms();
+    if (overall_status.ok() && !status.ok()) {
+      // If we've succeeded so far, set overall_status to
+      // represent this new failure. If we've already failed, no need to
+      // update the status - we're already going to return a resource
+      // exhausted error.
+      overall_status = status;
+    }
   }
 
   if (put_document_stats != nullptr) {
     put_document_stats->set_index_latency_ms(
-        index_timer.GetElapsedMilliseconds());
+        index_timer->GetElapsedMilliseconds());
     put_document_stats->mutable_tokenization_stats()->set_num_tokens_indexed(
         num_tokens);
   }
@@ -127,7 +139,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
   if (overall_status.ok() && index_->WantsMerge()) {
     ICING_VLOG(1) << "Merging the index at docid " << document_id << ".";
 
-    Timer merge_timer;
+    std::unique_ptr<Timer> merge_timer = clock_.GetNewTimer();
     libtextclassifier3::Status merge_status = index_->Merge();
 
     if (!merge_status.ok()) {
@@ -146,7 +158,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
 
     if (put_document_stats != nullptr) {
       put_document_stats->set_index_merge_latency_ms(
-          merge_timer.GetElapsedMilliseconds());
+          merge_timer->GetElapsedMilliseconds());
     }
   }
 

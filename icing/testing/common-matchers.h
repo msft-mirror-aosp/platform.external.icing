@@ -23,6 +23,8 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/search.proto.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
@@ -56,6 +58,44 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
       section_mask);
   return actual.document_id() == document_id &&
          actual.hit_section_ids_mask() == section_mask;
+}
+
+// Used to match a DocHitInfo
+MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
+           section_ids_to_term_frequencies_map, "") {
+  const DocHitInfo& actual = arg;
+  SectionIdMask section_mask = kSectionIdMaskNone;
+
+  bool term_frequency_as_expected = true;
+  std::vector<Hit::TermFrequency> expected_tfs;
+  std::vector<Hit::TermFrequency> actual_tfs;
+  for (auto itr = section_ids_to_term_frequencies_map.begin();
+       itr != section_ids_to_term_frequencies_map.end(); itr++) {
+    SectionId section_id = itr->first;
+    section_mask |= 1U << section_id;
+    expected_tfs.push_back(itr->second);
+    actual_tfs.push_back(actual.hit_term_frequency(section_id));
+    if (actual.hit_term_frequency(section_id) != itr->second) {
+      term_frequency_as_expected = false;
+    }
+  }
+  std::string actual_term_frequencies = absl_ports::StrCat(
+      "[", absl_ports::StrJoin(actual_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  std::string expected_term_frequencies = absl_ports::StrCat(
+      "[",
+      absl_ports::StrJoin(expected_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  *result_listener << IcingStringUtil::StringPrintf(
+      "(actual is {document_id=%d, section_mask=%d, term_frequencies=%s}, but "
+      "expected was "
+      "{document_id=%d, section_mask=%d, term_frequencies=%s}.)",
+      actual.document_id(), actual.hit_section_ids_mask(),
+      actual_term_frequencies.c_str(), document_id, section_mask,
+      expected_term_frequencies.c_str());
+  return actual.document_id() == document_id &&
+         actual.hit_section_ids_mask() == section_mask &&
+         term_frequency_as_expected;
 }
 
 // Used to match a ScoredDocumentHit
@@ -332,6 +372,18 @@ MATCHER_P2(ProtoStatusIs, status_code, error_matcher, "") {
     return false;
   }
   return ExplainMatchResult(error_matcher, arg.message(), result_listener);
+}
+
+MATCHER_P(EqualsSearchResultIgnoreStats, expected, "") {
+  SearchResultProto actual_copy = arg;
+  actual_copy.clear_query_stats();
+  actual_copy.clear_debug_info();
+
+  SearchResultProto expected_copy = expected;
+  expected_copy.clear_query_stats();
+  expected_copy.clear_debug_info();
+  return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
+                            result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status

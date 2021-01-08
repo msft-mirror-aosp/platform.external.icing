@@ -173,11 +173,12 @@ MainIndex::GetAccessorForPrefixTerm(const std::string& prefix) {
   ICING_ASSIGN_OR_RETURN(PostingListAccessor pl_accessor,
                          PostingListAccessor::CreateFromExisting(
                              flash_index_storage_.get(), posting_list_id));
-  GetPrefixAccessorResult result = {std::make_unique<PostingListAccessor>(std::move(pl_accessor)), exact};
+  GetPrefixAccessorResult result = {
+      std::make_unique<PostingListAccessor>(std::move(pl_accessor)), exact};
   return result;
 }
 
-// TODO(samzheng): Implement a method PropertyReadersAll.HasAnyProperty().
+// TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
 bool IsTermInNamespaces(
     const IcingDynamicTrie::PropertyReadersAll& property_reader,
     uint32_t value_index, const std::vector<NamespaceId>& namespace_ids) {
@@ -578,7 +579,8 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     }
 
     // A backfill hit is a prefix hit in a prefix section.
-    const Hit backfill_hit(hit.section_id(), hit.document_id(), hit.score(),
+    const Hit backfill_hit(hit.section_id(), hit.document_id(),
+                           hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
                            /*is_prefix_hit=*/true);
     if (backfill_hit == last_added_hit) {

@@ -117,7 +117,7 @@ std::vector<std::string> CreateNamespaces(int num_namespaces) {
 // Creates a vector containing num_words randomly-generated words for use by
 // documents.
 template <typename Rand>
-std::vector<std::string> CreateLanguage(int num_words, Rand* r) {
+std::vector<std::string> CreateLanguages(int num_words, Rand* r) {
   std::vector<std::string> language;
   std::normal_distribution<> norm_dist(kAvgTokenLen, kTokenStdDev);
   while (--num_words >= 0) {
@@ -175,6 +175,165 @@ class DestructibleDirectory {
   std::string dir_;
 };
 
+std::vector<DocumentProto> GenerateRandomDocuments(
+    EvenDistributionTypeSelector* type_selector, int num_docs) {
+  std::vector<std::string> namespaces = CreateNamespaces(kAvgNumNamespaces);
+  EvenDistributionNamespaceSelector namespace_selector(namespaces);
+
+  std::default_random_engine random;
+  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
+  UniformDistributionLanguageTokenGenerator<std::default_random_engine>
+      token_generator(language, &random);
+
+  DocumentGenerator<
+      EvenDistributionNamespaceSelector, EvenDistributionTypeSelector,
+      UniformDistributionLanguageTokenGenerator<std::default_random_engine>>
+      generator(&namespace_selector, type_selector, &token_generator,
+                kAvgDocumentSize * kContentSizePct);
+
+  std::vector<DocumentProto> random_docs;
+  random_docs.reserve(num_docs);
+  for (int i = 0; i < num_docs; i++) {
+    random_docs.push_back(generator.generateDoc());
+  }
+  return random_docs;
+}
+
+void BM_IndexLatency(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  std::default_random_engine random;
+  int num_types = kAvgNumNamespaces * kAvgNumTypes;
+  ExactStringPropertyGenerator property_generator;
+  SchemaGenerator<ExactStringPropertyGenerator> schema_generator(
+      /*num_properties=*/state.range(1), &property_generator);
+  SchemaProto schema = schema_generator.GenerateSchema(num_types);
+  EvenDistributionTypeSelector type_selector(schema);
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  int num_docs = state.range(0);
+  const std::vector<DocumentProto> random_docs =
+      GenerateRandomDocuments(&type_selector, num_docs);
+  Timer timer;
+  for (const DocumentProto& doc : random_docs) {
+    ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+  }
+  int64_t time_taken_ns = timer.GetElapsedNanoseconds();
+  int64_t time_per_doc_ns = time_taken_ns / num_docs;
+  std::cout << "Number of indexed documents:\t" << num_docs
+            << "\t\tNumber of indexed sections:\t" << state.range(1)
+            << "\t\tTime taken (ms):\t" << time_taken_ns / 1000000
+            << "\t\tTime taken per doc (us):\t" << time_per_doc_ns / 1000
+            << std::endl;
+}
+BENCHMARK(BM_IndexLatency)
+    // Arguments: num_indexed_documents, num_sections
+    ->ArgPair(1, 1)
+    ->ArgPair(2, 1)
+    ->ArgPair(8, 1)
+    ->ArgPair(32, 1)
+    ->ArgPair(128, 1)
+    ->ArgPair(1 << 10, 1)
+    ->ArgPair(1 << 13, 1)
+    ->ArgPair(1 << 15, 1)
+    ->ArgPair(1 << 17, 1)
+    ->ArgPair(1, 5)
+    ->ArgPair(2, 5)
+    ->ArgPair(8, 5)
+    ->ArgPair(32, 5)
+    ->ArgPair(128, 5)
+    ->ArgPair(1 << 10, 5)
+    ->ArgPair(1 << 13, 5)
+    ->ArgPair(1 << 15, 5)
+    ->ArgPair(1 << 17, 5)
+    ->ArgPair(1, 10)
+    ->ArgPair(2, 10)
+    ->ArgPair(8, 10)
+    ->ArgPair(32, 10)
+    ->ArgPair(128, 10)
+    ->ArgPair(1 << 10, 10)
+    ->ArgPair(1 << 13, 10)
+    ->ArgPair(1 << 15, 10)
+    ->ArgPair(1 << 17, 10);
+
+void BM_IndexThroughput(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  std::default_random_engine random;
+  int num_types = kAvgNumNamespaces * kAvgNumTypes;
+  ExactStringPropertyGenerator property_generator;
+  SchemaGenerator<ExactStringPropertyGenerator> schema_generator(
+      /*num_properties=*/state.range(1), &property_generator);
+  SchemaProto schema = schema_generator.GenerateSchema(num_types);
+  EvenDistributionTypeSelector type_selector(schema);
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  int num_docs = state.range(0);
+  const std::vector<DocumentProto> random_docs =
+      GenerateRandomDocuments(&type_selector, num_docs);
+  for (auto s : state) {
+    for (const DocumentProto& doc : random_docs) {
+      ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+    }
+  }
+  state.SetItemsProcessed(state.iterations() * num_docs);
+}
+BENCHMARK(BM_IndexThroughput)
+    // Arguments: num_indexed_documents, num_sections
+    ->ArgPair(1, 1)
+    ->ArgPair(2, 1)
+    ->ArgPair(8, 1)
+    ->ArgPair(32, 1)
+    ->ArgPair(128, 1)
+    ->ArgPair(1 << 10, 1)
+    ->ArgPair(1 << 13, 1)
+    ->ArgPair(1 << 15, 1)
+    ->ArgPair(1 << 17, 1)
+    ->ArgPair(1, 5)
+    ->ArgPair(2, 5)
+    ->ArgPair(8, 5)
+    ->ArgPair(32, 5)
+    ->ArgPair(128, 5)
+    ->ArgPair(1 << 10, 5)
+    ->ArgPair(1 << 13, 5)
+    ->ArgPair(1 << 15, 5)
+    ->ArgPair(1 << 17, 5)
+    ->ArgPair(1, 10)
+    ->ArgPair(2, 10)
+    ->ArgPair(8, 10)
+    ->ArgPair(32, 10)
+    ->ArgPair(128, 10)
+    ->ArgPair(1 << 10, 10)
+    ->ArgPair(1 << 13, 10)
+    ->ArgPair(1 << 15, 10)
+    ->ArgPair(1 << 17, 10);
+
 void BM_MutlipleIndices(benchmark::State& state) {
   // Initialize the filesystem
   std::string test_dir = GetTestTempDir() + "/icing/benchmark";
@@ -202,11 +361,8 @@ void BM_MutlipleIndices(benchmark::State& state) {
     options.set_index_merge_size(kIcingFullIndexSize / num_indices);
     auto icing = std::make_unique<IcingSearchEngine>(options);
 
-    InitializeResultProto init_result = icing->Initialize();
-    ASSERT_THAT(init_result.status().code(), Eq(StatusProto::OK));
-
-    SetSchemaResultProto schema_result = icing->SetSchema(schema);
-    ASSERT_THAT(schema_result.status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
     icings.push_back(std::move(icing));
   }
 
@@ -214,7 +370,7 @@ void BM_MutlipleIndices(benchmark::State& state) {
   std::vector<std::string> namespaces = CreateNamespaces(kAvgNumNamespaces);
   EvenDistributionNamespaceSelector namespace_selector(namespaces);
 
-  std::vector<std::string> language = CreateLanguage(kLanguageSize, &random);
+  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
   UniformDistributionLanguageTokenGenerator<std::default_random_engine>
       token_generator(language, &random);
 
@@ -231,8 +387,7 @@ void BM_MutlipleIndices(benchmark::State& state) {
       ASSERT_THAT(put_result.status().code(), Eq(StatusProto::UNKNOWN));
       continue;
     }
-    put_result = icings.at(i % icings.size())->Put(doc);
-    ASSERT_THAT(put_result.status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(icings.at(i % icings.size())->Put(doc).status(), ProtoIsOk());
   }
 
   // QUERY!
@@ -255,13 +410,13 @@ void BM_MutlipleIndices(benchmark::State& state) {
       continue;
     }
     result = icings.at(0)->Search(search_spec, scoring_spec, result_spec);
-    ASSERT_THAT(result.status().code(), Eq(StatusProto::OK));
+    ASSERT_THAT(result.status(), ProtoIsOk());
     while (!result.results().empty()) {
       num_results += result.results_size();
       if (!icings.empty()) {
         result = icings.at(0)->GetNextPage(result.next_page_token());
       }
-      ASSERT_THAT(result.status().code(), Eq(StatusProto::OK));
+      ASSERT_THAT(result.status(), ProtoIsOk());
     }
   }
 
