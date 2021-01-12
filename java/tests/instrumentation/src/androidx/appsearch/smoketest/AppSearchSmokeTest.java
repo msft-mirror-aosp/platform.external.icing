@@ -16,34 +16,46 @@
 
 package androidx.appsearch.smoketest;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static com.google.common.truth.Truth.assertThat;
 
-import androidx.appsearch.app.AppSearchManager;
-import androidx.appsearch.app.AppSearchManager.PutDocumentsRequest;
-import androidx.appsearch.app.AppSearchManager.SetSchemaRequest;
+import static org.junit.Assert.assertEquals;
+
 import androidx.appsearch.app.AppSearchSchema;
 import androidx.appsearch.app.AppSearchSchema.PropertyConfig;
+import androidx.appsearch.app.AppSearchSession;
+import androidx.appsearch.app.PutDocumentsRequest;
+import androidx.appsearch.app.SearchResult;
 import androidx.appsearch.app.SearchResults;
 import androidx.appsearch.app.SearchSpec;
+import androidx.appsearch.app.SetSchemaRequest;
+import androidx.appsearch.localstorage.LocalStorage;
+import androidx.appsearch.localstorage.LocalStorage.SearchContext;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.SmallTest;
 
-import com.google.android.icing.proto.IcingSearchEngineOptions;
-
+import org.junit.Before;
 import org.junit.Test;
+
+import java.util.List;
 
 @SmallTest
 public class AppSearchSmokeTest {
+    private AppSearchSession appSearch;
+
+    @Before
+    public void setUp() throws Exception {
+        appSearch =
+                LocalStorage.createSearchSession(
+                                new SearchContext.Builder(
+                                                ApplicationProvider.getApplicationContext())
+                                        .build())
+                        .get();
+        // Remove all data before test
+        appSearch.setSchema(new SetSchemaRequest.Builder().setForceOverride(true).build()).get();
+    }
+
     @Test
     public void smokeTest() throws Exception {
-        IcingSearchEngineOptions o = IcingSearchEngineOptions.newBuilder().build();
-        AppSearchManager appSearch =
-                new AppSearchManager.Builder(ApplicationProvider.getApplicationContext())
-                        .build()
-                        .get()
-                        .getResultValue();
         AppSearchSchema schema =
                 new AppSearchSchema.Builder("testType")
                         .addProperty(
@@ -54,23 +66,14 @@ public class AppSearchSmokeTest {
                                         .setTokenizerType(PropertyConfig.TOKENIZER_TYPE_PLAIN)
                                         .build())
                         .build();
-        appSearch
-                .setSchema(new SetSchemaRequest.Builder().addSchema(schema).build())
-                .get()
-                .getResultValue();
+        appSearch.setSchema(new SetSchemaRequest.Builder().addSchema(schema).build()).get();
     }
 
     @Test
     public void smokeTestAnnotationProcessor() throws Exception {
-        AppSearchManager appSearch =
-                new AppSearchManager.Builder(ApplicationProvider.getApplicationContext())
-                        .build()
-                        .get()
-                        .getResultValue();
         appSearch
                 .setSchema(new SetSchemaRequest.Builder().addDataClass(TestDataClass.class).build())
-                .get()
-                .getResultValue();
+                .get();
 
         TestDataClass input = new TestDataClass("uri1", "avocado");
         appSearch
@@ -78,17 +81,15 @@ public class AppSearchSmokeTest {
                 .get()
                 .checkSuccess();
         SearchResults results =
-                appSearch
-                        .query(
-                                "av",
-                                SearchSpec.newBuilder().setTermMatchType(
-                                        SearchSpec.TERM_MATCH_TYPE_PREFIX).build())
-                        .get()
-                        .getResultValue();
-
-        assertTrue(results.hasNext());
-        SearchResults.Result result = results.next();
-        assertFalse(results.hasNext());
+                appSearch.query(
+                        "av",
+                        new SearchSpec.Builder()
+                                .setTermMatch(SearchSpec.TERM_MATCH_PREFIX)
+                                .build());
+        List<SearchResult> page = results.getNextPage().get();
+        assertThat(page).hasSize(1);
+        SearchResult result = page.get(0);
+        assertThat(results.getNextPage().get()).isEmpty();
 
         assertEquals("uri1", result.getDocument().getUri());
         assertEquals("avocado", result.getDocument().getPropertyString("body"));
