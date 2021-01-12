@@ -105,11 +105,11 @@ TEST(IndexBlockTest, IndexBlockChangesPersistAcrossInstances) {
   ASSERT_TRUE(CreateFileWithSize(filesystem, flash_file, kBlockSize));
 
   std::vector<Hit> test_hits{
-      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kMaxHitScore),
-      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kMaxHitScore),
-      Hit(/*section_id=*/5, /*document_id=*/1, /*score=*/99),
-      Hit(/*section_id=*/3, /*document_id=*/3, /*score=*/17),
-      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kMaxHitScore),
+      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99),
+      Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17),
+      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency),
   };
   PostingListIndex allocated_index;
   {
@@ -152,18 +152,18 @@ TEST(IndexBlockTest, IndexBlockMultiplePostingLists) {
   ASSERT_TRUE(CreateFileWithSize(filesystem, flash_file, kBlockSize));
 
   std::vector<Hit> hits_in_posting_list1{
-      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kMaxHitScore),
-      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kMaxHitScore),
-      Hit(/*section_id=*/5, /*document_id=*/1, /*score=*/99),
-      Hit(/*section_id=*/3, /*document_id=*/3, /*score=*/17),
-      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kMaxHitScore),
+      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99),
+      Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17),
+      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency),
   };
   std::vector<Hit> hits_in_posting_list2{
-      Hit(/*section_id=*/12, /*document_id=*/220, /*score=*/88),
-      Hit(/*section_id=*/17, /*document_id=*/265, Hit::kMaxHitScore),
-      Hit(/*section_id=*/0, /*document_id=*/287, /*score=*/2),
-      Hit(/*section_id=*/11, /*document_id=*/306, /*score=*/12),
-      Hit(/*section_id=*/10, /*document_id=*/306, Hit::kMaxHitScore),
+      Hit(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88),
+      Hit(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2),
+      Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12),
+      Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency),
   };
   PostingListIndex allocated_index_1;
   PostingListIndex allocated_index_2;
@@ -242,11 +242,11 @@ TEST(IndexBlockTest, IndexBlockReallocatingPostingLists) {
 
   // Add hits to the first posting list.
   std::vector<Hit> hits_in_posting_list1{
-      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kMaxHitScore),
-      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kMaxHitScore),
-      Hit(/*section_id=*/5, /*document_id=*/1, /*score=*/99),
-      Hit(/*section_id=*/3, /*document_id=*/3, /*score=*/17),
-      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kMaxHitScore),
+      Hit(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/5, /*document_id=*/1, /*term_frequency=*/99),
+      Hit(/*section_id=*/3, /*document_id=*/3, /*term_frequency=*/17),
+      Hit(/*section_id=*/10, /*document_id=*/10, Hit::kDefaultTermFrequency),
   };
   ICING_ASSERT_OK_AND_ASSIGN(PostingListIndex allocated_index_1,
                              block.AllocatePostingList());
@@ -261,11 +261,11 @@ TEST(IndexBlockTest, IndexBlockReallocatingPostingLists) {
 
   // Add hits to the second posting list.
   std::vector<Hit> hits_in_posting_list2{
-      Hit(/*section_id=*/12, /*document_id=*/220, /*score=*/88),
-      Hit(/*section_id=*/17, /*document_id=*/265, Hit::kMaxHitScore),
-      Hit(/*section_id=*/0, /*document_id=*/287, /*score=*/2),
-      Hit(/*section_id=*/11, /*document_id=*/306, /*score=*/12),
-      Hit(/*section_id=*/10, /*document_id=*/306, Hit::kMaxHitScore),
+      Hit(/*section_id=*/12, /*document_id=*/220, /*term_frequency=*/88),
+      Hit(/*section_id=*/17, /*document_id=*/265, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/0, /*document_id=*/287, /*term_frequency=*/2),
+      Hit(/*section_id=*/11, /*document_id=*/306, /*term_frequency=*/12),
+      Hit(/*section_id=*/10, /*document_id=*/306, Hit::kDefaultTermFrequency),
   };
   ICING_ASSERT_OK_AND_ASSIGN(PostingListIndex allocated_index_2,
                              block.AllocatePostingList());
@@ -288,9 +288,9 @@ TEST(IndexBlockTest, IndexBlockReallocatingPostingLists) {
   EXPECT_TRUE(block.has_free_posting_lists());
 
   std::vector<Hit> hits_in_posting_list3{
-      Hit(/*section_id=*/12, /*document_id=*/0, /*score=*/88),
-      Hit(/*section_id=*/17, /*document_id=*/1, Hit::kMaxHitScore),
-      Hit(/*section_id=*/0, /*document_id=*/2, /*score=*/2),
+      Hit(/*section_id=*/12, /*document_id=*/0, /*term_frequency=*/88),
+      Hit(/*section_id=*/17, /*document_id=*/1, Hit::kDefaultTermFrequency),
+      Hit(/*section_id=*/0, /*document_id=*/2, /*term_frequency=*/2),
   };
   ICING_ASSERT_OK_AND_ASSIGN(PostingListIndex allocated_index_3,
                              block.AllocatePostingList());

@@ -339,6 +339,7 @@ TEST_F(FileBackedProtoLogTest, CorruptContent) {
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_TRUE(create_result.has_data_loss());
+    ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
 
     // Lost everything in the log since the rewind position doesn't help if
     // there's been data corruption within the persisted region
@@ -408,6 +409,7 @@ TEST_F(FileBackedProtoLogTest, PersistToDisk) {
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_TRUE(create_result.has_data_loss());
+    ASSERT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
 
     // Check that everything was persisted across instances
     ASSERT_THAT(proto_log->ReadProto(document1_offset),

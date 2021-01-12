@@ -30,6 +30,7 @@
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
@@ -38,6 +39,7 @@
 #include "icing/store/usage-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/document-validator.h"
 
 namespace icing {
@@ -70,6 +72,26 @@ class DocumentStore {
     int32_t optimizable_docs = 0;
   };
 
+  struct DeleteByGroupResult {
+    // Status representing whether or not the operation succeeded. See the
+    // comments above the function that returns this result to determine what
+    // possible statuses could be returned.
+    libtextclassifier3::Status status;
+
+    int num_docs_deleted = 0;
+  };
+
+  struct CreateResult {
+    // A successfully initialized document store.
+    std::unique_ptr<DocumentStore> document_store;
+
+    // The data status after initializing from a previous state. Data loss can
+    // happen if the file is corrupted or some previously added data was
+    // unpersisted. This may be used to signal that any derived data off of the
+    // document store may need to be regenerated.
+    DataLoss data_loss;
+  };
+
   // Not copyable
   DocumentStore(const DocumentStore&) = delete;
   DocumentStore& operator=(const DocumentStore&) = delete;
@@ -92,10 +114,10 @@ class DocumentStore {
   // were regenerated. This may be helpful in logs.
   //
   // Returns:
-  //   A DocumentStore on success
+  //   A DocumentStore::CreateResult on success
   //   FAILED_PRECONDITION on any null pointer input
   //   INTERNAL_ERROR on IO error
-  static libtextclassifier3::StatusOr<std::unique_ptr<DocumentStore>> Create(
+  static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
       NativeInitializeStats* initialize_stats = nullptr);
@@ -209,6 +231,15 @@ class DocumentStore {
   libtextclassifier3::StatusOr<NamespaceId> GetNamespaceId(
       std::string_view name_space) const;
 
+  // Returns the CorpusId associated with the given namespace and schema.
+  //
+  // Returns:
+  //   A CorpusId on success
+  //   NOT_FOUND if the key doesn't exist
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<CorpusId> GetCorpusId(
+      const std::string_view name_space, const std::string_view schema) const;
+
   // Returns the DocumentAssociatedScoreData of the document specified by the
   // DocumentId.
   //
@@ -272,8 +303,8 @@ class DocumentStore {
   //   OK on success
   //   NOT_FOUND if namespace doesn't exist
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status DeleteByNamespace(std::string_view name_space,
-                                               bool soft_delete = false);
+  DeleteByGroupResult DeleteByNamespace(std::string_view name_space,
+                                        bool soft_delete = false);
 
   // Deletes all documents belonging to the given schema type. The documents
   // will be marked as deleted if 'soft_delete' is true, otherwise they will be
@@ -289,8 +320,8 @@ class DocumentStore {
   //   OK on success
   //   NOT_FOUND if schema_type doesn't exist
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status DeleteBySchemaType(std::string_view schema_type,
-                                                bool soft_delete = false);
+  DeleteByGroupResult DeleteBySchemaType(std::string_view schema_type,
+                                         bool soft_delete = false);
 
   // Syncs all the data and metadata changes to disk.
   //
@@ -306,7 +337,7 @@ class DocumentStore {
   //   Disk usage on success
   //   INTERNAL_ERROR on IO error
   //
-  // TODO(samzheng): consider returning a struct which has the breakdown of each
+  // TODO(tjbarron): consider returning a struct which has the breakdown of each
   // component.
   libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
 
@@ -426,6 +457,12 @@ class DocumentStore {
   // DocumentStore. Namespaces may be removed from the mapper during compaction.
   std::unique_ptr<KeyMapper<NamespaceId>> namespace_mapper_;
 
+  // Maps a corpus, i.e. a (namespace, schema type) pair, to a densely-assigned
+  // unique id. A coprus is assigned an
+  // id when the first document belonging to that corpus is added to the
+  // DocumentStore. Corpus ids may be removed from the mapper during compaction.
+  std::unique_ptr<KeyMapper<CorpusId>> corpus_mapper_;
+
   // A storage class that caches all usage scores. Usage scores are not
   // considered as ground truth. Usage scores are associated with document ids
   // so they need to be updated when document ids change.
@@ -438,7 +475,7 @@ class DocumentStore {
   // worry about this field.
   bool initialized_ = false;
 
-  libtextclassifier3::Status Initialize(
+  libtextclassifier3::StatusOr<DataLoss> Initialize(
       NativeInitializeStats* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
@@ -490,6 +527,12 @@ class DocumentStore {
   //
   // Returns OK or any IO errors.
   libtextclassifier3::Status ResetNamespaceMapper();
+
+  // Resets the unique_ptr to the corpus_mapper, deletes the underlying file,
+  // and re-creates a new instance of the corpus_mapper.
+  //
+  // Returns OK or any IO errors.
+  libtextclassifier3::Status ResetCorpusMapper();
 
   // Checks if the header exists already. This does not create the header file
   // if it doesn't exist.

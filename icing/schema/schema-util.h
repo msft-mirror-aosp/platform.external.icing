@@ -81,10 +81,17 @@ class SchemaUtil {
   //      SchemaTypeConfigProto.schema_type
   //  10. Property names can only be alphanumeric.
   //  11. Any STRING data types have a valid string_indexing_config
+  //  12. A SchemaTypeConfigProto cannot have a property whose schema_type is
+  //      itself, thus creating an infinite loop.
+  //  13. Two SchemaTypeConfigProtos cannot have properties that reference each
+  //      other's schema_type, thus creating an infinite loop.
+  //
+  //  TODO(b/171996137): Clarify 12 and 13 are only for indexed properties, once
+  //  document properties can be opted out of indexing.
   //
   // Returns:
   //   ALREADY_EXISTS for case 1 and 2
-  //   INVALID_ARGUMENT for 3-11
+  //   INVALID_ARGUMENT for 3-13
   //   OK otherwise
   static libtextclassifier3::Status Validate(const SchemaProto& schema);
 

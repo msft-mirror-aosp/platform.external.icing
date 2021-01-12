@@ -125,7 +125,6 @@ TEST_F(IcuNormalizerTest, NonLatinLetterNotRemoveAccent) {
   // Our current ICU rules can't handle Hebrew properly, e.g. the accents in
   // "אָלֶף־בֵּית עִבְרִי"
   // will be removed.
-  // TODO (samzheng): figure out how we should handle Hebrew.
 }
 
 TEST_F(IcuNormalizerTest, FullWidthCharsToASCII) {

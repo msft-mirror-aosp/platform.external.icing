@@ -41,7 +41,8 @@ namespace {
 // form decomposition) and NFKC (compatible normalization form composition)
 // are applied as well as some other rules we need. More information at
 // http://www.unicode.org/reports/tr15/
-// TODO(samzheng) Figure out if we need to support small hiragana to katakana
+//
+// Please note that the following rules don't support small hiragana to katakana
 // transformation.
 constexpr UChar kTransformRulesUtf16[] =
     u"Lower; "                      // Lowercase
@@ -74,7 +75,7 @@ bool DiacriticCharToAscii(const UNormalizer2* normalizer2, UChar32 uchar32_in,
   }
 
   // Maximum number of pieces a Unicode character can be decomposed into.
-  // TODO(samzheng) figure out if this number is proper.
+  // TODO(tjbarron) figure out if this number is proper.
   constexpr int kDecompositionBufferCapacity = 5;
 
   // A buffer used to store Unicode decomposition mappings of only one
