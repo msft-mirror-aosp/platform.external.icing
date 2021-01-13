@@ -21,6 +21,7 @@
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
@@ -35,10 +36,12 @@ using ::testing::IsEmpty;
 class PlainTokenizerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
   }
 };
 
@@ -132,14 +135,29 @@ TEST_F(PlainTokenizerTest, Punctuation) {
                                        EqualsToken(Token::REGULAR, "World"))));
 
   // Full-width punctuation marks are filtered out.
-  EXPECT_THAT(
-      plain_tokenizer->TokenizeAll("你好，世界！你好：世界。“你好”世界？"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "你好"),
-                               EqualsToken(Token::REGULAR, "世界"),
-                               EqualsToken(Token::REGULAR, "你好"),
-                               EqualsToken(Token::REGULAR, "世界"),
-                               EqualsToken(Token::REGULAR, "你好"),
-                               EqualsToken(Token::REGULAR, "世界"))));
+  std::vector<std::string_view> exp_tokens;
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(
+        plain_tokenizer->TokenizeAll("你好，世界！你好：世界。“你好”世界？"),
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "你"),
+                                 EqualsToken(Token::REGULAR, "好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你"),
+                                 EqualsToken(Token::REGULAR, "好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你"),
+                                 EqualsToken(Token::REGULAR, "好"),
+                                 EqualsToken(Token::REGULAR, "世界"))));
+  } else {
+    EXPECT_THAT(
+        plain_tokenizer->TokenizeAll("你好，世界！你好：世界。“你好”世界？"),
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "你好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你好"),
+                                 EqualsToken(Token::REGULAR, "世界"))));
+  }
 }
 
 TEST_F(PlainTokenizerTest, SpecialCharacters) {
@@ -166,7 +184,10 @@ TEST_F(PlainTokenizerTest, SpecialCharacters) {
 }
 
 TEST_F(PlainTokenizerTest, CJKT) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  // In plain tokenizer, CJKT characters are handled the same way as non-CJKT
+  // characters, just add these tests as sanity checks.
+  // Chinese
+  language_segmenter_factory::SegmenterOptions options(ULOC_SIMPLIFIED_CHINESE);
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -174,11 +195,6 @@ TEST_F(PlainTokenizerTest, CJKT) {
                              tokenizer_factory::CreateIndexingTokenizer(
                                  StringIndexingConfig::TokenizerType::PLAIN,
                                  language_segmenter.get()));
-
-  // In plain tokenizer, CJKT characters are handled the same way as non-CJKT
-  // characters, just add these tests as sanity checks.
-
-  // Chinese
   EXPECT_THAT(plain_tokenizer->TokenizeAll("我每天走路去上班。"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "我"),
                                        EqualsToken(Token::REGULAR, "每天"),
@@ -186,16 +202,38 @@ TEST_F(PlainTokenizerTest, CJKT) {
                                        EqualsToken(Token::REGULAR, "去"),
                                        EqualsToken(Token::REGULAR, "上班"))));
   // Japanese
-  EXPECT_THAT(
-      plain_tokenizer->TokenizeAll("私は毎日仕事に歩いています。"),
-      IsOkAndHolds(ElementsAre(
-          EqualsToken(Token::REGULAR, "私"), EqualsToken(Token::REGULAR, "は"),
-          EqualsToken(Token::REGULAR, "毎日"),
-          EqualsToken(Token::REGULAR, "仕事"),
-          EqualsToken(Token::REGULAR, "に"), EqualsToken(Token::REGULAR, "歩"),
-          EqualsToken(Token::REGULAR, "い"),
-          EqualsToken(Token::REGULAR, "てい"),
-          EqualsToken(Token::REGULAR, "ます"))));
+  options = language_segmenter_factory::SegmenterOptions(ULOC_JAPANESE);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(plain_tokenizer->TokenizeAll("私は毎日仕事に歩いています。"),
+                IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "私"),
+                                         EqualsToken(Token::REGULAR, "は"),
+                                         EqualsToken(Token::REGULAR, "毎日"),
+                                         EqualsToken(Token::REGULAR, "仕事"),
+                                         EqualsToken(Token::REGULAR, "に"),
+                                         EqualsToken(Token::REGULAR, "歩い"),
+                                         EqualsToken(Token::REGULAR, "て"),
+                                         EqualsToken(Token::REGULAR, "い"),
+                                         EqualsToken(Token::REGULAR, "ます"))));
+  } else {
+    EXPECT_THAT(plain_tokenizer->TokenizeAll("私は毎日仕事に歩いています。"),
+                IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "私"),
+                                         EqualsToken(Token::REGULAR, "は"),
+                                         EqualsToken(Token::REGULAR, "毎日"),
+                                         EqualsToken(Token::REGULAR, "仕事"),
+                                         EqualsToken(Token::REGULAR, "に"),
+                                         EqualsToken(Token::REGULAR, "歩"),
+                                         EqualsToken(Token::REGULAR, "い"),
+                                         EqualsToken(Token::REGULAR, "てい"),
+                                         EqualsToken(Token::REGULAR, "ます"))));
+  }
+
   // Khmer
   EXPECT_THAT(plain_tokenizer->TokenizeAll("ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "ញុំ"),
@@ -210,13 +248,27 @@ TEST_F(PlainTokenizerTest, CJKT) {
                                EqualsToken(Token::REGULAR, "출근합니다"))));
 
   // Thai
-  EXPECT_THAT(plain_tokenizer->TokenizeAll("ฉันเดินไปทำงานทุกวัน"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "ฉัน"),
-                                       EqualsToken(Token::REGULAR, "เดิน"),
-                                       EqualsToken(Token::REGULAR, "ไป"),
-                                       EqualsToken(Token::REGULAR, "ทำงาน"),
-                                       EqualsToken(Token::REGULAR, "ทุก"),
-                                       EqualsToken(Token::REGULAR, "วัน"))));
+  // DIFFERENCE!! Disagreement over how to segment "ทุกวัน" (iOS groups).
+  // This difference persists even when locale is set to THAI
+  if (IsCfStringTokenization()) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::vector<Token> tokens,
+        plain_tokenizer->TokenizeAll("ฉันเดินไปทำงานทุกวัน"));
+
+    EXPECT_THAT(tokens, ElementsAre(EqualsToken(Token::REGULAR, "ฉัน"),
+                                    EqualsToken(Token::REGULAR, "เดิน"),
+                                    EqualsToken(Token::REGULAR, "ไป"),
+                                    EqualsToken(Token::REGULAR, "ทำงาน"),
+                                    EqualsToken(Token::REGULAR, "ทุกวัน")));
+  } else {
+    EXPECT_THAT(plain_tokenizer->TokenizeAll("ฉันเดินไปทำงานทุกวัน"),
+                IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "ฉัน"),
+                                         EqualsToken(Token::REGULAR, "เดิน"),
+                                         EqualsToken(Token::REGULAR, "ไป"),
+                                         EqualsToken(Token::REGULAR, "ทำงาน"),
+                                         EqualsToken(Token::REGULAR, "ทุก"),
+                                         EqualsToken(Token::REGULAR, "วัน"))));
+  }
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {

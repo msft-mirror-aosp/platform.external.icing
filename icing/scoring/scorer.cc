@@ -144,6 +144,9 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
       return std::make_unique<UsageScorer>(document_store, rank_by,
                                            default_score);
+    case ScoringSpecProto::RankingStrategy::
+        RELEVANCE_SCORE_NONFUNCTIONAL_PLACEHOLDER:
+      [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);
   }

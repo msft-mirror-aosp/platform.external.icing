@@ -24,7 +24,7 @@ namespace {
 
 using ::testing::Eq;
 
-TEST(FakeClockTest, GetSetOk) {
+TEST(FakeClockTest, GetSetSystemTimeOk) {
   FakeClock fake_clock;
   EXPECT_THAT(fake_clock.GetSystemTimeMilliseconds(), Eq(0));
 
@@ -33,6 +33,17 @@ TEST(FakeClockTest, GetSetOk) {
 
   fake_clock.SetSystemTimeMilliseconds(-1);
   EXPECT_THAT(fake_clock.GetSystemTimeMilliseconds(), Eq(-1));
+}
+
+TEST(FakeClockTest, GetSetTimerElapsedTimeOk) {
+  FakeClock fake_clock;
+  EXPECT_THAT(fake_clock.GetNewTimer()->GetElapsedMilliseconds(), Eq(0));
+
+  fake_clock.SetTimerElapsedMilliseconds(10);
+  EXPECT_THAT(fake_clock.GetNewTimer()->GetElapsedMilliseconds(), Eq(10));
+
+  fake_clock.SetTimerElapsedMilliseconds(-1);
+  EXPECT_THAT(fake_clock.GetNewTimer()->GetElapsedMilliseconds(), Eq(-1));
 }
 
 }  // namespace
