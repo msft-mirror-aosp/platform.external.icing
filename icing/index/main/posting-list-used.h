@@ -155,12 +155,12 @@ class PostingListUsed {
   // starts somewhere between [kSpecialHitsSize, kSpecialHitsSize + sizeof(Hit)
   // - 1] and ends at size_in_bytes - 1.
   //
-  // Hit scores are stored after the hit value, compressed or
+  // Hit term frequencies are stored after the hit value, compressed or
   // uncompressed. For the first two special hits, we always have a
-  // space for the score. For hits in the compressed area, we only have
-  // the score following the hit value of hit.has_score() is true. This
-  // allows good compression in the common case where hits don't have a
-  // specific score.
+  // space for the term frequency. For hits in the compressed area, we only have
+  // the term frequency following the hit value of hit.has_term_frequency() is
+  // true. This allows good compression in the common case where hits don't have
+  // a valid term frequency.
   //
   // EXAMPLE
   // Posting list storage. Posting list size: 20 bytes
@@ -175,7 +175,8 @@ class PostingListUsed {
   // |     16      |Hit::kInvalidVal|      0x000      |       0x07FFF998     |
   // +-------------+----------------+-----------------+----------------------+
   //
-  // Add Hit 0x07FFF684 (DocumentId = 18, SectionId = 0, Flags = 4, Score=125)
+  // Add Hit 0x07FFF684 (DocumentId = 18, SectionId = 0, Flags = 4,
+  // TermFrequency=125)
   // (Hit 0x07FFF998 - Hit 0x07FFF684 = 788)
   // +--bytes 0-4--+----- 5-9 ------+-- 10-12 --+-- 13-16 --+- 17 -+-- 18-19 --+
   // |      13     |Hit::kInvalidVal|   0x000   | 0x07FFF684| 125  |    788    |
@@ -187,9 +188,9 @@ class PostingListUsed {
   // |      9      |Hit::kInvVal|  0x00  |0x07FFF4D2|   434   | 125  |   788   |
   // +-------------+------------+--------+----------+---------+------+---------+
   //
-  // Add Hit 0x07FFF40E (DocumentId = 23, SectionId = 1, Flags = 6, Score = 87)
-  // (Hit 0x07FFF684 - Hit 0x07FFF4D2 = 196)
-  // ALMOST FULL!
+  // Add Hit 0x07FFF40E (DocumentId = 23, SectionId = 1, Flags = 6,
+  // TermFrequency = 87)
+  // (Hit 0x07FFF684 - Hit 0x07FFF4D2 = 196) ALMOST FULL!
   // +--bytes 0-4-+---- 5-9 ----+- 10-12 -+- 13-14 -+- 15-16 -+- 17 -+- 18-19 -+
   // |Hit::kInvVal|0x07FFF40E,87|  0x000  |    196  |   434   |  125 |   788   |
   // +-------------+------------+---------+---------+---------+------+---------+
@@ -302,13 +303,17 @@ class PostingListUsed {
   libtextclassifier3::StatusOr<uint32_t> PrependHitUncompressed(
       const Hit &hit, uint32_t offset);
 
-  // Reads the score located at offset and returns it. Callers are responsible
-  // for ensuring that the bytes starting at offset actually represent a score.
+  // If hit has a term frequency, consumes the term frequency at offset, updates
+  // hit to include the term frequency and updates offset to reflect that the
+  // term frequency has been consumed.
   //
   // RETURNS:
-  //   - The score located at offset, if successful
-  //   - INVALID_ARGUMENT if offset + sizeof(Hit::Score) >= size_in_bytes_
-  libtextclassifier3::StatusOr<Hit::Score> ReadScore(uint32_t offset) const;
+  //   - OK, if successful
+  //   - INVALID_ARGUMENT if hit has a term frequency and offset +
+  //   sizeof(Hit::TermFrequency) >=
+  //     size_in_bytes_
+  libtextclassifier3::Status ConsumeTermFrequencyIfPresent(
+      Hit *hit, uint32_t *offset) const;
 
   // A byte array of size size_in_bytes_ containing encoded hits for this
   // posting list.

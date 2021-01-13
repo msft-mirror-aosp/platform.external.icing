@@ -16,8 +16,8 @@ syntax = "proto2";
 
 package icing.lib;
 
-import "icing/proto/status.proto";
 import "icing/proto/logging.proto";
+import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
@@ -50,11 +50,6 @@ message DocumentProto {
   // already defined in the schema for this Document's schema_type.
   repeated PropertyProto properties = 5;
 
-  // OPTIONAL: Properties that will not be validated against the schema,
-  // indexed, or be searchable. The properties will be stored in the Documents,
-  // but never looked at by Icing.
-  repeated PropertyProto custom_properties = 6;
-
   // OPTIONAL: Score of the document which could be used during search result
   // ranking. Negative values will lead to validation errors. The default is the
   // lowest score 0.
@@ -69,6 +64,8 @@ message DocumentProto {
   // TODO(cassiewang): Benchmark if fixed64 or some other proto type is better
   // in terms of space/time efficiency. Both for ttl_ms and timestamp fields
   optional int64 ttl_ms = 8 [default = 0];
+
+  reserved 6;
 }
 
 // Holds a property field of the Document.
@@ -146,7 +143,7 @@ message GetAllNamespacesResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 2
+// Next tag: 3
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -159,10 +156,13 @@ message DeleteResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 2
+// Next tag: 3
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -175,10 +175,13 @@ message DeleteByNamespaceResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 2
+// Next tag: 3
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -191,4 +194,26 @@ message DeleteBySchemaTypeResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
+}
+
+// Result of a call to IcingSearchEngine.DeleteByQuery
+// Next tag: 3
+message DeleteByQueryResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Stats for delete execution performance.
+  optional NativeDeleteStats delete_stats = 2;
 }
