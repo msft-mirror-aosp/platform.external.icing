@@ -101,20 +101,6 @@ message ResultSpecProto {
   // How to specify a subset of properties to retrieve. If no type property mask
   // has been specified for a schema type, then *all* properties of that schema
   // type will be retrieved.
-  // Next tag: 3
-  message TypePropertyMask {
-    // The schema type to which these property masks should apply.
-    // If the schema type is the wildcard ("*"), then the type property masks
-    // will apply to all results of types that don't have their own, specific
-    // type property mask entry.
-    optional string schema_type = 1;
-
-    // The property masks specifying the property to be retrieved. Property
-    // masks must be composed only of property names, property separators (the
-    // '.' character). For example, "subject", "recipients.name". Specifying no
-    // property masks will result in *no* properties being retrieved.
-    repeated string paths = 2;
-  }
   repeated TypePropertyMask type_property_masks = 4;
 }
 
@@ -213,4 +199,27 @@ message SearchResultProto {
 
   // Stats for query execution performance.
   optional NativeQueryStats query_stats = 5;
+}
+
+// Next tag: 3
+message TypePropertyMask {
+  // The schema type to which these property masks should apply.
+  // If the schema type is the wildcard ("*"), then the type property masks
+  // will apply to all results of types that don't have their own, specific
+  // type property mask entry.
+  optional string schema_type = 1;
+
+  // The property masks specifying the property to be retrieved. Property
+  // masks must be composed only of property names, property separators (the
+  // '.' character). For example, "subject", "recipients.name". Specifying no
+  // property masks will result in *no* properties being retrieved.
+  repeated string paths = 2;
+}
+
+// Next tag: 2
+message GetResultSpecProto {
+  // How to specify a subset of properties to retrieve. If no type property mask
+  // has been specified for a schema type, then *all* properties of that schema
+  // type will be retrieved.
+  repeated TypePropertyMask type_property_masks = 1;
 }

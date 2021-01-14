@@ -58,9 +58,11 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
 }
 
 std::vector<ScoredDocumentHit> ScoringProcessor::Score(
-    std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator,
-    int num_to_score) {
+    std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator, int num_to_score,
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+        query_term_iterators) {
   std::vector<ScoredDocumentHit> scored_document_hits;
+  scorer_->PrepareToScore(query_term_iterators);
 
   while (doc_hit_info_iterator->Advance().ok() && num_to_score-- > 0) {
     const DocHitInfo& doc_hit_info = doc_hit_info_iterator->doc_hit_info();
@@ -69,7 +71,8 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     // The final score of the doc_hit_info = score of doc * demotion factor of
     // hit.
     double score =
-        scorer_->GetScore(doc_hit_info.document_id()) * hit_demotion_factor;
+        scorer_->GetScore(doc_hit_info, doc_hit_info_iterator.get()) *
+        hit_demotion_factor;
     scored_document_hits.emplace_back(
         doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);
   }

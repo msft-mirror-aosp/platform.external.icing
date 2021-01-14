@@ -421,16 +421,16 @@ libtextclassifier3::StatusOr<SchemaTypeId> SchemaStore::GetSchemaTypeId(
   return schema_type_mapper_->Get(schema_type);
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SchemaStore::GetSectionContent(const DocumentProto& document,
-                               std::string_view section_path) const {
-  return section_manager_->GetSectionContent(document, section_path);
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SchemaStore::GetStringSectionContent(const DocumentProto& document,
+                                     std::string_view section_path) const {
+  return section_manager_->GetStringSectionContent(document, section_path);
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SchemaStore::GetSectionContent(const DocumentProto& document,
-                               SectionId section_id) const {
-  return section_manager_->GetSectionContent(document, section_id);
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SchemaStore::GetStringSectionContent(const DocumentProto& document,
+                                     SectionId section_id) const {
+  return section_manager_->GetStringSectionContent(document, section_id);
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>

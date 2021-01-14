@@ -24,6 +24,8 @@ namespace lib {
 // DocumentProto. Generated in DocumentStore.
 using CorpusId = int32_t;
 
+inline constexpr CorpusId kInvalidCorpusId = -1;
+
 }  // namespace lib
 }  // namespace icing
 
