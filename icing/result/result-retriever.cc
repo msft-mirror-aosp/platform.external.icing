@@ -22,47 +22,12 @@
 #include "icing/proto/term.pb.h"
 #include "icing/result/page-result-state.h"
 #include "icing/result/projection-tree.h"
+#include "icing/result/projector.h"
 #include "icing/result/snippet-context.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
-
-namespace {
-
-void Project(const std::vector<ProjectionTree::Node>& projection_tree,
-             google::protobuf::RepeatedPtrField<PropertyProto>* properties) {
-  int num_kept = 0;
-  for (int cur_pos = 0; cur_pos < properties->size(); ++cur_pos) {
-    PropertyProto* prop = properties->Mutable(cur_pos);
-    auto itr = std::find_if(projection_tree.begin(), projection_tree.end(),
-                            [&prop](const ProjectionTree::Node& node) {
-                              return node.name == prop->name();
-                            });
-    if (itr == projection_tree.end()) {
-      // Property is not present in the projection tree. Just skip it.
-      continue;
-    }
-    // This property should be kept.
-    properties->SwapElements(num_kept, cur_pos);
-    ++num_kept;
-    if (itr->children.empty()) {
-      // A field mask does refer to this property, but it has no children. So
-      // we should take the entire property, with all of its
-      // subproperties/values
-      continue;
-    }
-    // The field mask refers to children of this property. Recurse through the
-    // document values that this property holds and project the children
-    // requested by this field mask.
-    for (DocumentProto& subproperty : *(prop->mutable_document_values())) {
-      Project(itr->children, subproperty.mutable_properties());
-    }
-  }
-  properties->DeleteSubrange(num_kept, properties->size() - num_kept);
-}
-
-}  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<ResultRetriever>>
 ResultRetriever::Create(const DocumentStore* doc_store,
@@ -118,17 +83,15 @@ ResultRetriever::RetrieveResults(
       }
     }
 
+    DocumentProto document = std::move(document_or).ValueOrDie();
     // Apply projection
-    auto itr = page_result_state.projection_tree_map.find(
-        document_or.ValueOrDie().schema());
-
+    auto itr = page_result_state.projection_tree_map.find(document.schema());
     if (itr != page_result_state.projection_tree_map.end()) {
-      Project(itr->second.root().children,
-              document_or.ValueOrDie().mutable_properties());
+      projector::Project(itr->second.root().children, &document);
     } else if (wildcard_projection_tree_itr !=
                page_result_state.projection_tree_map.end()) {
-      Project(wildcard_projection_tree_itr->second.root().children,
-              document_or.ValueOrDie().mutable_properties());
+      projector::Project(wildcard_projection_tree_itr->second.root().children,
+                         &document);
     }
 
     SearchResultProto::ResultProto result;
@@ -137,13 +100,13 @@ ResultRetriever::RetrieveResults(
         remaining_num_to_snippet > search_results.size()) {
       SnippetProto snippet_proto = snippet_retriever_->RetrieveSnippet(
           snippet_context.query_terms, snippet_context.match_type,
-          snippet_context.snippet_spec, document_or.ValueOrDie(),
+          snippet_context.snippet_spec, document,
           scored_document_hit.hit_section_id_mask());
       *result.mutable_snippet() = std::move(snippet_proto);
     }
 
     // Add the document, itself.
-    *result.mutable_document() = std::move(document_or).ValueOrDie();
+    *result.mutable_document() = std::move(document);
     search_results.push_back(std::move(result));
   }
   return search_results;

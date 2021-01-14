@@ -189,16 +189,21 @@ Java_com_google_android_icing_IcingSearchEngine_nativePut(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGet(
-    JNIEnv* env, jclass clazz, jobject object, jstring name_space,
-    jstring uri) {
+    JNIEnv* env, jclass clazz, jobject object, jstring name_space, jstring uri,
+    jbyteArray result_spec_bytes) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
   const char* native_name_space =
       env->GetStringUTFChars(name_space, /*isCopy=*/nullptr);
   const char* native_uri = env->GetStringUTFChars(uri, /*isCopy=*/nullptr);
+  icing::lib::GetResultSpecProto get_result_spec;
+  if (!ParseProtoFromJniByteArray(env, result_spec_bytes, &get_result_spec)) {
+    ICING_LOG(ERROR) << "Failed to parse GetResultSpecProto in nativeGet";
+    return nullptr;
+  }
   icing::lib::GetResultProto get_result_proto =
-      icing->Get(native_name_space, native_uri);
+      icing->Get(native_name_space, native_uri, get_result_spec);
 
   return SerializeProtoToJniByteArray(env, get_result_proto);
 }

@@ -58,6 +58,7 @@ class Hit {
   static constexpr TermFrequency kMaxTermFrequency =
       std::numeric_limits<TermFrequency>::max();
   static constexpr TermFrequency kDefaultTermFrequency = 1;
+  static constexpr TermFrequency kNoTermFrequency = 0;
 
   explicit Hit(Value value = kInvalidValue,
                TermFrequency term_frequency = kDefaultTermFrequency)

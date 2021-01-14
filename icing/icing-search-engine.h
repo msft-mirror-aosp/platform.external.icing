@@ -36,6 +36,7 @@
 #include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/result/result-state-manager.h"
@@ -213,7 +214,8 @@ class IcingSearchEngine {
   //   NOT_FOUND if the key doesn't exist or doc has been deleted
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
-  GetResultProto Get(std::string_view name_space, std::string_view uri);
+  GetResultProto Get(std::string_view name_space, std::string_view uri,
+                     const GetResultSpecProto& result_spec);
 
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.

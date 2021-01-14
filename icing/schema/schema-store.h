@@ -180,8 +180,9 @@ class SchemaStore {
   //     1. Property is optional and not found in the document
   //     2. section_path is invalid
   //     3. Content is empty
-  libtextclassifier3::StatusOr<std::vector<std::string>> GetSectionContent(
-      const DocumentProto& document, std::string_view section_path) const;
+  libtextclassifier3::StatusOr<std::vector<std::string_view>>
+  GetStringSectionContent(const DocumentProto& document,
+                          std::string_view section_path) const;
 
   // Finds content of a section by id
   //
@@ -189,8 +190,9 @@ class SchemaStore {
   //   A string of content on success
   //   INVALID_ARGUMENT if section id is invalid
   //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<std::vector<std::string>> GetSectionContent(
-      const DocumentProto& document, SectionId section_id) const;
+  libtextclassifier3::StatusOr<std::vector<std::string_view>>
+  GetStringSectionContent(const DocumentProto& document,
+                          SectionId section_id) const;
 
   // Returns the SectionMetadata associated with the SectionId that's in the
   // SchemaTypeId.
