@@ -30,6 +30,7 @@
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
@@ -37,6 +38,7 @@
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
@@ -149,23 +151,27 @@ class DocumentStore {
   //     exist in schema
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> Put(
-      const DocumentProto& document,
+      const DocumentProto& document, int32_t num_tokens = 0,
       NativePutDocumentStats* put_document_stats = nullptr);
   libtextclassifier3::StatusOr<DocumentId> Put(
-      DocumentProto&& document,
+      DocumentProto&& document, int32_t num_tokens = 0,
       NativePutDocumentStats* put_document_stats = nullptr);
 
   // Finds and returns the document identified by the given key (namespace +
-  // uri)
+  // uri). If 'clear_internal_fields' is true, document level data that's
+  // generated internally by DocumentStore is cleared.
   //
   // Returns:
   //   The document found on success
   //   NOT_FOUND if the key doesn't exist or document has been deleted
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentProto> Get(std::string_view name_space,
-                                                  std::string_view uri) const;
+  libtextclassifier3::StatusOr<DocumentProto> Get(
+      std::string_view name_space, std::string_view uri,
+      bool clear_internal_fields = true) const;
 
-  // Finds and returns the document identified by the given document id
+  // Finds and returns the document identified by the given document id. If
+  // 'clear_internal_fields' is true, document level data that's generated
+  // internally by DocumentStore is cleared.
   //
   // Returns:
   //   The document found on success
@@ -173,7 +179,8 @@ class DocumentStore {
   //                    maximum value
   //   NOT_FOUND if the document doesn't exist or has been deleted
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentProto> Get(DocumentId document_id) const;
+  libtextclassifier3::StatusOr<DocumentProto> Get(
+      DocumentId document_id, bool clear_internal_fields = true) const;
 
   // Returns all namespaces which have at least 1 active document (not deleted
   // or expired). Order of namespaces is undefined.
@@ -255,6 +262,20 @@ class DocumentStore {
   //   NOT_FOUND if no score data is found
   libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
   GetDocumentAssociatedScoreData(DocumentId document_id) const;
+
+  // Returns the CorpusAssociatedScoreData of the corpus specified by the
+  // corpus_id.
+  //
+  // NOTE: This does not check if the corpus exists and will return the
+  // CorpusAssociatedScoreData of the corpus even if all documents belonging to
+  // that corpus have been deleted.
+  //
+  // Returns:
+  //   CorpusAssociatedScoreData on success
+  //   OUT_OF_RANGE if corpus_id is negative or exceeds previously seen
+  //                CorpusIds
+  libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
+  GetCorpusAssociatedScoreData(CorpusId corpus_id) const;
 
   // Returns the DocumentFilterData of the document specified by the DocumentId.
   //
@@ -394,7 +415,9 @@ class DocumentStore {
   //   OK on success
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status OptimizeInto(const std::string& new_directory);
+  libtextclassifier3::Status OptimizeInto(
+      const std::string& new_directory,
+      const LanguageSegmenter* lang_segmenter);
 
   // Calculates status for a potential Optimize call. Includes how many docs
   // there are vs how many would be optimized away. And also includes an
@@ -441,8 +464,10 @@ class DocumentStore {
 
   // A cache of document associated scores. The ground truth of the scores is
   // DocumentProto stored in document_log_. This cache contains:
+  //   - CorpusId
   //   - Document score
   //   - Document creation timestamp in seconds
+  //   - Document length in number of tokens
   std::unique_ptr<FileBackedVector<DocumentAssociatedScoreData>> score_cache_;
 
   // A cache of data, indexed by DocumentId, used to filter documents. Currently
@@ -451,6 +476,13 @@ class DocumentStore {
   //   - SchemaTypeId
   //   - Expiration timestamp in seconds
   std::unique_ptr<FileBackedVector<DocumentFilterData>> filter_cache_;
+
+  // A cache of corpus associated scores. The ground truth of the scores is
+  // DocumentProto stored in document_log_. This cache contains:
+  //   - Number of documents belonging to the corpus score
+  //   - The sum of the documents' lengths, in number of tokens.
+  std::unique_ptr<FileBackedVector<CorpusAssociatedScoreData>>
+      corpus_score_cache_;
 
   // Maps namespaces to a densely-assigned unique id. Namespaces are assigned an
   // id when the first document belonging to that namespace is added to the
@@ -516,6 +548,12 @@ class DocumentStore {
   // Returns OK or any IO errors.
   libtextclassifier3::Status ResetDocumentAssociatedScoreCache();
 
+  // Resets the unique_ptr to the corpus_score_cache, deletes the underlying
+  // file, and re-creates a new instance of the corpus_score_cache.
+  //
+  // Returns OK or any IO errors.
+  libtextclassifier3::Status ResetCorpusAssociatedScoreCache();
+
   // Resets the unique_ptr to the filter_cache, deletes the underlying file, and
   // re-creates a new instance of the filter_cache.
   //
@@ -545,6 +583,10 @@ class DocumentStore {
   //   OK on success
   //   INTERNAL on I/O error
   libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
+
+  libtextclassifier3::StatusOr<DocumentId> InternalPut(
+      DocumentProto& document,
+      NativePutDocumentStats* put_document_stats = nullptr);
 
   // Helper function to do batch deletes. Documents with the given
   // "namespace_id" and "schema_type_id" will be deleted. If callers don't need
@@ -597,6 +639,21 @@ class DocumentStore {
   libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
       std::string_view name_space, std::string_view uri) const;
 
+  // Returns the CorpusAssociatedScoreData of the corpus specified by the
+  // corpus_id.
+  //
+  // If the corpus_id has never been seen before, it returns a
+  // CorpusAssociatedScoreData with properties set to default values.
+  //
+  // NOTE: This does not check if the corpus exists and will return the
+  // CorpusAssociatedScoreData of the corpus even if all documents belonging to
+  // that corpus have been deleted.
+  //
+  // Returns:
+  //   CorpusAssociatedScoreData on success
+  libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
+  GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const;
+
   // Helper method to validate the document id and return the file offset of the
   // associated document in document_log_.
   //
@@ -616,6 +673,10 @@ class DocumentStore {
   // Updates the entry in the score cache for document_id.
   libtextclassifier3::Status UpdateDocumentAssociatedScoreCache(
       DocumentId document_id, const DocumentAssociatedScoreData& score_data);
+
+  // Updates the entry in the corpus score cache for corpus_id.
+  libtextclassifier3::Status UpdateCorpusAssociatedScoreCache(
+      CorpusId corpus_id, const CorpusAssociatedScoreData& score_data);
 
   // Updates the entry in the filter cache for document_id.
   libtextclassifier3::Status UpdateFilterCache(

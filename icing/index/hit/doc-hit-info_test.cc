@@ -34,13 +34,13 @@ constexpr DocumentId kSomeOtherDocumentId = 54;
 TEST(DocHitInfoTest, InitialMaxHitTermFrequencies) {
   DocHitInfo info(kSomeDocumentId);
   for (SectionId i = 0; i <= kMaxSectionId; ++i) {
-    EXPECT_THAT(info.hit_term_frequency(i), Eq(Hit::kDefaultTermFrequency));
+    EXPECT_THAT(info.hit_term_frequency(i), Eq(Hit::kNoTermFrequency));
   }
 }
 
 TEST(DocHitInfoTest, UpdateHitTermFrequenciesForTheFirstTime) {
   DocHitInfo info(kSomeDocumentId);
-  ASSERT_THAT(info.hit_term_frequency(3), Eq(Hit::kDefaultTermFrequency));
+  ASSERT_THAT(info.hit_term_frequency(3), Eq(Hit::kNoTermFrequency));
 
   // Updating a section for the first time, should change its hit
   // term_frequency

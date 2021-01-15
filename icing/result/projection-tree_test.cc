@@ -28,14 +28,14 @@ using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
 TEST(ProjectionTreeTest, CreateEmptyFieldMasks) {
-  ResultSpecProto::TypePropertyMask type_field_mask;
+  TypePropertyMask type_field_mask;
   ProjectionTree tree(type_field_mask);
   EXPECT_THAT(tree.root().name, IsEmpty());
   EXPECT_THAT(tree.root().children, IsEmpty());
 }
 
 TEST(ProjectionTreeTest, CreateTreeTopLevel) {
-  ResultSpecProto::TypePropertyMask type_field_mask;
+  TypePropertyMask type_field_mask;
   type_field_mask.add_paths("subject");
 
   ProjectionTree tree(type_field_mask);
@@ -46,7 +46,7 @@ TEST(ProjectionTreeTest, CreateTreeTopLevel) {
 }
 
 TEST(ProjectionTreeTest, CreateTreeMultipleTopLevel) {
-  ResultSpecProto::TypePropertyMask type_field_mask;
+  TypePropertyMask type_field_mask;
   type_field_mask.add_paths("subject");
   type_field_mask.add_paths("body");
 
@@ -60,7 +60,7 @@ TEST(ProjectionTreeTest, CreateTreeMultipleTopLevel) {
 }
 
 TEST(ProjectionTreeTest, CreateTreeNested) {
-  ResultSpecProto::TypePropertyMask type_field_mask;
+  TypePropertyMask type_field_mask;
   type_field_mask.add_paths("subject.body");
   type_field_mask.add_paths("body");
 
@@ -76,7 +76,7 @@ TEST(ProjectionTreeTest, CreateTreeNested) {
 }
 
 TEST(ProjectionTreeTest, CreateTreeNestedSharedNode) {
-  ResultSpecProto::TypePropertyMask type_field_mask;
+  TypePropertyMask type_field_mask;
   type_field_mask.add_paths("sender.name.first");
   type_field_mask.add_paths("sender.emailAddress");
 

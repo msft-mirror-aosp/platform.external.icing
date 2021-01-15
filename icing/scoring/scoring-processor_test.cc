@@ -253,6 +253,216 @@ TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
                           EqualsScoredDocumentHit(scored_document_hits.at(2))));
 }
 
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_DocumentsWithDifferentLength) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/100));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store()->Put(document3, /*num_tokens=*/50));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info2(document_id2);
+  doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info3(document_id3);
+  doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+  // Since the three documents all contain the query term "foo" exactly once,
+  // the document's length determines the final score. Document shorter than the
+  // average corpus length are slightly boosted.
+  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask,
+                                             /*score=*/0.255482);
+  ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask,
+                                             /*score=*/0.115927);
+  ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask,
+                                             /*score=*/0.166435);
+  EXPECT_THAT(
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/3, &query_term_iterators),
+      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit2),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_DocumentsWithSameLength) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store()->Put(document3, /*num_tokens=*/10));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info2(document_id2);
+  doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info3(document_id3);
+  doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+  // Since the three documents all contain the query term "foo" exactly once
+  // and they have the same length, they will have the same BM25F scoret.
+  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask,
+                                             /*score=*/0.16173716);
+  ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask,
+                                             /*score=*/0.16173716);
+  ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask,
+                                             /*score=*/0.16173716);
+  EXPECT_THAT(
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/3, &query_term_iterators),
+      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit2),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_DocumentsWithDifferentQueryFrequency) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store()->Put(document3, /*num_tokens=*/10));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  // Document 1 contains the query term "foo" 5 times
+  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/5);
+  DocHitInfo doc_hit_info2(document_id2);
+  // Document 1 contains the query term "foo" 1 time
+  doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info3(document_id3);
+  // Document 1 contains the query term "foo" 3 times
+  doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/2);
+
+  SectionIdMask section_id_mask1 = 0b00000001;
+  SectionIdMask section_id_mask2 = 0b00000001;
+  SectionIdMask section_id_mask3 = 0b00000011;
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+  // Since the three documents all have the same length, the score is decided by
+  // the frequency of the query term "foo".
+  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask1,
+                                             /*score=*/0.309497);
+  ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask2,
+                                             /*score=*/0.16173716);
+  ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask3,
+                                             /*score=*/0.268599);
+  EXPECT_THAT(
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/3, &query_term_iterators),
+      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit2),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
 TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,

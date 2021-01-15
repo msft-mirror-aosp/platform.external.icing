@@ -24,6 +24,7 @@ namespace lib {
 
 namespace {
 using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::Not;
 
 class UsageStoreTest : public testing::Test {
@@ -558,6 +559,22 @@ TEST_F(UsageStoreTest, StoreShouldBeResetOnHeaderChecksumMismatch) {
   // Previous data should be cleared.
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/0),
               IsOkAndHolds(UsageStore::UsageScores()));
+}
+
+TEST_F(UsageStoreTest, GetElementsFileSize) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<UsageStore> usage_store,
+                             UsageStore::Create(&filesystem_, test_dir_));
+
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t empty_file_size,
+                             usage_store->GetElementsFileSize());
+  EXPECT_THAT(empty_file_size, Eq(0));
+
+  UsageReport usage_report = CreateUsageReport(
+      "namespace", "uri", /*timestamp_ms=*/1000, UsageReport::USAGE_TYPE1);
+  usage_store->AddUsageReport(usage_report, /*document_id=*/1);
+
+  EXPECT_THAT(usage_store->GetElementsFileSize(),
+              IsOkAndHolds(Gt(empty_file_size)));
 }
 
 }  // namespace

@@ -24,6 +24,7 @@ import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
+import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
@@ -84,7 +85,9 @@ public final class IcingSearchEngine implements Closeable {
 
   @Override
   public void close() {
-    throwIfClosed();
+    if (closed) {
+      return;
+    }
 
     if (nativePointer != 0) {
       nativeDestroy(this);
@@ -95,8 +98,8 @@ public final class IcingSearchEngine implements Closeable {
 
   @Override
   protected void finalize() throws Throwable {
-    super.finalize();
     close();
+    super.finalize();
   }
 
   @NonNull
@@ -217,10 +220,11 @@ public final class IcingSearchEngine implements Closeable {
   }
 
   @NonNull
-  public GetResultProto get(@NonNull String namespace, @NonNull String uri) {
+  public GetResultProto get(
+      @NonNull String namespace, @NonNull String uri, @NonNull GetResultSpecProto getResultSpec) {
     throwIfClosed();
 
-    byte[] getResultBytes = nativeGet(this, namespace, uri);
+    byte[] getResultBytes = nativeGet(this, namespace, uri, getResultSpec.toByteArray());
     if (getResultBytes == null) {
       Log.e(TAG, "Received null GetResultProto from native.");
       return GetResultProto.newBuilder()
@@ -533,7 +537,8 @@ public final class IcingSearchEngine implements Closeable {
 
   private static native byte[] nativePut(IcingSearchEngine instance, byte[] documentBytes);
 
-  private static native byte[] nativeGet(IcingSearchEngine instance, String namespace, String uri);
+  private static native byte[] nativeGet(
+      IcingSearchEngine instance, String namespace, String uri, byte[] getResultSpecBytes);
 
   private static native byte[] nativeReportUsage(
       IcingSearchEngine instance, byte[] usageReportBytes);

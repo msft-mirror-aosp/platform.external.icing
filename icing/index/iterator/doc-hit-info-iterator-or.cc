@@ -108,6 +108,7 @@ libtextclassifier3::Status DocHitInfoIteratorOr::Advance() {
   } else {
     chosen = left_.get();
   }
+  current_ = chosen;
 
   doc_hit_info_ = chosen->doc_hit_info();
   hit_intersect_section_ids_mask_ = chosen->hit_intersect_section_ids_mask();
@@ -139,6 +140,7 @@ DocHitInfoIteratorOrNary::DocHitInfoIteratorOrNary(
     : iterators_(std::move(iterators)) {}
 
 libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
+  current_iterators_.clear();
   if (iterators_.size() < 2) {
     return absl_ports::InvalidArgumentError(
         "Not enough iterators to OR together");
@@ -187,6 +189,7 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
   hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
   for (const auto& iterator : iterators_) {
     if (iterator->doc_hit_info().document_id() == next_document_id) {
+      current_iterators_.push_back(iterator.get());
       if (doc_hit_info_.document_id() == kInvalidDocumentId) {
         doc_hit_info_ = iterator->doc_hit_info();
         hit_intersect_section_ids_mask_ =
