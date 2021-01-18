@@ -177,7 +177,8 @@ TEST_F(IndexTest, EmptyIndexAfterMerge) {
 TEST_F(IndexTest, AdvancePastEnd) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -200,7 +201,8 @@ TEST_F(IndexTest, AdvancePastEnd) {
 TEST_F(IndexTest, AdvancePastEndAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -225,7 +227,8 @@ TEST_F(IndexTest, AdvancePastEndAfterMerge) {
 TEST_F(IndexTest, SingleHitSingleTermIndex) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -240,7 +243,8 @@ TEST_F(IndexTest, SingleHitSingleTermIndex) {
 TEST_F(IndexTest, SingleHitSingleTermIndexAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -257,8 +261,9 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMerge) {
 TEST_F(IndexTest, SingleHitMultiTermIndex) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -273,8 +278,9 @@ TEST_F(IndexTest, SingleHitMultiTermIndex) {
 TEST_F(IndexTest, SingleHitMultiTermIndexAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -291,8 +297,9 @@ TEST_F(IndexTest, SingleHitMultiTermIndexAfterMerge) {
 TEST_F(IndexTest, NoHitMultiTermIndex) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -305,8 +312,9 @@ TEST_F(IndexTest, NoHitMultiTermIndex) {
 TEST_F(IndexTest, NoHitMultiTermIndexAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -321,15 +329,18 @@ TEST_F(IndexTest, NoHitMultiTermIndexAfterMerge) {
 TEST_F(IndexTest, MultiHitMultiTermIndex) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -345,15 +356,18 @@ TEST_F(IndexTest, MultiHitMultiTermIndex) {
 TEST_F(IndexTest, MultiHitMultiTermIndexAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -371,11 +385,13 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMerge) {
 TEST_F(IndexTest, MultiHitSectionRestrict) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   SectionIdMask desired_section = 1U << kSectionId2;
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -391,11 +407,13 @@ TEST_F(IndexTest, MultiHitSectionRestrict) {
 TEST_F(IndexTest, MultiHitSectionRestrictAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -415,12 +433,13 @@ TEST_F(IndexTest, SingleHitDedupeIndex) {
   EXPECT_THAT(size, Eq(0));
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(size, index_->GetElementsSize());
   EXPECT_THAT(size, Gt(0));
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(int64_t new_size, index_->GetElementsSize());
   EXPECT_THAT(new_size, Eq(size));
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -435,7 +454,8 @@ TEST_F(IndexTest, SingleHitDedupeIndex) {
 TEST_F(IndexTest, PrefixHit) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -450,7 +470,8 @@ TEST_F(IndexTest, PrefixHit) {
 TEST_F(IndexTest, PrefixHitAfterMerge) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -467,11 +488,13 @@ TEST_F(IndexTest, PrefixHitAfterMerge) {
 TEST_F(IndexTest, MultiPrefixHit) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -488,11 +511,13 @@ TEST_F(IndexTest, MultiPrefixHit) {
 TEST_F(IndexTest, MultiPrefixHitAfterMerge) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -511,11 +536,13 @@ TEST_F(IndexTest, MultiPrefixHitAfterMerge) {
 TEST_F(IndexTest, NoExactHitInPrefixQuery) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -529,11 +556,13 @@ TEST_F(IndexTest, NoExactHitInPrefixQuery) {
 TEST_F(IndexTest, NoExactHitInPrefixQueryAfterMerge) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -549,8 +578,9 @@ TEST_F(IndexTest, NoExactHitInPrefixQueryAfterMerge) {
 TEST_F(IndexTest, PrefixHitDedupe) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -564,8 +594,9 @@ TEST_F(IndexTest, PrefixHitDedupe) {
 TEST_F(IndexTest, PrefixHitDedupeAfterMerge) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -621,8 +652,9 @@ TEST_F(IndexTest, ExactToString) {
 TEST_F(IndexTest, NonAsciiTerms) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("こんにちは"), IsOk());
-  ASSERT_THAT(edit.AddHit("あなた"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("こんにちは"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("あなた"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -642,8 +674,9 @@ TEST_F(IndexTest, NonAsciiTerms) {
 TEST_F(IndexTest, NonAsciiTermsAfterMerge) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("こんにちは"), IsOk());
-  ASSERT_THAT(edit.AddHit("あなた"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("こんにちは"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("あなた"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -684,7 +717,11 @@ TEST_F(IndexTest, FullIndex) {
           index_->Edit(document_id, kSectionId2, TermMatchType::EXACT_ONLY,
                        /*namespace_id=*/0);
       size_t idx = uniform(random);
-      status = edit.AddHit(query_terms.at(idx).c_str());
+      status = edit.BufferTerm(query_terms.at(idx).c_str());
+      if (!status.ok()) {
+        break;
+      }
+      status = edit.IndexAllBufferedTerms();
       if (!status.ok()) {
         break;
       }
@@ -696,11 +733,10 @@ TEST_F(IndexTest, FullIndex) {
   Index::Editor edit =
       index_->Edit(document_id + 1, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-  EXPECT_THAT(edit.AddHit("bar"),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-  EXPECT_THAT(edit.AddHit("baz"),
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("baz"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 
   for (int i = 0; i < query_terms.size(); i += 25) {
@@ -737,7 +773,11 @@ TEST_F(IndexTest, FullIndexMerge) {
           index_->Edit(document_id, kSectionId2, TermMatchType::EXACT_ONLY,
                        /*namespace_id=*/0);
       size_t idx = uniform(random);
-      status = edit.AddHit(query_terms.at(idx).c_str());
+      status = edit.BufferTerm(query_terms.at(idx).c_str());
+      if (!status.ok()) {
+        break;
+      }
+      status = edit.IndexAllBufferedTerms();
       if (!status.ok()) {
         break;
       }
@@ -751,11 +791,10 @@ TEST_F(IndexTest, FullIndexMerge) {
   Index::Editor edit =
       index_->Edit(document_id + 1, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-  EXPECT_THAT(edit.AddHit("bar"),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-  EXPECT_THAT(edit.AddHit("baz"),
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("baz"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(document_id - 1));
 
@@ -763,9 +802,10 @@ TEST_F(IndexTest, FullIndexMerge) {
   ICING_ASSERT_OK(index_->Merge());
   edit =
       index_->Edit(document_id + 1, kSectionId2, TermMatchType::EXACT_ONLY, 0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
-  EXPECT_THAT(edit.AddHit("baz"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("baz"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("bar", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
@@ -790,8 +830,9 @@ TEST_F(IndexTest, IndexCreateCorruptionFailure) {
   // Add some content to the index
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("bar"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // Close the index.
   index_.reset();
@@ -820,8 +861,9 @@ TEST_F(IndexTest, IndexPersistence) {
   // Add some content to the index
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("bar"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   EXPECT_THAT(index_->PersistToDisk(), IsOk());
 
   // Close the index.
@@ -847,8 +889,9 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
   // Add some content to the index
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("bar"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK(index_->Merge());
   EXPECT_THAT(index_->PersistToDisk(), IsOk());
 
@@ -881,7 +924,8 @@ TEST_F(IndexTest, InvalidHitBufferSize) {
 TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo", /*namespace_ids=*/{0},
                                         /*num_to_return=*/0),
@@ -903,8 +947,9 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
 TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("bar"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // "b" should only match "bar" but not "foo".
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"b", /*namespace_ids=*/{0},
@@ -923,9 +968,10 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
 TEST_F(IndexTest, FindTermByPrefixShouldRespectNumToReturn) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fo"), IsOk());
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // We have 3 results but only 2 should be returned.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
@@ -944,13 +990,15 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInOneNamespace) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit1.AddHit("fo"), IsOk());
-  EXPECT_THAT(edit1.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit1.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit1.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
 
   Index::Editor edit2 =
       index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/1);
-  EXPECT_THAT(edit2.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit2.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
 
   // namespace with id 0 has 2 results.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
@@ -982,17 +1030,20 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInMultipleNamespaces) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit1.AddHit("fo"), IsOk());
+  EXPECT_THAT(edit1.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
 
   Index::Editor edit2 =
       index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/1);
-  EXPECT_THAT(edit2.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit2.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
 
   Index::Editor edit3 =
       index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/2);
-  EXPECT_THAT(edit3.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit3.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit3.IndexAllBufferedTerms(), IsOk());
 
   // Should return "foo" and "fool" which are in namespaces with ids 1 and 2.
   EXPECT_THAT(
@@ -1015,17 +1066,20 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit1.AddHit("fo"), IsOk());
+  EXPECT_THAT(edit1.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
 
   Index::Editor edit2 =
       index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/1);
-  EXPECT_THAT(edit2.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit2.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
 
   Index::Editor edit3 =
       index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/2);
-  EXPECT_THAT(edit3.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit3.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit3.IndexAllBufferedTerms(), IsOk());
 
   // Should return "fo", "foo" and "fool" across all namespaces.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{},
@@ -1049,13 +1103,15 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit1.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit1.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit1.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit1.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
 
   Index::Editor edit2 =
       index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit2.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit2.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 2 hits.
   EXPECT_THAT(
@@ -1079,30 +1135,38 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnApproximateHitCountForMain) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId4, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId5, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId6, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId7, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 8 hits.
   EXPECT_THAT(
@@ -1125,14 +1189,16 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCombinedHitCount) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
   edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit in the main index, 'fool' has 1 hit in the main index and
   // 1 hit in the lite index.
@@ -1147,13 +1213,15 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
   edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit in the main index, 'fool' has 1 hit in the lite index.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
@@ -1171,7 +1239,8 @@ TEST_F(IndexTest, GetElementsSize) {
   // Add an element.
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(size, index_->GetElementsSize());
   EXPECT_THAT(size, Gt(0));
 
@@ -1183,19 +1252,23 @@ TEST_F(IndexTest, GetElementsSize) {
 TEST_F(IndexTest, ExactResultsFromLiteAndMain) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foot"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK(index_->Merge());
 
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("footer"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("footer"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -1212,19 +1285,23 @@ TEST_F(IndexTest, ExactResultsFromLiteAndMain) {
 TEST_F(IndexTest, PrefixResultsFromLiteAndMain) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
-  EXPECT_THAT(edit.AddHit("fool"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foot"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK(index_->Merge());
 
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("footer"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("footer"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  EXPECT_THAT(edit.AddHit("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -1244,19 +1321,23 @@ TEST_F(IndexTest, GetDebugInfo) {
   // then add another doc to the lite index.
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK(index_->Merge());
 
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("footer"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("footer"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   std::string out0;
   index_->GetDebugInfo(/*verbosity=*/0, &out0);
@@ -1269,7 +1350,8 @@ TEST_F(IndexTest, GetDebugInfo) {
   // Add one more doc to the lite index. Debug strings should change.
   edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("far"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("far"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   std::string out2;
   index_->GetDebugInfo(/*verbosity=*/0, &out2);
@@ -1298,13 +1380,16 @@ TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {
   // then add another doc to the lite index.
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId0, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // After this merge the index should have posting lists for
   // "fool" {(doc0,sec3)},
@@ -1315,7 +1400,8 @@ TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {
   // Add one more doc to the lite index.
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("far"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("far"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // After this merge the index should add a posting list for "far" and a
   // backfill branch point for "f". In addition to the posting lists described
@@ -1343,11 +1429,13 @@ TEST_F(IndexTest, BackfillingNewTermsSucceeds) {
   // then add another doc to the lite index.
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
-  ASSERT_THAT(edit.AddHit("fool"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   // After this merge the index should have posting lists for
   // "fool" {(doc0,sec2)},
   // "foot" {(doc1,sec3)},
@@ -1356,14 +1444,17 @@ TEST_F(IndexTest, BackfillingNewTermsSucceeds) {
 
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("footer"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("footer"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   // Add one more doc to the lite index. Debug strings should change.
   edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("far"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("far"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // After this merge the index should add posting lists for "far" and "footer"
   // and a backfill branch point for "f". The new posting lists should be
@@ -1400,7 +1491,8 @@ TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
   // Add one document to the lite index
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   // Clipping to invalid should have no effect.
   ICING_EXPECT_OK(index_->TruncateTo(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1420,7 +1512,8 @@ TEST_F(IndexTest, TruncateToInvalidDocumentIdHasNoEffect) {
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // Clipping to invalid should still have no effect even if both indices have
   // hits.
@@ -1447,7 +1540,8 @@ TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
   // Add one document to the lite index
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_EXPECT_OK(index_->TruncateTo(index_->last_added_document_id()));
   // Clipping to invalid should have no effect.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1467,7 +1561,8 @@ TEST_F(IndexTest, TruncateToLastAddedDocumentIdHasNoEffect) {
 
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // Clipping to invalid should still have no effect even if both indices have
   // hits.
@@ -1487,14 +1582,16 @@ TEST_F(IndexTest, TruncateToThrowsOutLiteIndex) {
   // Add one document to the lite index and merge it into main.
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
   // Add another document to the lite index.
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   EXPECT_THAT(index_->TruncateTo(kDocumentId0), IsOk());
 
@@ -1513,17 +1610,20 @@ TEST_F(IndexTest, TruncateToThrowsOutBothIndices) {
   // Add two documents to the lite index and merge them into main.
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foo"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foul"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foul"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   ICING_ASSERT_OK(index_->Merge());
 
   // Add another document to the lite index.
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
-  ASSERT_THAT(edit.AddHit("foot"), IsOk());
+  ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   EXPECT_THAT(index_->TruncateTo(kDocumentId0), IsOk());
 

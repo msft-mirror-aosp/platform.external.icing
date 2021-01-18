@@ -59,7 +59,8 @@ class IndexProcessor {
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
       const SchemaStore* schema_store, const LanguageSegmenter* lang_segmenter,
-      const Normalizer* normalizer, Index* index, const Options& options);
+      const Normalizer* normalizer, Index* index, const Options& options,
+      const Clock* clock);
 
   // Add document to the index, associated with document_id. If the number of
   // tokens in the document exceeds max_tokens_per_document, then only the first
@@ -88,12 +89,13 @@ class IndexProcessor {
   IndexProcessor(const SchemaStore* schema_store,
                  const LanguageSegmenter* lang_segmenter,
                  const Normalizer* normalizer, Index* index,
-                 const Options& options)
+                 const Options& options, const Clock* clock)
       : schema_store_(*schema_store),
         lang_segmenter_(*lang_segmenter),
         normalizer_(*normalizer),
         index_(index),
-        options_(options) {}
+        options_(options),
+        clock_(*clock) {}
 
   std::string NormalizeToken(const Token& token);
 
@@ -102,6 +104,7 @@ class IndexProcessor {
   const Normalizer& normalizer_;
   Index* const index_;
   const Options options_;
+  const Clock& clock_;
 };
 
 }  // namespace lib

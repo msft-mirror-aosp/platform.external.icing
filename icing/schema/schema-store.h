@@ -34,6 +34,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -114,7 +115,7 @@ class SchemaStore {
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      NativeInitializeStats* initialize_stats = nullptr);
+      const Clock* clock, NativeInitializeStats* initialize_stats = nullptr);
 
   // Not copyable
   SchemaStore(const SchemaStore&) = delete;
@@ -227,7 +228,8 @@ class SchemaStore {
 
  private:
   // Use SchemaStore::Create instead.
-  explicit SchemaStore(const Filesystem* filesystem, std::string base_dir);
+  explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,
+                       const Clock* clock);
 
   // Handles initializing the SchemaStore and regenerating any data if needed.
   //
@@ -273,6 +275,7 @@ class SchemaStore {
 
   const Filesystem& filesystem_;
   const std::string base_dir_;
+  const Clock& clock_;
 
   // Used internally to indicate whether the class has been initialized. This is
   // to guard against cases where the object has been created, but Initialize

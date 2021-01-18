@@ -56,8 +56,6 @@ class DocumentValidator {
   // In addition, all nested DocumentProto will also be validated towards the
   // requirements above.
   //
-  // DocumentProto.custom_properties are not validated.
-  //
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION if no schema is set yet
