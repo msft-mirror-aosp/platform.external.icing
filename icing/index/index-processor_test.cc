@@ -53,6 +53,7 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -140,8 +141,7 @@ class IndexProcessorTest : public Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         index_processor_,
-        IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                               normalizer_.get(), index_.get(),
+        IndexProcessor::Create(normalizer_.get(), index_.get(),
                                processor_options, &fake_clock_));
     mock_icing_filesystem_ = std::make_unique<IcingMockFilesystem>();
   }
@@ -195,7 +195,7 @@ class IndexProcessorTest : public Test {
     type_config->set_schema_type(std::string(kFakeType));
 
     AddStringProperty(std::string(kExactProperty), DataType::STRING,
-                      Cardinality::REQUIRED, TermMatchType::EXACT_ONLY,
+                      Cardinality::OPTIONAL, TermMatchType::EXACT_ONLY,
                       type_config);
 
     AddStringProperty(std::string(kPrefixedProperty), DataType::STRING,
@@ -244,25 +244,11 @@ TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
   processor_options.token_limit_behavior =
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
-  EXPECT_THAT(
-      IndexProcessor::Create(/*schema_store=*/nullptr, lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), processor_options,
-                             &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  EXPECT_THAT(
-      IndexProcessor::Create(schema_store_.get(), /*lang_segmenter=*/nullptr,
-                             normalizer_.get(), index_.get(), processor_options,
-                             &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  EXPECT_THAT(IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                                     /*normalizer=*/nullptr, index_.get(),
+  EXPECT_THAT(IndexProcessor::Create(/*normalizer=*/nullptr, index_.get(),
                                      processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                                     normalizer_.get(), /*index=*/nullptr,
+  EXPECT_THAT(IndexProcessor::Create(normalizer_.get(), /*index=*/nullptr,
                                      processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
@@ -276,7 +262,12 @@ TEST_F(IndexProcessorTest, NoTermMatchTypeContent) {
           .AddBytesProperty(std::string(kUnindexedProperty2),
                             "attachment bytes")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
 }
 
@@ -287,7 +278,12 @@ TEST_F(IndexProcessorTest, OneDoc) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), "hello world")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
@@ -313,7 +309,12 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
           .AddStringProperty(std::string(kExactProperty), "hello world")
           .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   std::string coffeeRepeatedString = "coffee";
@@ -329,7 +330,12 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
           .AddStringProperty(std::string(kPrefixedProperty),
                              "mr. world world wide")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId1), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
@@ -372,11 +378,18 @@ TEST_F(IndexProcessorTest, DocWithNestedProperty) {
           .AddDocumentProperty(
               std::string(kSubProperty),
               DocumentBuilder()
+                  .SetKey("icing", "nested_type/1")
+                  .SetSchema(std::string(kNestedType))
                   .AddStringProperty(std::string(kNestedProperty),
                                      "rocky raccoon")
                   .Build())
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
@@ -396,7 +409,12 @@ TEST_F(IndexProcessorTest, DocWithRepeatedProperty) {
           .AddStringProperty(std::string(kRepeatedProperty), "rocky",
                              "italian stallion")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
@@ -417,8 +435,7 @@ TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), options,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), options,
                              &fake_clock_));
 
   DocumentProto document =
@@ -428,7 +445,11 @@ TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
           .AddStringProperty(std::string(kExactProperty), "hello world")
           .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0),
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
@@ -457,8 +478,7 @@ TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), options,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), options,
                              &fake_clock_));
 
   DocumentProto document =
@@ -468,7 +488,12 @@ TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
           .AddStringProperty(std::string(kExactProperty), "hello world")
           .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // "night" should have been indexed.
@@ -498,8 +523,7 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer.get(), index_.get(), options,
+      IndexProcessor::Create(normalizer.get(), index_.get(), options,
                              &fake_clock_));
 
   DocumentProto document =
@@ -509,7 +533,12 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
           .AddStringProperty(std::string(kExactProperty), "hello world")
           .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   // "good" should have been indexed normally.
@@ -542,7 +571,12 @@ TEST_F(IndexProcessorTest, NonPrefixedContentPrefixQuery) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), "best rocky movies")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   document =
@@ -551,7 +585,12 @@ TEST_F(IndexProcessorTest, NonPrefixedContentPrefixQuery) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPrefixedProperty), "rocky raccoon")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId1), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   // Only document_id 1 should surface in a prefix query for "Rock"
@@ -570,7 +609,12 @@ TEST_F(IndexProcessorTest, TokenNormalization) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), "ALL UPPER CASE")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   document =
@@ -579,7 +623,12 @@ TEST_F(IndexProcessorTest, TokenNormalization) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), "all lower case")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId1), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
@@ -600,7 +649,12 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), "ALL UPPER CASE")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId1), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId1),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
   // Indexing a document with document_id < last_added_document_id should cause
@@ -611,11 +665,15 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), "all lower case")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0),
+  ICING_ASSERT_OK_AND_ASSIGN(
+      tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // As should indexing a document document_id == last_added_document_id.
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0),
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
@@ -635,8 +693,7 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(),
+      IndexProcessor::Create(normalizer_.get(), index_.get(),
                              processor_options, &fake_clock_));
 
   DocumentProto document =
@@ -646,7 +703,12 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
           .AddStringProperty(std::string(kExactProperty),
                              "你好，世界！你好：世界。“你好”世界？")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
@@ -666,8 +728,7 @@ TEST_F(IndexProcessorTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), processor_options,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
                              &fake_clock_));
 
   // This is the maximum token length that an empty lexicon constructed for a
@@ -684,7 +745,11 @@ TEST_F(IndexProcessorTest,
                              absl_ports::StrCat(enormous_string, " foo"))
           .AddStringProperty(std::string(kPrefixedProperty), "bar baz")
           .Build();
-  EXPECT_THAT(index_processor_->IndexDocument(document, kDocumentId0),
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 
@@ -715,6 +780,10 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kExactProperty), kIpsumText)
           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
   Index::Options options(index_dir_,
                          /*index_merge_size=*/document.ByteSizeLong() * 100);
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -727,8 +796,7 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), processor_options,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
                              &fake_clock_));
   DocumentId doc_id = 0;
   // Have determined experimentally that indexing 3373 documents with this text
@@ -737,10 +805,12 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
   // empties the LiteIndex.
   constexpr int kNumDocsLiteIndexExhaustion = 3373;
   for (; doc_id < kNumDocsLiteIndexExhaustion; ++doc_id) {
-    EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+    EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
+                IsOk());
     EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
   }
-  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 }
 
@@ -768,6 +838,10 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPrefixedProperty), kIpsumText)
           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
 
   // 2. Recreate the index with the mock filesystem and a merge size that will
   // only allow one document to be added before requiring a merge.
@@ -784,25 +858,26 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(schema_store_.get(), lang_segmenter_.get(),
-                             normalizer_.get(), index_.get(), processor_options,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
                              &fake_clock_));
 
   // 3. Index one document. This should fit in the LiteIndex without requiring a
   // merge.
   DocumentId doc_id = 0;
-  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 
   // 4. Add one more document to trigger a merge, which should fail and result
   // in a Reset.
   ++doc_id;
-  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id),
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
               StatusIs(libtextclassifier3::StatusCode::DATA_LOSS));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
 
   // 5. Indexing a new document should succeed.
-  EXPECT_THAT(index_processor_->IndexDocument(document, doc_id), IsOk());
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
 }
 
