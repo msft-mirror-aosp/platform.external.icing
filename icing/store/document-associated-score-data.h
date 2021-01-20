@@ -19,6 +19,7 @@
 #include <type_traits>
 
 #include "icing/legacy/core/icing-packed-pod.h"
+#include "icing/store/corpus-id.h"
 
 namespace icing {
 namespace lib {
@@ -26,33 +27,46 @@ namespace lib {
 // This is the cache entity of document-associated scores. It contains scores
 // that are related to the document itself. The ground-truth data is stored
 // somewhere else. The cache includes:
-// 1. Document score. It's defined in and passed from DocumentProto.score.
+// 1. Corpus Id.
+// 2. Document score. It's defined in and passed from DocumentProto.score.
 //    Positive values are required.
-// 2. Document creation timestamp. Unix timestamp of when the document is
+// 3. Document creation timestamp. Unix timestamp of when the document is
 //    created and inserted into Icing.
+// 4. Document length in number of tokens.
 class DocumentAssociatedScoreData {
  public:
-  explicit DocumentAssociatedScoreData(int document_score,
-                                       int64_t creation_timestamp_ms)
-      : document_score_(document_score),
-        creation_timestamp_ms_(creation_timestamp_ms) {}
+  explicit DocumentAssociatedScoreData(CorpusId corpus_id, int document_score,
+                                       int64_t creation_timestamp_ms,
+                                       int length_in_tokens = 0)
+      : creation_timestamp_ms_(creation_timestamp_ms),
+        corpus_id_(corpus_id),
+        document_score_(document_score),
+        length_in_tokens_(length_in_tokens) {}
 
   bool operator==(const DocumentAssociatedScoreData& other) const {
     return document_score_ == other.document_score() &&
-           creation_timestamp_ms_ == other.creation_timestamp_ms();
+           creation_timestamp_ms_ == other.creation_timestamp_ms() &&
+           length_in_tokens_ == other.length_in_tokens() &&
+           corpus_id_ == other.corpus_id();
   }
+
+  CorpusId corpus_id() const { return corpus_id_; }
 
   int document_score() const { return document_score_; }
 
   int64_t creation_timestamp_ms() const { return creation_timestamp_ms_; }
 
+  int length_in_tokens() const { return length_in_tokens_; }
+
  private:
-  int document_score_;
   int64_t creation_timestamp_ms_;
+  CorpusId corpus_id_;
+  int document_score_;
+  int length_in_tokens_;
 } __attribute__((packed));
 
-static_assert(sizeof(DocumentAssociatedScoreData) == 12,
-              "Size of DocumentAssociatedScoreData should be 12");
+static_assert(sizeof(DocumentAssociatedScoreData) == 20,
+              "Size of DocumentAssociatedScoreData should be 20");
 static_assert(icing_is_packed_pod<DocumentAssociatedScoreData>::value,
               "go/icing-ubsan");
 

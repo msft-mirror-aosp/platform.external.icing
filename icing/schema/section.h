@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -83,9 +84,10 @@ struct SectionMetadata {
 // values of a property.
 struct Section {
   SectionMetadata metadata;
-  std::vector<std::string> content;
+  std::vector<std::string_view> content;
 
-  Section(SectionMetadata&& metadata_in, std::vector<std::string>&& content_in)
+  Section(SectionMetadata&& metadata_in,
+          std::vector<std::string_view>&& content_in)
       : metadata(std::move(metadata_in)), content(std::move(content_in)) {}
 };
 

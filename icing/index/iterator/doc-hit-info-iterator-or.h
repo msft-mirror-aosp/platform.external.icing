@@ -42,9 +42,26 @@ class DocHitInfoIteratorOr : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo> *matched_terms_stats) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    current_->PopulateMatchedTermsStats(matched_terms_stats);
+    // If equal, then current_ == left_. Combine with results from right_.
+    if (left_document_id_ == right_document_id_) {
+      right_->PopulateMatchedTermsStats(matched_terms_stats);
+    }
+  }
+
  private:
   std::unique_ptr<DocHitInfoIterator> left_;
   std::unique_ptr<DocHitInfoIterator> right_;
+  // Pointer to the chosen iterator that points to the current doc_hit_info_. If
+  // both left_ and right_ point to the same docid, then chosen_ == left.
+  // chosen_ does not own the iterator it points to.
+  DocHitInfoIterator *current_;
   DocumentId left_document_id_ = kMaxDocumentId;
   DocumentId right_document_id_ = kMaxDocumentId;
 };
@@ -65,8 +82,22 @@ class DocHitInfoIteratorOrNary : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo> *matched_terms_stats) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    for (size_t i = 0; i < current_iterators_.size(); i++) {
+      current_iterators_.at(i)->PopulateMatchedTermsStats(matched_terms_stats);
+    }
+  }
+
  private:
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators_;
+  // Pointers to the iterators that point to the current doc_hit_info_.
+  // current_iterators_ does not own the iterators it points to.
+  std::vector<DocHitInfoIterator *> current_iterators_;
 };
 
 }  // namespace lib

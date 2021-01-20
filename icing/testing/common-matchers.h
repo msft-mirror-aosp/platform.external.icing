@@ -15,6 +15,8 @@
 #ifndef ICING_TESTING_COMMON_MATCHERS_H_
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
+#include <cmath>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -103,7 +105,7 @@ MATCHER_P(EqualsScoredDocumentHit, expected_scored_document_hit, "") {
   if (arg.document_id() != expected_scored_document_hit.document_id() ||
       arg.hit_section_id_mask() !=
           expected_scored_document_hit.hit_section_id_mask() ||
-      arg.score() != expected_scored_document_hit.score()) {
+      std::fabs(arg.score() - expected_scored_document_hit.score()) > 1e-6) {
     *result_listener << IcingStringUtil::StringPrintf(
         "Expected: document_id=%d, hit_section_id_mask=%d, score=%.2f. Actual: "
         "document_id=%d, hit_section_id_mask=%d, score=%.2f",

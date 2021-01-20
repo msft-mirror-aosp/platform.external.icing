@@ -22,8 +22,7 @@
 namespace icing {
 namespace lib {
 
-ProjectionTree::ProjectionTree(
-    const ResultSpecProto::TypePropertyMask& type_field_mask) {
+ProjectionTree::ProjectionTree(const TypePropertyMask& type_field_mask) {
   for (const std::string& field_mask : type_field_mask.paths()) {
     Node* current_node = &root_;
     for (std::string_view sub_field_mask :

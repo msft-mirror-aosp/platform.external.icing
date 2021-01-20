@@ -21,6 +21,7 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/hit/doc-hit-info.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -120,9 +121,10 @@ TEST_F(ScorerTest, ShouldGetDefaultScore) {
       Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
                      /*default_score=*/10, document_store()));
 
-  DocumentId non_existing_document_id = 1;
+  // Non existent document id
+  DocHitInfo docHitInfo = DocHitInfo(/*document_id_in=*/1);
   // The caller-provided default score is returned
-  EXPECT_THAT(scorer->GetScore(non_existing_document_id), Eq(10));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
 }
 
 TEST_F(ScorerTest, ShouldGetDefaultDocumentScore) {
@@ -142,7 +144,8 @@ TEST_F(ScorerTest, ShouldGetDefaultDocumentScore) {
       Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
                      /*default_score=*/10, document_store()));
 
-  EXPECT_THAT(scorer->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(0));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectDocumentScore) {
@@ -163,7 +166,32 @@ TEST_F(ScorerTest, ShouldGetCorrectDocumentScore) {
       Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
                      /*default_score=*/0, document_store()));
 
-  EXPECT_THAT(scorer->GetScore(document_id), Eq(5));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(5));
+}
+
+// See scoring-processor_test.cc and icing-search-engine_test.cc for better
+// Bm25F scoring tests.
+TEST_F(ScorerTest, QueryIteratorNullRelevanceScoreShouldReturnDefaultScore) {
+  // Creates a test document with document score 5
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetScore(5)
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock2().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                     /*default_score=*/10, document_store()));
+
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
@@ -193,9 +221,11 @@ TEST_F(ScorerTest, ShouldGetCorrectCreationTimestampScore) {
       Scorer::Create(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP,
                      /*default_score=*/0, document_store()));
 
-  EXPECT_THAT(scorer->GetScore(document_id1),
+  DocHitInfo docHitInfo1 = DocHitInfo(document_id1);
+  DocHitInfo docHitInfo2 = DocHitInfo(document_id2);
+  EXPECT_THAT(scorer->GetScore(docHitInfo1),
               Eq(fake_clock1().GetSystemTimeMilliseconds()));
-  EXPECT_THAT(scorer->GetScore(document_id2),
+  EXPECT_THAT(scorer->GetScore(docHitInfo2),
               Eq(fake_clock2().GetSystemTimeMilliseconds()));
 }
 
@@ -224,9 +254,10 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
       std::unique_ptr<Scorer> scorer3,
       Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
                      /*default_score=*/0, document_store()));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report a type1 usage.
   UsageReport usage_report_type1 = CreateUsageReport(
@@ -234,9 +265,9 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType1) {
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1));
 
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(1));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
@@ -264,9 +295,10 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
       std::unique_ptr<Scorer> scorer3,
       Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
                      /*default_score=*/0, document_store()));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report a type2 usage.
   UsageReport usage_report_type2 = CreateUsageReport(
@@ -274,9 +306,9 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType2) {
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2));
 
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(1));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
@@ -304,9 +336,10 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
       std::unique_ptr<Scorer> scorer3,
       Scorer::Create(ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT,
                      /*default_score=*/0, document_store()));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report a type1 usage.
   UsageReport usage_report_type3 = CreateUsageReport(
@@ -314,9 +347,9 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageCountScoreForType3) {
       UsageReport::USAGE_TYPE3);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3));
 
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(1));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(1));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
@@ -347,35 +380,36 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
       Scorer::Create(
           ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
           /*default_score=*/0, document_store()));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   UsageReport usage_report_type1_time1 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time1));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(1));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report usage with timestamp = 5000ms, score should be updated.
   UsageReport usage_report_type1_time5 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time5));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(5));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report usage with timestamp = 3000ms, score should not be updated.
   UsageReport usage_report_type1_time3 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time3));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(5));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
@@ -406,35 +440,36 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
       Scorer::Create(
           ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
           /*default_score=*/0, document_store()));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   UsageReport usage_report_type2_time1 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time1));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(1));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report usage with timestamp = 5000ms, score should be updated.
   UsageReport usage_report_type2_time5 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time5));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(5));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report usage with timestamp = 3000ms, score should not be updated.
   UsageReport usage_report_type2_time3 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time3));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(5));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
 TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
@@ -465,35 +500,36 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
       Scorer::Create(
           ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP,
           /*default_score=*/0, document_store()));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(0));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   UsageReport usage_report_type3_time1 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
       UsageReport::USAGE_TYPE3);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time1));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(1));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(1));
 
   // Report usage with timestamp = 5000ms, score should be updated.
   UsageReport usage_report_type3_time5 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
       UsageReport::USAGE_TYPE3);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time5));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(5));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5));
 
   // Report usage with timestamp = 3000ms, score should not be updated.
   UsageReport usage_report_type3_time3 = CreateUsageReport(
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
       UsageReport::USAGE_TYPE3);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time3));
-  EXPECT_THAT(scorer1->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(document_id), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(document_id), Eq(5));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5));
 }
 
 TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
@@ -502,17 +538,23 @@ TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
       Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
                      /*default_score=*/3, document_store()));
 
-  EXPECT_THAT(scorer->GetScore(/*document_id=*/0), Eq(3));
-  EXPECT_THAT(scorer->GetScore(/*document_id=*/1), Eq(3));
-  EXPECT_THAT(scorer->GetScore(/*document_id=*/2), Eq(3));
+  DocHitInfo docHitInfo1 = DocHitInfo(/*document_id_in=*/0);
+  DocHitInfo docHitInfo2 = DocHitInfo(/*document_id_in=*/1);
+  DocHitInfo docHitInfo3 = DocHitInfo(/*document_id_in=*/2);
+  EXPECT_THAT(scorer->GetScore(docHitInfo1), Eq(3));
+  EXPECT_THAT(scorer->GetScore(docHitInfo2), Eq(3));
+  EXPECT_THAT(scorer->GetScore(docHitInfo3), Eq(3));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, Scorer::Create(ScoringSpecProto::RankingStrategy::NONE,
                              /*default_score=*/111, document_store()));
 
-  EXPECT_THAT(scorer->GetScore(/*document_id=*/4), Eq(111));
-  EXPECT_THAT(scorer->GetScore(/*document_id=*/5), Eq(111));
-  EXPECT_THAT(scorer->GetScore(/*document_id=*/6), Eq(111));
+  docHitInfo1 = DocHitInfo(/*document_id_in=*/4);
+  docHitInfo2 = DocHitInfo(/*document_id_in=*/5);
+  docHitInfo3 = DocHitInfo(/*document_id_in=*/6);
+  EXPECT_THAT(scorer->GetScore(docHitInfo1), Eq(111));
+  EXPECT_THAT(scorer->GetScore(docHitInfo2), Eq(111));
+  EXPECT_THAT(scorer->GetScore(docHitInfo3), Eq(111));
 }
 
 }  // namespace

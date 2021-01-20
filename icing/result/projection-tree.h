@@ -35,8 +35,7 @@ class ProjectionTree {
     std::vector<Node> children;
   };
 
-  explicit ProjectionTree(
-      const ResultSpecProto::TypePropertyMask& type_field_mask);
+  explicit ProjectionTree(const TypePropertyMask& type_field_mask);
 
   const Node& root() const { return root_; }
 
