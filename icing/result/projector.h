@@ -1,4 +1,4 @@
-// Copyright (C) 2020 Google LLC
+// Copyright (C) 2019 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,20 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_ENABLE_BM25F_H_
-#define ICING_STORE_ENABLE_BM25F_H_
+#ifndef ICING_RESULT_PROJECTOR_H_
+#define ICING_RESULT_PROJECTOR_H_
+
+#include <vector>
+
+#include "icing/proto/document.pb.h"
+#include "icing/result/projection-tree.h"
 
 namespace icing {
 namespace lib {
 
-inline bool enable_bm25f_ = false;
+namespace projector {
 
-inline bool enableBm25f() { return enable_bm25f_; }
+void Project(const std::vector<ProjectionTree::Node>& projection_tree,
+             DocumentProto* document);
 
-// Setter for testing purposes. It should never be called in production code.
-inline void setEnableBm25f(bool enable_bm25f) { enable_bm25f_ = enable_bm25f; }
+}  // namespace projector
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_ENABLE_BM25F_H_
+#endif  // ICING_RESULT_PROJECTOR_H_

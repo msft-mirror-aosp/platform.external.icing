@@ -141,11 +141,25 @@ TEST_F(DocumentValidatorTest, ValidateEmptyNamespaceInvalid) {
                        HasSubstr("'namespace' is empty")));
 }
 
-TEST_F(DocumentValidatorTest, ValidateEmptyUriInvalid) {
+TEST_F(DocumentValidatorTest, ValidateTopLevelEmptyUriInvalid) {
   DocumentProto email = SimpleEmailBuilder().SetUri("").Build();
   EXPECT_THAT(document_validator_->Validate(email),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("'uri' is empty")));
+}
+
+TEST_F(DocumentValidatorTest, ValidateNestedEmptyUriValid) {
+  DocumentProto conversation =
+      SimpleConversationBuilder()
+          .ClearProperties()
+          .AddStringProperty(kPropertyName, kDefaultString)
+          .AddDocumentProperty(kPropertyEmails,
+                               SimpleEmailBuilder()
+                                   .SetUri("")  // Empty nested uri
+                                   .Build())
+          .Build();
+
+  EXPECT_THAT(document_validator_->Validate(conversation), IsOk());
 }
 
 TEST_F(DocumentValidatorTest, ValidateEmptySchemaInvalid) {
