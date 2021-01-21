@@ -43,6 +43,8 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/query/query-processor.h"
+#include "icing/result/projection-tree.h"
+#include "icing/result/projector.h"
 #include "icing/result/result-retriever.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
@@ -60,6 +62,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -693,7 +696,19 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     return result_proto;
   }
 
-  auto document_id_or = document_store_->Put(document, put_document_stats);
+  auto tokenized_document_or = TokenizedDocument::Create(
+      schema_store_.get(), language_segmenter_.get(), std::move(document));
+  if (!tokenized_document_or.ok()) {
+    TransformStatus(tokenized_document_or.status(), result_status);
+    put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
+    return result_proto;
+  }
+  TokenizedDocument tokenized_document(
+      std::move(tokenized_document_or).ValueOrDie());
+
+  auto document_id_or =
+      document_store_->Put(tokenized_document.document(),
+                           tokenized_document.num_tokens(), put_document_stats);
   if (!document_id_or.ok()) {
     TransformStatus(document_id_or.status(), result_status);
     put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
@@ -702,8 +717,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   DocumentId document_id = document_id_or.ValueOrDie();
 
   auto index_processor_or = IndexProcessor::Create(
-      schema_store_.get(), language_segmenter_.get(), normalizer_.get(),
-      index_.get(), CreateIndexProcessorOptions(options_), clock_.get());
+      normalizer_.get(), index_.get(), CreateIndexProcessorOptions(options_),
+      clock_.get());
   if (!index_processor_or.ok()) {
     TransformStatus(index_processor_or.status(), result_status);
     put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
@@ -712,8 +727,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   std::unique_ptr<IndexProcessor> index_processor =
       std::move(index_processor_or).ValueOrDie();
 
-  auto status =
-      index_processor->IndexDocument(document, document_id, put_document_stats);
+  auto status = index_processor->IndexDocument(tokenized_document, document_id,
+                                               put_document_stats);
 
   TransformStatus(status, result_status);
   put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
@@ -721,7 +736,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
 }
 
 GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
-                                      const std::string_view uri) {
+                                      const std::string_view uri,
+                                      const GetResultSpecProto& result_spec) {
   GetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
@@ -738,8 +754,29 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
     return result_proto;
   }
 
+  DocumentProto document = std::move(document_or).ValueOrDie();
+  std::unique_ptr<ProjectionTree> type_projection_tree;
+  std::unique_ptr<ProjectionTree> wildcard_projection_tree;
+  for (const TypePropertyMask& type_field_mask :
+       result_spec.type_property_masks()) {
+    if (type_field_mask.schema_type() == document.schema()) {
+      type_projection_tree = std::make_unique<ProjectionTree>(type_field_mask);
+    } else if (type_field_mask.schema_type() ==
+               ProjectionTree::kSchemaTypeWildcard) {
+      wildcard_projection_tree =
+          std::make_unique<ProjectionTree>(type_field_mask);
+    }
+  }
+
+  // Apply projection
+  if (type_projection_tree != nullptr) {
+    projector::Project(type_projection_tree->root().children, &document);
+  } else if (wildcard_projection_tree != nullptr) {
+    projector::Project(wildcard_projection_tree->root().children, &document);
+  }
+
   result_status->set_code(StatusProto::OK);
-  *result_proto.mutable_document() = std::move(document_or).ValueOrDie();
+  *result_proto.mutable_document() = std::move(document);
   return result_proto;
 }
 
@@ -1237,7 +1274,8 @@ SearchResultProto IcingSearchEngine::Search(
       std::move(scoring_processor_or).ValueOrDie();
   std::vector<ScoredDocumentHit> result_document_hits =
       scoring_processor->Score(std::move(query_results.root_iterator),
-                               performance_configuration_.num_to_score);
+                               performance_configuration_.num_to_score,
+                               &query_results.query_term_iterators);
   query_stats->set_scoring_latency_ms(
       component_timer->GetElapsedMilliseconds());
   query_stats->set_num_documents_scored(result_document_hits.size());
@@ -1416,7 +1454,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
   }
 
   // Copies valid document data to tmp directory
-  auto optimize_status = document_store_->OptimizeInto(temporary_document_dir);
+  auto optimize_status = document_store_->OptimizeInto(
+      temporary_document_dir, language_segmenter_.get());
 
   // Handles error if any
   if (!optimize_status.ok()) {
@@ -1523,9 +1562,9 @@ libtextclassifier3::Status IcingSearchEngine::RestoreIndexIfNeeded() {
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<IndexProcessor> index_processor,
-      IndexProcessor::Create(
-          schema_store_.get(), language_segmenter_.get(), normalizer_.get(),
-          index_.get(), CreateIndexProcessorOptions(options_), clock_.get()));
+      IndexProcessor::Create(normalizer_.get(), index_.get(),
+                             CreateIndexProcessorOptions(options_),
+                             clock_.get()));
 
   ICING_VLOG(1) << "Restoring index by replaying documents from document id "
                 << first_document_to_reindex << " to document id "
@@ -1546,9 +1585,20 @@ libtextclassifier3::Status IcingSearchEngine::RestoreIndexIfNeeded() {
         return document_or.status();
       }
     }
+    DocumentProto document(std::move(document_or).ValueOrDie());
+
+    libtextclassifier3::StatusOr<TokenizedDocument> tokenized_document_or =
+        TokenizedDocument::Create(schema_store_.get(),
+                                  language_segmenter_.get(),
+                                  std::move(document));
+    if (!tokenized_document_or.ok()) {
+      return tokenized_document_or.status();
+    }
+    TokenizedDocument tokenized_document(
+        std::move(tokenized_document_or).ValueOrDie());
 
     libtextclassifier3::Status status =
-        index_processor->IndexDocument(document_or.ValueOrDie(), document_id);
+        index_processor->IndexDocument(tokenized_document, document_id);
     if (!status.ok()) {
       if (!absl_ports::IsDataLoss(status)) {
         // Real error. Stop recovering and pass it up.

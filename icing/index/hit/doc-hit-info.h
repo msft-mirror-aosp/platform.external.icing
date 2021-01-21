@@ -25,7 +25,7 @@
 namespace icing {
 namespace lib {
 
-// DocHitInfo provides a collapsed view of all hits for a specific term and doc.
+// DocHitInfo provides a collapsed view of all hits for a specific doc.
 // Hits contain a document_id, section_id and a term frequency. The
 // information in multiple hits is collapse into a DocHitInfo by providing a
 // SectionIdMask of all sections that contained a hit for this term as well as
@@ -36,7 +36,7 @@ class DocHitInfo {
                       SectionIdMask hit_section_ids_mask = kSectionIdMaskNone)
       : document_id_(document_id_in),
         hit_section_ids_mask_(hit_section_ids_mask) {
-    memset(hit_term_frequency_, Hit::kDefaultTermFrequency,
+    memset(hit_term_frequency_, Hit::kNoTermFrequency,
            sizeof(hit_term_frequency_));
   }
 

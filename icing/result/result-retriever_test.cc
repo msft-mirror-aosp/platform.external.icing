@@ -779,7 +779,7 @@ TEST_F(ResultRetrieverTest, ProjectionTopLevelLeadNodeFieldPath) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("name");
   std::unordered_map<std::string, ProjectionTree> type_projection_tree_map;
@@ -881,7 +881,7 @@ TEST_F(ResultRetrieverTest, ProjectionNestedLeafNodeFieldPath) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("sender.name");
   std::unordered_map<std::string, ProjectionTree> type_projection_tree_map;
@@ -994,7 +994,7 @@ TEST_F(ResultRetrieverTest, ProjectionIntermediateNodeFieldPath) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("sender");
   std::unordered_map<std::string, ProjectionTree> type_projection_tree_map;
@@ -1111,7 +1111,7 @@ TEST_F(ResultRetrieverTest, ProjectionMultipleNestedFieldPaths) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("sender.name");
   type_property_mask.add_paths("sender.emailAddress");
@@ -1214,7 +1214,7 @@ TEST_F(ResultRetrieverTest, ProjectionEmptyFieldPath) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   std::unordered_map<std::string, ProjectionTree> type_projection_tree_map;
   type_projection_tree_map.insert(
@@ -1297,7 +1297,7 @@ TEST_F(ResultRetrieverTest, ProjectionInvalidFieldPath) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("nonExistentProperty");
   std::unordered_map<std::string, ProjectionTree> type_projection_tree_map;
@@ -1381,7 +1381,7 @@ TEST_F(ResultRetrieverTest, ProjectionValidAndInvalidFieldPath) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("name");
   type_property_mask.add_paths("nonExistentProperty");
@@ -1469,7 +1469,7 @@ TEST_F(ResultRetrieverTest, ProjectionMultipleTypesNoWildcards) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask type_property_mask;
+  TypePropertyMask type_property_mask;
   type_property_mask.set_schema_type("Email");
   type_property_mask.add_paths("name");
   std::unordered_map<std::string, ProjectionTree> type_projection_tree_map;
@@ -1558,7 +1558,7 @@ TEST_F(ResultRetrieverTest, ProjectionMultipleTypesWildcard) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask wildcard_type_property_mask;
+  TypePropertyMask wildcard_type_property_mask;
   wildcard_type_property_mask.set_schema_type(
       std::string(ProjectionTree::kSchemaTypeWildcard));
   wildcard_type_property_mask.add_paths("name");
@@ -1648,10 +1648,10 @@ TEST_F(ResultRetrieverTest, ProjectionMultipleTypesWildcardWithOneOverride) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask email_type_property_mask;
+  TypePropertyMask email_type_property_mask;
   email_type_property_mask.set_schema_type("Email");
   email_type_property_mask.add_paths("body");
-  ResultSpecProto::TypePropertyMask wildcard_type_property_mask;
+  TypePropertyMask wildcard_type_property_mask;
   wildcard_type_property_mask.set_schema_type(
       std::string(ProjectionTree::kSchemaTypeWildcard));
   wildcard_type_property_mask.add_paths("name");
@@ -1752,10 +1752,10 @@ TEST_F(ResultRetrieverTest, ProjectionSingleTypesWildcardAndOverride) {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask email_type_property_mask;
+  TypePropertyMask email_type_property_mask;
   email_type_property_mask.set_schema_type("Email");
   email_type_property_mask.add_paths("sender.name");
-  ResultSpecProto::TypePropertyMask wildcard_type_property_mask;
+  TypePropertyMask wildcard_type_property_mask;
   wildcard_type_property_mask.set_schema_type(
       std::string(ProjectionTree::kSchemaTypeWildcard));
   wildcard_type_property_mask.add_paths("name");
@@ -1861,10 +1861,10 @@ TEST_F(ResultRetrieverTest,
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
 
-  ResultSpecProto::TypePropertyMask email_type_property_mask;
+  TypePropertyMask email_type_property_mask;
   email_type_property_mask.set_schema_type("Email");
   email_type_property_mask.add_paths("sender.name");
-  ResultSpecProto::TypePropertyMask wildcard_type_property_mask;
+  TypePropertyMask wildcard_type_property_mask;
   wildcard_type_property_mask.set_schema_type(
       std::string(ProjectionTree::kSchemaTypeWildcard));
   wildcard_type_property_mask.add_paths("sender");

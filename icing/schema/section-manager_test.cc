@@ -186,60 +186,64 @@ TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
                HasSubstr("Too many properties")));
 }
 
-TEST_F(SectionManagerTest, GetSectionContent) {
+TEST_F(SectionManagerTest, GetStringSectionContent) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto section_manager,
       SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Test simple section paths
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "subject"),
-              IsOkAndHolds(ElementsAre("the subject")));
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "text"),
+  EXPECT_THAT(
+      section_manager->GetStringSectionContent(email_document_,
+                                               /*section_path*/ "subject"),
+      IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
+                                                       /*section_path*/ "text"),
               IsOkAndHolds(ElementsAre("the text")));
 
   // Test repeated values, they are joined into one string
-  ICING_ASSERT_OK_AND_ASSIGN(auto content, section_manager->GetSectionContent(
-                                               email_document_,
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto content,
+      section_manager->GetStringSectionContent(email_document_,
                                                /*section_path*/ "recipients"));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3"));
 
   // Test concatenated section paths: "property1.property2"
-  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetSectionContent(
+  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetStringSectionContent(
                                           conversation_document_,
                                           /*section_path*/ "emails.subject"));
   EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetSectionContent(
+  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetStringSectionContent(
                                           conversation_document_,
                                           /*section_path*/ "emails.text"));
   EXPECT_THAT(content, ElementsAre("the text", "the text"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      content,
-      section_manager->GetSectionContent(conversation_document_,
-                                         /*section_path*/ "emails.recipients"));
+  ICING_ASSERT_OK_AND_ASSIGN(content,
+                             section_manager->GetStringSectionContent(
+                                 conversation_document_,
+                                 /*section_path*/ "emails.recipients"));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3",
                                    "recipient1", "recipient2", "recipient3"));
 
   // Test non-existing paths
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "name"),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "invalid"),
+  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
+                                                       /*section_path*/ "name"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(
-      section_manager->GetSectionContent(conversation_document_,
-                                         /*section_path*/ "emails.invalid"),
+      section_manager->GetStringSectionContent(email_document_,
+                                               /*section_path*/ "invalid"),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetStringSectionContent(
+                  conversation_document_,
+                  /*section_path*/ "emails.invalid"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // Test other data types
   // BYTES type can't be indexed, so content won't be returned
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "attachment"),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      section_manager->GetStringSectionContent(email_document_,
+                                               /*section_path*/ "attachment"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // The following tests are similar to the ones above but use section ids
   // instead of section paths
@@ -249,16 +253,16 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   SectionId subject_section_id = 1;
   SectionId invalid_email_section_id = 2;
   ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(email_document_,
-                                                  recipients_section_id));
+      content, section_manager->GetStringSectionContent(email_document_,
+                                                        recipients_section_id));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3"));
 
-  EXPECT_THAT(
-      section_manager->GetSectionContent(email_document_, subject_section_id),
-      IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
+                                                       subject_section_id),
+              IsOkAndHolds(ElementsAre("the subject")));
 
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 invalid_email_section_id),
+  EXPECT_THAT(section_manager->GetStringSectionContent(
+                  email_document_, invalid_email_section_id),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Conversation (section id -> section path):
@@ -270,21 +274,21 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   SectionId name_section_id = 2;
   SectionId invalid_conversation_section_id = 3;
   ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(
+      content, section_manager->GetStringSectionContent(
                    conversation_document_, emails_recipients_section_id));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3",
                                    "recipient1", "recipient2", "recipient3"));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(conversation_document_,
-                                                  emails_subject_section_id));
+      content, section_manager->GetStringSectionContent(
+                   conversation_document_, emails_subject_section_id));
   EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
 
-  EXPECT_THAT(section_manager->GetSectionContent(conversation_document_,
-                                                 name_section_id),
+  EXPECT_THAT(section_manager->GetStringSectionContent(conversation_document_,
+                                                       name_section_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  EXPECT_THAT(section_manager->GetSectionContent(
+  EXPECT_THAT(section_manager->GetStringSectionContent(
                   conversation_document_, invalid_conversation_section_id),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }

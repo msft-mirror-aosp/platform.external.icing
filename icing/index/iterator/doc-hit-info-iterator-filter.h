@@ -67,6 +67,11 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
+  }
+
  private:
   std::unique_ptr<DocHitInfoIterator> delegate_;
   const DocumentStore& document_store_;
