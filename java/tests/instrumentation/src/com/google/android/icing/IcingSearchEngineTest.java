@@ -18,12 +18,14 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
+import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
+import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
@@ -116,7 +118,7 @@ public final class IcingSearchEngineTest {
 
   @After
   public void tearDown() throws Exception {
-    icingSearchEngine.destroy();
+    icingSearchEngine.close();
   }
 
   @Test
@@ -162,7 +164,8 @@ public final class IcingSearchEngineTest {
     PutResultProto putResultProto = icingSearchEngine.put(emailDocument);
     assertStatusOk(putResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertStatusOk(getResultProto.getStatus());
     assertThat(getResultProto.getDocument()).isEqualTo(emailDocument);
   }
@@ -280,7 +283,8 @@ public final class IcingSearchEngineTest {
     DeleteResultProto deleteResultProto = icingSearchEngine.delete("namespace", "uri");
     assertStatusOk(deleteResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
@@ -304,7 +308,8 @@ public final class IcingSearchEngineTest {
         icingSearchEngine.deleteByNamespace("namespace");
     assertStatusOk(deleteByNamespaceResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
@@ -328,7 +333,8 @@ public final class IcingSearchEngineTest {
         icingSearchEngine.deleteBySchemaType(EMAIL_TYPE);
     assertStatusOk(deleteBySchemaTypeResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
@@ -373,12 +379,14 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
 
-    DeleteResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
+    DeleteByQueryResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
     assertStatusOk(deleteResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri1");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
-    getResultProto = icingSearchEngine.get("namespace", "uri2");
+    getResultProto =
+        icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
     assertStatusOk(getResultProto.getStatus());
   }
 

@@ -107,6 +107,21 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
   // already.
   std::unordered_set<std::string_view> known_property_names;
 
+  // Tracks which schemas reference other schemas. This is used to detect
+  // infinite loops between indexed schema references (e.g. A -> B -> C -> A).
+  // We could get into an infinite loop while trying to assign section ids.
+  //
+  // The key is the "child" schema that is being referenced within another
+  // schema.
+  // The value is a set of all the direct/indirect "parent" schemas that
+  // reference the "child" schema.
+  //
+  // For example, if A has a nested document property of type B, then A is the
+  // "parent" and B is the "child" and so schema_references will contain
+  // schema_references[B] == {A}.
+  std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
+      schema_references;
+
   for (const auto& type_config : schema.types()) {
     std::string_view schema_type(type_config.schema_type());
     ICING_RETURN_IF_ERROR(ValidateSchemaType(schema_type));
@@ -120,6 +135,7 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
 
     // We only care about properties being unique within one type_config
     known_property_names.clear();
+
     for (const auto& property_config : type_config.properties()) {
       std::string_view property_name(property_config.property_name());
       ICING_RETURN_IF_ERROR(ValidatePropertyName(property_name, schema_type));
@@ -149,10 +165,55 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
                                  schema_type, ".", property_name, "'"));
         }
 
+        if (property_schema_type == schema_type) {
+          // The schema refers to itself. This also causes a infinite loop.
+          //
+          // TODO(b/171996137): When clients can opt out of indexing document
+          // properties, then we don't need to do this if the document property
+          // isn't indexed. We only care about infinite loops while we're trying
+          // to assign section ids for indexing.
+          return absl_ports::InvalidArgumentError(
+              absl_ports::StrCat("Infinite loop detected in type configs. '",
+                                 schema_type, "' references itself."));
+        }
+
         // Need to make sure we eventually see/validate this schema_type
         if (known_schema_types.count(property_schema_type) == 0) {
           unknown_schema_types.insert(property_schema_type);
         }
+
+        // Start tracking the parent schemas that references this nested schema
+        // for infinite loop detection.
+        //
+        // TODO(b/171996137): When clients can opt out of indexing document
+        // properties, then we don't need to do this if the document property
+        // isn't indexed. We only care about infinite loops while we're trying
+        // to assign section ids for indexing.
+        std::unordered_set<std::string_view> parent_schemas;
+        parent_schemas.insert(schema_type);
+
+        for (const auto& parent : parent_schemas) {
+          // Check for any indirect parents
+          auto indirect_parents_iter = schema_references.find(parent);
+          if (indirect_parents_iter == schema_references.end()) {
+            continue;
+          }
+
+          // Our "parent" schema has parents as well. They're our indirect
+          // parents now.
+          for (const std::string_view& indirect_parent :
+               indirect_parents_iter->second) {
+            if (indirect_parent == property_schema_type) {
+              // We're our own indirect parent! Infinite loop found.
+              return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+                  "Infinite loop detected in type configs. '",
+                  property_schema_type, "' references itself."));
+            }
+            parent_schemas.insert(indirect_parent);
+          }
+        }
+
+        schema_references.insert({property_schema_type, parent_schemas});
       }
 
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
@@ -166,7 +227,7 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
     }
   }
 
-  // An Document property claimed to be of a schema_type that we never
+  // A Document property claimed to be of a schema_type that we never
   // saw/validated
   if (!unknown_schema_types.empty()) {
     return absl_ports::UnknownError(

@@ -32,12 +32,13 @@ DocumentValidator::DocumentValidator(const SchemaStore* schema_store)
     : schema_store_(schema_store) {}
 
 libtextclassifier3::Status DocumentValidator::Validate(
-    const DocumentProto& document) {
+    const DocumentProto& document, int depth) {
   if (document.namespace_().empty()) {
     return absl_ports::InvalidArgumentError("Field 'namespace' is empty.");
   }
 
-  if (document.uri().empty()) {
+  // Only require a non-empty uri on top-level documents.
+  if (depth == 0 && document.uri().empty()) {
     return absl_ports::InvalidArgumentError("Field 'uri' is empty.");
   }
 
@@ -96,7 +97,8 @@ libtextclassifier3::Status DocumentValidator::Validate(
     if (property_iter == parsed_property_configs.property_config_map.end()) {
       return absl_ports::NotFoundError(absl_ports::StrCat(
           "Property config '", property.name(), "' not found for key: (",
-          document.namespace_(), ", ", document.uri(), ")."));
+          document.namespace_(), ", ", document.uri(),
+          ") of type: ", document.schema(), "."));
     }
     const PropertyConfigProto& property_config = *property_iter->second;
 
@@ -159,7 +161,7 @@ libtextclassifier3::Status DocumentValidator::Validate(
               nested_document.schema(), "' for key: (", document.namespace_(),
               ", ", document.uri(), ")."));
         }
-        ICING_RETURN_IF_ERROR(Validate(nested_document));
+        ICING_RETURN_IF_ERROR(Validate(nested_document, depth + 1));
       }
     }
   }

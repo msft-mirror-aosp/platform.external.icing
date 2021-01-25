@@ -148,6 +148,15 @@ class UsageStore {
   //   INTERNAL_ERROR if the internal state is inconsistent
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
 
+  // Returns the file size of the all the elements held in the UsageStore. File
+  // size is in bytes. This excludes the size of any internal metadata, e.g. any
+  // internal headers.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
+
   // Resizes the storage so that only the usage scores of and before
   // last_document_id are stored.
   //
