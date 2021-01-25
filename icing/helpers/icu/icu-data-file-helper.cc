@@ -49,8 +49,6 @@ libtextclassifier3::Status SetUpICUDataFile(
     return absl_ports::InternalError("Unable to open file at provided path");
   }
 
-  // TODO(samzheng): figure out why icing::MemoryMappedFile causes
-  // segmentation fault here.
   const void* data =
       mmap(nullptr, file_size, PROT_READ, MAP_PRIVATE, fd.get(), 0);
 

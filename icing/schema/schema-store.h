@@ -34,6 +34,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -114,7 +115,7 @@ class SchemaStore {
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      NativeInitializeStats* initialize_stats = nullptr);
+      const Clock* clock, NativeInitializeStats* initialize_stats = nullptr);
 
   // Not copyable
   SchemaStore(const SchemaStore&) = delete;
@@ -179,8 +180,9 @@ class SchemaStore {
   //     1. Property is optional and not found in the document
   //     2. section_path is invalid
   //     3. Content is empty
-  libtextclassifier3::StatusOr<std::vector<std::string>> GetSectionContent(
-      const DocumentProto& document, std::string_view section_path) const;
+  libtextclassifier3::StatusOr<std::vector<std::string_view>>
+  GetStringSectionContent(const DocumentProto& document,
+                          std::string_view section_path) const;
 
   // Finds content of a section by id
   //
@@ -188,8 +190,9 @@ class SchemaStore {
   //   A string of content on success
   //   INVALID_ARGUMENT if section id is invalid
   //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<std::vector<std::string>> GetSectionContent(
-      const DocumentProto& document, SectionId section_id) const;
+  libtextclassifier3::StatusOr<std::vector<std::string_view>>
+  GetStringSectionContent(const DocumentProto& document,
+                          SectionId section_id) const;
 
   // Returns the SectionMetadata associated with the SectionId that's in the
   // SchemaTypeId.
@@ -227,7 +230,8 @@ class SchemaStore {
 
  private:
   // Use SchemaStore::Create instead.
-  explicit SchemaStore(const Filesystem* filesystem, std::string base_dir);
+  explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,
+                       const Clock* clock);
 
   // Handles initializing the SchemaStore and regenerating any data if needed.
   //
@@ -273,6 +277,7 @@ class SchemaStore {
 
   const Filesystem& filesystem_;
   const std::string base_dir_;
+  const Clock& clock_;
 
   // Used internally to indicate whether the class has been initialized. This is
   // to guard against cases where the object has been created, but Initialize

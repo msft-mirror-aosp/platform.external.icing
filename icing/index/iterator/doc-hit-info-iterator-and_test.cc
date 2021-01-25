@@ -32,8 +32,10 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+using ::testing::SizeIs;
 
 TEST(CreateAndIteratorTest, And) {
   // Basic test that we can create a working And iterator. Further testing of
@@ -196,6 +198,125 @@ TEST(DocHitInfoIteratorAndTest, SectionIdMask) {
   EXPECT_THAT(and_iter.hit_intersect_section_ids_mask(), Eq(mask_anded_result));
 }
 
+TEST(DocHitInfoIteratorAndTest, PopulateMatchedTermsStats) {
+  {
+    // Arbitrary section ids for the documents in the DocHitInfoIterators.
+    // Created to test correct section_id_mask behavior.
+    SectionIdMask section_id_mask1 = 0b01010101;  // hits in sections 0, 2, 4, 6
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1{
+        1, 0, 2, 0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0};
+    SectionIdMask section_id_mask2 = 0b00000110;  // hits in sections 1, 2
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies2{
+        0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    DocHitInfo doc_hit_info1 = DocHitInfo(4);
+    doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
+    doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
+    doc_hit_info1.UpdateSection(/*section_id=*/4, /*hit_term_frequency=*/3);
+    doc_hit_info1.UpdateSection(/*section_id=*/6, /*hit_term_frequency=*/4);
+
+    DocHitInfo doc_hit_info2 = DocHitInfo(4);
+    doc_hit_info2.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/2);
+    doc_hit_info2.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/6);
+
+    std::vector<DocHitInfo> first_vector = {doc_hit_info1};
+    std::vector<DocHitInfo> second_vector = {doc_hit_info2};
+
+    auto first_iter =
+        std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
+    first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
+
+    auto second_iter =
+        std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hello");
+    second_iter->set_hit_intersect_section_ids_mask(section_id_mask2);
+
+    DocHitInfoIteratorAnd and_iter(std::move(first_iter),
+                                   std::move(second_iter));
+    std::vector<TermMatchInfo> matched_terms_stats;
+    and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+    EXPECT_THAT(matched_terms_stats, IsEmpty());
+
+    ICING_EXPECT_OK(and_iter.Advance());
+    EXPECT_THAT(and_iter.doc_hit_info().document_id(), Eq(4));
+
+    and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
+    EXPECT_EQ(matched_terms_stats.at(0).term, "hi");
+    EXPECT_EQ(matched_terms_stats.at(1).term, "hello");
+    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
+                ElementsAreArray(term_frequencies1));
+    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask1);
+    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
+                ElementsAreArray(term_frequencies2));
+    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask2);
+
+    EXPECT_FALSE(and_iter.Advance().ok());
+  }
+  {
+    // Arbitrary section ids for the documents in the DocHitInfoIterators.
+    // Created to test correct section_id_mask behavior.
+    SectionIdMask section_id_mask1 = 0b00000101;  // hits in sections 0, 2
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1{
+        1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    DocHitInfo doc_hit_info1 = DocHitInfo(4);
+    doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
+    doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
+
+    std::vector<DocHitInfo> first_vector = {doc_hit_info1};
+    std::vector<DocHitInfo> second_vector = {doc_hit_info1};
+
+    auto first_iter =
+        std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
+    first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
+
+    auto second_iter =
+        std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hi");
+    second_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
+
+    DocHitInfoIteratorAnd and_iter(std::move(first_iter),
+                                   std::move(second_iter));
+    std::vector<TermMatchInfo> matched_terms_stats;
+    and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+    EXPECT_THAT(matched_terms_stats, IsEmpty());
+
+    ICING_EXPECT_OK(and_iter.Advance());
+    EXPECT_THAT(and_iter.doc_hit_info().document_id(), Eq(4));
+
+    and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
+    EXPECT_EQ(matched_terms_stats.at(0).term, "hi");
+    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
+                ElementsAreArray(term_frequencies1));
+    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask1);
+
+    EXPECT_FALSE(and_iter.Advance().ok());
+  }
+}
+
+TEST(DocHitInfoIteratorAndTest, PopulateMatchedTermsStats_NoMatchingDocument) {
+  DocHitInfo doc_hit_info1 = DocHitInfo(4);
+  doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
+
+  DocHitInfo doc_hit_info2 = DocHitInfo(5);
+  doc_hit_info2.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/2);
+  doc_hit_info2.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/6);
+
+  std::vector<DocHitInfo> first_vector = {doc_hit_info1};
+  std::vector<DocHitInfo> second_vector = {doc_hit_info2};
+
+  auto first_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
+  auto second_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hello");
+
+  DocHitInfoIteratorAnd and_iter(std::move(first_iter), std::move(second_iter));
+  std::vector<TermMatchInfo> matched_terms_stats;
+  and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
+  EXPECT_FALSE(and_iter.Advance().ok());
+}
+
 TEST(DocHitInfoIteratorAndNaryTest, Initialize) {
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>());
@@ -343,6 +464,90 @@ TEST(DocHitInfoIteratorAndNaryTest, SectionIdMask) {
   EXPECT_THAT(and_iter.doc_hit_info().hit_section_ids_mask(),
               Eq(mask_ored_result));
   EXPECT_THAT(and_iter.hit_intersect_section_ids_mask(), Eq(mask_anded_result));
+}
+
+TEST(DocHitInfoIteratorAndNaryTest, PopulateMatchedTermsStats) {
+  // Arbitrary section ids/term frequencies for the documents in the
+  // DocHitInfoIterators.
+  // For term "hi", document 10 and 8
+  SectionIdMask section_id_mask1_hi = 0b01000101;  // hits in sections 0, 2, 6
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1_hi{
+      1, 0, 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info1_hi = DocHitInfo(10);
+  doc_hit_info1_hi.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
+  doc_hit_info1_hi.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
+  doc_hit_info1_hi.UpdateSection(/*section_id=*/6, /*hit_term_frequency=*/4);
+
+  DocHitInfo doc_hit_info2_hi = DocHitInfo(8);
+  doc_hit_info2_hi.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/2);
+  doc_hit_info2_hi.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/6);
+
+  // For term "hello", document 10 and 9
+  SectionIdMask section_id_mask1_hello = 0b00001001;  // hits in sections 0, 3
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1_hello{
+      2, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info1_hello = DocHitInfo(10);
+  doc_hit_info1_hello.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/2);
+  doc_hit_info1_hello.UpdateSection(/*section_id=*/3, /*hit_term_frequency=*/3);
+
+  DocHitInfo doc_hit_info2_hello = DocHitInfo(9);
+  doc_hit_info2_hello.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/3);
+  doc_hit_info2_hello.UpdateSection(/*section_id=*/3, /*hit_term_frequency=*/2);
+
+  // For term "ciao", document 10 and 9
+  SectionIdMask section_id_mask1_ciao = 0b00000011;  // hits in sections 0, 1
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1_ciao{
+      2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info1_ciao = DocHitInfo(10);
+  doc_hit_info1_ciao.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/2);
+  doc_hit_info1_ciao.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/3);
+
+  DocHitInfo doc_hit_info2_ciao = DocHitInfo(9);
+  doc_hit_info2_ciao.UpdateSection(/*section_id=*/3, /*hit_term_frequency=*/3);
+  doc_hit_info2_ciao.UpdateSection(/*section_id=*/4, /*hit_term_frequency=*/2);
+
+  std::vector<DocHitInfo> first_vector = {doc_hit_info1_hi, doc_hit_info2_hi};
+  std::vector<DocHitInfo> second_vector = {doc_hit_info1_hello,
+                                           doc_hit_info2_hello};
+  std::vector<DocHitInfo> third_vector = {doc_hit_info1_ciao,
+                                          doc_hit_info2_ciao};
+
+  auto first_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
+  auto second_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hello");
+  auto third_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(third_vector, "ciao");
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::move(first_iter));
+  iterators.push_back(std::move(second_iter));
+  iterators.push_back(std::move(third_iter));
+
+  DocHitInfoIteratorAndNary and_iter(std::move(iterators));
+  std::vector<TermMatchInfo> matched_terms_stats;
+  and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
+
+  ICING_EXPECT_OK(and_iter.Advance());
+  EXPECT_THAT(and_iter.doc_hit_info().document_id(), Eq(10));
+
+  and_iter.PopulateMatchedTermsStats(&matched_terms_stats);
+  ASSERT_THAT(matched_terms_stats, SizeIs(3));  // 3 terms
+  EXPECT_EQ(matched_terms_stats.at(0).term, "hi");
+  EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
+              ElementsAreArray(term_frequencies1_hi));
+  EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask1_hi);
+  EXPECT_EQ(matched_terms_stats.at(1).term, "hello");
+  EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
+              ElementsAreArray(term_frequencies1_hello));
+  EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask1_hello);
+  EXPECT_EQ(matched_terms_stats.at(2).term, "ciao");
+  EXPECT_THAT(matched_terms_stats.at(2).term_frequencies,
+              ElementsAreArray(term_frequencies1_ciao));
+  EXPECT_EQ(matched_terms_stats.at(2).section_ids_mask, section_id_mask1_ciao);
+
+  EXPECT_FALSE(and_iter.Advance().ok());
 }
 
 }  // namespace

@@ -29,6 +29,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::HasSubstr;
 
 // Properties/fields in a schema type
 constexpr char kEmailType[] = "EmailMessage";
@@ -84,7 +85,7 @@ class SchemaUtilTest : public ::testing::Test {
   }
 };
 
-TEST_F(SchemaUtilTest, Valid_Empty) {
+TEST_F(SchemaUtilTest, EmptySchemaProtoIsValid) {
   ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
@@ -98,7 +99,7 @@ TEST_F(SchemaUtilTest, Valid_Nested) {
   ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
-TEST_F(SchemaUtilTest, Valid_ClearedPropertyConfigs) {
+TEST_F(SchemaUtilTest, ClearedPropertyConfigsIsValid) {
   // No property fields is technically ok, but probably not realistic.
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
@@ -107,7 +108,7 @@ TEST_F(SchemaUtilTest, Valid_ClearedPropertyConfigs) {
   ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
-TEST_F(SchemaUtilTest, Invalid_ClearedSchemaType) {
+TEST_F(SchemaUtilTest, ClearedSchemaTypeIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
   type->clear_schema_type();
@@ -116,7 +117,7 @@ TEST_F(SchemaUtilTest, Invalid_ClearedSchemaType) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_EmptySchemaType) {
+TEST_F(SchemaUtilTest, EmptySchemaTypeIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
   type->set_schema_type("");
@@ -133,7 +134,7 @@ TEST_F(SchemaUtilTest, AnySchemaTypeOk) {
   ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
-TEST_F(SchemaUtilTest, Invalid_ClearedPropertyName) {
+TEST_F(SchemaUtilTest, ClearedPropertyNameIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -146,7 +147,7 @@ TEST_F(SchemaUtilTest, Invalid_ClearedPropertyName) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_EmptyPropertyName) {
+TEST_F(SchemaUtilTest, EmptyPropertyNameIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -184,7 +185,7 @@ TEST_F(SchemaUtilTest, AlphanumericPropertyNameOk) {
   ICING_ASSERT_OK(SchemaUtil::Validate(schema_proto_));
 }
 
-TEST_F(SchemaUtilTest, Invalid_DuplicatePropertyName) {
+TEST_F(SchemaUtilTest, DuplicatePropertyNameIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -202,7 +203,7 @@ TEST_F(SchemaUtilTest, Invalid_DuplicatePropertyName) {
               StatusIs(libtextclassifier3::StatusCode::ALREADY_EXISTS));
 }
 
-TEST_F(SchemaUtilTest, Invalid_ClearedDataType) {
+TEST_F(SchemaUtilTest, ClearedDataTypeIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -215,7 +216,7 @@ TEST_F(SchemaUtilTest, Invalid_ClearedDataType) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_UnknownDataType) {
+TEST_F(SchemaUtilTest, UnknownDataTypeIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -228,7 +229,7 @@ TEST_F(SchemaUtilTest, Invalid_UnknownDataType) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_ClearedCardinality) {
+TEST_F(SchemaUtilTest, ClearedCardinalityIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -241,7 +242,7 @@ TEST_F(SchemaUtilTest, Invalid_ClearedCardinality) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_UnknownCardinality) {
+TEST_F(SchemaUtilTest, UnknownCardinalityIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -254,7 +255,7 @@ TEST_F(SchemaUtilTest, Invalid_UnknownCardinality) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_ClearedPropertySchemaType) {
+TEST_F(SchemaUtilTest, ClearedPropertySchemaTypeIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -282,7 +283,7 @@ TEST_F(SchemaUtilTest, Invalid_EmptyPropertySchemaType) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(SchemaUtilTest, Invalid_NoMatchingSchemaType) {
+TEST_F(SchemaUtilTest, NoMatchingSchemaTypeIsInvalid) {
   auto type = schema_proto_.add_types();
   *type = CreateSchemaTypeConfig(kEmailType);
 
@@ -293,7 +294,8 @@ TEST_F(SchemaUtilTest, Invalid_NoMatchingSchemaType) {
   property->set_schema_type("NewSchemaType");
 
   ASSERT_THAT(SchemaUtil::Validate(schema_proto_),
-              StatusIs(libtextclassifier3::StatusCode::UNKNOWN));
+              StatusIs(libtextclassifier3::StatusCode::UNKNOWN,
+                       HasSubstr("Undefined 'schema_type'")));
 }
 
 TEST_F(SchemaUtilTest, NewOptionalPropertyIsCompatible) {
@@ -616,6 +618,153 @@ TEST_F(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
   prop->mutable_string_indexing_config()->set_tokenizer_type(
       StringIndexingConfig::TokenizerType::PLAIN);
   EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST_F(SchemaUtilTest, MultipleReferencesToSameNestedSchemaOk) {
+  SchemaProto schema;
+
+  // Create a parent schema
+  auto type = schema.add_types();
+  type->set_schema_type("ParentSchema");
+
+  // Create multiple references to the same child schema
+  auto property = type->add_properties();
+  property->set_property_name("ChildProperty1");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("ChildSchema");
+  property->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
+
+  property = type->add_properties();
+  property->set_property_name("ChildProperty2");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("ChildSchema");
+  property->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
+
+  // Create a child schema
+  type = schema.add_types();
+  type->set_schema_type("ChildSchema");
+
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST_F(SchemaUtilTest, InvalidSelfReference) {
+  SchemaProto schema;
+
+  // Create a schema with a self-reference cycle in it: OwnSchema -> OwnSchema
+  auto type = schema.add_types();
+  type->set_schema_type("OwnSchema");
+
+  // Reference a child schema, so far so good
+  auto property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("OwnSchema");
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("Infinite loop")));
+}
+
+TEST_F(SchemaUtilTest, InvalidSelfReferenceEvenWithOtherProperties) {
+  SchemaProto schema;
+
+  // Create a schema with a self-reference cycle in it: OwnSchema -> OwnSchema
+  auto type = schema.add_types();
+  type->set_schema_type("OwnSchema");
+
+  // Reference a child schema, so far so good
+  auto property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("OwnSchema");
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  property = type->add_properties();
+  property->set_property_name("SomeString");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  property->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
+
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("Infinite loop")));
+}
+
+TEST_F(SchemaUtilTest, InvalidInfiniteLoopTwoDegrees) {
+  SchemaProto schema;
+
+  // Create a schema for the parent schema
+  auto type = schema.add_types();
+  type->set_schema_type("A");
+
+  // Reference schema B, so far so good
+  auto property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("B");
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  // Create the child schema
+  type = schema.add_types();
+  type->set_schema_type("B");
+
+  // Reference the schema A, causing an infinite loop of references.
+  property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("A");
+  property->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
+
+  // Two degrees of referencing: A -> B -> A
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("Infinite loop")));
+}
+
+TEST_F(SchemaUtilTest, InvalidInfiniteLoopThreeDegrees) {
+  SchemaProto schema;
+
+  // Create a schema for the parent schema
+  auto type = schema.add_types();
+  type->set_schema_type("A");
+
+  // Reference schema B , so far so good
+  auto property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("B");
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  // Create the child schema
+  type = schema.add_types();
+  type->set_schema_type("B");
+
+  // Reference schema C, so far so good
+  property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("C");
+  property->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
+
+  // Create the child schema
+  type = schema.add_types();
+  type->set_schema_type("C");
+
+  // Reference schema A, no good
+  property = type->add_properties();
+  property->set_property_name("NestedDocument");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_schema_type("A");
+  property->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
+
+  // Three degrees of referencing: A -> B -> C -> A
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("Infinite loop")));
 }
 
 }  // namespace

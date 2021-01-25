@@ -17,6 +17,7 @@ syntax = "proto2";
 package icing.lib;
 
 import "icing/proto/document.proto";
+import "icing/proto/logging.proto";
 import "icing/proto/status.proto";
 import "icing/proto/term.proto";
 
@@ -64,7 +65,7 @@ message SearchSpecProto {
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 4
+// Next tag: 5
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -96,6 +97,11 @@ message ResultSpecProto {
     optional int32 max_window_bytes = 3;
   }
   optional SnippetSpecProto snippet_spec = 3;
+
+  // How to specify a subset of properties to retrieve. If no type property mask
+  // has been specified for a schema type, then *all* properties of that schema
+  // type will be retrieved.
+  repeated TypePropertyMask type_property_masks = 4;
 }
 
 // The representation of a single match within a DocumentProto property.
@@ -145,7 +151,7 @@ message SnippetProto {
 }
 
 // Icing lib-supplied results from a search results.
-// Next tag: 5
+// Next tag: 6
 message SearchResultProto {
   // Status code can be one of:
   //   OK
@@ -173,19 +179,14 @@ message SearchResultProto {
   repeated ResultProto results = 2;
 
   // Various debug fields. Not populated if ResultSpecProto.debug_info = false.
+  // Next tag: 4
   message DebugInfoProto {
-    // The number of results that actually matched the SearchSpecProto. This is
-    // different from the number of `documents` returned since the user can
-    // set a ResultSpecProto.limit on how many results are returned to them.
-    optional uint64 num_results = 1;
-
-    // Latency to parse and execute the query, in milliseconds.
-    optional uint64 latency_ms = 2;
-
     // The internal representation of the actual query string that was executed.
     // This may be different from the SearchSpecProto.query if the original
     // query was malformed.
     optional string executed_query = 3;
+
+    reserved 1, 2;
   }
   optional DebugInfoProto debug_info = 3;
 
@@ -195,4 +196,30 @@ message SearchResultProto {
   // LINT.IfChange(next_page_token)
   optional uint64 next_page_token = 4;
   // LINT.ThenChange(//depot/google3/icing/result/result-state-manager.h:kInvalidNextPageToken)
+
+  // Stats for query execution performance.
+  optional NativeQueryStats query_stats = 5;
+}
+
+// Next tag: 3
+message TypePropertyMask {
+  // The schema type to which these property masks should apply.
+  // If the schema type is the wildcard ("*"), then the type property masks
+  // will apply to all results of types that don't have their own, specific
+  // type property mask entry.
+  optional string schema_type = 1;
+
+  // The property masks specifying the property to be retrieved. Property
+  // masks must be composed only of property names, property separators (the
+  // '.' character). For example, "subject", "recipients.name". Specifying no
+  // property masks will result in *no* properties being retrieved.
+  repeated string paths = 2;
+}
+
+// Next tag: 2
+message GetResultSpecProto {
+  // How to specify a subset of properties to retrieve. If no type property mask
+  // has been specified for a schema type, then *all* properties of that schema
+  // type will be retrieved.
+  repeated TypePropertyMask type_property_masks = 1;
 }
