@@ -16,17 +16,17 @@
 
 package androidx.appsearch.smoketest;
 
-import androidx.appsearch.annotation.AppSearchDocument;
-import androidx.appsearch.app.AppSearchSchema.PropertyConfig;
+import androidx.appsearch.annotation.Document;
+import androidx.appsearch.app.AppSearchSchema.StringPropertyConfig;
 
-@AppSearchDocument
-public class TestDataClass {
-    @AppSearchDocument.Uri private final String uri;
+@Document
+public class TestDocument {
+    @Document.Uri private final String uri;
 
-    @AppSearchDocument.Property(indexingType = PropertyConfig.INDEXING_TYPE_PREFIXES)
+    @Document.Property(indexingType = StringPropertyConfig.INDEXING_TYPE_PREFIXES)
     private final String body;
 
-    TestDataClass(String uri, String body) {
+    TestDocument(String uri, String body) {
         this.uri = uri;
         this.body = body;
     }
