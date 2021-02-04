@@ -22,6 +22,7 @@ import static org.junit.Assert.assertEquals;
 
 import androidx.appsearch.app.AppSearchSchema;
 import androidx.appsearch.app.AppSearchSchema.PropertyConfig;
+import androidx.appsearch.app.AppSearchSchema.StringPropertyConfig;
 import androidx.appsearch.app.AppSearchSession;
 import androidx.appsearch.app.PutDocumentsRequest;
 import androidx.appsearch.app.SearchResult;
@@ -59,29 +60,32 @@ public class AppSearchSmokeTest {
         AppSearchSchema schema =
                 new AppSearchSchema.Builder("testType")
                         .addProperty(
-                                new PropertyConfig.Builder("prop")
-                                        .setDataType(PropertyConfig.DATA_TYPE_STRING)
+                                new StringPropertyConfig.Builder("prop")
                                         .setCardinality(PropertyConfig.CARDINALITY_OPTIONAL)
-                                        .setIndexingType(PropertyConfig.INDEXING_TYPE_PREFIXES)
-                                        .setTokenizerType(PropertyConfig.TOKENIZER_TYPE_PLAIN)
+                                        .setIndexingType(
+                                                StringPropertyConfig.INDEXING_TYPE_PREFIXES)
+                                        .setTokenizerType(StringPropertyConfig.TOKENIZER_TYPE_PLAIN)
                                         .build())
                         .build();
-        appSearch.setSchema(new SetSchemaRequest.Builder().addSchema(schema).build()).get();
+        appSearch.setSchema(new SetSchemaRequest.Builder().addSchemas(schema).build()).get();
     }
 
     @Test
     public void smokeTestAnnotationProcessor() throws Exception {
         appSearch
-                .setSchema(new SetSchemaRequest.Builder().addDataClass(TestDataClass.class).build())
+                .setSchema(
+                        new SetSchemaRequest.Builder()
+                                .addDocumentClasses(TestDocument.class)
+                                .build())
                 .get();
 
-        TestDataClass input = new TestDataClass("uri1", "avocado");
+        TestDocument input = new TestDocument("uri1", "avocado");
         appSearch
-                .putDocuments(new PutDocumentsRequest.Builder().addDataClass(input).build())
+                .put(new PutDocumentsRequest.Builder().addDocuments(input).build())
                 .get()
                 .checkSuccess();
         SearchResults results =
-                appSearch.query(
+                appSearch.search(
                         "av",
                         new SearchSpec.Builder()
                                 .setTermMatch(SearchSpec.TERM_MATCH_PREFIX)
@@ -93,7 +97,7 @@ public class AppSearchSmokeTest {
 
         assertEquals("uri1", result.getDocument().getUri());
         assertEquals("avocado", result.getDocument().getPropertyString("body"));
-        TestDataClass output = result.getDocument().toDataClass(TestDataClass.class);
+        TestDocument output = result.getDocument().toDataClass(TestDocument.class);
         assertEquals("uri1", output.getUri());
         assertEquals("avocado", output.getBody());
     }
