@@ -24,7 +24,7 @@ option objc_class_prefix = "ICNG";
 // Canonical status to indicate the results of API calls.
 // Next tag: 3
 message StatusProto {
-  // Next tag: 9
+  // Next tag: 10
   enum Code {
     // A default for all other use-cases. Should never be used in practice. This
     // may happen if there are backwards-compatibility issues.
@@ -36,6 +36,9 @@ message StatusProto {
     // The IcingSearchEngine instance is still usable. But the schema and/or
     // documents may need to be re-added to prevent future API calls from
     // failing or returning correct information.
+    //
+    // TODO(b/171750324): split into WARNING_PARTIAL_LOSS and
+    // WARNING_COMPLETE_LOSS.
     WARNING_DATA_LOSS = 2;
 
     // Parameters to API call are invalid and cannot be processed.
@@ -61,6 +64,12 @@ message StatusProto {
     // Out of storage space. Try running Optimize to reclaim internal space, or
     // make some space on the underlying filesystem.
     OUT_OF_SPACE = 8;
+
+    // An operation is invalid because the resource already exists and can't be
+    // replaced. For example, this status is used when a SchemaProto contains
+    // multiple definitions of the same type or multiple properties with the
+    // same name within a type.
+    ALREADY_EXISTS = 9;
 
     // Any future status codes.
   }

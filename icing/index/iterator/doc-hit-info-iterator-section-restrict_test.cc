@@ -64,22 +64,24 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     property->set_property_name(indexed_property_);
     property->set_data_type(PropertyConfigProto::DataType::STRING);
     property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
+    property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
 
     // First and only indexed property, so it gets the first id of 0
     indexed_section_id_ = 0;
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {

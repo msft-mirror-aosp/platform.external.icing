@@ -33,6 +33,8 @@
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -40,6 +42,7 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -56,16 +59,22 @@ class SnippetRetrieverTest : public testing::Test {
     test_dir_ = GetTestTempDir() + "/icing";
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
 
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
-    ICING_ASSERT_OK_AND_ASSIGN(language_segmenter_,
-                               language_segmenter_factory::Create());
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
+
+    language_segmenter_factory::SegmenterOptions options(ULOC_US);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        language_segmenter_,
+        language_segmenter_factory::Create(std::move(options)));
 
     // Setup the schema
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     SchemaProto schema;
     SchemaTypeConfigProto* type_config = schema.add_types();
     type_config->set_schema_type("email");
@@ -73,18 +82,18 @@ class SnippetRetrieverTest : public testing::Test {
     prop_config->set_property_name("subject");
     prop_config->set_data_type(PropertyConfigProto::DataType::STRING);
     prop_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    prop_config->mutable_indexing_config()->set_term_match_type(
+    prop_config->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::PREFIX);
-    prop_config->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    prop_config->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
     prop_config = type_config->add_properties();
     prop_config->set_property_name("body");
     prop_config->set_data_type(PropertyConfigProto::DataType::STRING);
     prop_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    prop_config->mutable_indexing_config()->set_term_match_type(
+    prop_config->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
-    prop_config->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    prop_config->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
@@ -107,6 +116,7 @@ class SnippetRetrieverTest : public testing::Test {
   }
 
   Filesystem filesystem_;
+  FakeClock fake_clock_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SnippetRetriever> snippet_retriever_;

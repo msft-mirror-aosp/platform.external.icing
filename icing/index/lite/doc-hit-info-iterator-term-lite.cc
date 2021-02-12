@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/iterator/doc-hit-info-iterator-term.h"
+#include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
 #include <cstdint>
 
@@ -21,6 +21,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/schema/section.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -40,9 +41,15 @@ std::string SectionIdMaskToString(SectionIdMask section_id_mask) {
 
 }  // namespace
 
-libtextclassifier3::Status DocHitInfoIteratorTerm::Advance() {
+libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
   if (cached_hits_idx_ == -1) {
-    ICING_RETURN_IF_ERROR(RetrieveMoreHits());
+    libtextclassifier3::Status status = RetrieveMoreHits();
+    if (!status.ok()) {
+      ICING_LOG(ERROR) << "Failed to retrieve more hits "
+                       << status.error_message();
+      return absl_ports::ResourceExhaustedError(
+          "No more DocHitInfos in iterator");
+    }
   } else {
     ++cached_hits_idx_;
   }
@@ -59,9 +66,9 @@ libtextclassifier3::Status DocHitInfoIteratorTerm::Advance() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocHitInfoIteratorTermExact::RetrieveMoreHits() {
+libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   // Exact match only. All hits in lite lexicon are exact.
-  ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->FindTerm(term_));
+  ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->GetTermId(term_));
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   lite_index_->AppendHits(term_id, section_restrict_mask_,
@@ -70,12 +77,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermExact::RetrieveMoreHits() {
   return libtextclassifier3::Status::OK;
 }
 
-std::string DocHitInfoIteratorTermExact::ToString() const {
+std::string DocHitInfoIteratorTermLiteExact::ToString() const {
   return absl_ports::StrCat(SectionIdMaskToString(section_restrict_mask_), ":",
                             term_);
 }
 
-libtextclassifier3::Status DocHitInfoIteratorTermPrefix::RetrieveMoreHits() {
+libtextclassifier3::Status
+DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
   // Take union of lite terms.
   int term_len = term_.length();
   int terms_matched = 0;
@@ -97,7 +105,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermPrefix::RetrieveMoreHits() {
   return libtextclassifier3::Status::OK;
 }
 
-void DocHitInfoIteratorTermPrefix::SortAndDedupeDocumentIds() {
+void DocHitInfoIteratorTermLitePrefix::SortAndDedupeDocumentIds() {
   // Re-sort cached document_ids and merge sections.
   sort(cached_hits_.begin(), cached_hits_.end());
 
@@ -116,7 +124,7 @@ void DocHitInfoIteratorTermPrefix::SortAndDedupeDocumentIds() {
   cached_hits_.resize(idx + 1);
 }
 
-std::string DocHitInfoIteratorTermPrefix::ToString() const {
+std::string DocHitInfoIteratorTermLitePrefix::ToString() const {
   return absl_ports::StrCat(SectionIdMaskToString(section_restrict_mask_), ":",
                             term_, "*");
 }

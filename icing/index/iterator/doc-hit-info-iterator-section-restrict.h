@@ -52,6 +52,15 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
+  // NOTE: currently, section restricts does decide which documents to
+  // return, but doesn't impact the relevance score of a document.
+  // TODO(b/173156803): decide whether we want to filter the matched_terms_stats
+  // for the restricted sections.
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
+  }
+
  private:
   std::unique_ptr<DocHitInfoIterator> delegate_;
   const DocumentStore& document_store_;

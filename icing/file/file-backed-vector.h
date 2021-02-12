@@ -149,6 +149,12 @@ class FileBackedVector {
   //             within a directory that already exists.
   // mmap_strategy : Strategy/optimizations to access the content in the vector,
   //                 see MemoryMappedFile::Strategy for more details
+  //
+  // Return:
+  //   FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
+  //                             checksum.
+  //   INTERNAL_ERROR on I/O errors.
+  //   UNIMPLEMENTED_ERROR if created with strategy READ_WRITE_MANUAL_SYNC.
   static libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
   Create(const Filesystem& filesystem, const std::string& file_path,
          MemoryMappedFile::Strategy mmap_strategy);
@@ -181,11 +187,13 @@ class FileBackedVector {
   //   OUT_OF_RANGE_ERROR if idx < 0 or file cannot be grown idx size
   libtextclassifier3::Status Set(int32_t idx, const T& value);
 
-  // Resizes to first len elements. The crc is not updated on truncation.
+  // Resizes to first len elements. The crc is cleared on truncation and will be
+  // updated on destruction, or once the client calls ComputeChecksum() or
+  // PersistToDisk().
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if len < 0 or >= num_elements()
-  libtextclassifier3::Status TruncateTo(int32_t len);
+  libtextclassifier3::Status TruncateTo(int32_t new_num_elements);
 
   // Flushes content to underlying file.
   //
@@ -400,7 +408,7 @@ FileBackedVector<T>::InitializeExistingFile(
 
   // Check header
   if (header->header_checksum != header->CalculateHeaderChecksum()) {
-    return absl_ports::InternalError(
+    return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid header crc for ", file_path));
   }
 
@@ -418,7 +426,7 @@ FileBackedVector<T>::InitializeExistingFile(
   vector_checksum.Append(vector_contents);
 
   if (vector_checksum.Get() != header->vector_checksum) {
-    return absl_ports::InternalError(
+    return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid vector contents for ", file_path));
   }
 
@@ -577,6 +585,13 @@ libtextclassifier3::Status FileBackedVector<T>::TruncateTo(
         new_num_elements, header_->num_elements));
   }
 
+  ICING_VLOG(2)
+      << "FileBackedVector truncating, need to recalculate entire checksum";
+  changes_.clear();
+  saved_original_buffer_.clear();
+  changes_end_ = 0;
+  header_->vector_checksum = 0;
+
   header_->num_elements = new_num_elements;
   return libtextclassifier3::Status::OK;
 }
@@ -653,6 +668,7 @@ libtextclassifier3::StatusOr<Crc32> FileBackedVector<T>::ComputeChecksum() {
     }
     cur_offset += sizeof(T);
   }
+
   if (!changes_.empty()) {
     ICING_VLOG(2) << IcingStringUtil::StringPrintf(
         "Array update partial crcs %d truncated %d overlapped %d duplicate %d",
