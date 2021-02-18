@@ -97,7 +97,7 @@ public class AppSearchSmokeTest {
 
         assertEquals("uri1", result.getDocument().getUri());
         assertEquals("avocado", result.getDocument().getPropertyString("body"));
-        TestDocument output = result.getDocument().toDataClass(TestDocument.class);
+        TestDocument output = result.getDocument().toDocumentClass(TestDocument.class);
         assertEquals("uri1", output.getUri());
         assertEquals("avocado", output.getBody());
     }
