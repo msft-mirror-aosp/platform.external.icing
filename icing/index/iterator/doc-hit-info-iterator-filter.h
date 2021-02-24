@@ -37,10 +37,6 @@ namespace lib {
 class DocHitInfoIteratorFilter : public DocHitInfoIterator {
  public:
   struct Options {
-    // Filter out/don't return DocHitInfos that are associated with nonexistent
-    // Documents.
-    bool filter_deleted = true;
-
     // List of namespaces that documents must have. An empty vector means that
     // all namespaces are valid, and no documents will be filtered out.
     //
@@ -70,6 +66,11 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
+  }
 
  private:
   std::unique_ptr<DocHitInfoIterator> delegate_;

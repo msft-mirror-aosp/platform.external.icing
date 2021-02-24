@@ -63,14 +63,16 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
     auto type_config = schema.add_types();
     type_config->set_schema_type("email");
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -103,33 +105,6 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, EmptyOriginalIterator) {
       schema_store_.get(), &fake_clock_, options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
-}
-
-TEST_F(DocHitInfoIteratorDeletedFilterTest, TurnOffDeletedFilterOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(test_document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(test_document3_));
-
-  // Deletes test document 2
-  ICING_ASSERT_OK(document_store_->Delete(test_document2_.namespace_(),
-                                          test_document2_.uri()));
-
-  std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
-                                           DocHitInfo(document_id2),
-                                           DocHitInfo(document_id3)};
-  std::unique_ptr<DocHitInfoIterator> original_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  options_.filter_deleted = false;
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
-
-  EXPECT_THAT(GetDocumentIds(&filtered_iterator),
-              ElementsAre(document_id1, document_id2, document_id3));
 }
 
 TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
@@ -255,14 +230,16 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
     auto type_config = schema.add_types();
     type_config->set_schema_type("email");
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -410,14 +387,16 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
     type_config = schema.add_types();
     type_config->set_schema_type(schema3_);
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -548,14 +527,16 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
     auto type_config = schema.add_types();
     type_config->set_schema_type(email_schema_);
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -738,14 +719,16 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
     type_config = schema.add_types();
     type_config->set_schema_type(schema2_);
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {

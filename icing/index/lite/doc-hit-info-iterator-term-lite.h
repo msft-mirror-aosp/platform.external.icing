@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_H_
-#define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_H_
+#ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
+#define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_
 
 #include <cstdint>
 #include <vector>
@@ -28,11 +28,12 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorTerm : public DocHitInfoIterator {
+class DocHitInfoIteratorTermLite : public DocHitInfoIterator {
  public:
-  explicit DocHitInfoIteratorTerm(const TermIdCodec* term_id_codec,
-                                  LiteIndex* lite_index, const std::string term,
-                                  SectionIdMask section_restrict_mask)
+  explicit DocHitInfoIteratorTermLite(const TermIdCodec* term_id_codec,
+                                      LiteIndex* lite_index,
+                                      const std::string& term,
+                                      SectionIdMask section_restrict_mask)
       : term_(term),
         lite_index_(lite_index),
         cached_hits_idx_(-1),
@@ -47,6 +48,34 @@ class DocHitInfoIteratorTerm : public DocHitInfoIterator {
     return 0;
   }
   int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    SectionIdMask section_mask = doc_hit_info_.hit_section_ids_mask();
+    std::array<Hit::TermFrequency, kMaxSectionId> section_term_frequencies = {
+        Hit::kNoTermFrequency};
+    while (section_mask) {
+      SectionId section_id = __builtin_ctz(section_mask);
+      section_term_frequencies.at(section_id) =
+          doc_hit_info_.hit_term_frequency(section_id);
+      section_mask &= ~(1u << section_id);
+    }
+    TermMatchInfo term_stats(term_, doc_hit_info_.hit_section_ids_mask(),
+                             std::move(section_term_frequencies));
+
+    for (const TermMatchInfo& cur_term_stats : *matched_terms_stats) {
+      if (cur_term_stats.term == term_stats.term) {
+        // Same docId and same term, we don't need to add the term and the term
+        // frequency should always be the same
+        return;
+      }
+    }
+    matched_terms_stats->push_back(std::move(term_stats));
+  }
 
  protected:
   // Add DocHitInfos corresponding to term_ to cached_hits_.
@@ -66,14 +95,14 @@ class DocHitInfoIteratorTerm : public DocHitInfoIterator {
   const SectionIdMask section_restrict_mask_;
 };
 
-class DocHitInfoIteratorTermExact : public DocHitInfoIteratorTerm {
+class DocHitInfoIteratorTermLiteExact : public DocHitInfoIteratorTermLite {
  public:
-  explicit DocHitInfoIteratorTermExact(const TermIdCodec* term_id_codec,
-                                       LiteIndex* lite_index,
-                                       const std::string& term,
-                                       SectionIdMask section_id_mask)
-      : DocHitInfoIteratorTerm(term_id_codec, lite_index, term,
-                               section_id_mask) {}
+  explicit DocHitInfoIteratorTermLiteExact(const TermIdCodec* term_id_codec,
+                                           LiteIndex* lite_index,
+                                           const std::string& term,
+                                           SectionIdMask section_id_mask)
+      : DocHitInfoIteratorTermLite(term_id_codec, lite_index, term,
+                                   section_id_mask) {}
 
   std::string ToString() const override;
 
@@ -81,14 +110,14 @@ class DocHitInfoIteratorTermExact : public DocHitInfoIteratorTerm {
   libtextclassifier3::Status RetrieveMoreHits() override;
 };
 
-class DocHitInfoIteratorTermPrefix : public DocHitInfoIteratorTerm {
+class DocHitInfoIteratorTermLitePrefix : public DocHitInfoIteratorTermLite {
  public:
-  explicit DocHitInfoIteratorTermPrefix(const TermIdCodec* term_id_codec,
-                                        LiteIndex* lite_index,
-                                        const std::string& term,
-                                        SectionIdMask section_id_mask)
-      : DocHitInfoIteratorTerm(term_id_codec, lite_index, term,
-                               section_id_mask) {}
+  explicit DocHitInfoIteratorTermLitePrefix(const TermIdCodec* term_id_codec,
+                                            LiteIndex* lite_index,
+                                            const std::string& term,
+                                            SectionIdMask section_id_mask)
+      : DocHitInfoIteratorTermLite(term_id_codec, lite_index, term,
+                                   section_id_mask) {}
 
   std::string ToString() const override;
 
@@ -105,4 +134,4 @@ class DocHitInfoIteratorTermPrefix : public DocHitInfoIteratorTerm {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_H_
+#endif  // ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TERM_LITE_H_

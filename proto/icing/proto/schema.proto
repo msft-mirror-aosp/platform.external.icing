@@ -34,7 +34,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 5
+// Next tag: 6
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that uniquely identifies the structured, logical
   // schema being defined.
@@ -51,19 +51,26 @@ message SchemaTypeConfigProto {
   // easier.
   repeated PropertyConfigProto properties = 4;
 
+  // Version is an arbitrary number that the client may use to keep track of
+  // different incarnations of the schema. Icing library imposes no requirements
+  // on this field and will not validate it in anyway. If a client calls
+  // SetSchema with a schema that contains one or more new version numbers, then
+  // those version numbers will be updated so long as the SetSchema call
+  // succeeds. Clients are free to leave the version number unset, in which case
+  // it will default to value == 0.
+  optional int32 version = 5;
+
   reserved 2, 3;
 }
 
-// Describes how a single property should be indexed.
+// Describes how a string property should be indexed.
 // Next tag: 3
-message IndexingConfig {
+message StringIndexingConfig {
   // Indicates how the content of this property should be matched in the index.
   //
   // TermMatchType.Code=UNKNOWN
   // Content in this property will not be tokenized or indexed. Useful if the
-  // data type is not made up of terms (e.g. DOCUMENT or BYTES type). All the
-  // properties inside the nested property won't be indexed regardless of the
-  // value of the term_match_type field for the nested properties.
+  // data type is not indexable. See schema-util for details.
   //
   // TermMatchType.Code=EXACT_ONLY
   // Content in this property should only be returned for queries matching the
@@ -79,7 +86,7 @@ message IndexingConfig {
   message TokenizerType {
     enum Code {
       // It is only valid for tokenizer_type to be 'NONE' if the data type is
-      // DOCUMENT.
+      // not indexed.
       NONE = 0;
 
       // Tokenization for plain text.
@@ -89,10 +96,22 @@ message IndexingConfig {
   optional TokenizerType.Code tokenizer_type = 2;
 }
 
+// Describes how a document property should be indexed.
+// Next tag: 2
+message DocumentIndexingConfig {
+  // OPTIONAL: Whether nested properties within the document property should be
+  // indexed. If true, then the nested properties will be indexed according to
+  // the property's own indexing configurations. If false, nested documents'
+  // properties will not be indexed even if they have an indexing configuration.
+  //
+  // The default value is false.
+  optional bool index_nested_properties = 1;
+}
+
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 6
+// Next tag: 7
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -106,9 +125,10 @@ message PropertyConfigProto {
   // REQUIRED: Physical data-types of the contents of the property.
   message DataType {
     enum Code {
-      // This should never purposely be set. This is used for backwards
+      // This value should never purposely be used. This is used for backwards
       // compatibility reasons.
       UNKNOWN = 0;
+
       STRING = 1;
       INT64 = 2;
       DOUBLE = 3;
@@ -162,9 +182,12 @@ message PropertyConfigProto {
   }
   optional Cardinality.Code cardinality = 4;
 
-  // OPTIONAL: Properties that do not set the indexing config will not be
-  // indexed.
-  optional IndexingConfig indexing_config = 5;
+  // OPTIONAL: Describes how string properties should be indexed. String
+  // properties that do not set the indexing config will not be indexed.
+  optional StringIndexingConfig string_indexing_config = 5;
+
+  // OPTIONAL: Describes how document properties should be indexed.
+  optional DocumentIndexingConfig document_indexing_config = 6;
 }
 
 // List of all supported types constitutes the schema used by Icing.

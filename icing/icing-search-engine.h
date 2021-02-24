@@ -37,6 +37,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -128,12 +129,18 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   ALREADY_EXISTS if 'new_schema' contains multiple definitions of the same
+  //     type or contains a type that has multiple properties with the same
+  //     name.
   //   INVALID_ARGUMENT if 'new_schema' is invalid
   //   FAILED_PRECONDITION if 'new_schema' is incompatible, or IcingSearchEngine
   //     has not been initialized yet.
   //   INTERNAL_ERROR if Icing failed to store the new schema or upgrade
   //     existing data based on the new schema. Using Icing beyond this error is
   //     undefined and may cause crashes.
+  //   DATA_LOSS_ERROR if 'new_schema' requires the index to be rebuilt and an
+  //     IO error leads to some documents being excluded from the index. These
+  //     documents will still be retrievable via Get, but won't match queries.
   //
   // TODO(cassiewang) Figure out, document (and maybe even enforce) the best
   // way ordering of calls between Initialize() and SetSchema(), both when
@@ -184,6 +191,9 @@ class IcingSearchEngine {
   //     has not been initialized yet.
   //   NOT_FOUND if there is no SchemaTypeConfig in the SchemaProto that matches
   //     the document's schema
+  //   DATA_LOSS if an IO error occurs while merging document into the index and
+  //     the index is lost. These documents will still be retrievable via Get,
+  //     but won't match queries.
   //   INTERNAL_ERROR on IO error
   PutResultProto Put(DocumentProto&& document) ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -203,7 +213,17 @@ class IcingSearchEngine {
   //   NOT_FOUND if the key doesn't exist or doc has been deleted
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
-  GetResultProto Get(std::string_view name_space, std::string_view uri);
+  GetResultProto Get(std::string_view name_space, std::string_view uri,
+                     const GetResultSpecProto& result_spec);
+
+  // Reports usage. The corresponding usage scores of the specified document in
+  // the report will be updated.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the [namesapce + uri] key in the report doesn't exist
+  //   INTERNAL_ERROR on I/O errors.
+  ReportUsageResultProto ReportUsage(const UsageReport& usage_report);
 
   // Returns all the namespaces that have at least one valid document in it.
   //
@@ -256,10 +276,25 @@ class IcingSearchEngine {
   DeleteBySchemaTypeResultProto DeleteBySchemaType(std::string_view schema_type)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Deletes all Documents that match the query specified in search_spec. Delete
+  // changes are automatically applied to disk, callers can also call
+  // PersistToDisk() to flush changes immediately.
+  //
+  // NOTE: Space is not reclaimed for deleted documents until Optimize() is
+  // called.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND if the query doesn't match any documents
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on IO error
+  DeleteByQueryResultProto DeleteByQuery(const SearchSpecProto& search_spec)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Retrieves, scores, ranks, and returns the results according to the specs.
   // Results can be empty. If there're multiple pages of results,
-  // SearchResultProto.next_page_token will be populated and that can be used to
-  // fetch more pages via GetNextPage() method. Clients should call
+  // SearchResultProto.next_page_token will be set to a non-zero token and can
+  // be used to fetch more pages via GetNextPage() method. Clients should call
   // InvalidateNextPageToken() after they get the pages they need to release
   // result cache in memory. Please refer to each proto file for spec
   // definitions.
@@ -276,7 +311,12 @@ class IcingSearchEngine {
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Fetches the next page of results of a previously executed query. Results
-  // can be empty if next-page token is invalid or all pages have been returned.
+  // can be empty if next-page token is invalid. Invalid next page tokens are
+  // tokens that are either zero or were previously passed to
+  // InvalidateNextPageToken. If there are pages of results remaining after the
+  // one retrieved by this call, SearchResultProto.next_page_token will be
+  // set to a non-zero token and can be used to fetch more pages via
+  // GetNextPage() method.
   //
   // Returns a SearchResultProto with status:
   //   OK with results on success
@@ -354,6 +394,7 @@ class IcingSearchEngine {
  protected:
   IcingSearchEngine(IcingSearchEngineOptions options,
                     std::unique_ptr<const Filesystem> filesystem,
+                    std::unique_ptr<const IcingFilesystem> icing_filesystem,
                     std::unique_ptr<Clock> clock,
                     std::unique_ptr<const JniCache> jni_cache = nullptr);
 
@@ -364,15 +405,18 @@ class IcingSearchEngine {
   bool initialized_ ICING_GUARDED_BY(mutex_) = false;
 
   // Abstraction for accessing time values.
-  std::unique_ptr<Clock> clock_;
+  const std::unique_ptr<const Clock> clock_;
 
   // Provides key thresholds that affects the running time and memory of major
   // components in Icing search engine.
-  PerformanceConfiguration performance_configuration_;
+  const PerformanceConfiguration performance_configuration_;
 
-  // Used to manage pagination state of query results. A lock is not needed here
-  // because ResultStateManager has its own reader-writer lock.
-  ResultStateManager result_state_manager_;
+  // Used to manage pagination state of query results. Even though
+  // ResultStateManager has its own reader-writer lock, mutex_ must still be
+  // acquired first in order to adhere to the global lock ordering:
+  //   1. mutex_
+  //   2. result_state_manager_.lock_
+  ResultStateManager result_state_manager_ ICING_GUARDED_BY(mutex_);
 
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
@@ -411,10 +455,12 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   RESOURCE_EXHAUSTED if the index runs out of storage
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL on any I/O errors
-  libtextclassifier3::Status InitializeMembers()
+  libtextclassifier3::Status InitializeMembers(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any validation/setup required for the given IcingSearchEngineOptions
@@ -430,8 +476,10 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeSchemaStore()
+  libtextclassifier3::Status InitializeSchemaStore(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create a DocumentStore
@@ -439,8 +487,10 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeDocumentStore()
+  libtextclassifier3::Status InitializeDocumentStore(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create a DocumentStore
@@ -448,10 +498,12 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   FAILED_PRECONDITION if initialize_stats is null
   //   RESOURCE_EXHAUSTED if the index runs out of storage
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeIndex()
+  libtextclassifier3::Status InitializeIndex(
+      NativeInitializeStats* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
@@ -474,7 +526,9 @@ class IcingSearchEngine {
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on any IO errors
-  libtextclassifier3::Status RegenerateDerivedFiles()
+  libtextclassifier3::Status RegenerateDerivedFiles(
+      NativeInitializeStats* initialize_stats = nullptr,
+      bool log_document_store_stats = false)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Optimizes the DocumentStore by removing any unneeded documents (i.e.
@@ -503,7 +557,7 @@ class IcingSearchEngine {
   //   RESOURCE_EXHAUSTED if the index fills up before finishing indexing
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL_ERROR on any IO errors
-  libtextclassifier3::Status RestoreIndex()
+  libtextclassifier3::Status RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Computes the combined checksum of the IcingSearchEngine - includes all its

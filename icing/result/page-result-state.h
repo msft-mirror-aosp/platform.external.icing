@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/scoring/scored-document-hit.h"
 
@@ -29,11 +30,14 @@ struct PageResultState {
   PageResultState(std::vector<ScoredDocumentHit> scored_document_hits_in,
                   uint64_t next_page_token_in,
                   SnippetContext snippet_context_in,
-                  int num_previously_returned_in)
+                  std::unordered_map<std::string, ProjectionTree> tree_map,
+                  int num_previously_returned_in, int num_per_page_in)
       : scored_document_hits(std::move(scored_document_hits_in)),
         next_page_token(next_page_token_in),
         snippet_context(std::move(snippet_context_in)),
-        num_previously_returned(num_previously_returned_in) {}
+        projection_tree_map(std::move(tree_map)),
+        num_previously_returned(num_previously_returned_in),
+        requested_page_size(num_per_page_in) {}
 
   // Results of one page
   std::vector<ScoredDocumentHit> scored_document_hits;
@@ -44,8 +48,15 @@ struct PageResultState {
   // Information needed for snippeting.
   SnippetContext snippet_context;
 
+  // Information needed for projection.
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map;
+
   // Number of results that have been returned in previous pages.
   int num_previously_returned;
+
+  // The page size for this query. This should always be >=
+  // scored_document_hits.size();
+  int requested_page_size;
 };
 
 }  // namespace lib
