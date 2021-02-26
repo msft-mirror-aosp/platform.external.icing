@@ -164,7 +164,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
                         icing_filesystem));
   return std::unique_ptr<Index>(new Index(options, std::move(term_id_codec),
                                           std::move(lite_index),
-                                          std::move(main_index)));
+                                          std::move(main_index), filesystem));
 }
 
 libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
@@ -275,6 +275,18 @@ Index::FindTermsByPrefix(const std::string& prefix,
 
   return MergeTermMetadatas(std::move(lite_term_metadata_list),
                             std::move(main_term_metadata_list), num_to_return);
+}
+
+IndexStorageInfoProto Index::GetStorageInfo() const {
+  IndexStorageInfoProto storage_info;
+  int64_t directory_size = filesystem_->GetDiskUsage(options_.base_dir.c_str());
+  if (directory_size != Filesystem::kBadFileSize) {
+    storage_info.set_index_size(directory_size);
+  } else {
+    storage_info.set_index_size(-1);
+  }
+  storage_info = lite_index_->GetStorageInfo(std::move(storage_info));
+  return main_index_->GetStorageInfo(std::move(storage_info));
 }
 
 libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {

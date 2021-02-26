@@ -80,7 +80,7 @@ class RelevanceScoreScorer : public Scorer {
 
   void PrepareToScore(
       std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
-          query_term_iterators) {
+          query_term_iterators) override {
     bm25f_calculator_->PrepareToScore(query_term_iterators);
   }
 

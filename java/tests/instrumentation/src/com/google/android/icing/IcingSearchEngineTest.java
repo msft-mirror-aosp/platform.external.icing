@@ -45,6 +45,7 @@ import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StatusProto;
+import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.StringIndexingConfig;
 import com.google.android.icing.proto.StringIndexingConfig.TokenizerType;
 import com.google.android.icing.proto.TermMatchType;
@@ -414,6 +415,14 @@ public final class IcingSearchEngineTest {
     assertStatusOk(getOptimizeInfoResultProto.getStatus());
     assertThat(getOptimizeInfoResultProto.getOptimizableDocs()).isEqualTo(0);
     assertThat(getOptimizeInfoResultProto.getEstimatedOptimizableBytes()).isEqualTo(0);
+  }
+
+  @Test
+  public void testGetStorageInfo() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    StorageInfoResultProto storageInfoResultProto = icingSearchEngine.getStorageInfo();
+    assertStatusOk(storageInfoResultProto.getStatus());
   }
 
   @Test

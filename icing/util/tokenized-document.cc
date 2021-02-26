@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/proto/document.proto.h"
+#include "icing/proto/document.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
