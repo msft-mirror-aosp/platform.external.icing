@@ -16,7 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
-option java_package = "com.google.android.icing.proto";
+option java_package = "com.google.android.icing.internal.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
