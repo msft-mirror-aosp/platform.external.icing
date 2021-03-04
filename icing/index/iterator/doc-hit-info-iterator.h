@@ -15,8 +15,10 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_H_
 
+#include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -27,6 +29,26 @@
 
 namespace icing {
 namespace lib {
+
+// Data structure that maps a single matched query term to its section mask
+// and the list of term frequencies.
+// TODO(b/158603837): add stat on whether the matched terms are prefix matched
+// or not. This information will be used to boost exact match.
+struct TermMatchInfo {
+  std::string_view term;
+  // SectionIdMask associated to the term.
+  SectionIdMask section_ids_mask;
+  // Array with fixed size kMaxSectionId. For every section id, i.e.
+  // vector index, it stores the term frequency of the term.
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies;
+
+  explicit TermMatchInfo(
+      std::string_view term, SectionIdMask section_ids_mask,
+      std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies)
+      : term(term),
+        section_ids_mask(section_ids_mask),
+        term_frequencies(std::move(term_frequencies)) {}
+};
 
 // Iterator over DocHitInfos (collapsed Hits) in REVERSE document_id order.
 //
@@ -69,6 +91,17 @@ class DocHitInfoIterator {
 
   // A string representing the iterator.
   virtual std::string ToString() const = 0;
+
+  // For the last hit docid, retrieves all the matched query terms and other
+  // stats, see TermMatchInfo.
+  // filtering_section_mask filters the matching sections and should be set only
+  // by DocHitInfoIteratorSectionRestrict.
+  // If Advance() wasn't called after construction, Advance() returned false or
+  // the concrete HitIterator didn't override this method, the vectors aren't
+  // populated.
+  virtual void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const {}
 
  protected:
   DocHitInfo doc_hit_info_;

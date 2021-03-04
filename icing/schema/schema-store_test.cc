@@ -30,7 +30,9 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -40,8 +42,23 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Ge;
 using ::testing::Not;
 using ::testing::Pointee;
+
+PropertyConfigProto CreateProperty(
+    std::string_view name, PropertyConfigProto::DataType::Code datatype,
+    PropertyConfigProto::Cardinality::Code cardinality,
+    TermMatchType::Code match_type,
+    StringIndexingConfig::TokenizerType::Code tokenizer_type) {
+  PropertyConfigProto property;
+  property.set_property_name(std::string(name));
+  property.set_data_type(datatype);
+  property.set_cardinality(cardinality);
+  property.mutable_string_indexing_config()->set_term_match_type(match_type);
+  property.mutable_string_indexing_config()->set_tokenizer_type(tokenizer_type);
+  return property;
+}
 
 class SchemaStoreTest : public ::testing::Test {
  protected:
@@ -53,13 +70,10 @@ class SchemaStoreTest : public ::testing::Test {
 
     // Add an indexed property so we generate section metadata on it
     auto property = type->add_properties();
-    property->set_property_name("subject");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_indexing_config()->set_tokenizer_type(
-        IndexingConfig::TokenizerType::PLAIN);
+    *property = CreateProperty("subject", PropertyConfigProto::DataType::STRING,
+                               PropertyConfigProto::Cardinality::OPTIONAL,
+                               TermMatchType::EXACT_ONLY,
+                               StringIndexingConfig::TokenizerType::PLAIN);
   }
 
   void TearDown() override {
@@ -69,17 +83,20 @@ class SchemaStoreTest : public ::testing::Test {
   const Filesystem filesystem_;
   const std::string test_dir_;
   SchemaProto schema_;
+  const FakeClock fake_clock_;
 };
 
 TEST_F(SchemaStoreTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(SchemaStore::Create(/*filesystem=*/nullptr, test_dir_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      SchemaStore::Create(/*filesystem=*/nullptr, test_dir_, &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(SchemaStoreTest, CorruptSchemaError) {
   {
-    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
     // Set it for the first time
     SchemaStore::SetSchemaResult result;
@@ -105,14 +122,15 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
                     serialized_schema.size());
 
   // If ground truth was corrupted, we won't know what to do
-  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_),
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
   {
-    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
     // Set it for the first time
     SchemaStore::SetSchemaResult result;
@@ -134,8 +152,9 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
       absl_ports::StrCat(test_dir_, "/schema_type_mapper");
   filesystem_.DeleteDirectoryRecursively(schema_type_mapper_dir.c_str());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -146,8 +165,9 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
 
 TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
   {
-    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
     // Set it for the first time
     SchemaStore::SetSchemaResult result;
@@ -172,8 +192,9 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
   filesystem_.DeleteFile(header_file.c_str());
   filesystem_.Write(header_file.c_str(), &header, sizeof(header));
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -183,12 +204,42 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
 }
 
 TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
-  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // The apis to retrieve information about the schema should fail gracefully.
+  EXPECT_THAT(store->GetSchema(),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(store->GetSchemaTypeConfig("foo"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetSchemaTypeId("foo"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetSectionMetadata(/*schema_type_id=*/0, /*section_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  // The apis to extract content from a document should fail gracefully.
+  DocumentProto doc;
+  PropertyProto* prop = doc.add_properties();
+  prop->set_name("name");
+  prop->add_string_values("foo bar baz");
+
+  EXPECT_THAT(store->GetStringSectionContent(doc, /*section_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetStringSectionContent(doc, "name"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->ExtractSections(doc),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  // The apis to persist and checksum data should succeed.
+  EXPECT_THAT(store->ComputeChecksum(), IsOkAndHolds(Crc32()));
+  EXPECT_THAT(store->PersistToDisk(), IsOk());
 }
 
 TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaStore::SetSchemaResult result;
   result.success = true;
@@ -196,7 +247,8 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   schema_store.reset();
-  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_), IsOk());
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_),
+              IsOk());
 }
 
 TEST_F(SchemaStoreTest, MultipleCreateOk) {
@@ -206,8 +258,9 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   properties->set_name("subject");
   properties->add_string_values("subject_content");
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaStore::SetSchemaResult result;
   result.success = true;
@@ -225,8 +278,8 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
   schema_store.reset();
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store, SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Verify that our in-memory structures are ok
   EXPECT_THAT(schema_store->GetSchemaTypeConfig("email"),
@@ -240,8 +293,9 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
 }
 
 TEST_F(SchemaStoreTest, SetNewSchemaOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
@@ -254,8 +308,9 @@ TEST_F(SchemaStoreTest, SetNewSchemaOk) {
 }
 
 TEST_F(SchemaStoreTest, SetSameSchemaOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
@@ -274,8 +329,9 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
 }
 
 TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
@@ -298,8 +354,9 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto schema;
   auto type = schema.add_types();
@@ -326,8 +383,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto schema;
   auto type = schema.add_types();
@@ -381,8 +439,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto schema;
   auto type = schema.add_types();
@@ -420,8 +479,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
 }
 
 TEST_F(SchemaStoreTest, SetSchemaThatRequiresReindexingOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto schema;
   auto type = schema.add_types();
@@ -444,10 +504,10 @@ TEST_F(SchemaStoreTest, SetSchemaThatRequiresReindexingOk) {
 
   // Make a previously unindexed property indexed
   property = schema.mutable_types(0)->mutable_properties(0);
-  property->mutable_indexing_config()->set_term_match_type(
+  property->mutable_string_indexing_config()->set_term_match_type(
       TermMatchType::EXACT_ONLY);
-  property->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   // With a new indexed property, we'll need to reindex
   result.index_incompatible = true;
@@ -460,8 +520,9 @@ TEST_F(SchemaStoreTest, SetSchemaThatRequiresReindexingOk) {
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto schema;
   auto type = schema.add_types();
@@ -514,8 +575,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
 }
 
 TEST_F(SchemaStoreTest, GetSchemaTypeId) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   schema_.clear_types();
 
@@ -539,16 +601,18 @@ TEST_F(SchemaStoreTest, GetSchemaTypeId) {
 }
 
 TEST_F(SchemaStoreTest, ComputeChecksumDefaultOnEmptySchemaStore) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   Crc32 default_checksum;
   EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(default_checksum));
 }
 
 TEST_F(SchemaStoreTest, ComputeChecksumSameBetweenCalls) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto foo_schema;
   auto type_config = foo_schema.add_types();
@@ -563,8 +627,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameBetweenCalls) {
 }
 
 TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto foo_schema;
   auto type_config = foo_schema.add_types();
@@ -577,14 +642,15 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
   // Destroy the previous instance and recreate SchemaStore
   schema_store.reset();
 
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store, SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(checksum));
 }
 
 TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto foo_schema;
   auto type_config = foo_schema.add_types();
@@ -607,16 +673,18 @@ TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
 }
 
 TEST_F(SchemaStoreTest, PersistToDiskFineForEmptySchemaStore) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   // Persisting is fine and shouldn't affect anything
   ICING_EXPECT_OK(schema_store->PersistToDisk());
 }
 
 TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<SchemaStore> schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
   SchemaProto schema;
   auto type_config = schema.add_types();
@@ -640,10 +708,73 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
   schema_store.reset();
 
   // And we get the same schema back on reinitialization
-  ICING_ASSERT_OK_AND_ASSIGN(schema_store,
-                             SchemaStore::Create(&filesystem_, test_dir_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store, SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+}
+
+TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // Create a schema with two types: one simple type and one type that uses all
+  // 16 sections.
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
+  PropertyConfigProto prop = CreateProperty(
+      "subject", PropertyConfigProto::DataType::STRING,
+      PropertyConfigProto::Cardinality::OPTIONAL, TermMatchType::EXACT_ONLY,
+      StringIndexingConfig::TokenizerType::PLAIN);
+  *type->add_properties() = prop;
+
+  type = schema.add_types();
+  type->set_schema_type("fullSectionsType");
+  prop.set_property_name("prop0");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop1");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop2");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop3");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop4");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop5");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop6");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop7");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop8");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop9");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop10");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop11");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop12");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop13");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop14");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop15");
+  *type->add_properties() = prop;
+
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  EXPECT_THAT(schema_store->SetSchema(schema),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  SchemaStoreStorageInfoProto storage_info = schema_store->GetStorageInfo();
+  EXPECT_THAT(storage_info.schema_store_size(), Ge(0));
+  EXPECT_THAT(storage_info.num_schema_types(), Eq(2));
+  EXPECT_THAT(storage_info.num_total_sections(), Eq(17));
+  EXPECT_THAT(storage_info.num_schema_types_sections_exhausted(), Eq(1));
 }
 
 }  // namespace

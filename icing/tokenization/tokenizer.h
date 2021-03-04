@@ -16,9 +16,12 @@
 #define ICING_TOKENIZATION_TOKENIZER_H_
 
 #include <cstdint>
+#include <memory>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/token.h"
+
 namespace icing {
 namespace lib {
 
@@ -82,6 +85,8 @@ class Tokenizer {
     // // "foo".
     // PrintToken(iterator.GetToken());  // prints "foo"
     virtual bool ResetToTokenBefore(int32_t offset) { return false; }
+
+    virtual bool ResetToStart() { return false; }
   };
 
   // Tokenizes the input text. The input text should outlive the returned

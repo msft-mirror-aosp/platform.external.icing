@@ -34,41 +34,5 @@ std::string GetTestFilePath(const std::string& google3_relative_file_path) {
                             "/google3/", google3_relative_file_path);
 }
 
-// ICU data file needs to be set up only once every test run, it can be shared
-// between different test cases. Setting up the file too many times may cause
-// out-of-memory / segmentation fault errors in Android emulator.
-bool has_set_up_icu_data_file = false;
-
-libtextclassifier3::Status SetUpICUDataFile(
-    const std::string& icu_data_file_relative_path) {
-  if (has_set_up_icu_data_file) {
-    return libtextclassifier3::Status::OK;
-  }
-
-  const std::string& file_path = GetTestFilePath(icu_data_file_relative_path);
-
-  Filesystem filesystem;
-  int64_t file_size = filesystem.GetFileSize(file_path.c_str());
-  ScopedFd fd(filesystem.OpenForRead(file_path.c_str()));
-
-  // TODO(samzheng): figure out why icing::MemoryMappedFile causes
-  // segmentation fault here.
-  const void* data =
-      mmap(nullptr, file_size, PROT_READ, MAP_PRIVATE, fd.get(), 0);
-
-  UErrorCode status = U_ZERO_ERROR;
-  udata_setCommonData(data, &status);
-
-  if (U_FAILURE(status)) {
-    return absl_ports::InternalError(
-        "Failed to set up ICU data, please check if you have the data file at "
-        "the given path.");
-  }
-
-  has_set_up_icu_data_file = true;
-
-  return libtextclassifier3::Status::OK;
-}
-
 }  // namespace lib
 }  // namespace icing

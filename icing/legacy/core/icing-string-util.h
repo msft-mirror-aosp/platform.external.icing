@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2011 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
-//         sbanacho@google.com (Scott Banachowski)
-
 #ifndef ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 #define ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 
@@ -36,8 +32,6 @@ class IcingStringUtil {
   static bool IsContinuationByte(char byte) {
     return (static_cast<uint8_t>(byte) & 0xC0) == 0x80;
   }
-
-  static bool IsAsciiChar(char c) { return static_cast<signed char>(c) >= 0; }
 
   // Update a rolling crc32. This undoes the one's complement
   // pre-conditioning and post-conditioning of zlib's

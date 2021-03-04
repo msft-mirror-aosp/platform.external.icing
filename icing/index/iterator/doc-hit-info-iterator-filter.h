@@ -25,8 +25,8 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
-#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/clock.h"
 
 namespace icing {
@@ -37,10 +37,6 @@ namespace lib {
 class DocHitInfoIteratorFilter : public DocHitInfoIterator {
  public:
   struct Options {
-    // Filter out/don't return DocHitInfos that are associated with nonexistent
-    // Documents.
-    bool filter_deleted = true;
-
     // List of namespaces that documents must have. An empty vector means that
     // all namespaces are valid, and no documents will be filtered out.
     //
@@ -70,6 +66,13 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats,
+                                         filtering_section_mask);
+  }
 
  private:
   std::unique_ptr<DocHitInfoIterator> delegate_;

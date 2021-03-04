@@ -1,0 +1,101 @@
+// Copyright (C) 2019 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+java_library {
+    name: "icing-java-proto-lite",
+    proto: {
+        // If you change the proto type, also update jarjar-rules.txt to match
+        // the corresponding proto lib's package path.
+        type: "lite",
+        include_dirs: ["external/protobuf/src"],
+        canonical_path_from_root: false,
+    },
+    srcs: ["icing/proto/*.proto"],
+    jarjar_rules: "jarjar-rules.txt",
+    sdk_version: "core_current",
+}
+
+cc_defaults {
+    name: "libicing_defaults",
+
+    // For debug / treemap purposes.
+    //strip: {
+    //    keep_symbols: true,
+    //},
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+        "-Wno-deprecated-declarations",
+        "-Wno-ignored-qualifiers",
+        "-Wno-missing-field-initializers",
+        "-Wno-sign-compare",
+        "-Wno-tautological-constant-out-of-range-compare",
+        "-Wno-undefined-var-template",
+        "-Wno-unused-function",
+        "-Wno-unused-parameter",
+        "-Wno-extern-c-compat",
+
+        "-funsigned-char",
+        "-fvisibility=hidden",
+    ],
+}
+
+cc_library_static {
+    name: "icing-c-proto",
+    defaults: ["libicing_defaults"],
+    proto: {
+        type: "lite",
+        // Find protos relative from where they're specified (useful for external protos)
+        canonical_path_from_root: false,
+        // Need to be able to see the .pb.h files that are generated
+        export_proto_headers: true,
+    },
+    srcs: ["icing/**/*.proto"],
+}
+
+cc_library_shared {
+    name: "libicing_jni",
+    defaults: ["libicing_defaults"],
+    srcs: [
+        "icing/**/*.cc",
+    ],
+    exclude_srcs: [
+        // Tests
+        "icing/**/*_test.cc",
+        // Benchmarks
+        "icing/**/*_benchmark.cc",
+        // Test-only related files (i.e. utils)
+        "icing/testing/**/*",
+        // Tools for manual debugging/investigating
+        "icing/tools/**/*",
+    ],
+    static_libs: [
+        "icing-c-proto",
+        "libutf",
+    ],
+    shared_libs: [
+        "libandroidicu",
+        "liblog",
+        // TODO(b/147509515): We only need the full version for GzipStream. If we can remove
+        // that dependency, then we can just use libprotobuf-cpp-lite
+        "libprotobuf-cpp-full",
+        "libz",
+    ],
+
+    version_script: "icing/jni.lds",
+}
+
+// TODO(cassiewang): Add build rules and a TEST_MAPPING for cc_tests
