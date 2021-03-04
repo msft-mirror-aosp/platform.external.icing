@@ -165,16 +165,6 @@ std::vector<std::string_view> GetStringPropertyContent(
   return values;
 }
 
-// Helper function to get metadata list of a type config
-libtextclassifier3::StatusOr<std::vector<SectionMetadata>> GetMetadataList(
-    const KeyMapper<SchemaTypeId>& schema_type_mapper,
-    const std::vector<std::vector<SectionMetadata>>& section_metadata_cache,
-    const std::string& type_config_name) {
-  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
-                         schema_type_mapper.Get(type_config_name));
-  return section_metadata_cache.at(schema_type_id);
-}
-
 }  // namespace
 
 SectionManager::SectionManager(
@@ -263,18 +253,16 @@ SectionManager::GetStringSectionContent(const DocumentProto& document,
         "Section id %d is greater than the max value %d", section_id,
         kMaxSectionId));
   }
-  ICING_ASSIGN_OR_RETURN(
-      const std::vector<SectionMetadata>& metadata_list,
-      GetMetadataList(schema_type_mapper_, section_metadata_cache_,
-                      document.schema()));
-  if (section_id >= metadata_list.size()) {
+  ICING_ASSIGN_OR_RETURN(const std::vector<SectionMetadata>* metadata_list,
+                         GetMetadataList(document.schema()));
+  if (section_id >= metadata_list->size()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Section with id %d doesn't exist in type config %s", section_id,
         document.schema().c_str()));
   }
   // The index of metadata list is the same as the section id, so we can use
   // section id as the index.
-  return GetStringSectionContent(document, metadata_list[section_id].path);
+  return GetStringSectionContent(document, metadata_list->at(section_id).path);
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>
@@ -300,12 +288,10 @@ SectionManager::GetSectionMetadata(SchemaTypeId schema_type_id,
 
 libtextclassifier3::StatusOr<std::vector<Section>>
 SectionManager::ExtractSections(const DocumentProto& document) const {
-  ICING_ASSIGN_OR_RETURN(
-      const std::vector<SectionMetadata>& metadata_list,
-      GetMetadataList(schema_type_mapper_, section_metadata_cache_,
-                      document.schema()));
+  ICING_ASSIGN_OR_RETURN(const std::vector<SectionMetadata>* metadata_list,
+                         GetMetadataList(document.schema()));
   std::vector<Section> sections;
-  for (const auto& section_metadata : metadata_list) {
+  for (const auto& section_metadata : *metadata_list) {
     auto section_content_or =
         GetStringSectionContent(document, section_metadata.path);
     // Adds to result vector if section is found in document
@@ -315,6 +301,13 @@ SectionManager::ExtractSections(const DocumentProto& document) const {
     }
   }
   return sections;
+}
+
+libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
+SectionManager::GetMetadataList(const std::string& type_config_name) const {
+  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+                         schema_type_mapper_.Get(type_config_name));
+  return &section_metadata_cache_.at(schema_type_id);
 }
 
 }  // namespace lib

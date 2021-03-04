@@ -218,6 +218,10 @@ libtextclassifier3::StatusOr<int64_t> UsageStore::GetElementsFileSize() const {
   return usage_score_cache_->GetElementsFileSize();
 }
 
+libtextclassifier3::StatusOr<int64_t> UsageStore::GetDiskUsage() const {
+  return usage_score_cache_->GetDiskUsage();
+}
+
 libtextclassifier3::Status UsageStore::TruncateTo(DocumentId num_documents) {
   if (num_documents >= usage_score_cache_->num_elements()) {
     // No need to truncate

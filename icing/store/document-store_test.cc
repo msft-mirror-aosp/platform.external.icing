@@ -31,6 +31,7 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -55,6 +56,7 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
 using ::testing::Eq;
+using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
@@ -436,16 +438,16 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
-  int64_t ground_truth_size_before = filesystem_.GetFileSize(
+  int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(
       document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
 TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
@@ -566,7 +568,7 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNonexistentNamespaceNotFound) {
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
-  int64_t ground_truth_size_before = filesystem_.GetFileSize(
+  int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(doc_store
@@ -575,9 +577,9 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNonexistentNamespaceNotFound) {
                   .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
 TEST_F(DocumentStoreTest, HardDeleteByNamespaceNonexistentNamespaceNotFound) {
@@ -590,7 +592,7 @@ TEST_F(DocumentStoreTest, HardDeleteByNamespaceNonexistentNamespaceNotFound) {
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
-  int64_t ground_truth_size_before = filesystem_.GetFileSize(
+  int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(doc_store
@@ -599,9 +601,9 @@ TEST_F(DocumentStoreTest, HardDeleteByNamespaceNonexistentNamespaceNotFound) {
                   .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
 TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNoExistingDocumentsNotFound) {
@@ -665,7 +667,7 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
   document4.set_namespace_("namespace.1");
   document4.set_uri("uri2");
 
-  int64_t ground_truth_size_before;
+  int64_t document_log_size_before;
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -686,7 +688,7 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
     EXPECT_THAT(group_result.status, IsOk());
     EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
 
-    ground_truth_size_before = filesystem_.GetFileSize(
+    document_log_size_before = filesystem_.GetFileSize(
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   }  // Destructors should update checksum and persist all data to file.
 
@@ -710,9 +712,9 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
       std::move(create_result.document_store);
 
   // Make sure we didn't add anything to the ground truth after we recovered.
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_EQ(ground_truth_size_before, ground_truth_size_after);
+  EXPECT_EQ(document_log_size_before, document_log_size_after);
 
   EXPECT_THAT(doc_store->Get(document1.namespace_(), document1.uri()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -908,7 +910,7 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
-  int64_t ground_truth_size_before = filesystem_.GetFileSize(
+  int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(document_store
@@ -917,10 +919,10 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
                   .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
 TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
@@ -933,7 +935,7 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
 
   // Validates that deleting something non-existing won't append anything to
   // ground truth
-  int64_t ground_truth_size_before = filesystem_.GetFileSize(
+  int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
   EXPECT_THAT(document_store
@@ -942,10 +944,10 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
                   .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(ground_truth_size_before, Eq(ground_truth_size_after));
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
 TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNoExistingDocumentsNotFound) {
@@ -1016,7 +1018,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
                                        .SetSchema("message")
                                        .SetCreationTimestampMs(1)
                                        .Build();
-  int64_t ground_truth_size_before;
+  int64_t document_log_size_before;
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -1036,7 +1038,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
     EXPECT_THAT(group_result.status, IsOk());
     EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
 
-    ground_truth_size_before = filesystem_.GetFileSize(
+    document_log_size_before = filesystem_.GetFileSize(
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   }  // Destructors should update checksum and persist all data to file.
 
@@ -1060,9 +1062,9 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
       std::move(create_result.document_store);
 
   // Make sure we didn't add anything to the ground truth after we recovered.
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_EQ(ground_truth_size_before, ground_truth_size_after);
+  EXPECT_EQ(document_log_size_before, document_log_size_after);
 
   EXPECT_THAT(document_store->Get(email_document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -1100,7 +1102,7 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
                                        .SetSchema("message")
                                        .SetCreationTimestampMs(1)
                                        .Build();
-  int64_t ground_truth_size_before;
+  int64_t document_log_size_before;
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -1125,7 +1127,7 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
     EXPECT_THAT(document_store->Get(message_document_id),
                 IsOkAndHolds(EqualsProto(message_document)));
 
-    ground_truth_size_before = filesystem_.GetFileSize(
+    document_log_size_before = filesystem_.GetFileSize(
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   }  // Destructors should update checksum and persist all data to file.
 
@@ -1156,9 +1158,9 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
       std::move(create_result.document_store);
 
   // Make sure we didn't add anything to the ground truth after we recovered.
-  int64_t ground_truth_size_after = filesystem_.GetFileSize(
+  int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_EQ(ground_truth_size_before, ground_truth_size_after);
+  EXPECT_EQ(document_log_size_before, document_log_size_after);
 
   EXPECT_THAT(document_store->Get(email_document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -1507,7 +1509,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
                   /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
 }
 
-TEST_F(DocumentStoreTest, GetDiskUsage) {
+TEST_F(DocumentStoreTest, GetStorageInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1515,8 +1517,8 @@ TEST_F(DocumentStoreTest, GetDiskUsage) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t empty_doc_store_size,
-                             doc_store->GetDiskUsage());
+  DocumentStorageInfoProto doc_store_storage_info = doc_store->GetStorageInfo();
+  int64_t empty_doc_store_size = doc_store_storage_info.document_store_size();
   EXPECT_THAT(empty_doc_store_size, Gt(0));
 
   DocumentProto document = DocumentBuilder()
@@ -1525,15 +1527,16 @@ TEST_F(DocumentStoreTest, GetDiskUsage) {
                                .AddStringProperty("subject", "foo")
                                .Build();
 
-  // Since our GetDiskUsage can only get sizes in increments of block_size, we
+  // Since GetStorageInfo can only get sizes in increments of block_size, we
   // need to insert enough documents so the disk usage will increase by at least
   // 1 block size. The number 100 is a bit arbitrary, gotten from manually
   // testing.
   for (int i = 0; i < 100; ++i) {
     ICING_ASSERT_OK(doc_store->Put(document));
   }
-  EXPECT_THAT(doc_store->GetDiskUsage(),
-              IsOkAndHolds(Gt(empty_doc_store_size)));
+  doc_store_storage_info = doc_store->GetStorageInfo();
+  EXPECT_THAT(doc_store_storage_info.document_store_size(),
+              Gt(empty_doc_store_size));
 
   // Bad file system
   MockFilesystem mock_filesystem;
@@ -1546,8 +1549,8 @@ TEST_F(DocumentStoreTest, GetDiskUsage) {
   std::unique_ptr<DocumentStore> doc_store_with_mock_filesystem =
       std::move(create_result.document_store);
 
-  EXPECT_THAT(doc_store_with_mock_filesystem->GetDiskUsage(),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  doc_store_storage_info = doc_store_with_mock_filesystem->GetStorageInfo();
+  EXPECT_THAT(doc_store_storage_info.document_store_size(), Eq(-1));
 }
 
 TEST_F(DocumentStoreTest, MaxDocumentId) {
@@ -2231,7 +2234,7 @@ TEST_F(DocumentStoreTest, ComputeChecksumSameAcrossInstances) {
   EXPECT_THAT(document_store->ComputeChecksum(), IsOkAndHolds(checksum));
 }
 
-TEST_F(DocumentStoreTest, ComputeChecksumChangesOnModification) {
+TEST_F(DocumentStoreTest, ComputeChecksumChangesOnNewDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -2245,6 +2248,24 @@ TEST_F(DocumentStoreTest, ComputeChecksumChangesOnModification) {
   ICING_EXPECT_OK(document_store->Put(test_document2_));
   EXPECT_THAT(document_store->ComputeChecksum(),
               IsOkAndHolds(Not(Eq(checksum))));
+}
+
+TEST_F(DocumentStoreTest, ComputeChecksumDoesntChangeOnNewUsage) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_EXPECT_OK(document_store->Put(test_document1_));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, document_store->ComputeChecksum());
+
+  UsageReport usage_report =
+      CreateUsageReport(test_document1_.namespace_(), test_document1_.uri(),
+                        /*timestamp_ms=*/1000, UsageReport::USAGE_TYPE1);
+  ICING_EXPECT_OK(document_store->ReportUsage(usage_report));
+  EXPECT_THAT(document_store->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
 }
 
 TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
@@ -3438,17 +3459,66 @@ TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
     ASSERT_THAT(filesystem_.CopyFile(src.c_str(), dst.c_str()), true);
   }
 
-  NativeInitializeStats initializeStats;
+  InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get(), &initializeStats));
+                            schema_store_.get(), &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   // The store_cache trigger regeneration because its element size is
   // inconsistent: expected 20 (current new size), actual 12 (as per the v0
   // score_cache).
-  EXPECT_TRUE(initializeStats.has_document_store_recovery_cause());
+  EXPECT_TRUE(initialize_stats.has_document_store_recovery_cause());
+}
+
+TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  // Add three documents.
+  DocumentProto document1 = test_document1_;
+  document1.set_namespace_("namespace.1");
+  document1.set_uri("uri1");
+  ICING_ASSERT_OK(doc_store->Put(document1));
+
+  DocumentProto document2 = test_document1_;
+  document2.set_namespace_("namespace.1");
+  document2.set_uri("uri2");
+  document2.set_creation_timestamp_ms(fake_clock_.GetSystemTimeMilliseconds());
+  document2.set_ttl_ms(100);
+  ICING_ASSERT_OK(doc_store->Put(document2));
+
+  DocumentProto document3 = test_document1_;
+  document3.set_namespace_("namespace.1");
+  document3.set_uri("uri3");
+  ICING_ASSERT_OK(doc_store->Put(document3));
+
+  // Delete the first doc.
+  ICING_ASSERT_OK(doc_store->Delete(document1.namespace_(), document1.uri()));
+
+  // Expire the second doc.
+  fake_clock_.SetSystemTimeMilliseconds(document2.creation_timestamp_ms() +
+                                        document2.ttl_ms() + 1);
+
+  DocumentStorageInfoProto storage_info = doc_store->GetStorageInfo();
+  EXPECT_THAT(storage_info.num_alive_documents(), Eq(1));
+  EXPECT_THAT(storage_info.num_deleted_documents(), Eq(1));
+  EXPECT_THAT(storage_info.num_expired_documents(), Eq(1));
+  EXPECT_THAT(storage_info.document_store_size(), Ge(0));
+  EXPECT_THAT(storage_info.document_log_size(), Ge(0));
+  EXPECT_THAT(storage_info.key_mapper_size(), Ge(0));
+  EXPECT_THAT(storage_info.document_id_mapper_size(), Ge(0));
+  EXPECT_THAT(storage_info.score_cache_size(), Ge(0));
+  EXPECT_THAT(storage_info.filter_cache_size(), Ge(0));
+  EXPECT_THAT(storage_info.corpus_mapper_size(), Ge(0));
+  EXPECT_THAT(storage_info.corpus_score_cache_size(), Ge(0));
+  EXPECT_THAT(storage_info.namespace_id_mapper_size(), Ge(0));
+  EXPECT_THAT(storage_info.num_namespaces(), Eq(1));
 }
 
 }  // namespace
