@@ -267,7 +267,7 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   }
 }
 
-string ProtoStatusCodeToString(StatusProto::Code code) {
+std::string ProtoStatusCodeToString(StatusProto::Code code) {
   switch (code) {
     case StatusProto::OK:
       return "OK";

@@ -23,36 +23,32 @@
 namespace icing {
 namespace lib {
 
-// Retrieve pointer to the snippet_index'th SnippetMatchProto within the
-// EntryProto identified by property_name within snippet_proto.
-// Returns nullptr
-//   - if there is no EntryProto within snippet_proto corresponding to
-//     property_name.
-//   - if there is no SnippetMatchProto at snippet_index within the EntryProto
-const SnippetMatchProto* GetSnippetMatch(const SnippetProto& snippet_proto,
-                                         const std::string& property_name,
-                                         int snippet_index);
-
 // Retrieve pointer to the PropertyProto identified by property_name.
 // Returns nullptr if no such property exists.
+//
+// NOTE: This function does not handle nesting or indexes. "foo.bar" will return
+// a nullptr even if document contains a property called "foo" that contains a
+// subproperty called "bar".
 const PropertyProto* GetProperty(const DocumentProto& document,
                                  const std::string& property_name);
 
-// Retrieves the window defined by the SnippetMatchProto returned by
-// GetSnippetMatch(snippet_proto, property_name, snippet_index) for the property
-// returned by GetProperty(document, property_name).
-// Returns "" if no such property, snippet or window exists.
-std::string GetWindow(const DocumentProto& document,
-                      const SnippetProto& snippet_proto,
-                      const std::string& property_name, int snippet_index);
+// Retrieves all windows defined by the snippet_proto for the content.
+std::vector<std::string_view> GetWindows(
+    std::string_view content, const SnippetProto::EntryProto& snippet_proto);
 
-// Retrieves the match defined by the SnippetMatchProto returned by
-// GetSnippetMatch(snippet_proto, property_name, snippet_index) for the property
-// returned by GetProperty(document, property_name).
-// Returns "" if no such property or snippet exists.
-std::string GetMatch(const DocumentProto& document,
-                     const SnippetProto& snippet_proto,
-                     const std::string& property_name, int snippet_index);
+// Retrieves all matches defined by the snippet_proto for the content.
+std::vector<std::string_view> GetMatches(
+    std::string_view content, const SnippetProto::EntryProto& snippet_proto);
+
+// Retrieves the string value held in the document corresponding to the
+// property_path.
+// Example:
+//   - GetString(doc, "foo") will retrieve the first string value in the
+//     property "foo" in document or an empty string if it doesn't exist.
+//   - GetString(doc, "foo[1].bar[2]") will retrieve the third string value in
+//     the subproperty "bar" of the second document value in the property "foo".
+std::string_view GetString(const DocumentProto* document,
+                           std::string_view property_path);
 
 }  // namespace lib
 }  // namespace icing

@@ -52,13 +52,21 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  // NOTE: currently, section restricts does decide which documents to
-  // return, but doesn't impact the relevance score of a document.
-  // TODO(b/173156803): decide whether we want to filter the matched_terms_stats
-  // for the restricted sections.
+  // Note that the DocHitInfoIteratorSectionRestrict is the only iterator that
+  // should set filtering_section_mask, hence the received
+  // filtering_section_mask is ignored and the filtering_section_mask passed to
+  // the delegate will be set to hit_intersect_section_ids_mask_. This will
+  // allow to filter the matching sections in the delegate.
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats) const override {
-    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    delegate_->PopulateMatchedTermsStats(
+        matched_terms_stats,
+        /*filtering_section_mask=*/hit_intersect_section_ids_mask_);
   }
 
  private:
