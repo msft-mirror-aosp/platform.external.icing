@@ -59,8 +59,7 @@ TEST(ResultStateManagerTest, ShouldRankAndPaginateOnePage) {
                         /*num_per_page=*/10);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
@@ -86,8 +85,7 @@ TEST(ResultStateManagerTest, ShouldRankAndPaginateMultiplePages) {
                         /*num_per_page=*/2);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // First page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -126,8 +124,7 @@ TEST(ResultStateManagerTest, EmptyStateShouldReturnError) {
   ResultState empty_result_state = CreateResultState({}, /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   EXPECT_THAT(
       result_state_manager.RankAndPaginate(std::move(empty_result_state)),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -146,8 +143,7 @@ TEST(ResultStateManagerTest, ShouldInvalidateOneToken) {
                         /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -185,8 +181,7 @@ TEST(ResultStateManagerTest, ShouldInvalidateAllTokens) {
                         /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -221,9 +216,7 @@ TEST(ResultStateManagerTest, ShouldRemoveOldestResultState) {
                          CreateScoredDocumentHit(/*document_id=*/6)},
                         /*num_per_page=*/1);
 
-  ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/2);
+  ResultStateManager result_state_manager(/*max_total_hits=*/2);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -255,7 +248,7 @@ TEST(ResultStateManagerTest, ShouldRemoveOldestResultState) {
 }
 
 TEST(ResultStateManagerTest,
-     PreviouslyInvalidatedResultStateShouldNotBeCounted) {
+     InvalidatedResultStateShouldDecreaseCurrentHitsCount) {
   ResultState result_state1 =
       CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
                          CreateScoredDocumentHit(/*document_id=*/2)},
@@ -268,14 +261,12 @@ TEST(ResultStateManagerTest,
       CreateResultState({CreateScoredDocumentHit(/*document_id=*/5),
                          CreateScoredDocumentHit(/*document_id=*/6)},
                         /*num_per_page=*/1);
-  ResultState result_state4 =
-      CreateResultState({CreateScoredDocumentHit(/*document_id=*/7),
-                         CreateScoredDocumentHit(/*document_id=*/8)},
-                        /*num_per_page=*/1);
 
-  ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/3);
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // Each result state has a page size of 1 and a result set of 2 hits. So each
+  // result will take up one hit of our three hit budget.
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -286,11 +277,18 @@ TEST(ResultStateManagerTest,
       PageResultState page_result_state3,
       result_state_manager.RankAndPaginate(std::move(result_state3)));
 
-  // Invalidates state 2, so that the number of valid tokens becomes 2.
+  // Invalidates state 2, so that the number of hits current cached should be
+  // decremented to 2.
   result_state_manager.InvalidateResultState(
       page_result_state2.next_page_token);
 
-  // Adding state 4 shouldn't affect rest of the states
+  // If invalidating state 2 correctly decremented the current hit count to 2,
+  // then adding state 4 should still be within our budget and no other result
+  // states should be evicted.
+  ResultState result_state4 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/7),
+                         CreateScoredDocumentHit(/*document_id=*/8)},
+                        /*num_per_page=*/1);
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state4,
       result_state_manager.RankAndPaginate(std::move(result_state4)));
@@ -321,6 +319,473 @@ TEST(ResultStateManagerTest,
                   /*document_id=*/7))));
 }
 
+TEST(ResultStateManagerTest,
+     InvalidatedAllResultStatesShouldResetCurrentHitCount) {
+  ResultState result_state1 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
+                         CreateScoredDocumentHit(/*document_id=*/2)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/3),
+                         CreateScoredDocumentHit(/*document_id=*/4)},
+                        /*num_per_page=*/1);
+  ResultState result_state3 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/5),
+                         CreateScoredDocumentHit(/*document_id=*/6)},
+                        /*num_per_page=*/1);
+
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // Each result state has a page size of 1 and a result set of 2 hits. So each
+  // result will take up one hit of our three hit budget.
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state3,
+      result_state_manager.RankAndPaginate(std::move(result_state3)));
+
+  // Invalidates all states so that the current hit count will be 0.
+  result_state_manager.InvalidateAllResultStates();
+
+  // If invalidating all states correctly reset the current hit count to 0,
+  // then the entirety of state 4 should still be within our budget and no other
+  // result states should be evicted.
+  ResultState result_state4 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/7),
+                         CreateScoredDocumentHit(/*document_id=*/8)},
+                        /*num_per_page=*/1);
+  ResultState result_state5 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/9),
+                         CreateScoredDocumentHit(/*document_id=*/10)},
+                        /*num_per_page=*/1);
+  ResultState result_state6 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/11),
+                         CreateScoredDocumentHit(/*document_id=*/12)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state4,
+      result_state_manager.RankAndPaginate(std::move(result_state4)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state5,
+      result_state_manager.RankAndPaginate(std::move(result_state5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state6,
+      result_state_manager.RankAndPaginate(std::move(result_state6)));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state2.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state3.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state4,
+      result_state_manager.GetNextPage(page_result_state4.next_page_token));
+  EXPECT_THAT(page_result_state4.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/7))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state5,
+      result_state_manager.GetNextPage(page_result_state5.next_page_token));
+  EXPECT_THAT(page_result_state5.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/9))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state6,
+      result_state_manager.GetNextPage(page_result_state6.next_page_token));
+  EXPECT_THAT(page_result_state6.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/11))));
+}
+
+TEST(ResultStateManagerTest,
+     InvalidatedResultStateShouldDecreaseCurrentHitsCountByExactStateHitCount) {
+  ResultState result_state1 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
+                         CreateScoredDocumentHit(/*document_id=*/2)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/3),
+                         CreateScoredDocumentHit(/*document_id=*/4)},
+                        /*num_per_page=*/1);
+  ResultState result_state3 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/5),
+                         CreateScoredDocumentHit(/*document_id=*/6)},
+                        /*num_per_page=*/1);
+
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // Each result state has a page size of 1 and a result set of 2 hits. So each
+  // result will take up one hit of our three hit budget.
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state3,
+      result_state_manager.RankAndPaginate(std::move(result_state3)));
+
+  // Invalidates state 2, so that the number of hits current cached should be
+  // decremented to 2.
+  result_state_manager.InvalidateResultState(
+      page_result_state2.next_page_token);
+
+  // If invalidating state 2 correctly decremented the current hit count to 2,
+  // then adding state 4 should still be within our budget and no other result
+  // states should be evicted.
+  ResultState result_state4 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/7),
+                         CreateScoredDocumentHit(/*document_id=*/8)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state4,
+      result_state_manager.RankAndPaginate(std::move(result_state4)));
+
+  // If invalidating result state 2 correctly decremented the current hit count
+  // to 2 and adding state 4 correctly incremented it to 3, then adding this
+  // result state should trigger the eviction of state 1.
+  ResultState result_state5 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/9),
+                         CreateScoredDocumentHit(/*document_id=*/10)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state5,
+      result_state_manager.RankAndPaginate(std::move(result_state5)));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state2.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/5))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state4,
+      result_state_manager.GetNextPage(page_result_state4.next_page_token));
+  EXPECT_THAT(page_result_state4.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/7))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state5,
+      result_state_manager.GetNextPage(page_result_state5.next_page_token));
+  EXPECT_THAT(page_result_state5.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/9))));
+}
+
+TEST(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
+  ResultState result_state1 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
+                         CreateScoredDocumentHit(/*document_id=*/2)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/3),
+                         CreateScoredDocumentHit(/*document_id=*/4)},
+                        /*num_per_page=*/1);
+  ResultState result_state3 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/5),
+                         CreateScoredDocumentHit(/*document_id=*/6)},
+                        /*num_per_page=*/1);
+
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // Each result state has a page size of 1 and a result set of 2 hits. So each
+  // result will take up one hit of our three hit budget.
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state3,
+      result_state_manager.RankAndPaginate(std::move(result_state3)));
+
+  // GetNextPage for result state 1 should return its result and decrement the
+  // number of cached hits to 2.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state1,
+      result_state_manager.GetNextPage(page_result_state1.next_page_token));
+  EXPECT_THAT(page_result_state1.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/1))));
+
+  // If retrieving the next page for result state 1 correctly decremented the
+  // current hit count to 2, then adding state 4 should still be within our
+  // budget and no other result states should be evicted.
+  ResultState result_state4 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/7),
+                         CreateScoredDocumentHit(/*document_id=*/8)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state4,
+      result_state_manager.RankAndPaginate(std::move(result_state4)));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state2,
+      result_state_manager.GetNextPage(page_result_state2.next_page_token));
+  EXPECT_THAT(page_result_state2.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/3))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/5))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state4,
+      result_state_manager.GetNextPage(page_result_state4.next_page_token));
+  EXPECT_THAT(page_result_state4.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/7))));
+}
+
+TEST(ResultStateManagerTest,
+     GetNextPageShouldDecreaseCurrentHitsCountByExactlyOnePage) {
+  ResultState result_state1 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
+                         CreateScoredDocumentHit(/*document_id=*/2)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/3),
+                         CreateScoredDocumentHit(/*document_id=*/4)},
+                        /*num_per_page=*/1);
+  ResultState result_state3 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/5),
+                         CreateScoredDocumentHit(/*document_id=*/6)},
+                        /*num_per_page=*/1);
+
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // Each result state has a page size of 1 and a result set of 2 hits. So each
+  // result will take up one hit of our three hit budget.
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state3,
+      result_state_manager.RankAndPaginate(std::move(result_state3)));
+
+  // GetNextPage for result state 1 should return its result and decrement the
+  // number of cached hits to 2.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state1,
+      result_state_manager.GetNextPage(page_result_state1.next_page_token));
+  EXPECT_THAT(page_result_state1.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/1))));
+
+  // If retrieving the next page for result state 1 correctly decremented the
+  // current hit count to 2, then adding state 4 should still be within our
+  // budget and no other result states should be evicted.
+  ResultState result_state4 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/7),
+                         CreateScoredDocumentHit(/*document_id=*/8)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state4,
+      result_state_manager.RankAndPaginate(std::move(result_state4)));
+
+  // If retrieving the next page for result state 1 correctly decremented the
+  // current hit count to 2 and adding state 4 correctly incremented it to 3,
+  // then adding this result state should trigger the eviction of state 2.
+  ResultState result_state5 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/9),
+                         CreateScoredDocumentHit(/*document_id=*/10)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state5,
+      result_state_manager.RankAndPaginate(std::move(result_state5)));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state2.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/5))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state4,
+      result_state_manager.GetNextPage(page_result_state4.next_page_token));
+  EXPECT_THAT(page_result_state4.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/7))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state5,
+      result_state_manager.GetNextPage(page_result_state5.next_page_token));
+  EXPECT_THAT(page_result_state5.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/9))));
+}
+
+TEST(ResultStateManagerTest, AddingOverBudgetResultStateShouldEvictAllStates) {
+  ResultState result_state1 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
+                         CreateScoredDocumentHit(/*document_id=*/2),
+                         CreateScoredDocumentHit(/*document_id=*/3)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/4),
+                         CreateScoredDocumentHit(/*document_id=*/5)},
+                        /*num_per_page=*/1);
+
+  // Add the first two states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // Each result state has a page size of 1. So 3 hits will remain cached.
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+
+  // Add a result state that is larger than the entire budget. This should
+  // result in all previous result states being evicted, the first hit from
+  // result state 3 being returned and the next four hits being cached (the last
+  // hit should be dropped because it exceeds the max).
+  ResultState result_state3 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/6),
+                         CreateScoredDocumentHit(/*document_id=*/7),
+                         CreateScoredDocumentHit(/*document_id=*/8),
+                         CreateScoredDocumentHit(/*document_id=*/9),
+                         CreateScoredDocumentHit(/*document_id=*/10),
+                         CreateScoredDocumentHit(/*document_id=*/11)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state3,
+      result_state_manager.RankAndPaginate(std::move(result_state3)));
+
+  // GetNextPage for result state 1 and 2 should return NOT_FOUND.
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state2.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Only the next four results in state 3 should be retrievable.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/10))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/9))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/8))));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/7))));
+
+  // The final result should have been dropped because it exceeded the budget.
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state3.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST(ResultStateManagerTest,
+     AddingResultStateShouldEvictOverBudgetResultState) {
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
+  // Add a result state that is larger than the entire budget. The entire result
+  // state will still be cached
+  ResultState result_state1 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/0),
+                         CreateScoredDocumentHit(/*document_id=*/1),
+                         CreateScoredDocumentHit(/*document_id=*/2),
+                         CreateScoredDocumentHit(/*document_id=*/3),
+                         CreateScoredDocumentHit(/*document_id=*/4),
+                         CreateScoredDocumentHit(/*document_id=*/5)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+
+  // Add a result state. Because state2 + state1 is larger than the budget,
+  // state1 should be evicted.
+  ResultState result_state2 =
+      CreateResultState({CreateScoredDocumentHit(/*document_id=*/6),
+                         CreateScoredDocumentHit(/*document_id=*/7)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+
+  // state1 should have been evicted and state2 should still be retrievable.
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state2,
+      result_state_manager.GetNextPage(page_result_state2.next_page_token));
+  EXPECT_THAT(page_result_state2.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredDocumentHit(
+                  /*document_id=*/6))));
+}
+
 TEST(ResultStateManagerTest, ShouldGetSnippetContext) {
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/1);
   result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
@@ -339,8 +804,7 @@ TEST(ResultStateManagerTest, ShouldGetSnippetContext) {
       query_terms_map, search_spec, CreateScoringSpec(), result_spec);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
@@ -374,8 +838,7 @@ TEST(ResultStateManagerTest, ShouldGetDefaultSnippetContext) {
       query_terms_map, search_spec, CreateScoringSpec(), result_spec);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
@@ -400,8 +863,7 @@ TEST(ResultStateManagerTest, ShouldGetCorrectNumPreviouslyReturned) {
                         /*num_per_page=*/2);
 
   ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/std::numeric_limits<int>::max(),
-      /*max_result_states=*/std::numeric_limits<int>::max());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // First page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -435,41 +897,47 @@ TEST(ResultStateManagerTest, ShouldGetCorrectNumPreviouslyReturned) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST(ResultStateManagerTest, ShouldStoreMaxNumberOfScoredDocumentHits) {
-  ResultState original_result_state =
-      CreateResultState({CreateScoredDocumentHit(/*document_id=*/1),
-                         CreateScoredDocumentHit(/*document_id=*/2),
-                         CreateScoredDocumentHit(/*document_id=*/3),
-                         CreateScoredDocumentHit(/*document_id=*/4),
-                         CreateScoredDocumentHit(/*document_id=*/5)},
-                        /*num_per_page=*/2);
+TEST(ResultStateManagerTest, ShouldStoreAllHits) {
+  ScoredDocumentHit scored_hit_1 = CreateScoredDocumentHit(/*document_id=*/1);
+  ScoredDocumentHit scored_hit_2 = CreateScoredDocumentHit(/*document_id=*/2);
+  ScoredDocumentHit scored_hit_3 = CreateScoredDocumentHit(/*document_id=*/3);
+  ScoredDocumentHit scored_hit_4 = CreateScoredDocumentHit(/*document_id=*/4);
+  ScoredDocumentHit scored_hit_5 = CreateScoredDocumentHit(/*document_id=*/5);
 
-  ResultStateManager result_state_manager(
-      /*max_hits_per_query=*/3,
-      /*max_result_states=*/std::numeric_limits<int>::max());
+  ResultState original_result_state = CreateResultState(
+      {scored_hit_1, scored_hit_2, scored_hit_3, scored_hit_4, scored_hit_5},
+      /*num_per_page=*/2);
 
-  // The 5 input scored document hits will be truncated to 3.
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
+
+  // The 5 input scored document hits will not be truncated. The first page of
+  // two hits will be returned immediately and the other three hits will fit
+  // within our caching budget.
 
   // First page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
-  EXPECT_THAT(
-      page_result_state1.scored_document_hits,
-      ElementsAre(
-          EqualsScoredDocumentHit(CreateScoredDocumentHit(/*document_id=*/5)),
-          EqualsScoredDocumentHit(CreateScoredDocumentHit(/*document_id=*/4))));
+  EXPECT_THAT(page_result_state1.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(scored_hit_5),
+                          EqualsScoredDocumentHit(scored_hit_4)));
 
   uint64_t next_page_token = page_result_state1.next_page_token;
 
-  // Second page, 1 results.
+  // Second page, 2 results.
   ICING_ASSERT_OK_AND_ASSIGN(PageResultState page_result_state2,
                              result_state_manager.GetNextPage(next_page_token));
   EXPECT_THAT(page_result_state2.scored_document_hits,
-              ElementsAre(EqualsScoredDocumentHit(
-                  CreateScoredDocumentHit(/*document_id=*/3))));
+              ElementsAre(EqualsScoredDocumentHit(scored_hit_3),
+                          EqualsScoredDocumentHit(scored_hit_2)));
 
-  // No third page.
+  // Third page, 1 result.
+  ICING_ASSERT_OK_AND_ASSIGN(PageResultState page_result_state3,
+                             result_state_manager.GetNextPage(next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(scored_hit_1)));
+
+  // Fourth page, 0 results.
   EXPECT_THAT(result_state_manager.GetNextPage(next_page_token),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }

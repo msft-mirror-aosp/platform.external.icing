@@ -68,8 +68,10 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   std::string ToString() const override;
 
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats) const override {
-    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats,
+                                         filtering_section_mask);
   }
 
  private:

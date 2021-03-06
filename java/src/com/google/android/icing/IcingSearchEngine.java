@@ -41,6 +41,7 @@ import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
 import com.google.android.icing.proto.StatusProto;
+import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.UsageReport;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -501,6 +502,29 @@ public final class IcingSearchEngine implements Closeable {
   }
 
   @NonNull
+  public StorageInfoResultProto getStorageInfo() {
+    throwIfClosed();
+
+    byte[] storageInfoResultProtoBytes = nativeGetStorageInfo(this);
+    if (storageInfoResultProtoBytes == null) {
+      Log.e(TAG, "Received null StorageInfoResultProto from native.");
+      return StorageInfoResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return StorageInfoResultProto.parseFrom(
+          storageInfoResultProtoBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing GetOptimizeInfoResultProto.", e);
+      return StorageInfoResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
   public ResetResultProto reset() {
     throwIfClosed();
 
@@ -573,6 +597,8 @@ public final class IcingSearchEngine implements Closeable {
   private static native byte[] nativeOptimize(IcingSearchEngine instance);
 
   private static native byte[] nativeGetOptimizeInfo(IcingSearchEngine instance);
+
+  private static native byte[] nativeGetStorageInfo(IcingSearchEngine instance);
 
   private static native byte[] nativeReset(IcingSearchEngine instance);
 }
