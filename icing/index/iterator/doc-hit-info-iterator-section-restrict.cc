@@ -84,8 +84,7 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
       if (section_metadata->path == target_section_) {
         // The hit was in the target section name, return OK/found
         doc_hit_info_ = delegate_->doc_hit_info();
-        hit_intersect_section_ids_mask_ =
-            delegate_->hit_intersect_section_ids_mask();
+        hit_intersect_section_ids_mask_ = 1u << section_id;
         return libtextclassifier3::Status::OK;
       }
     }

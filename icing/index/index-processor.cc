@@ -55,7 +55,7 @@ IndexProcessor::Create(const Normalizer* normalizer, Index* index,
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    NativePutDocumentStats* put_document_stats) {
+    PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (index_->last_added_document_id() != kInvalidDocumentId &&
