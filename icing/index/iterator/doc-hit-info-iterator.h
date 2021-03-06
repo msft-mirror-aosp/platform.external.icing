@@ -94,11 +94,14 @@ class DocHitInfoIterator {
 
   // For the last hit docid, retrieves all the matched query terms and other
   // stats, see TermMatchInfo.
+  // filtering_section_mask filters the matching sections and should be set only
+  // by DocHitInfoIteratorSectionRestrict.
   // If Advance() wasn't called after construction, Advance() returned false or
   // the concrete HitIterator didn't override this method, the vectors aren't
   // populated.
   virtual void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats) const {}
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const {}
 
  protected:
   DocHitInfo doc_hit_info_;

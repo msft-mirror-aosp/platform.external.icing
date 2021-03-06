@@ -959,7 +959,8 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::PersistToDisk() {
   header_->header_checksum = header_->CalculateHeaderChecksum();
 
   if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
-                           sizeof(Header))) {
+                           sizeof(Header)) ||
+      !filesystem_->DataSync(fd_.get())) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to update header to: ", file_path_));
   }

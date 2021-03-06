@@ -29,6 +29,8 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -122,7 +124,7 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
-      NativeInitializeStats* initialize_stats = nullptr);
+      InitializeStatsProto* initialize_stats = nullptr);
 
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
@@ -152,10 +154,10 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> Put(
       const DocumentProto& document, int32_t num_tokens = 0,
-      NativePutDocumentStats* put_document_stats = nullptr);
+      PutDocumentStatsProto* put_document_stats = nullptr);
   libtextclassifier3::StatusOr<DocumentId> Put(
       DocumentProto&& document, int32_t num_tokens = 0,
-      NativePutDocumentStats* put_document_stats = nullptr);
+      PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Finds and returns the document identified by the given key (namespace +
   // uri). If 'clear_internal_fields' is true, document level data that's
@@ -351,16 +353,11 @@ class DocumentStore {
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
 
-  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
-  // block size.
+  // Calculates the StorageInfo for the Document Store.
   //
-  // Returns:
-  //   Disk usage on success
-  //   INTERNAL_ERROR on IO error
-  //
-  // TODO(tjbarron): consider returning a struct which has the breakdown of each
-  // component.
-  libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
+  // If an IO error occurs while trying to calculate the value for a field, then
+  // that field will be set to -1.
+  DocumentStorageInfoProto GetStorageInfo() const;
 
   // Update any derived data off of the SchemaStore with the new SchemaStore.
   // This may include pointers, SchemaTypeIds, etc.
@@ -407,6 +404,8 @@ class DocumentStore {
   // reassigned so any files / classes that are based on old document ids may be
   // outdated.
   //
+  // stats will be set if non-null.
+  //
   // NOTE: The tasks in this method are too expensive to be executed in
   // real-time. The caller should decide how frequently and when to call this
   // method based on device usage.
@@ -416,8 +415,8 @@ class DocumentStore {
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status OptimizeInto(
-      const std::string& new_directory,
-      const LanguageSegmenter* lang_segmenter);
+      const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
+      OptimizeStatsProto* stats = nullptr);
 
   // Calculates status for a potential Optimize call. Includes how many docs
   // there are vs how many would be optimized away. And also includes an
@@ -508,7 +507,7 @@ class DocumentStore {
   bool initialized_ = false;
 
   libtextclassifier3::StatusOr<DataLoss> Initialize(
-      NativeInitializeStats* initialize_stats);
+      InitializeStatsProto* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
   //
@@ -576,8 +575,8 @@ class DocumentStore {
   // if it doesn't exist.
   bool HeaderExists();
 
-  // Update and replace the header file. Creates the header file if it doesn't
-  // exist.
+  // Update, replace and persist the header file. Creates the header file if it
+  // doesn't exist.
   //
   // Returns:
   //   OK on success
@@ -586,7 +585,7 @@ class DocumentStore {
 
   libtextclassifier3::StatusOr<DocumentId> InternalPut(
       DocumentProto& document,
-      NativePutDocumentStats* put_document_stats = nullptr);
+      PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Helper function to do batch deletes. Documents with the given
   // "namespace_id" and "schema_type_id" will be deleted. If callers don't need
@@ -688,6 +687,20 @@ class DocumentStore {
   // Sets usage scores for the given document.
   libtextclassifier3::Status SetUsageScores(
       DocumentId document_id, const UsageStore::UsageScores& usage_scores);
+
+  // Returns:
+  //   - on success, a DocumentStorageInfoProto with the fields relating to the
+  //     size of Document Store member variables populated.
+  //   - INTERNAL on failure to get file size
+  DocumentStorageInfoProto GetMemberStorageInfo() const;
+
+  // Returns:
+  //   - on success, the storage_info that was passed in but with the number of
+  //     alive, deleted and expired documents also set.
+  //   - OUT_OF_RANGE, this should never happen. This could only be returned if
+  //     the document_id_mapper somehow became larger than the filter cache.
+  DocumentStorageInfoProto CalculateDocumentStatusCounts(
+      DocumentStorageInfoProto storage_info) const;
 };
 
 }  // namespace lib

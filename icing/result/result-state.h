@@ -67,6 +67,10 @@ class ResultState {
   // increased when GetNextPage() is called.
   int num_returned() const { return num_returned_; }
 
+  // The number of results yet to be returned. This number is decreased when
+  // GetNextPage is called.
+  int num_remaining() const { return scored_document_hits_.size(); }
+
  private:
   // The scored document hits. It represents a heap data structure when ranking
   // is required so that we can get top K hits in O(KlgN) time. If no ranking is
