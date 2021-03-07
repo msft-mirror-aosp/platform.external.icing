@@ -32,6 +32,7 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -151,6 +152,12 @@ class Index {
     return lite_index_size + main_index_size;
   }
 
+  // Calculates the StorageInfo for the Index.
+  //
+  // If an IO error occurs while trying to calculate the value for a field, then
+  // that field will be set to -1.
+  IndexStorageInfoProto GetStorageInfo() const;
+
   // Create an iterator to iterate through all doc hit infos in the index that
   // match the term. section_id_mask can be set to ignore hits from sections not
   // listed in the mask. Eg. section_id_mask = 1U << 3; would only return hits
@@ -242,11 +249,12 @@ class Index {
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
         std::unique_ptr<LiteIndex> lite_index,
-        std::unique_ptr<MainIndex> main_index)
+        std::unique_ptr<MainIndex> main_index, const Filesystem* filesystem)
       : lite_index_(std::move(lite_index)),
         main_index_(std::move(main_index)),
         options_(options),
-        term_id_codec_(std::move(term_id_codec)) {}
+        term_id_codec_(std::move(term_id_codec)),
+        filesystem_(filesystem) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
       const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
@@ -256,6 +264,7 @@ class Index {
   std::unique_ptr<MainIndex> main_index_;
   const Options options_;
   std::unique_ptr<TermIdCodec> term_id_codec_;
+  const Filesystem* filesystem_;
 };
 
 }  // namespace lib

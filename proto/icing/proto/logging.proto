@@ -24,7 +24,7 @@ option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
 // Next tag: 11
-message NativeInitializeStats {
+message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
 
@@ -95,7 +95,7 @@ message NativeInitializeStats {
 
 // Stats of the top-level function IcingSearchEngine::Put().
 // Next tag: 7
-message NativePutDocumentStats {
+message PutDocumentStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
 
@@ -126,7 +126,7 @@ message NativePutDocumentStats {
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
 // Next tag: 15
-message NativeQueryStats {
+message QueryStatsProto {
   // Number of terms in the query string.
   optional int32 num_terms = 1;
 
@@ -178,7 +178,7 @@ message NativeQueryStats {
 // IcingSearchEngine::DeleteByNamespace, IcingSearchEngine::DeleteBySchemaType,
 // IcingSearchEngine::DeleteByQuery.
 // Next tag: 4
-message NativeDeleteStats {
+message DeleteStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
 

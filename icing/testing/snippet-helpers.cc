@@ -17,28 +17,37 @@
 #include <algorithm>
 #include <string_view>
 
+#include "icing/absl_ports/str_join.h"
 #include "icing/proto/search.pb.h"
+#include "icing/schema/section-manager.h"
 
 namespace icing {
 namespace lib {
 
-const SnippetMatchProto* GetSnippetMatch(const SnippetProto& snippet_proto,
-                                         const std::string& property_name,
-                                         int snippet_index) {
-  auto iterator = std::find_if(
-      snippet_proto.entries().begin(), snippet_proto.entries().end(),
-      [&property_name](const SnippetProto::EntryProto& entry) {
-        return entry.property_name() == property_name;
-      });
-  if (iterator == snippet_proto.entries().end() ||
-      iterator->snippet_matches_size() <= snippet_index) {
-    return nullptr;
+namespace {
+
+// Returns the property index and the property name with the index removed.
+// Examples:
+//   GetPropertyIndex("foo") will return ["foo", 0]
+//   GetPropertyIndex("foo[5]") will return ["foo", 5]
+std::pair<std::string_view, int> GetPropertyIndex(std::string_view property) {
+  size_t l_bracket = property.find(kLBracket);
+  if (l_bracket == std::string_view::npos || l_bracket >= property.length()) {
+    return {property, 0};
   }
-  return &iterator->snippet_matches(snippet_index);
+  size_t r_bracket = property.find(kRBracket, l_bracket);
+  if (r_bracket == std::string_view::npos || r_bracket - l_bracket < 2) {
+    return {property, 0};
+  }
+  std::string index_string =
+      std::string(property.substr(l_bracket + 1, r_bracket - l_bracket - 1));
+  return {property.substr(0, l_bracket), std::stoi(index_string)};
 }
 
+}  // namespace
+
 const PropertyProto* GetProperty(const DocumentProto& document,
-                                 const std::string& property_name) {
+                                 std::string_view property_name) {
   const PropertyProto* property = nullptr;
   for (const PropertyProto& prop : document.properties()) {
     if (prop.name() == property_name) {
@@ -48,32 +57,55 @@ const PropertyProto* GetProperty(const DocumentProto& document,
   return property;
 }
 
-std::string GetWindow(const DocumentProto& document,
-                      const SnippetProto& snippet_proto,
-                      const std::string& property_name, int snippet_index) {
-  const SnippetMatchProto* match =
-      GetSnippetMatch(snippet_proto, property_name, snippet_index);
-  const PropertyProto* property = GetProperty(document, property_name);
-  if (match == nullptr || property == nullptr) {
-    return "";
+std::vector<std::string_view> GetWindows(
+    std::string_view content, const SnippetProto::EntryProto& snippet_proto) {
+  std::vector<std::string_view> windows;
+  for (const SnippetMatchProto& match : snippet_proto.snippet_matches()) {
+    windows.push_back(
+        content.substr(match.window_position(), match.window_bytes()));
   }
-  std::string_view value = property->string_values(match->values_index());
-  return std::string(
-      value.substr(match->window_position(), match->window_bytes()));
+  return windows;
 }
 
-std::string GetMatch(const DocumentProto& document,
-                     const SnippetProto& snippet_proto,
-                     const std::string& property_name, int snippet_index) {
-  const SnippetMatchProto* match =
-      GetSnippetMatch(snippet_proto, property_name, snippet_index);
-  const PropertyProto* property = GetProperty(document, property_name);
-  if (match == nullptr || property == nullptr) {
-    return "";
+std::vector<std::string_view> GetMatches(
+    std::string_view content, const SnippetProto::EntryProto& snippet_proto) {
+  std::vector<std::string_view> matches;
+  for (const SnippetMatchProto& match : snippet_proto.snippet_matches()) {
+    matches.push_back(content.substr(match.exact_match_position(),
+                                     match.exact_match_bytes()));
   }
-  std::string_view value = property->string_values(match->values_index());
-  return std::string(
-      value.substr(match->exact_match_position(), match->exact_match_bytes()));
+  return matches;
+}
+
+std::string_view GetString(const DocumentProto* document,
+                           std::string_view property_path) {
+  std::vector<std::string_view> properties =
+      absl_ports::StrSplit(property_path, kPropertySeparator);
+  for (int i = 0; i < properties.size(); ++i) {
+    std::string_view property = properties.at(i);
+    int property_index;
+    std::tie(property, property_index) = GetPropertyIndex(property);
+    const PropertyProto* prop = GetProperty(*document, property);
+    if (prop == nullptr) {
+      // requested property doesn't exist in the document. Return empty string.
+      return "";
+    }
+    if (i == properties.size() - 1) {
+      // The last property. Get the string_value
+      if (prop->string_values_size() - 1 < property_index) {
+        // The requested string doesn't exist. Return empty string.
+        return "";
+      }
+      return prop->string_values(property_index);
+    } else if (prop->document_values_size() - 1 < property_index) {
+      // The requested subproperty doesn't exist. return an empty string.
+      return "";
+    } else {
+      // Go to the next subproperty.
+      document = &prop->document_values(property_index);
+    }
+  }
+  return "";
 }
 
 }  // namespace lib
