@@ -27,6 +27,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/util/status-macros.h"
 
@@ -387,6 +388,18 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetOptimizeInfo(
       icing->GetOptimizeInfo();
 
   return SerializeProtoToJniByteArray(env, get_optimize_info_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetStorageInfo(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::StorageInfoResultProto storage_info_result_proto =
+      icing->GetStorageInfo();
+
+  return SerializeProtoToJniByteArray(env, storage_info_result_proto);
 }
 
 JNIEXPORT jbyteArray JNICALL

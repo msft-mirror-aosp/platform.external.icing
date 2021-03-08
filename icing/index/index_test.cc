@@ -31,6 +31,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -46,6 +47,7 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::IsTrue;
@@ -1634,6 +1636,33 @@ TEST_F(IndexTest, TruncateToThrowsOutBothIndices) {
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 
   EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
+}
+
+TEST_F(IndexTest, IndexStorageInfoProto) {
+  // Add two documents to the lite index and merge them into main.
+  {
+    Index::Editor edit = index_->Edit(
+        kDocumentId0, kSectionId2, TermMatchType::PREFIX, /*namespace_id=*/0);
+    ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
+    EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+    edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::PREFIX,
+                        /*namespace_id=*/0);
+    ASSERT_THAT(edit.BufferTerm("foul"), IsOk());
+    EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+    ICING_ASSERT_OK(index_->Merge());
+  }
+
+  IndexStorageInfoProto storage_info = index_->GetStorageInfo();
+  EXPECT_THAT(storage_info.index_size(), Ge(0));
+  EXPECT_THAT(storage_info.lite_index_lexicon_size(), Ge(0));
+  EXPECT_THAT(storage_info.lite_index_hit_buffer_size(), Ge(0));
+  EXPECT_THAT(storage_info.main_index_lexicon_size(), Ge(0));
+  EXPECT_THAT(storage_info.main_index_storage_size(), Ge(0));
+  EXPECT_THAT(storage_info.main_index_block_size(), Ge(0));
+  // There should be 1 block for the header and 1 block for two posting lists.
+  EXPECT_THAT(storage_info.num_blocks(), Eq(2));
+  EXPECT_THAT(storage_info.min_free_fraction(), Ge(0));
 }
 
 }  // namespace

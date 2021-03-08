@@ -27,7 +27,9 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section-manager.h"
 #include "icing/store/document-id.h"
@@ -49,9 +51,29 @@ namespace lib {
 
 namespace {
 
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+
+std::vector<std::string_view> GetPropertyPaths(const SnippetProto& snippet) {
+  std::vector<std::string_view> paths;
+  for (const SnippetProto::EntryProto& entry : snippet.entries()) {
+    paths.push_back(entry.property_name());
+  }
+  return paths;
+}
 
 class SnippetRetrieverTest : public testing::Test {
  protected:
@@ -75,25 +97,22 @@ class SnippetRetrieverTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    SchemaProto schema;
-    SchemaTypeConfigProto* type_config = schema.add_types();
-    type_config->set_schema_type("email");
-    PropertyConfigProto* prop_config = type_config->add_properties();
-    prop_config->set_property_name("subject");
-    prop_config->set_data_type(PropertyConfigProto::DataType::STRING);
-    prop_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    prop_config->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    prop_config->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-    prop_config = type_config->add_properties();
-    prop_config->set_property_name("body");
-    prop_config->set_data_type(PropertyConfigProto::DataType::STRING);
-    prop_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    prop_config->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    prop_config->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("email")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("subject")
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("body")
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
@@ -156,11 +175,13 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeSmallerThanMatch) {
   // "three". len=4, orig_window= "thre"
   snippet_spec_.set_max_window_bytes(4);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq(""));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre(""));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsInWhitespace) {
@@ -180,11 +201,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsInWhitespace) {
   // len=14, orig_window=" two three fou"
   snippet_spec_.set_max_window_bytes(14);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("two three"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("two three"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsMidToken) {
@@ -203,11 +227,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsMidToken) {
   // len=16, orig_window="e two three four"
   snippet_spec_.set_max_window_bytes(16);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("two three four"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("two three four"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInPunctuation) {
@@ -226,11 +253,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInPunctuation) {
   // len=20, orig_window="one two three four.."
   snippet_spec_.set_max_window_bytes(20);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("one two three four.."));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four.."));
 }
 
 TEST_F(SnippetRetrieverTest,
@@ -251,11 +281,14 @@ TEST_F(SnippetRetrieverTest,
   // len=26, orig_window="pside down in Australia\xC2"
   snippet_spec_.set_max_window_bytes(24);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("down in Australia"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("down in Australia"));
 }
 
 TEST_F(SnippetRetrieverTest,
@@ -276,11 +309,14 @@ TEST_F(SnippetRetrieverTest,
   // len=26, orig_window="upside down in Australia\xC2\xBF"
   snippet_spec_.set_max_window_bytes(26);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("upside down in Australia¿"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("upside down in Australia¿"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsBeforeValueStart) {
@@ -299,11 +335,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsBeforeValueStart) {
   // len=22, orig_window="one two three four..."
   snippet_spec_.set_max_window_bytes(22);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("one two three four..."));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four..."));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInWhitespace) {
@@ -322,11 +361,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInWhitespace) {
   // len=26, orig_window="one two three four.... "
   snippet_spec_.set_max_window_bytes(26);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("one two three four...."));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four...."));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsMidToken) {
@@ -345,11 +387,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsMidToken) {
   // len=32, orig_window="one two three four.... fiv"
   snippet_spec_.set_max_window_bytes(32);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("one two three four...."));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four...."));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeEqualToValueSize) {
@@ -368,11 +413,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeEqualToValueSize) {
   // len=34, orig_window="one two three four.... five"
   snippet_spec_.set_max_window_bytes(34);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("one two three four.... five"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four.... five"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeLargerThanValueSize) {
@@ -391,11 +439,14 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeLargerThanValueSize) {
   // len=36, orig_window="one two three four.... five"
   snippet_spec_.set_max_window_bytes(36);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", /*snippet_index=*/0),
-              Eq("one two three four.... five"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four.... five"));
 }
 
 TEST_F(SnippetRetrieverTest, PrefixSnippeting) {
@@ -409,14 +460,17 @@ TEST_F(SnippetRetrieverTest, PrefixSnippeting) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"f"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
 
   // Check the snippets. 'f' should match prefix-enabled property 'subject', but
   // not exact-only property 'body'
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), Eq("subject foo"));
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("foo"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("subject foo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
 }
 
 TEST_F(SnippetRetrieverTest, ExactSnippeting) {
@@ -431,8 +485,7 @@ TEST_F(SnippetRetrieverTest, ExactSnippeting) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"f"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
 
   // Check the snippets
   EXPECT_THAT(snippet.entries(), IsEmpty());
@@ -452,13 +505,15 @@ TEST_F(SnippetRetrieverTest, SimpleSnippetingNoWindowing) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"foo"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
 
   // Check the snippets
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), IsEmpty());
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("foo"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre(""));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatches) {
@@ -474,20 +529,25 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatches) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
 
   // Check the snippets
   EXPECT_THAT(snippet.entries(), SizeIs(2));
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), Eq("subject foo"));
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("foo"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(
-      GetWindow(document, snippet, "body", 0),
-      Eq("Concerning the subject of foo, we need to begin considering"));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("foo"));
-  EXPECT_THAT(GetWindow(document, snippet, "body", 1),
-              Eq("our options regarding body bar."));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 1), Eq("bar"));
+      GetWindows(content, snippet.entries(0)),
+      ElementsAre("Concerning the subject of foo, we need to begin considering",
+                  "our options regarding body bar."));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)),
+              ElementsAre("foo", "bar"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)),
+              ElementsAre("subject foo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("foo"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrict) {
@@ -505,18 +565,19 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrict) {
   SectionIdMask section_mask = 0b00000001;
   SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
 
   // Check the snippets
   EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(
-      GetWindow(document, snippet, "body", 0),
-      Eq("Concerning the subject of foo, we need to begin considering"));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("foo"));
-  EXPECT_THAT(GetWindow(document, snippet, "body", 1),
-              Eq("our options regarding body bar."));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 1), Eq("bar"));
+      GetWindows(content, snippet.entries(0)),
+      ElementsAre("Concerning the subject of foo, we need to begin considering",
+                  "our options regarding body bar."));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)),
+              ElementsAre("foo", "bar"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrictedTerm) {
@@ -536,25 +597,26 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrictedTerm) {
   SectionRestrictQueryTermsMap query_terms{{"", {"subject"}},
                                            {"body", {"foo"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
 
   // Check the snippets
   EXPECT_THAT(snippet.entries(), SizeIs(2));
-  // 'subject' section should only have the one match for "subject".
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), Eq("subject foo"));
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("subject"));
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 1), IsEmpty());
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 1), IsEmpty());
-
-  // 'body' section should have matches for "subject" and "foo".
-  EXPECT_THAT(GetWindow(document, snippet, "body", 0),
-              Eq("Concerning the subject of foo, we need to begin"));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("subject"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(
-      GetWindow(document, snippet, "body", 1),
-      Eq("Concerning the subject of foo, we need to begin considering"));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 1), Eq("foo"));
+      GetWindows(content, snippet.entries(0)),
+      ElementsAre(
+          "Concerning the subject of foo, we need to begin",
+          "Concerning the subject of foo, we need to begin considering"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)),
+              ElementsAre("subject", "foo"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)),
+              ElementsAre("subject foo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("subject"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
@@ -573,19 +635,24 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
 
   // Check the snippets
   EXPECT_THAT(snippet.entries(), SizeIs(2));
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), Eq("subject foo"));
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("foo"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(
-      GetWindow(document, snippet, "body", 0),
-      Eq("Concerning the subject of foo, we need to begin considering"));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("foo"));
-  EXPECT_THAT(GetWindow(document, snippet, "body", 1), IsEmpty());
-  EXPECT_THAT(GetMatch(document, snippet, "body", 1), IsEmpty());
+      GetWindows(content, snippet.entries(0)),
+      ElementsAre(
+          "Concerning the subject of foo, we need to begin considering"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)),
+              ElementsAre("subject foo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("foo"));
 }
 
 TEST_F(SnippetRetrieverTest, PrefixSnippetingNormalization) {
@@ -599,12 +666,14 @@ TEST_F(SnippetRetrieverTest, PrefixSnippetingNormalization) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"md"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::PREFIX, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
 
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "subject", 0), Eq("MDI team"));
-  EXPECT_THAT(GetMatch(document, snippet, "subject", 0), Eq("MDI"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("MDI team"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("MDI"));
 }
 
 TEST_F(SnippetRetrieverTest, ExactSnippetingNormalization) {
@@ -619,13 +688,398 @@ TEST_F(SnippetRetrieverTest, ExactSnippetingNormalization) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"zurich"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
-      query_terms, TermMatchType::EXACT_ONLY, snippet_spec_, document,
-      section_mask);
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
 
   EXPECT_THAT(snippet.entries(), SizeIs(1));
-  EXPECT_THAT(GetWindow(document, snippet, "body", 0),
-              Eq("Some members are in Zürich."));
-  EXPECT_THAT(GetMatch(document, snippet, "body", 0), Eq("Zürich"));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("Some members are in Zürich."));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("Zürich"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingTestOneLevel) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("SingleLevelType")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("X")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Y")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Z")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  std::vector<std::string> string_values = {"marco", "polo", "marco", "polo"};
+  DocumentProto document;
+  document.set_schema("SingleLevelType");
+  PropertyProto* prop = document.add_properties();
+  prop->set_name("X");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+  prop = document.add_properties();
+  prop->set_name("Y");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+  prop = document.add_properties();
+  prop->set_name("Z");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+
+  SectionIdMask section_mask = 0b00000111;
+  SectionRestrictQueryTermsMap query_terms{{"", {"polo"}}};
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(6));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("X[1]"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("X[3]"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+
+  EXPECT_THAT(GetPropertyPaths(snippet),
+              ElementsAre("X[1]", "X[3]", "Y[1]", "Y[3]", "Z[1]", "Z[3]"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevel) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("SingleLevelType")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("X")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Y")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Z")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("MultiLevelType")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("A")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("B")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("C")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  std::vector<std::string> string_values = {"marco", "polo", "marco", "polo"};
+  DocumentProto subdocument;
+  PropertyProto* prop = subdocument.add_properties();
+  prop->set_name("X");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+  prop = subdocument.add_properties();
+  prop->set_name("Y");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+  prop = subdocument.add_properties();
+  prop->set_name("Z");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+
+  DocumentProto document;
+  document.set_schema("MultiLevelType");
+  prop = document.add_properties();
+  prop->set_name("A");
+  *prop->add_document_values() = subdocument;
+
+  prop = document.add_properties();
+  prop->set_name("B");
+  *prop->add_document_values() = subdocument;
+
+  prop = document.add_properties();
+  prop->set_name("C");
+  *prop->add_document_values() = subdocument;
+
+  SectionIdMask section_mask = 0b111111111;
+  SectionRestrictQueryTermsMap query_terms{{"", {"polo"}}};
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(18));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("A.X[1]"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("A.X[3]"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+
+  EXPECT_THAT(
+      GetPropertyPaths(snippet),
+      ElementsAre("A.X[1]", "A.X[3]", "A.Y[1]", "A.Y[3]", "A.Z[1]", "A.Z[3]",
+                  "B.X[1]", "B.X[3]", "B.Y[1]", "B.Y[3]", "B.Z[1]", "B.Z[3]",
+                  "C.X[1]", "C.X[3]", "C.Y[1]", "C.Y[3]", "C.Z[1]", "C.Z[3]"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelRepeated) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("SingleLevelType")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("X")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Y")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Z")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("MultiLevelType")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("A")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("B")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("C")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  std::vector<std::string> string_values = {"marco", "polo", "marco", "polo"};
+  DocumentProto subdocument;
+  PropertyProto* prop = subdocument.add_properties();
+  prop->set_name("X");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+  prop = subdocument.add_properties();
+  prop->set_name("Y");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+  prop = subdocument.add_properties();
+  prop->set_name("Z");
+  for (const std::string& s : string_values) {
+    prop->add_string_values(s);
+  }
+
+  DocumentProto document;
+  document.set_schema("MultiLevelType");
+  prop = document.add_properties();
+  prop->set_name("A");
+  *prop->add_document_values() = subdocument;
+  *prop->add_document_values() = subdocument;
+
+  prop = document.add_properties();
+  prop->set_name("B");
+  *prop->add_document_values() = subdocument;
+  *prop->add_document_values() = subdocument;
+
+  prop = document.add_properties();
+  prop->set_name("C");
+  *prop->add_document_values() = subdocument;
+  *prop->add_document_values() = subdocument;
+
+  SectionIdMask section_mask = 0b111111111;
+  SectionRestrictQueryTermsMap query_terms{{"", {"polo"}}};
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(36));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("A[0].X[1]"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("A[0].X[3]"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+
+  EXPECT_THAT(GetPropertyPaths(snippet),
+              ElementsAre("A[0].X[1]", "A[0].X[3]", "A[1].X[1]", "A[1].X[3]",
+                          "A[0].Y[1]", "A[0].Y[3]", "A[1].Y[1]", "A[1].Y[3]",
+                          "A[0].Z[1]", "A[0].Z[3]", "A[1].Z[1]", "A[1].Z[3]",
+                          "B[0].X[1]", "B[0].X[3]", "B[1].X[1]", "B[1].X[3]",
+                          "B[0].Y[1]", "B[0].Y[3]", "B[1].Y[1]", "B[1].Y[3]",
+                          "B[0].Z[1]", "B[0].Z[3]", "B[1].Z[1]", "B[1].Z[3]",
+                          "C[0].X[1]", "C[0].X[3]", "C[1].X[1]", "C[1].X[3]",
+                          "C[0].Y[1]", "C[0].Y[3]", "C[1].Y[1]", "C[1].Y[3]",
+                          "C[0].Z[1]", "C[0].Z[3]", "C[1].Z[1]", "C[1].Z[3]"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelSingleValue) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("SingleLevelType")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("X")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Y")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Z")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("MultiLevelType")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("A")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("B")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("C")
+                                        .SetDataTypeDocument(
+                                            "SingleLevelType",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  DocumentProto subdocument;
+  PropertyProto* prop = subdocument.add_properties();
+  prop->set_name("X");
+  prop->add_string_values("polo");
+  prop = subdocument.add_properties();
+  prop->set_name("Y");
+  prop->add_string_values("marco");
+  prop = subdocument.add_properties();
+  prop->set_name("Z");
+  prop->add_string_values("polo");
+
+  DocumentProto document;
+  document.set_schema("MultiLevelType");
+  prop = document.add_properties();
+  prop->set_name("A");
+  *prop->add_document_values() = subdocument;
+  *prop->add_document_values() = subdocument;
+
+  prop = document.add_properties();
+  prop->set_name("B");
+  *prop->add_document_values() = subdocument;
+  *prop->add_document_values() = subdocument;
+
+  prop = document.add_properties();
+  prop->set_name("C");
+  *prop->add_document_values() = subdocument;
+  *prop->add_document_values() = subdocument;
+
+  SectionIdMask section_mask = 0b111111111;
+  SectionRestrictQueryTermsMap query_terms{{"", {"polo"}}};
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(12));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("A[0].X"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+
+  EXPECT_THAT(snippet.entries(1).property_name(), Eq("A[1].X"));
+  content = GetString(&document, snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+
+  EXPECT_THAT(
+      GetPropertyPaths(snippet),
+      ElementsAre("A[0].X", "A[1].X", "A[0].Z", "A[1].Z", "B[0].X", "B[1].X",
+                  "B[0].Z", "B[1].Z", "C[0].X", "C[1].X", "C[0].Z", "C[1].Z"));
 }
 
 }  // namespace

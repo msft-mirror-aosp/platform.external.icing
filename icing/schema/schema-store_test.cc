@@ -30,8 +30,9 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -41,8 +42,23 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Ge;
 using ::testing::Not;
 using ::testing::Pointee;
+
+PropertyConfigProto CreateProperty(
+    std::string_view name, PropertyConfigProto::DataType::Code datatype,
+    PropertyConfigProto::Cardinality::Code cardinality,
+    TermMatchType::Code match_type,
+    StringIndexingConfig::TokenizerType::Code tokenizer_type) {
+  PropertyConfigProto property;
+  property.set_property_name(std::string(name));
+  property.set_data_type(datatype);
+  property.set_cardinality(cardinality);
+  property.mutable_string_indexing_config()->set_term_match_type(match_type);
+  property.mutable_string_indexing_config()->set_tokenizer_type(tokenizer_type);
+  return property;
+}
 
 class SchemaStoreTest : public ::testing::Test {
  protected:
@@ -54,13 +70,10 @@ class SchemaStoreTest : public ::testing::Test {
 
     // Add an indexed property so we generate section metadata on it
     auto property = type->add_properties();
-    property->set_property_name("subject");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
+    *property = CreateProperty("subject", PropertyConfigProto::DataType::STRING,
+                               PropertyConfigProto::Cardinality::OPTIONAL,
+                               TermMatchType::EXACT_ONLY,
+                               StringIndexingConfig::TokenizerType::PLAIN);
   }
 
   void TearDown() override {
@@ -74,8 +87,9 @@ class SchemaStoreTest : public ::testing::Test {
 };
 
 TEST_F(SchemaStoreTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(SchemaStore::Create(/*filesystem=*/nullptr, test_dir_, &fake_clock_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      SchemaStore::Create(/*filesystem=*/nullptr, test_dir_, &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(SchemaStoreTest, CorruptSchemaError) {
@@ -190,7 +204,36 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
 }
 
 TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
-  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_), IsOk());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // The apis to retrieve information about the schema should fail gracefully.
+  EXPECT_THAT(store->GetSchema(),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(store->GetSchemaTypeConfig("foo"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetSchemaTypeId("foo"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetSectionMetadata(/*schema_type_id=*/0, /*section_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  // The apis to extract content from a document should fail gracefully.
+  DocumentProto doc;
+  PropertyProto* prop = doc.add_properties();
+  prop->set_name("name");
+  prop->add_string_values("foo bar baz");
+
+  EXPECT_THAT(store->GetStringSectionContent(doc, /*section_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetStringSectionContent(doc, "name"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->ExtractSections(doc),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  // The apis to persist and checksum data should succeed.
+  EXPECT_THAT(store->ComputeChecksum(), IsOkAndHolds(Crc32()));
+  EXPECT_THAT(store->PersistToDisk(), IsOk());
 }
 
 TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
@@ -204,7 +247,8 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   schema_store.reset();
-  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_), IsOk());
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_),
+              IsOk());
 }
 
 TEST_F(SchemaStoreTest, MultipleCreateOk) {
@@ -668,6 +712,69 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
       schema_store, SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+}
+
+TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // Create a schema with two types: one simple type and one type that uses all
+  // 16 sections.
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
+  PropertyConfigProto prop = CreateProperty(
+      "subject", PropertyConfigProto::DataType::STRING,
+      PropertyConfigProto::Cardinality::OPTIONAL, TermMatchType::EXACT_ONLY,
+      StringIndexingConfig::TokenizerType::PLAIN);
+  *type->add_properties() = prop;
+
+  type = schema.add_types();
+  type->set_schema_type("fullSectionsType");
+  prop.set_property_name("prop0");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop1");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop2");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop3");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop4");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop5");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop6");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop7");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop8");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop9");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop10");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop11");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop12");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop13");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop14");
+  *type->add_properties() = prop;
+  prop.set_property_name("prop15");
+  *type->add_properties() = prop;
+
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  EXPECT_THAT(schema_store->SetSchema(schema),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+
+  SchemaStoreStorageInfoProto storage_info = schema_store->GetStorageInfo();
+  EXPECT_THAT(storage_info.schema_store_size(), Ge(0));
+  EXPECT_THAT(storage_info.num_schema_types(), Eq(2));
+  EXPECT_THAT(storage_info.num_total_sections(), Eq(17));
+  EXPECT_THAT(storage_info.num_schema_types_sections_exhausted(), Eq(1));
 }
 
 }  // namespace

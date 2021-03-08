@@ -15,6 +15,7 @@
 #include "icing/performance-configuration.h"
 
 #include "icing/result/result-state.h"
+#include "icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {
@@ -60,32 +61,14 @@ constexpr int kDefaultNumToScore = 30000;
 // value.
 constexpr int kSafeMemoryUsage = 16 * 1024 * 1024;  // 16MB
 
-// This number is not determined by benchmarks. We just assume that returning
-// the best 1000 scored document hits of a query is enough. To find the best
-// 1000 scored document hits from a heap, we need roughly 0.7 ms on a Pixel 3 XL
-// according to //icing/scoring:ranker_benchmark.
-constexpr int kMaxNumHitsPerQuery = 1000;
+// The maximum number of hits that can fit below the kSafeMemoryUsage threshold.
+constexpr int kMaxNumTotalHits = kSafeMemoryUsage / sizeof(ScoredDocumentHit);
 
-// A rough estimation of the size of ResultState if it stores the maximum number
-// of scored document hits.
-constexpr int kMaxMemoryPerResult =
-    sizeof(ResultState) + kMaxNumHitsPerQuery * sizeof(ScoredDocumentHit);
-
-// To be safer, we assume that all the Results contain the maximum number of
-// hits and only use half of the memory allowed.
-constexpr int kDefaultNumResultsToCache =
-    kSafeMemoryUsage / 2 / kMaxMemoryPerResult;
-
-static_assert(
-    kDefaultNumResultsToCache > 500,
-    "Default number of results to cache has changed, please update and make "
-    "sure it still meets our requirements.");
 }  // namespace
 
 PerformanceConfiguration::PerformanceConfiguration()
     : PerformanceConfiguration(kMaxQueryLength, kDefaultNumToScore,
-                               kMaxNumHitsPerQuery, kDefaultNumResultsToCache) {
-}
+                               kMaxNumTotalHits) {}
 
 }  // namespace lib
 }  // namespace icing
