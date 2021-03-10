@@ -27,6 +27,7 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index-processor.h"
@@ -35,6 +36,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/internal/optimize.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
@@ -75,6 +77,7 @@ constexpr std::string_view kIndexSubfolderName = "index_dir";
 constexpr std::string_view kSchemaSubfolderName = "schema_dir";
 constexpr std::string_view kIcingSearchEngineHeaderFilename =
     "icing_search_engine_header";
+constexpr std::string_view kOptimizeStatusFilename = "optimize_status";
 
 libtextclassifier3::Status ValidateOptions(
     const IcingSearchEngineOptions& options) {
@@ -238,8 +241,7 @@ IcingSearchEngine::IcingSearchEngine(
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
-      result_state_manager_(performance_configuration_.max_num_hits_per_query,
-                            performance_configuration_.max_num_cache_results),
+      result_state_manager_(performance_configuration_.max_num_total_hits),
       jni_cache_(std::move(jni_cache)) {
   ICING_VLOG(1) << "Creating IcingSearchEngine in dir: " << options_.base_dir();
 }
@@ -270,8 +272,8 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
 
   InitializeResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
-  NativeInitializeStats* initialize_stats =
-      result_proto.mutable_native_initialize_stats();
+  InitializeStatsProto* initialize_stats =
+      result_proto.mutable_initialize_stats();
   if (initialized_) {
     // Already initialized.
     result_status->set_code(StatusProto::OK);
@@ -307,7 +309,7 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
       // sub-components may not be able to tell if the storage is being
       // initialized the first time or has lost some files. Sub-components may
       // already have set these fields in earlier steps.
-      *initialize_stats = NativeInitializeStats();
+      *initialize_stats = InitializeStatsProto();
       status = RegenerateDerivedFiles();
     } else {
       ICING_VLOG(1)
@@ -317,13 +319,13 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
       // recovery. Preserve the root cause that was set by the document store.
       bool should_log_document_store_recovery_cause =
           initialize_stats->document_store_recovery_cause() ==
-          NativeInitializeStats::NONE;
+          InitializeStatsProto::NONE;
       if (should_log_document_store_recovery_cause) {
         initialize_stats->set_document_store_recovery_cause(
-            NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH);
+            InitializeStatsProto::TOTAL_CHECKSUM_MISMATCH);
       }
       initialize_stats->set_index_restoration_cause(
-          NativeInitializeStats::TOTAL_CHECKSUM_MISMATCH);
+          InitializeStatsProto::TOTAL_CHECKSUM_MISMATCH);
       status = RegenerateDerivedFiles(initialize_stats,
                                       should_log_document_store_recovery_cause);
     }
@@ -339,7 +341,7 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
         // Index is inconsistent with the document store, we need to restore the
         // index.
         initialize_stats->set_index_restoration_cause(
-            NativeInitializeStats::INCONSISTENT_WITH_GROUND_TRUTH);
+            InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH);
         std::unique_ptr<Timer> index_restore_timer = clock_->GetNewTimer();
         status = RestoreIndexIfNeeded();
         initialize_stats->set_index_restoration_latency_ms(
@@ -357,7 +359,7 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
-    NativeInitializeStats* initialize_stats) {
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
   ICING_RETURN_IF_ERROR(InitializeOptions());
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
@@ -390,7 +392,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeOptions() {
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
-    NativeInitializeStats* initialize_stats) {
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
 
   const std::string schema_store_dir =
@@ -408,7 +410,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
-    NativeInitializeStats* initialize_stats) {
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
 
   const std::string document_dir =
@@ -428,7 +430,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
-    NativeInitializeStats* initialize_stats) {
+    InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
 
   const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
@@ -449,7 +451,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     }
 
     initialize_stats->set_index_restoration_cause(
-        NativeInitializeStats::IO_ERROR);
+        InitializeStatsProto::IO_ERROR);
 
     // Try recreating it from scratch and re-indexing everything.
     ICING_ASSIGN_OR_RETURN(index_,
@@ -499,7 +501,7 @@ libtextclassifier3::Status IcingSearchEngine::CheckConsistency() {
 }
 
 libtextclassifier3::Status IcingSearchEngine::RegenerateDerivedFiles(
-    NativeInitializeStats* initialize_stats, bool log_document_store_stats) {
+    InitializeStatsProto* initialize_stats, bool log_document_store_stats) {
   // Measure the latency of the data recovery. The cause of the recovery should
   // be logged by the caller.
   std::unique_ptr<Timer> timer = clock_->GetNewTimer();
@@ -682,8 +684,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
 
   PutResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
-  NativePutDocumentStats* put_document_stats =
-      result_proto.mutable_native_put_document_stats();
+  PutDocumentStatsProto* put_document_stats =
+      result_proto.mutable_put_document_stats();
 
   // Lock must be acquired before validation because the DocumentStore uses
   // the schema file to validate, and the schema could be changed in
@@ -833,8 +835,8 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
     return result_proto;
   }
 
-  NativeDeleteStats* delete_stats = result_proto.mutable_delete_stats();
-  delete_stats->set_delete_type(NativeDeleteStats::DeleteType::SINGLE);
+  DeleteStatsProto* delete_stats = result_proto.mutable_delete_stats();
+  delete_stats->set_delete_type(DeleteStatsProto::DeleteType::SINGLE);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
@@ -867,8 +869,8 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
     return delete_result;
   }
 
-  NativeDeleteStats* delete_stats = delete_result.mutable_delete_stats();
-  delete_stats->set_delete_type(NativeDeleteStats::DeleteType::NAMESPACE);
+  DeleteStatsProto* delete_stats = delete_result.mutable_delete_stats();
+  delete_stats->set_delete_type(DeleteStatsProto::DeleteType::NAMESPACE);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
@@ -901,8 +903,8 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
     return delete_result;
   }
 
-  NativeDeleteStats* delete_stats = delete_result.mutable_delete_stats();
-  delete_stats->set_delete_type(NativeDeleteStats::DeleteType::SCHEMA_TYPE);
+  DeleteStatsProto* delete_stats = delete_result.mutable_delete_stats();
+  delete_stats->set_delete_type(DeleteStatsProto::DeleteType::SCHEMA_TYPE);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
@@ -937,8 +939,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
     return result_proto;
   }
 
-  NativeDeleteStats* delete_stats = result_proto.mutable_delete_stats();
-  delete_stats->set_delete_type(NativeDeleteStats::DeleteType::QUERY);
+  DeleteStatsProto* delete_stats = result_proto.mutable_delete_stats();
+  delete_stats->set_delete_type(DeleteStatsProto::DeleteType::QUERY);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   libtextclassifier3::Status status =
@@ -1029,6 +1031,16 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     return result_proto;
   }
 
+  std::unique_ptr<Timer> optimize_timer = clock_->GetNewTimer();
+  OptimizeStatsProto* optimize_stats = result_proto.mutable_optimize_stats();
+  int64_t before_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
+  if (before_size != Filesystem::kBadFileSize) {
+    optimize_stats->set_storage_size_before(before_size);
+  } else {
+    // Set -1 as a sentinel value when failures occur.
+    optimize_stats->set_storage_size_before(-1);
+  }
+
   // Releases result / query cache if any
   result_state_manager_.InvalidateAllResultStates();
 
@@ -1041,7 +1053,11 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
 
   // TODO(b/143646633): figure out if we need to optimize index and doc store
   // at the same time.
-  libtextclassifier3::Status optimization_status = OptimizeDocumentStore();
+  std::unique_ptr<Timer> optimize_doc_store_timer = clock_->GetNewTimer();
+  libtextclassifier3::Status optimization_status =
+      OptimizeDocumentStore(optimize_stats);
+  optimize_stats->set_document_store_optimize_latency_ms(
+      optimize_doc_store_timer->GetElapsedMilliseconds());
 
   if (!optimization_status.ok() &&
       !absl_ports::IsDataLoss(optimization_status)) {
@@ -1055,6 +1071,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
 
   // The status is either OK or DATA_LOSS. The optimized document store is
   // guaranteed to work, so we update index according to the new document store.
+  std::unique_ptr<Timer> optimize_index_timer = clock_->GetNewTimer();
   libtextclassifier3::Status index_reset_status = index_->Reset();
   if (!index_reset_status.ok()) {
     status = absl_ports::Annotate(
@@ -1065,6 +1082,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   }
 
   libtextclassifier3::Status index_restoration_status = RestoreIndexIfNeeded();
+  optimize_stats->set_index_restoration_latency_ms(
+      optimize_index_timer->GetElapsedMilliseconds());
   if (!index_restoration_status.ok()) {
     status = absl_ports::Annotate(
         absl_ports::InternalError(
@@ -1074,6 +1093,35 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     TransformStatus(status, result_status);
     return result_proto;
   }
+
+  // Read the optimize status to get the time that we last ran.
+  std::string optimize_status_filename =
+      absl_ports::StrCat(options_.base_dir(), "/", kOptimizeStatusFilename);
+  FileBackedProto<OptimizeStatusProto> optimize_status_file(
+      *filesystem_, optimize_status_filename);
+  auto optimize_status_or = optimize_status_file.Read();
+  int64_t current_time = clock_->GetSystemTimeMilliseconds();
+  if (optimize_status_or.ok()) {
+    // If we have trouble reading the status or this is the first time that
+    // we've ever run, don't set this field.
+    optimize_stats->set_time_since_last_optimize_ms(
+        current_time - optimize_status_or.ValueOrDie()
+                           ->last_successful_optimize_run_time_ms());
+  }
+
+  // Update the status for this run and write it.
+  auto optimize_status = std::make_unique<OptimizeStatusProto>();
+  optimize_status->set_last_successful_optimize_run_time_ms(current_time);
+  optimize_status_file.Write(std::move(optimize_status));
+
+  int64_t after_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
+  if (after_size != Filesystem::kBadFileSize) {
+    optimize_stats->set_storage_size_after(after_size);
+  } else {
+    // Set -1 as a sentinel value when failures occur.
+    optimize_stats->set_storage_size_after(-1);
+  }
+  optimize_stats->set_latency_ms(optimize_timer->GetElapsedMilliseconds());
 
   TransformStatus(optimization_status, result_status);
   return result_proto;
@@ -1090,6 +1138,22 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
     return result_proto;
+  }
+
+  // Read the optimize status to get the time that we last ran.
+  std::string optimize_status_filename =
+      absl_ports::StrCat(options_.base_dir(), "/", kOptimizeStatusFilename);
+  FileBackedProto<OptimizeStatusProto> optimize_status_file(
+      *filesystem_, optimize_status_filename);
+  auto optimize_status_or = optimize_status_file.Read();
+  int64_t current_time = clock_->GetSystemTimeMilliseconds();
+
+  if (optimize_status_or.ok()) {
+    // If we have trouble reading the status or this is the first time that
+    // we've ever run, don't set this field.
+    result_proto.set_time_since_last_optimize_ms(
+        current_time - optimize_status_or.ValueOrDie()
+                           ->last_successful_optimize_run_time_ms());
   }
 
   // Get stats from DocumentStore
@@ -1125,6 +1189,32 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
 
   result_status->set_code(StatusProto::OK);
   return result_proto;
+}
+
+StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
+  StorageInfoResultProto result;
+  absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result.mutable_status()->set_code(StatusProto::FAILED_PRECONDITION);
+    result.mutable_status()->set_message(
+        "IcingSearchEngine has not been initialized!");
+    return result;
+  }
+
+  int64_t index_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
+  if (index_size != Filesystem::kBadFileSize) {
+    result.mutable_storage_info()->set_total_storage_size(index_size);
+  } else {
+    result.mutable_storage_info()->set_total_storage_size(-1);
+  }
+  *result.mutable_storage_info()->mutable_document_storage_info() =
+      document_store_->GetStorageInfo();
+  *result.mutable_storage_info()->mutable_schema_store_storage_info() =
+      schema_store_->GetStorageInfo();
+  *result.mutable_storage_info()->mutable_index_storage_info() =
+      index_->GetStorageInfo();
+  result.mutable_status()->set_code(StatusProto::OK);
+  return result;
 }
 
 libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk() {
@@ -1189,8 +1279,11 @@ libtextclassifier3::Status IcingSearchEngine::UpdateHeader(
   header.checksum = checksum.Get();
 
   // This should overwrite the header.
-  if (!filesystem_->Write(MakeHeaderFilename(options_.base_dir()).c_str(),
-                          &header, sizeof(header))) {
+  ScopedFd sfd(filesystem_->OpenForWrite(
+      MakeHeaderFilename(options_.base_dir()).c_str()));
+  if (!sfd.is_valid() ||
+      !filesystem_->Write(sfd.get(), &header, sizeof(header)) ||
+      !filesystem_->DataSync(sfd.get())) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to write IcingSearchEngine header: ",
                            MakeHeaderFilename(options_.base_dir())));
@@ -1211,7 +1304,7 @@ SearchResultProto IcingSearchEngine::Search(
     return result_proto;
   }
 
-  NativeQueryStats* query_stats = result_proto.mutable_query_stats();
+  QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
 
   libtextclassifier3::Status status = ValidateResultSpec(result_spec);
@@ -1359,7 +1452,7 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
     return result_proto;
   }
 
-  NativeQueryStats* query_stats = result_proto.mutable_query_stats();
+  QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   query_stats->set_is_first_page(false);
 
   std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
@@ -1438,7 +1531,8 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
   result_state_manager_.InvalidateResultState(next_page_token);
 }
 
-libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
+libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
+    OptimizeStatsProto* optimize_stats) {
   // Gets the current directory path and an empty tmp directory path for
   // document store optimization.
   const std::string current_document_dir =
@@ -1455,7 +1549,7 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
 
   // Copies valid document data to tmp directory
   auto optimize_status = document_store_->OptimizeInto(
-      temporary_document_dir, language_segmenter_.get());
+      temporary_document_dir, language_segmenter_.get(), optimize_stats);
 
   // Handles error if any
   if (!optimize_status.ok()) {
@@ -1529,7 +1623,6 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore() {
     ICING_LOG(ERROR) << "Document store has been optimized, but it failed to "
                         "delete temporary file directory";
   }
-
   return libtextclassifier3::Status::OK;
 }
 
