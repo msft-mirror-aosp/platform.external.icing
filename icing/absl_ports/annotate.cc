@@ -33,7 +33,7 @@ libtextclassifier3::Status Annotate(const libtextclassifier3::Status& s,
 
   std::string new_msg =
       (!s.error_message().empty())
-          ? absl_ports::StrCat(s.error_message(), kErrorSeparator, msg)
+          ? absl_ports::StrCat(msg, kErrorSeparator, s.error_message())
           : std::string(msg);
   return libtextclassifier3::Status(s.CanonicalCode(), new_msg);
 }

@@ -17,6 +17,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
 
@@ -103,6 +104,9 @@ template <typename Container>
 std::string StrJoin(const Container& container, std::string_view sep) {
   return absl_ports::StrJoin(container, sep, DefaultFormatter());
 }
+
+std::vector<std::string_view> StrSplit(std::string_view text,
+                                       std::string_view sep);
 
 }  // namespace absl_ports
 }  // namespace lib

@@ -15,21 +15,28 @@
 #include "icing/result/snippet-retriever.h"
 
 #include <algorithm>
-#include <cctype>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-terms.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
-#include "unicode/utf8.h"
 
 namespace icing {
 namespace lib {
@@ -111,7 +118,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> CreateTokenMatcher(
       return std::make_unique<TokenMatcherPrefix>(
           unrestricted_query_terms, restricted_query_terms, normalizer);
     case TermMatchType::UNKNOWN:
-      U_FALLTHROUGH;
+      [[fallthrough]];
     default:
       return absl_ports::InvalidArgumentError("Invalid match type provided.");
   }
@@ -119,19 +126,18 @@ libtextclassifier3::StatusOr<std::unique_ptr<TokenMatcher>> CreateTokenMatcher(
 
 // Returns true if token matches any of the terms in query terms according to
 // the provided match type.
-
+//
 // Returns:
 //   the position of the window start if successful
 //   INTERNAL_ERROR - if a tokenizer error is encountered
 libtextclassifier3::StatusOr<int> DetermineWindowStart(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     std::string_view value, int match_mid, Tokenizer::Iterator* iterator) {
-  int window_start_min =
-      std::max((match_mid - snippet_spec.max_window_bytes() / 2), 0);
-  if (window_start_min == 0) {
+  int window_start_min = (match_mid - snippet_spec.max_window_bytes() / 2) - 1;
+  if (window_start_min < 0) {
     return 0;
   }
-  if (!iterator->ResetToTokenAfter(window_start_min - 1)) {
+  if (!iterator->ResetToTokenAfter(window_start_min)) {
     return absl_ports::InternalError(
         "Couldn't reset tokenizer to determine snippet window!");
   }
@@ -166,10 +172,9 @@ libtextclassifier3::StatusOr<int> DetermineWindowEnd(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     std::string_view value, int match_mid, Tokenizer::Iterator* iterator) {
   int window_end_max_exclusive =
-      std::min((match_mid + snippet_spec.max_window_bytes() / 2),
-               static_cast<int>(value.length()));
-  if (window_end_max_exclusive == value.length()) {
-    return window_end_max_exclusive;
+      match_mid + snippet_spec.max_window_bytes() / 2;
+  if (window_end_max_exclusive >= value.length()) {
+    return value.length();
   }
   if (!iterator->ResetToTokenBefore(window_end_max_exclusive)) {
     return absl_ports::InternalError(
@@ -220,8 +225,11 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
                            iterator));
     snippet_match.set_window_bytes(window_end_exclusive - window_start);
 
-    // Reset the iterator back to the original position.
-    if (!iterator->ResetToTokenAfter(match_pos - 1)) {
+    // DetermineWindowStart/End may change the position of the iterator. So,
+    // reset the iterator back to the original position.
+    bool success = (match_pos > 0) ? iterator->ResetToTokenAfter(match_pos - 1)
+                                   : iterator->ResetToStart();
+    if (!success) {
       return absl_ports::InternalError(
           "Couldn't reset tokenizer to determine snippet window!");
     }
@@ -285,8 +293,8 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     const DocumentProto& document, SectionIdMask section_id_mask) const {
   SnippetProto snippet_proto;
   ICING_ASSIGN_OR_RETURN(SchemaTypeId type_id,
-                             schema_store_.GetSchemaTypeId(document.schema()),
-                             snippet_proto);
+                         schema_store_.GetSchemaTypeId(document.schema()),
+                         snippet_proto);
   const std::unordered_set<std::string> empty_set;
   auto itr = query_terms.find("");
   const std::unordered_set<std::string>& unrestricted_set =
@@ -326,7 +334,8 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
         snippet_spec.num_matches_per_property();
 
     // Retrieve values and snippet them.
-    auto values_or = schema_store_.GetSectionContent(document, metadata->path);
+    auto values_or =
+        schema_store_.GetStringSectionContent(document, metadata->path);
     if (!values_or.ok()) {
       continue;
     }
@@ -336,7 +345,7 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
       // If we couldn't create the tokenizer properly, just skip this section.
       continue;
     }
-    std::vector<std::string> values = values_or.ValueOrDie();
+    std::vector<std::string_view> values = values_or.ValueOrDie();
     for (int value_index = 0; value_index < values.size(); ++value_index) {
       if (match_options.max_matches_remaining <= 0) {
         break;

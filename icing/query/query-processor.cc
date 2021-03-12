@@ -19,7 +19,7 @@
 #include <stack>
 #include <string>
 #include <string_view>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -131,10 +131,8 @@ QueryProcessor::QueryProcessor(Index* index,
       schema_store_(*schema_store),
       clock_(*clock) {}
 
-libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
-  ICING_ASSIGN_OR_RETURN(QueryResults results, ParseRawQuery(search_spec));
-
+DocHitInfoIteratorFilter::Options QueryProcessor::getFilterOptions(
+    const SearchSpecProto& search_spec) {
   DocHitInfoIteratorFilter::Options options;
 
   if (search_spec.namespace_filters_size() > 0) {
@@ -148,7 +146,14 @@ QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
         std::vector<std::string_view>(search_spec.schema_type_filters().begin(),
                                       search_spec.schema_type_filters().end());
   }
+  return options;
+}
 
+libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
+QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
+  ICING_ASSIGN_OR_RETURN(QueryResults results, ParseRawQuery(search_spec));
+
+  DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
       &clock_, options);
@@ -158,6 +163,8 @@ QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto
 libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
 QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
+  DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
+
   // Tokenize the incoming raw query
   //
   // TODO(cassiewang): Consider caching/creating a tokenizer factory that will
@@ -258,19 +265,29 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
             index_.GetIterator(normalized_text, kSectionIdMaskAll,
                                search_spec.term_match_type()));
 
-        // Add terms to match if this is not a negation term.
+        // Add term iterator and terms to match if this is not a negation term.
         // WARNING: setting query terms at this point is not compatible with
         // group-level excludes, group-level sections restricts or excluded
         // section restricts. Those are not currently supported. If they became
         // supported, this handling for query terms would need to be altered.
         if (!frames.top().saw_exclude) {
+          ICING_ASSIGN_OR_RETURN(
+              std::unique_ptr<DocHitInfoIterator> term_iterator,
+              index_.GetIterator(normalized_text, kSectionIdMaskAll,
+                                 search_spec.term_match_type()));
+
+          results.query_term_iterators[normalized_text] =
+              std::make_unique<DocHitInfoIteratorFilter>(
+                  std::move(term_iterator), &document_store_, &schema_store_,
+                  &clock_, options);
+
           results.query_terms[frames.top().section_restrict].insert(
               std::move(normalized_text));
         }
         break;
       }
       case Token::Type::INVALID:
-        U_FALLTHROUGH;
+        [[fallthrough]];
       default:
         // This wouldn't happen if tokenizer and query processor both work
         // correctly. An unknown token indicates inconsistency between tokenizer

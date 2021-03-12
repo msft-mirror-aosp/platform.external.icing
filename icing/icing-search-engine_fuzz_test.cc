@@ -18,6 +18,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/document-builder.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -31,8 +32,6 @@ namespace {
 
 IcingSearchEngineOptions Setup() {
   IcingSearchEngineOptions icing_options;
-  libtextclassifier3::Status status =
-      SetUpICUDataFile("icing/icu.dat");
   icing_options.set_base_dir(GetTestTempDir() + "/icing");
   return icing_options;
 }
@@ -45,9 +44,10 @@ SchemaProto SetTypes() {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
   return schema;
 }
 
@@ -74,6 +74,10 @@ SearchSpecProto SetSearchSpec(const uint8_t* data, size_t size) {
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   // Initialize
   IcingSearchEngineOptions icing_options = Setup();
+  std::string icu_data_file_path = GetTestFilePath("icing/icu.dat");
+  if (!icu_data_file_helper::SetUpICUDataFile(icu_data_file_path).ok()) {
+    return 1;
+  }
   IcingSearchEngine icing(icing_options);
   const Filesystem filesystem_;
   // TODO (b/145758378): Deleting directory should not be required.

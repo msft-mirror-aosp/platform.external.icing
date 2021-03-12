@@ -39,26 +39,32 @@ ResultStateManager::RankAndPaginate(ResultState result_state) {
   // Gets the number before calling GetNextPage() because num_returned() may
   // change after returning more results.
   int num_previously_returned = result_state.num_returned();
+  int num_per_page = result_state.num_per_page();
 
   std::vector<ScoredDocumentHit> page_result_document_hits =
       result_state.GetNextPage();
 
+  SnippetContext snippet_context_copy = result_state.snippet_context();
+
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map_copy =
+      result_state.projection_tree_map();
   if (!result_state.HasMoreResults()) {
     // No more pages, won't store ResultState, returns directly
     return PageResultState(
         std::move(page_result_document_hits), kInvalidNextPageToken,
-        result_state.snippet_context(), num_previously_returned);
+        std::move(snippet_context_copy), std::move(projection_tree_map_copy),
+        num_previously_returned, num_per_page);
   }
 
   absl_ports::unique_lock l(&mutex_);
 
   // ResultState has multiple pages, storing it
-  SnippetContext snippet_context_copy = result_state.snippet_context();
   uint64_t next_page_token = Add(std::move(result_state));
 
   return PageResultState(std::move(page_result_document_hits), next_page_token,
                          std::move(snippet_context_copy),
-                         num_previously_returned);
+                         std::move(projection_tree_map_copy),
+                         num_previously_returned, num_per_page);
 }
 
 uint64_t ResultStateManager::Add(ResultState result_state) {
@@ -83,6 +89,7 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
   }
 
   int num_returned = state_iterator->second.num_returned();
+  int num_per_page = state_iterator->second.num_per_page();
   std::vector<ScoredDocumentHit> result_of_page =
       state_iterator->second.GetNextPage();
   if (result_of_page.empty()) {
@@ -97,12 +104,17 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
   SnippetContext snippet_context_copy =
       state_iterator->second.snippet_context();
 
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map_copy =
+      state_iterator->second.projection_tree_map();
+
   if (!state_iterator->second.HasMoreResults()) {
     InternalInvalidateResultState(next_page_token);
+    next_page_token = kInvalidNextPageToken;
   }
 
-  return PageResultState(result_of_page, next_page_token,
-                         std::move(snippet_context_copy), num_returned);
+  return PageResultState(
+      result_of_page, next_page_token, std::move(snippet_context_copy),
+      std::move(projection_tree_map_copy), num_returned, num_per_page);
 }
 
 void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {

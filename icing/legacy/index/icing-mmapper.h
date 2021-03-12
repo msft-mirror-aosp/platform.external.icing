@@ -22,8 +22,10 @@
 #ifndef ICING_LEGACY_INDEX_ICING_MMAPPER_H_
 #define ICING_LEGACY_INDEX_ICING_MMAPPER_H_
 
-#include <stdint.h>
 #include <unistd.h>
+
+#include <cstddef>
+#include <cstdint>
 
 namespace icing {
 namespace lib {
