@@ -27,7 +27,7 @@ inline constexpr std::string_view kAlNumAlphabet =
 template <typename Gen>
 std::string RandomString(const std::string_view alphabet, size_t len,
                          Gen* gen) {
-  std::uniform_int_distribution<size_t> uniform(0u, alphabet.size());
+  std::uniform_int_distribution<size_t> uniform(0u, alphabet.size() - 1);
   std::string result(len, '\0');
   std::generate(
       std::begin(result), std::end(result),

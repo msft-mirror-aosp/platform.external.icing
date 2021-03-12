@@ -22,7 +22,6 @@
 #include "icing/text_classifier/lib3/utils/base/logging_levels.h"
 #include "icing/text_classifier/lib3/utils/base/port.h"
 
-
 namespace libtextclassifier3 {
 namespace logging {
 

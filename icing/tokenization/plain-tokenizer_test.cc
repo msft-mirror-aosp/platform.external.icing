@@ -18,10 +18,14 @@
 
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/i18n-test-utils.h"
+#include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -32,26 +36,31 @@ using ::testing::IsEmpty;
 class PlainTokenizerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        SetUpICUDataFile("icing/icu.dat"));
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
   }
 };
 
 TEST_F(PlainTokenizerTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, /*lang_segmenter=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(tokenizer_factory::CreateIndexingTokenizer(
+                  StringIndexingConfig::TokenizerType::PLAIN,
+                  /*lang_segmenter=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(PlainTokenizerTest, Simple) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   EXPECT_THAT(plain_tokenizer->TokenizeAll(""), IsOkAndHolds(IsEmpty()));
 
@@ -78,38 +87,42 @@ TEST_F(PlainTokenizerTest, Simple) {
 }
 
 TEST_F(PlainTokenizerTest, Whitespace) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // There're many unicode characters that are whitespaces, here we choose tabs
   // to represent others.
 
   // 0x0009 is horizontal tab, considered as a whitespace
   std::string text_with_horizontal_tab =
-      absl_ports::StrCat("Hello", UcharToString(0x0009), "World");
+      absl_ports::StrCat("Hello", UCharToString(0x0009), "World");
   EXPECT_THAT(plain_tokenizer->TokenizeAll(text_with_horizontal_tab),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
                                        EqualsToken(Token::REGULAR, "World"))));
 
   // 0x000B is vertical tab, considered as a whitespace
   std::string text_with_vertical_tab =
-      absl_ports::StrCat("Hello", UcharToString(0x000B), "World");
+      absl_ports::StrCat("Hello", UCharToString(0x000B), "World");
   EXPECT_THAT(plain_tokenizer->TokenizeAll(text_with_vertical_tab),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
                                        EqualsToken(Token::REGULAR, "World"))));
 }
 
 TEST_F(PlainTokenizerTest, Punctuation) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // Half-width punctuation marks are filtered out.
   EXPECT_THAT(plain_tokenizer->TokenizeAll(
@@ -122,23 +135,40 @@ TEST_F(PlainTokenizerTest, Punctuation) {
                                        EqualsToken(Token::REGULAR, "World"))));
 
   // Full-width punctuation marks are filtered out.
-  EXPECT_THAT(
-      plain_tokenizer->TokenizeAll("你好，世界！你好：世界。“你好”世界？"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "你好"),
-                               EqualsToken(Token::REGULAR, "世界"),
-                               EqualsToken(Token::REGULAR, "你好"),
-                               EqualsToken(Token::REGULAR, "世界"),
-                               EqualsToken(Token::REGULAR, "你好"),
-                               EqualsToken(Token::REGULAR, "世界"))));
+  std::vector<std::string_view> exp_tokens;
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(
+        plain_tokenizer->TokenizeAll("你好，世界！你好：世界。“你好”世界？"),
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "你"),
+                                 EqualsToken(Token::REGULAR, "好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你"),
+                                 EqualsToken(Token::REGULAR, "好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你"),
+                                 EqualsToken(Token::REGULAR, "好"),
+                                 EqualsToken(Token::REGULAR, "世界"))));
+  } else {
+    EXPECT_THAT(
+        plain_tokenizer->TokenizeAll("你好，世界！你好：世界。“你好”世界？"),
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "你好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你好"),
+                                 EqualsToken(Token::REGULAR, "世界"),
+                                 EqualsToken(Token::REGULAR, "你好"),
+                                 EqualsToken(Token::REGULAR, "世界"))));
+  }
 }
 
 TEST_F(PlainTokenizerTest, SpecialCharacters) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   // Right now we don't have special logic for these characters, just output
   // them as tokens.
@@ -154,17 +184,17 @@ TEST_F(PlainTokenizerTest, SpecialCharacters) {
 }
 
 TEST_F(PlainTokenizerTest, CJKT) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
-
   // In plain tokenizer, CJKT characters are handled the same way as non-CJKT
   // characters, just add these tests as sanity checks.
-
   // Chinese
+  language_segmenter_factory::SegmenterOptions options(ULOC_SIMPLIFIED_CHINESE);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
   EXPECT_THAT(plain_tokenizer->TokenizeAll("我每天走路去上班。"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "我"),
                                        EqualsToken(Token::REGULAR, "每天"),
@@ -172,16 +202,38 @@ TEST_F(PlainTokenizerTest, CJKT) {
                                        EqualsToken(Token::REGULAR, "去"),
                                        EqualsToken(Token::REGULAR, "上班"))));
   // Japanese
-  EXPECT_THAT(
-      plain_tokenizer->TokenizeAll("私は毎日仕事に歩いています。"),
-      IsOkAndHolds(ElementsAre(
-          EqualsToken(Token::REGULAR, "私"), EqualsToken(Token::REGULAR, "は"),
-          EqualsToken(Token::REGULAR, "毎日"),
-          EqualsToken(Token::REGULAR, "仕事"),
-          EqualsToken(Token::REGULAR, "に"), EqualsToken(Token::REGULAR, "歩"),
-          EqualsToken(Token::REGULAR, "い"),
-          EqualsToken(Token::REGULAR, "てい"),
-          EqualsToken(Token::REGULAR, "ます"))));
+  options = language_segmenter_factory::SegmenterOptions(ULOC_JAPANESE);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(plain_tokenizer->TokenizeAll("私は毎日仕事に歩いています。"),
+                IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "私"),
+                                         EqualsToken(Token::REGULAR, "は"),
+                                         EqualsToken(Token::REGULAR, "毎日"),
+                                         EqualsToken(Token::REGULAR, "仕事"),
+                                         EqualsToken(Token::REGULAR, "に"),
+                                         EqualsToken(Token::REGULAR, "歩い"),
+                                         EqualsToken(Token::REGULAR, "て"),
+                                         EqualsToken(Token::REGULAR, "い"),
+                                         EqualsToken(Token::REGULAR, "ます"))));
+  } else {
+    EXPECT_THAT(plain_tokenizer->TokenizeAll("私は毎日仕事に歩いています。"),
+                IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "私"),
+                                         EqualsToken(Token::REGULAR, "は"),
+                                         EqualsToken(Token::REGULAR, "毎日"),
+                                         EqualsToken(Token::REGULAR, "仕事"),
+                                         EqualsToken(Token::REGULAR, "に"),
+                                         EqualsToken(Token::REGULAR, "歩"),
+                                         EqualsToken(Token::REGULAR, "い"),
+                                         EqualsToken(Token::REGULAR, "てい"),
+                                         EqualsToken(Token::REGULAR, "ます"))));
+  }
+
   // Khmer
   EXPECT_THAT(plain_tokenizer->TokenizeAll("ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "ញុំ"),
@@ -196,22 +248,38 @@ TEST_F(PlainTokenizerTest, CJKT) {
                                EqualsToken(Token::REGULAR, "출근합니다"))));
 
   // Thai
-  EXPECT_THAT(plain_tokenizer->TokenizeAll("ฉันเดินไปทำงานทุกวัน"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "ฉัน"),
-                                       EqualsToken(Token::REGULAR, "เดิน"),
-                                       EqualsToken(Token::REGULAR, "ไป"),
-                                       EqualsToken(Token::REGULAR, "ทำงาน"),
-                                       EqualsToken(Token::REGULAR, "ทุก"),
-                                       EqualsToken(Token::REGULAR, "วัน"))));
+  // DIFFERENCE!! Disagreement over how to segment "ทุกวัน" (iOS groups).
+  // This difference persists even when locale is set to THAI
+  if (IsCfStringTokenization()) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::vector<Token> tokens,
+        plain_tokenizer->TokenizeAll("ฉันเดินไปทำงานทุกวัน"));
+
+    EXPECT_THAT(tokens, ElementsAre(EqualsToken(Token::REGULAR, "ฉัน"),
+                                    EqualsToken(Token::REGULAR, "เดิน"),
+                                    EqualsToken(Token::REGULAR, "ไป"),
+                                    EqualsToken(Token::REGULAR, "ทำงาน"),
+                                    EqualsToken(Token::REGULAR, "ทุกวัน")));
+  } else {
+    EXPECT_THAT(plain_tokenizer->TokenizeAll("ฉันเดินไปทำงานทุกวัน"),
+                IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "ฉัน"),
+                                         EqualsToken(Token::REGULAR, "เดิน"),
+                                         EqualsToken(Token::REGULAR, "ไป"),
+                                         EqualsToken(Token::REGULAR, "ทำงาน"),
+                                         EqualsToken(Token::REGULAR, "ทุก"),
+                                         EqualsToken(Token::REGULAR, "วัน"))));
+  }
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = "f b";
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
@@ -223,12 +291,14 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = "f b";
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
@@ -240,12 +310,14 @@ TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = " foo . bar baz.. bat ";
   EXPECT_THAT(plain_tokenizer->TokenizeAll(kText),
@@ -288,12 +360,14 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             LanguageSegmenter::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Tokenizer> plain_tokenizer,
-      tokenizer_factory::CreateIndexingTokenizer(
-          IndexingConfig::TokenizerType::PLAIN, language_segmenter.get()));
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
 
   constexpr std::string_view kText = " foo . bar baz.. bat ";
   EXPECT_THAT(plain_tokenizer->TokenizeAll(kText),
