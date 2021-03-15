@@ -32,6 +32,7 @@ import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
+import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PropertyConfigProto;
 import com.google.android.icing.proto.PropertyProto;
 import com.google.android.icing.proto.PutResultProto;
@@ -395,7 +396,8 @@ public final class IcingSearchEngineTest {
   public void testPersistToDisk() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
-    PersistToDiskResultProto persistToDiskResultProto = icingSearchEngine.persistToDisk();
+    PersistToDiskResultProto persistToDiskResultProto =
+        icingSearchEngine.persistToDisk(PersistType.Code.LITE);
     assertStatusOk(persistToDiskResultProto.getStatus());
   }
 
