@@ -1,3 +1,17 @@
+// Copyright 2021 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 syntax = "proto2";
 
 package icing.lib;
@@ -8,15 +22,43 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Next tag: 14
+// Next tag: 10
+message NamespaceStorageInfoProto {
+  // Name of the namespace
+  optional string namespace = 1;
+
+  // Number of alive documents in this namespace.
+  optional int32 num_alive_documents = 2;
+
+  // NOTE: We don't have stats on number of deleted documents in a namespace
+  // since we completely erase all data on a document when it's deleted. And we
+  // can't figure out which namespace it belonged to.
+
+  // Number of expired documents in this namespace.
+  optional int32 num_expired_documents = 3;
+
+  // LINT.IfChange(namespace_storage_info_usage_types)
+  // Number of alive documents that have a UsageReport.usage_type reported
+  optional int32 num_alive_documents_usage_type1 = 4;
+  optional int32 num_alive_documents_usage_type2 = 5;
+  optional int32 num_alive_documents_usage_type3 = 6;
+
+  // Number of expired documents that have a UsageReport.usage_type reported
+  optional int32 num_expired_documents_usage_type1 = 7;
+  optional int32 num_expired_documents_usage_type2 = 8;
+  optional int32 num_expired_documents_usage_type3 = 9;
+  // LINT.ThenChange()
+}
+
+// Next tag: 15
 message DocumentStorageInfoProto {
-  // Number of alive documents.
+  // Total number of alive documents.
   optional int32 num_alive_documents = 1;
 
-  // Number of deleted documents.
+  // Total number of deleted documents.
   optional int32 num_deleted_documents = 2;
 
-  // Number of expired documents.
+  // Total number of expired documents.
   optional int32 num_expired_documents = 3;
 
   // Total size of the document store in bytes. Will be set to -1 if an IO error
@@ -57,7 +99,13 @@ message DocumentStorageInfoProto {
   optional int64 namespace_id_mapper_size = 12;
 
   // Number of namespaces seen from the current documents.
+  //
+  // TODO(cassiewang): This isn't technically needed anymore since clients can
+  // get this number from namespace_storage_info. Consider removing this.
   optional int32 num_namespaces = 13;
+
+  // Storage information of each namespace.
+  repeated NamespaceStorageInfoProto namespace_storage_info = 14;
 }
 
 // Next tag: 5

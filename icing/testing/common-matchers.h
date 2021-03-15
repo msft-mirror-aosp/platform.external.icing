@@ -376,14 +376,22 @@ MATCHER_P2(ProtoStatusIs, status_code, error_matcher, "") {
   return ExplainMatchResult(error_matcher, arg.message(), result_listener);
 }
 
-MATCHER_P(EqualsSearchResultIgnoreStats, expected, "") {
+MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto actual_copy = arg;
   actual_copy.clear_query_stats();
   actual_copy.clear_debug_info();
+  for (SearchResultProto::ResultProto& result :
+       *actual_copy.mutable_results()) {
+    result.clear_score();
+  }
 
   SearchResultProto expected_copy = expected;
   expected_copy.clear_query_stats();
   expected_copy.clear_debug_info();
+  for (SearchResultProto::ResultProto& result :
+       *expected_copy.mutable_results()) {
+    result.clear_score();
+  }
   return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
                             result_listener);
 }

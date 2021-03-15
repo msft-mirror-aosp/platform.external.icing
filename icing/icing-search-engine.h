@@ -336,6 +336,19 @@ class IcingSearchEngine {
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
   // would be able to fully recover all data written up to this point.
   //
+  // If persist_type is PersistType::LITE, then only the ground truth will be
+  // synced. This should be relatively lightweight to do (order of microseconds)
+  // and ensures that there will be no data loss. At worst, Icing may need to
+  // recover internal data structures by replaying the document log upon the
+  // next startup. Clients should call PersistToDisk(LITE) after each batch of
+  // mutations.
+  //
+  // If persist_type is PersistType::FULL, then all internal data structures in
+  // Icing will be synced. This is a heavier operation (order of milliseconds).
+  // It ensures that Icing will not need to recover internal data structures
+  // upon the next startup. Clients should call PersistToDisk(FULL) before their
+  // process dies.
+  //
   // NOTE: It is not necessary to call PersistToDisk() to read back data
   // that was recently written. All read APIs will include the most recent
   // updates/deletes regardless of the data being flushed to disk.
@@ -344,7 +357,8 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL on I/O error
-  PersistToDiskResultProto PersistToDisk() ICING_LOCKS_EXCLUDED(mutex_);
+  PersistToDiskResultProto PersistToDisk(PersistType::Code persist_type)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Allows Icing to run tasks that are too expensive and/or unnecessary to be
   // executed in real-time, but are useful to keep it fast and be
@@ -424,7 +438,8 @@ class IcingSearchEngine {
   // acquired first in order to adhere to the global lock ordering:
   //   1. mutex_
   //   2. result_state_manager_.lock_
-  ResultStateManager result_state_manager_ ICING_GUARDED_BY(mutex_);
+  std::unique_ptr<ResultStateManager> result_state_manager_
+      ICING_GUARDED_BY(mutex_);
 
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
@@ -450,8 +465,8 @@ class IcingSearchEngine {
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
-  libtextclassifier3::Status InternalPersistToDisk()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::Status InternalPersistToDisk(
+      PersistType::Code persist_type) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public
