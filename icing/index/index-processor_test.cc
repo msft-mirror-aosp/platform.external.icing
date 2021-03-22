@@ -39,6 +39,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
@@ -103,6 +104,22 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Test;
 
+constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
+    PropertyConfigProto_DataType_Code_STRING;
+constexpr PropertyConfigProto_DataType_Code TYPE_BYTES =
+    PropertyConfigProto_DataType_Code_BYTES;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+
 class IndexProcessorTest : public Test {
  protected:
   void SetUp() override {
@@ -131,7 +148,49 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, GetTestTempDir(), &fake_clock_));
-    SchemaProto schema = CreateFakeSchema();
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType(kFakeType)
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kExactProperty)
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPrefixedProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kUnindexedProperty1)
+                                     .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kUnindexedProperty2)
+                                     .SetDataType(TYPE_BYTES)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kRepeatedProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kSubProperty)
+                            .SetDataTypeDocument(
+                                kNestedType, /*index_nested_properties=*/true)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType(kNestedType)
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kNestedProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     IndexProcessor::Options processor_options;
@@ -162,72 +221,6 @@ class IndexProcessorTest : public Test {
   std::unique_ptr<Index> index_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<IndexProcessor> index_processor_;
-
- private:
-  static void AddStringProperty(std::string_view name, DataType::Code type,
-                                Cardinality::Code cardinality,
-                                TermMatchType::Code term_match_type,
-                                SchemaTypeConfigProto* type_config) {
-    auto* prop = type_config->add_properties();
-    prop->set_property_name(std::string(name));
-    prop->set_data_type(type);
-    prop->set_cardinality(cardinality);
-    prop->mutable_string_indexing_config()->set_term_match_type(
-        term_match_type);
-    prop->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-  }
-
-  static void AddNonIndexedProperty(std::string_view name, DataType::Code type,
-                                    Cardinality::Code cardinality,
-                                    SchemaTypeConfigProto* type_config) {
-    auto* prop = type_config->add_properties();
-    prop->set_property_name(std::string(name));
-    prop->set_data_type(type);
-    prop->set_cardinality(cardinality);
-  }
-
-  static SchemaProto CreateFakeSchema() {
-    SchemaProto schema;
-
-    // Add top-level type
-    auto* type_config = schema.add_types();
-    type_config->set_schema_type(std::string(kFakeType));
-
-    AddStringProperty(std::string(kExactProperty), DataType::STRING,
-                      Cardinality::OPTIONAL, TermMatchType::EXACT_ONLY,
-                      type_config);
-
-    AddStringProperty(std::string(kPrefixedProperty), DataType::STRING,
-                      Cardinality::OPTIONAL, TermMatchType::PREFIX,
-                      type_config);
-
-    AddNonIndexedProperty(std::string(kUnindexedProperty1), DataType::STRING,
-                          Cardinality::OPTIONAL, type_config);
-
-    AddNonIndexedProperty(std::string(kUnindexedProperty2), DataType::BYTES,
-                          Cardinality::OPTIONAL, type_config);
-
-    AddStringProperty(std::string(kRepeatedProperty), DataType::STRING,
-                      Cardinality::REPEATED, TermMatchType::PREFIX,
-                      type_config);
-
-    auto* prop = type_config->add_properties();
-    prop->set_property_name(std::string(kSubProperty));
-    prop->set_data_type(DataType::DOCUMENT);
-    prop->set_cardinality(Cardinality::OPTIONAL);
-    prop->set_schema_type(std::string(kNestedType));
-    prop->mutable_document_indexing_config()->set_index_nested_properties(true);
-
-    // Add nested type
-    type_config = schema.add_types();
-    type_config->set_schema_type(std::string(kNestedType));
-
-    AddStringProperty(kNestedProperty, DataType::STRING, Cardinality::OPTIONAL,
-                      TermMatchType::PREFIX, type_config);
-
-    return schema;
-  }
 };
 
 std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {

@@ -23,6 +23,8 @@
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -31,17 +33,19 @@ namespace lib {
 // same query. Stored in ResultStateManager.
 class ResultState {
  public:
-  explicit ResultState(std::vector<ScoredDocumentHit> scored_document_hits,
-                       SectionRestrictQueryTermsMap query_terms,
-                       const SearchSpecProto& search_spec,
-                       const ScoringSpecProto& scoring_spec,
-                       const ResultSpecProto& result_spec);
+  ResultState(std::vector<ScoredDocumentHit> scored_document_hits,
+              SectionRestrictQueryTermsMap query_terms,
+              const SearchSpecProto& search_spec,
+              const ScoringSpecProto& scoring_spec,
+              const ResultSpecProto& result_spec,
+              const DocumentStore& document_store);
 
   // Returns the next page of results. The size of page is passed in from
   // ResultSpecProto in constructor. Calling this method could increase the
   // value of num_returned(), so be careful of the order of calling these
   // methods.
-  std::vector<ScoredDocumentHit> GetNextPage();
+  std::vector<ScoredDocumentHit> GetNextPage(
+      const DocumentStore& document_store);
 
   // Truncates the vector of ScoredDocumentHits to the given size. The best
   // ScoredDocumentHits are kept.
@@ -82,6 +86,13 @@ class ResultState {
 
   // Information needed for projection.
   std::unordered_map<std::string, ProjectionTree> projection_tree_map_;
+
+  // A map between namespace id and the id of the group that it appears in.
+  std::unordered_map<NamespaceId, int> namespace_group_id_map_;
+
+  // The count of remaining results to return for a group where group id is the
+  // index.
+  std::vector<int> group_result_limits_;
 
   // Number of results to return in each page.
   int num_per_page_;
