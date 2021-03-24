@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -36,6 +37,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -44,6 +46,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
@@ -189,17 +192,6 @@ int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
   return expiration_timestamp_ms;
 }
 
-void IncrementDeletedOrExpired(FileBackedVector<int64_t>* document_id_mapper,
-                               DocumentId document_id, int* num_deleted_out,
-                               int* num_expired_out) {
-  auto location_or = document_id_mapper->Get(document_id);
-  if (location_or.ok() && *location_or.ValueOrDie() == kDocDeletedFlag) {
-    ++(*num_deleted_out);
-  } else {
-    ++(*num_expired_out);
-  }
-}
-
 }  // namespace
 
 DocumentStore::DocumentStore(const Filesystem* filesystem,
@@ -227,7 +219,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
 
 DocumentStore::~DocumentStore() {
   if (initialized_) {
-    if (!PersistToDisk().ok()) {
+    if (!PersistToDisk(PersistType::FULL).ok()) {
       ICING_LOG(ERROR)
           << "Error persisting to disk in DocumentStore destructor";
     }
@@ -1405,7 +1397,12 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
   return num_updated_documents;
 }
 
-libtextclassifier3::Status DocumentStore::PersistToDisk() {
+libtextclassifier3::Status DocumentStore::PersistToDisk(
+    PersistType::Code persist_type) {
+  if (persist_type == PersistType::LITE) {
+    // only persist the document log.
+    return document_log_->PersistToDisk();
+  }
   ICING_RETURN_IF_ERROR(document_log_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
@@ -1451,21 +1448,104 @@ DocumentStorageInfoProto DocumentStore::GetMemberStorageInfo() const {
 
 DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
     DocumentStorageInfoProto storage_info) const {
-  int num_alive = 0;
-  int num_expired = 0;
-  int num_deleted = 0;
+  int total_num_alive = 0;
+  int total_num_expired = 0;
+  int total_num_deleted = 0;
+  std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
+      namespace_mapper_->GetValuesToKeys();
+  std::unordered_map<std::string, NamespaceStorageInfoProto>
+      namespace_to_storage_info;
+
   for (DocumentId document_id = 0;
        document_id < document_id_mapper_->num_elements(); ++document_id) {
+    // Check if it's deleted first.
+    auto location_or = document_id_mapper_->Get(document_id);
+    if (!location_or.ok()) {
+      ICING_VLOG(1) << "Error trying to get document offsets for document "
+                       "store storage info counts.";
+      continue;
+    }
+    if (*location_or.ValueOrDie() == kDocDeletedFlag) {
+      // We don't have the namespace id of hard deleted documents anymore, so we
+      // can't add to our namespace storage info.
+      ++total_num_deleted;
+      continue;
+    }
+
+    // At this point, the document is either alive or expired, we can get
+    // namespace info for it.
+    auto filter_data_or = filter_cache_->Get(document_id);
+    if (!filter_data_or.ok()) {
+      ICING_VLOG(1) << "Error trying to get filter data for document store "
+                       "storage info counts.";
+      continue;
+    }
+    const DocumentFilterData* filter_data = filter_data_or.ValueOrDie();
+    auto itr = namespace_id_to_namespace.find(filter_data->namespace_id());
+    if (itr == namespace_id_to_namespace.end()) {
+      ICING_VLOG(1) << "Error trying to find namespace for document store "
+                       "storage info counts.";
+      continue;
+    }
+    const std::string& name_space = itr->second;
+
+    // Always set the namespace, if the NamespaceStorageInfoProto didn't exist
+    // before, we'll get back a default instance of it.
+    NamespaceStorageInfoProto& namespace_storage_info =
+        namespace_to_storage_info[name_space];
+    namespace_storage_info.set_namespace_(name_space);
+
+    // Get usage scores
+    auto usage_scores_or = usage_store_->GetUsageScores(document_id);
+    if (!usage_scores_or.ok()) {
+      ICING_VLOG(1) << "Error trying to get usage scores for document store "
+                       "storage info counts.";
+      continue;
+    }
+    UsageStore::UsageScores usage_scores = usage_scores_or.ValueOrDie();
+
+    // Update our stats
     if (DoesDocumentExist(document_id)) {
-      ++num_alive;
+      ++total_num_alive;
+      namespace_storage_info.set_num_alive_documents(
+          namespace_storage_info.num_alive_documents() + 1);
+      if (usage_scores.usage_type1_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type1(
+            namespace_storage_info.num_alive_documents_usage_type1() + 1);
+      }
+      if (usage_scores.usage_type2_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type2(
+            namespace_storage_info.num_alive_documents_usage_type2() + 1);
+      }
+      if (usage_scores.usage_type3_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type3(
+            namespace_storage_info.num_alive_documents_usage_type3() + 1);
+      }
     } else {
-      IncrementDeletedOrExpired(document_id_mapper_.get(), document_id,
-                                &num_deleted, &num_expired);
+      ++total_num_expired;
+      namespace_storage_info.set_num_expired_documents(
+          namespace_storage_info.num_expired_documents() + 1);
+      if (usage_scores.usage_type1_count > 0) {
+        namespace_storage_info.set_num_expired_documents_usage_type1(
+            namespace_storage_info.num_expired_documents_usage_type1() + 1);
+      }
+      if (usage_scores.usage_type2_count > 0) {
+        namespace_storage_info.set_num_expired_documents_usage_type2(
+            namespace_storage_info.num_expired_documents_usage_type2() + 1);
+      }
+      if (usage_scores.usage_type3_count > 0) {
+        namespace_storage_info.set_num_expired_documents_usage_type3(
+            namespace_storage_info.num_expired_documents_usage_type3() + 1);
+      }
     }
   }
-  storage_info.set_num_alive_documents(num_alive);
-  storage_info.set_num_deleted_documents(num_deleted);
-  storage_info.set_num_expired_documents(num_expired);
+
+  for (auto& itr : namespace_to_storage_info) {
+    storage_info.mutable_namespace_storage_info()->Add(std::move(itr.second));
+  }
+  storage_info.set_num_alive_documents(total_num_alive);
+  storage_info.set_num_deleted_documents(total_num_deleted);
+  storage_info.set_num_expired_documents(total_num_expired);
   return storage_info;
 }
 
@@ -1649,9 +1729,13 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
-      // Skip nonexistent documents
-      IncrementDeletedOrExpired(document_id_mapper_.get(), document_id,
-                                &num_deleted, &num_expired);
+      // Don't optimize nonexistent documents, but collect stats
+      auto location_or = document_id_mapper_->Get(document_id);
+      if (location_or.ok() && *location_or.ValueOrDie() == kDocDeletedFlag) {
+        ++num_deleted;
+      } else {
+        ++num_expired;
+      }
       continue;
     } else if (!document_or.ok()) {
       // Real error, pass up
@@ -1701,7 +1785,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     stats->set_num_deleted_documents(num_deleted);
     stats->set_num_expired_documents(num_expired);
   }
-  ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk());
+  ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk(PersistType::FULL));
   return libtextclassifier3::Status::OK;
 }
 

@@ -37,7 +37,8 @@ inline constexpr uint64_t kInvalidNextPageToken = 0;
 // Used to store and manage ResultState.
 class ResultStateManager {
  public:
-  explicit ResultStateManager(int max_total_hits);
+  explicit ResultStateManager(int max_total_hits,
+                              const DocumentStore& document_store);
 
   ResultStateManager(const ResultStateManager&) = delete;
   ResultStateManager& operator=(const ResultStateManager&) = delete;
@@ -76,6 +77,8 @@ class ResultStateManager {
 
  private:
   absl_ports::shared_mutex mutex_;
+
+  const DocumentStore& document_store_;
 
   // The maximum number of scored document hits that all result states may
   // have. When a new result state is added such that num_total_hits_ would
