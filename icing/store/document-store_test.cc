@@ -66,6 +66,21 @@ using ::testing::Not;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
 
+const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
+    const DocumentStorageInfoProto& storage_info,
+    const std::string& name_space) {
+  for (const NamespaceStorageInfoProto& namespace_storage_info :
+       storage_info.namespace_storage_info()) {
+    if (namespace_storage_info.namespace_() == name_space) {
+      return namespace_storage_info;
+    }
+  }
+  // Didn't find our namespace, fail the test.
+  EXPECT_TRUE(false) << "Failed to find namespace '" << name_space
+                     << "' in DocumentStorageInfoProto.";
+  return std::move(NamespaceStorageInfoProto());
+}
+
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
                               int64 timestamp_ms,
                               UsageReport::UsageType usage_type) {
@@ -3498,6 +3513,35 @@ TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   document3.set_uri("uri3");
   ICING_ASSERT_OK(doc_store->Put(document3));
 
+  DocumentProto document4 = test_document1_;
+  document4.set_namespace_("namespace.2");
+  document4.set_uri("uri1");
+  ICING_ASSERT_OK(doc_store->Put(document4));
+
+  // Report usage with type 1 on document1
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"namespace.1", /*uri=*/"uri1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
+
+  // Report usage with type 2 on document2
+  UsageReport usage_report_type2 = CreateUsageReport(
+      /*name_space=*/"namespace.1", /*uri=*/"uri2", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE2);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type2));
+
+  // Report usage with type 3 on document3
+  UsageReport usage_report_type3 = CreateUsageReport(
+      /*name_space=*/"namespace.1", /*uri=*/"uri3", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE3);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type3));
+
+  // Report usage with type 1 on document4
+  usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"namespace.2", /*uri=*/"uri1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
+
   // Delete the first doc.
   ICING_ASSERT_OK(doc_store->Delete(document1.namespace_(), document1.uri()));
 
@@ -3505,8 +3549,9 @@ TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   fake_clock_.SetSystemTimeMilliseconds(document2.creation_timestamp_ms() +
                                         document2.ttl_ms() + 1);
 
+  // Check high level info
   DocumentStorageInfoProto storage_info = doc_store->GetStorageInfo();
-  EXPECT_THAT(storage_info.num_alive_documents(), Eq(1));
+  EXPECT_THAT(storage_info.num_alive_documents(), Eq(2));
   EXPECT_THAT(storage_info.num_deleted_documents(), Eq(1));
   EXPECT_THAT(storage_info.num_expired_documents(), Eq(1));
   EXPECT_THAT(storage_info.document_store_size(), Ge(0));
@@ -3518,7 +3563,37 @@ TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   EXPECT_THAT(storage_info.corpus_mapper_size(), Ge(0));
   EXPECT_THAT(storage_info.corpus_score_cache_size(), Ge(0));
   EXPECT_THAT(storage_info.namespace_id_mapper_size(), Ge(0));
-  EXPECT_THAT(storage_info.num_namespaces(), Eq(1));
+  EXPECT_THAT(storage_info.num_namespaces(), Eq(2));
+
+  // Check per-namespace info
+  EXPECT_THAT(storage_info.namespace_storage_info_size(), Eq(2));
+
+  NamespaceStorageInfoProto namespace_storage_info =
+      GetNamespaceStorageInfo(storage_info, "namespace.1");
+  EXPECT_THAT(namespace_storage_info.num_alive_documents(), Eq(1));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents(), Eq(1));
+  EXPECT_THAT(namespace_storage_info.num_alive_documents_usage_type1(), Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_alive_documents_usage_type2(), Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_alive_documents_usage_type3(), Eq(1));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type1(),
+              Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type2(),
+              Eq(1));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type3(),
+              Eq(0));
+
+  namespace_storage_info = GetNamespaceStorageInfo(storage_info, "namespace.2");
+  EXPECT_THAT(namespace_storage_info.num_alive_documents(), Eq(1));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents(), Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_alive_documents_usage_type1(), Eq(1));
+  EXPECT_THAT(namespace_storage_info.num_alive_documents_usage_type2(), Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_alive_documents_usage_type3(), Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type1(),
+              Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type2(),
+              Eq(0));
+  EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type3(),
+              Eq(0));
 }
 
 }  // namespace

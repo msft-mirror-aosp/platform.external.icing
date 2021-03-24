@@ -25,6 +25,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
@@ -37,6 +38,12 @@ namespace lib {
 
 namespace {
 using ::testing::Eq;
+
+constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
+    PropertyConfigProto_DataType_Code_STRING;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
+    PropertyConfigProto_Cardinality_Code_REQUIRED;
 
 class ScorerTest : public testing::Test {
  protected:
@@ -64,13 +71,14 @@ class ScorerTest : public testing::Test {
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
-    SchemaProto test_email_schema;
-    auto type_config = test_email_schema.add_types();
-    type_config->set_schema_type("email");
-    auto subject = type_config->add_properties();
-    subject->set_property_name("subject");
-    subject->set_data_type(PropertyConfigProto::DataType::STRING);
-    subject->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+    SchemaProto test_email_schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("subject")
+                    .SetDataType(TYPE_STRING)
+                    .SetCardinality(CARDINALITY_REQUIRED)))
+            .Build();
 
     ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
   }
