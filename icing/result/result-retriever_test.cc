@@ -228,9 +228,9 @@ TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      {document_id1, hit_section_id_mask, /*score=*/19},
+      {document_id2, hit_section_id_mask, /*score=*/5},
+      {document_id3, hit_section_id_mask, /*score=*/1}};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
@@ -238,10 +238,13 @@ TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(19);
   SearchResultProto::ResultProto result2;
   *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(5);
   SearchResultProto::ResultProto result3;
   *result3.mutable_document() = CreateDocument(/*id=*/3);
+  result3.set_score(1);
 
   SnippetContext snippet_context(
       /*query_terms_in=*/{},
@@ -277,8 +280,8 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
+      {document_id1, hit_section_id_mask, /*score=*/12},
+      {document_id2, hit_section_id_mask, /*score=*/4},
       {invalid_document_id, hit_section_id_mask, /*score=*/0}};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
@@ -288,8 +291,10 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(12);
   SearchResultProto::ResultProto result2;
   *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(4);
 
   SnippetContext snippet_context(
       /*query_terms_in=*/{},
