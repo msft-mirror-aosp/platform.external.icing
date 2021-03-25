@@ -97,6 +97,21 @@ libtextclassifier3::Status ValidateResultSpec(
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_per_page cannot be negative.");
   }
+  std::unordered_set<std::string> unique_namespaces;
+  for (const ResultSpecProto::ResultGrouping& result_grouping :
+       result_spec.result_groupings()) {
+    if (result_grouping.max_results() <= 0) {
+      return absl_ports::InvalidArgumentError(
+          "Cannot specify a result grouping with max results <= 0.");
+    }
+    for (const std::string& name_space : result_grouping.namespaces()) {
+      if (unique_namespaces.count(name_space) > 0) {
+        return absl_ports::InvalidArgumentError(
+            "Namespaces must be unique across result groups.");
+      }
+      unique_namespaces.insert(name_space);
+    }
+  }
   return libtextclassifier3::Status::OK;
 }
 
@@ -241,14 +256,13 @@ IcingSearchEngine::IcingSearchEngine(
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
-      result_state_manager_(performance_configuration_.max_num_total_hits),
       jni_cache_(std::move(jni_cache)) {
   ICING_VLOG(1) << "Creating IcingSearchEngine in dir: " << options_.base_dir();
 }
 
 IcingSearchEngine::~IcingSearchEngine() {
   if (initialized_) {
-    if (PersistToDisk().status().code() != StatusProto::OK) {
+    if (PersistToDisk(PersistType::FULL).status().code() != StatusProto::OK) {
       ICING_LOG(ERROR)
           << "Error persisting to disk in IcingSearchEngine destructor";
     }
@@ -282,9 +296,6 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
     initialize_stats->set_num_documents(document_store_->num_documents());
     return result_proto;
   }
-
-  // Releases result / query cache if any
-  result_state_manager_.InvalidateAllResultStates();
 
   libtextclassifier3::Status status = InitializeMembers(initialize_stats);
   if (!status.ok()) {
@@ -364,6 +375,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   ICING_RETURN_IF_ERROR(InitializeOptions());
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
   ICING_RETURN_IF_ERROR(InitializeDocumentStore(initialize_stats));
+
+  result_state_manager_ = std::make_unique<ResultStateManager>(
+      performance_configuration_.max_num_total_hits, *document_store_);
 
   // TODO(b/156383798) : Resolve how to specify the locale.
   language_segmenter_factory::SegmenterOptions segmenter_options(
@@ -994,7 +1008,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   return result_proto;
 }
 
-PersistToDiskResultProto IcingSearchEngine::PersistToDisk() {
+PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
+    PersistType::Code persist_type) {
   ICING_VLOG(1) << "Persisting data to disk";
 
   PersistToDiskResultProto result_proto;
@@ -1007,7 +1022,7 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk() {
     return result_proto;
   }
 
-  auto status = InternalPersistToDisk();
+  auto status = InternalPersistToDisk(persist_type);
   TransformStatus(status, result_status);
   return result_proto;
 }
@@ -1041,11 +1056,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     optimize_stats->set_storage_size_before(-1);
   }
 
-  // Releases result / query cache if any
-  result_state_manager_.InvalidateAllResultStates();
-
   // Flushes data to disk before doing optimization
-  auto status = InternalPersistToDisk();
+  auto status = InternalPersistToDisk(PersistType::FULL);
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
@@ -1217,9 +1229,13 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   return result;
 }
 
-libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk() {
+libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
+    PersistType::Code persist_type) {
+  if (persist_type == PersistType::LITE) {
+    return document_store_->PersistToDisk(persist_type);
+  }
   ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(document_store_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(document_store_->PersistToDisk(PersistType::FULL));
   ICING_RETURN_IF_ERROR(index_->PersistToDisk());
 
   // Update the combined checksum and write to header file.
@@ -1382,9 +1398,9 @@ SearchResultProto IcingSearchEngine::Search(
   component_timer = clock_->GetNewTimer();
   // Ranks and paginates results
   libtextclassifier3::StatusOr<PageResultState> page_result_state_or =
-      result_state_manager_.RankAndPaginate(ResultState(
+      result_state_manager_->RankAndPaginate(ResultState(
           std::move(result_document_hits), std::move(query_results.query_terms),
-          search_spec, scoring_spec, result_spec));
+          search_spec, scoring_spec, result_spec, *document_store_));
   if (!page_result_state_or.ok()) {
     TransformStatus(page_result_state_or.status(), result_status);
     return result_proto;
@@ -1400,7 +1416,7 @@ SearchResultProto IcingSearchEngine::Search(
       ResultRetriever::Create(document_store_.get(), schema_store_.get(),
                               language_segmenter_.get(), normalizer_.get());
   if (!result_retriever_or.ok()) {
-    result_state_manager_.InvalidateResultState(
+    result_state_manager_->InvalidateResultState(
         page_result_state.next_page_token);
     TransformStatus(result_retriever_or.status(), result_status);
     return result_proto;
@@ -1411,7 +1427,7 @@ SearchResultProto IcingSearchEngine::Search(
   libtextclassifier3::StatusOr<std::vector<SearchResultProto::ResultProto>>
       results_or = result_retriever->RetrieveResults(page_result_state);
   if (!results_or.ok()) {
-    result_state_manager_.InvalidateResultState(
+    result_state_manager_->InvalidateResultState(
         page_result_state.next_page_token);
     TransformStatus(results_or.status(), result_status);
     return result_proto;
@@ -1457,7 +1473,7 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
 
   std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
   libtextclassifier3::StatusOr<PageResultState> page_result_state_or =
-      result_state_manager_.GetNextPage(next_page_token);
+      result_state_manager_->GetNextPage(next_page_token);
 
   if (!page_result_state_or.ok()) {
     if (absl_ports::IsNotFound(page_result_state_or.status())) {
@@ -1528,7 +1544,7 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
     ICING_LOG(ERROR) << "IcingSearchEngine has not been initialized!";
     return;
   }
-  result_state_manager_.InvalidateResultState(next_page_token);
+  result_state_manager_->InvalidateResultState(next_page_token);
 }
 
 libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
@@ -1559,7 +1575,9 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
         optimize_status.error_message());
   }
 
-  // Resets before swapping
+  // result_state_manager_ depends on document_store_. So we need to reset it at
+  // the same time that we reset the document_store_.
+  result_state_manager_.reset();
   document_store_.reset();
 
   // When swapping files, always put the current working directory at the
@@ -1596,6 +1614,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
           create_result_or.status().error_message());
     }
     document_store_ = std::move(create_result_or.ValueOrDie().document_store);
+    result_state_manager_ = std::make_unique<ResultStateManager>(
+        performance_configuration_.max_num_total_hits, *document_store_);
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -1616,6 +1636,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
         "instance can't be created");
   }
   document_store_ = std::move(create_result_or.ValueOrDie().document_store);
+  result_state_manager_ = std::make_unique<ResultStateManager>(
+      performance_configuration_.max_num_total_hits, *document_store_);
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(

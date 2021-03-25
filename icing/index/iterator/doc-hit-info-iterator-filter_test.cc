@@ -28,6 +28,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -59,10 +60,10 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
     test_document3_ =
         DocumentBuilder().SetKey("icing", "email/3").SetSchema("email").Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("email");
-
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email"))
+            .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
@@ -226,10 +227,10 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
                                 .SetSchema("email")
                                 .Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("email");
-
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email"))
+            .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
@@ -379,14 +380,12 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
     document4_schema1_ =
         DocumentBuilder().SetKey("namespace", "4").SetSchema(schema1_).Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type(schema1_);
-    type_config = schema.add_types();
-    type_config->set_schema_type(schema2_);
-    type_config = schema.add_types();
-    type_config->set_schema_type(schema3_);
-
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType(schema1_))
+            .AddType(SchemaTypeConfigBuilder().SetType(schema2_))
+            .AddType(SchemaTypeConfigBuilder().SetType(schema3_))
+            .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
@@ -523,10 +522,10 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
   void SetUp() override {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type(email_schema_);
-
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType(email_schema_))
+            .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
@@ -713,12 +712,11 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
                                         .SetTtlMs(100)
                                         .Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type(schema1_);
-    type_config = schema.add_types();
-    type_config->set_schema_type(schema2_);
-
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType(schema1_))
+            .AddType(SchemaTypeConfigBuilder().SetType(schema2_))
+            .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
