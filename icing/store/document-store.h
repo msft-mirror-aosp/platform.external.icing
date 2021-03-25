@@ -30,6 +30,7 @@
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
@@ -351,7 +352,7 @@ class DocumentStore {
   // Returns:
   //   OK on success
   //   INTERNAL on I/O error
-  libtextclassifier3::Status PersistToDisk();
+  libtextclassifier3::Status PersistToDisk(PersistType::Code persist_type);
 
   // Calculates the StorageInfo for the Document Store.
   //

@@ -22,8 +22,10 @@
 namespace icing {
 namespace lib {
 
-ResultStateManager::ResultStateManager(int max_total_hits)
-    : max_total_hits_(max_total_hits),
+ResultStateManager::ResultStateManager(int max_total_hits,
+                                       const DocumentStore& document_store)
+    : document_store_(document_store),
+      max_total_hits_(max_total_hits),
       num_total_hits_(0),
       random_generator_(GetSteadyTimeNanoseconds()) {}
 
@@ -39,7 +41,7 @@ ResultStateManager::RankAndPaginate(ResultState result_state) {
   int num_per_page = result_state.num_per_page();
 
   std::vector<ScoredDocumentHit> page_result_document_hits =
-      result_state.GetNextPage();
+      result_state.GetNextPage(document_store_);
 
   SnippetContext snippet_context_copy = result_state.snippet_context();
 
@@ -90,7 +92,7 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
   int num_returned = state_iterator->second.num_returned();
   int num_per_page = state_iterator->second.num_per_page();
   std::vector<ScoredDocumentHit> result_of_page =
-      state_iterator->second.GetNextPage();
+      state_iterator->second.GetNextPage(document_store_);
   if (result_of_page.empty()) {
     // This shouldn't happen, all our active states should contain results, but
     // a sanity check here in case of any data inconsistency.
