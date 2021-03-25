@@ -107,6 +107,7 @@ ResultRetriever::RetrieveResults(
 
     // Add the document, itself.
     *result.mutable_document() = std::move(document);
+    result.set_score(scored_document_hit.score());
     search_results.push_back(std::move(result));
   }
   return search_results;
