@@ -62,14 +62,15 @@ class HitSelector {
       (*hits)[pos++] = best_exact_hit_;
       const Hit& prefix_hit = best_prefix_hit_.hit();
       // The prefix hit has score equal to the sum of the scores, capped at
-      // kMaxHitScore.
-      Hit::Score final_score =
-          std::min(static_cast<int>(Hit::kMaxHitScore),
-                   prefix_hit.score() + best_exact_hit_.hit().score());
+      // kMaxTermFrequency.
+      Hit::TermFrequency final_term_frequency = std::min(
+          static_cast<int>(Hit::kMaxTermFrequency),
+          prefix_hit.term_frequency() + best_exact_hit_.hit().term_frequency());
       best_prefix_hit_ = TermIdHitPair(
           best_prefix_hit_.term_id(),
-          Hit(prefix_hit.section_id(), prefix_hit.document_id(), final_score,
-              prefix_hit.is_in_prefix_section(), prefix_hit.is_prefix_hit()));
+          Hit(prefix_hit.section_id(), prefix_hit.document_id(),
+              final_term_frequency, prefix_hit.is_in_prefix_section(),
+              prefix_hit.is_prefix_hit()));
       (*hits)[pos++] = best_prefix_hit_;
       // Ensure sorted.
       if (best_prefix_hit_.hit() < best_exact_hit_.hit()) {
@@ -97,15 +98,15 @@ class HitSelector {
     } else {
       const Hit& hit = term_id_hit_pair.hit();
       // Create a new prefix hit with term_frequency as the sum of the term
-      // frequencies. The term frequency is capped at kMaxHitScore.
-      Hit::Score final_score =
-          std::min(static_cast<int>(Hit::kMaxHitScore),
-                   hit.score() + best_prefix_hit_.hit().score());
-      best_prefix_hit_ =
-          TermIdHitPair(term_id_hit_pair.term_id(),
-                        Hit(hit.section_id(), hit.document_id(), final_score,
-                            best_prefix_hit_.hit().is_in_prefix_section(),
-                            best_prefix_hit_.hit().is_prefix_hit()));
+      // frequencies. The term frequency is capped at kMaxTermFrequency.
+      Hit::TermFrequency final_term_frequency = std::min(
+          static_cast<int>(Hit::kMaxTermFrequency),
+          hit.term_frequency() + best_prefix_hit_.hit().term_frequency());
+      best_prefix_hit_ = TermIdHitPair(
+          term_id_hit_pair.term_id(),
+          Hit(hit.section_id(), hit.document_id(), final_term_frequency,
+              best_prefix_hit_.hit().is_in_prefix_section(),
+              best_prefix_hit_.hit().is_prefix_hit()));
     }
   }
 
@@ -116,14 +117,14 @@ class HitSelector {
       const Hit& hit = term_id_hit_pair.hit();
       // Create a new exact hit with term_frequency as the sum of the term
       // frequencies. The term frequency is capped at kMaxHitScore.
-      Hit::Score final_score =
-          std::min(static_cast<int>(Hit::kMaxHitScore),
-                   hit.score() + best_exact_hit_.hit().score());
-      best_exact_hit_ =
-          TermIdHitPair(term_id_hit_pair.term_id(),
-                        Hit(hit.section_id(), hit.document_id(), final_score,
-                            best_exact_hit_.hit().is_in_prefix_section(),
-                            best_exact_hit_.hit().is_prefix_hit()));
+      Hit::TermFrequency final_term_frequency = std::min(
+          static_cast<int>(Hit::kMaxTermFrequency),
+          hit.term_frequency() + best_exact_hit_.hit().term_frequency());
+      best_exact_hit_ = TermIdHitPair(
+          term_id_hit_pair.term_id(),
+          Hit(hit.section_id(), hit.document_id(), final_term_frequency,
+              best_exact_hit_.hit().is_in_prefix_section(),
+              best_exact_hit_.hit().is_prefix_hit()));
     }
   }
 
@@ -192,10 +193,10 @@ class HitComparator {
 // {"foot", docid0, sectionid0}
 // {"fool", docid0, sectionid0}
 //
-// When two or more prefix hits are duplicates, merge into one hit with score as
-// the sum of the scores. If there is both an exact and prefix hit for the same
-// term, keep the exact hit as it is, update the prefix hit so that its score is
-// the sum of the scores.
+// When two or more prefix hits are duplicates, merge into one hit with term
+// frequency as the sum of the term frequencies. If there is both an exact and
+// prefix hit for the same term, keep the exact hit as it is, update the prefix
+// hit so that its term frequency is the sum of the term frequencies.
 void DedupeHits(
     std::vector<TermIdHitPair>* hits, const TermIdCodec& term_id_codec,
     const std::unordered_map<uint32_t, int>& main_tvi_to_block_index) {
@@ -278,7 +279,7 @@ MainIndexMerger::TranslateAndExpandLiteHits(
       size_t offset = itr_prefixes->second.first;
       size_t len = itr_prefixes->second.second;
       size_t offset_end_exclusive = offset + len;
-      Hit prefix_hit(hit.section_id(), hit.document_id(), hit.score(),
+      Hit prefix_hit(hit.section_id(), hit.document_id(), hit.term_frequency(),
                      /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true);
       for (; offset < offset_end_exclusive; ++offset) {
         // Take the tvi (in the main lexicon) of each prefix term.

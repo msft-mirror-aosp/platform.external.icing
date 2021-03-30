@@ -287,7 +287,7 @@ libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
     tvi = tvi_or.ValueOrDie();
     if (seen_tokens_.find(tvi) != seen_tokens_.end()) {
       ICING_VLOG(1) << "Updating term frequency for term " << term;
-      if (seen_tokens_[tvi] != Hit::kMaxHitScore) {
+      if (seen_tokens_[tvi] != Hit::kMaxTermFrequency) {
         ++seen_tokens_[tvi];
       }
       return libtextclassifier3::Status::OK;
@@ -310,7 +310,7 @@ libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
 
 libtextclassifier3::Status Index::Editor::IndexAllBufferedTerms() {
   for (auto itr = seen_tokens_.begin(); itr != seen_tokens_.end(); itr++) {
-    Hit hit(section_id_, document_id_, /*score=*/itr->second,
+    Hit hit(section_id_, document_id_, /*term_frequency=*/itr->second,
             term_match_type_ == TermMatchType::PREFIX);
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id, term_id_codec_->EncodeTvi(itr->first, TviType::LITE));

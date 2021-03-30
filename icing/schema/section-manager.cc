@@ -155,8 +155,9 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
 
 // Helper function to get string content from a property. Repeated values are
 // joined into one string. We only care about the STRING data type.
-std::vector<std::string> GetPropertyContent(const PropertyProto& property) {
-  std::vector<std::string> values;
+std::vector<std::string_view> GetStringPropertyContent(
+    const PropertyProto& property) {
+  std::vector<std::string_view> values;
   if (!property.string_values().empty()) {
     std::copy(property.string_values().begin(), property.string_values().end(),
               std::back_inserter(values));
@@ -194,9 +195,9 @@ SectionManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
       schema_type_mapper, std::move(section_metadata_cache)));
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SectionManager::GetSectionContent(const DocumentProto& document,
-                                  std::string_view section_path) const {
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SectionManager::GetStringSectionContent(const DocumentProto& document,
+                                        std::string_view section_path) const {
   // Finds the first property name in section_path
   size_t separator_position = section_path.find(kPropertySeparator);
   std::string_view current_property_name =
@@ -221,7 +222,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
 
   if (separator_position == std::string::npos) {
     // Current property name is the last one in section path
-    std::vector<std::string> content = GetPropertyContent(*property_iterator);
+    std::vector<std::string_view> content =
+        GetStringPropertyContent(*property_iterator);
     if (content.empty()) {
       // The content of property is explicitly set to empty, we'll treat it as
       // NOT_FOUND because the index doesn't care about empty strings.
@@ -234,11 +236,13 @@ SectionManager::GetSectionContent(const DocumentProto& document,
   // Gets section content recursively
   std::string_view sub_section_path =
       section_path.substr(separator_position + 1);
-  std::vector<std::string> nested_document_content;
+  std::vector<std::string_view> nested_document_content;
   for (const auto& nested_document : property_iterator->document_values()) {
-    auto content_or = GetSectionContent(nested_document, sub_section_path);
+    auto content_or =
+        GetStringSectionContent(nested_document, sub_section_path);
     if (content_or.ok()) {
-      std::vector<std::string> content = std::move(content_or).ValueOrDie();
+      std::vector<std::string_view> content =
+          std::move(content_or).ValueOrDie();
       std::move(content.begin(), content.end(),
                 std::back_inserter(nested_document_content));
     }
@@ -251,9 +255,9 @@ SectionManager::GetSectionContent(const DocumentProto& document,
   return nested_document_content;
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SectionManager::GetSectionContent(const DocumentProto& document,
-                                  SectionId section_id) const {
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SectionManager::GetStringSectionContent(const DocumentProto& document,
+                                        SectionId section_id) const {
   if (!IsSectionIdValid(section_id)) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Section id %d is greater than the max value %d", section_id,
@@ -270,7 +274,7 @@ SectionManager::GetSectionContent(const DocumentProto& document,
   }
   // The index of metadata list is the same as the section id, so we can use
   // section id as the index.
-  return GetSectionContent(document, metadata_list[section_id].path);
+  return GetStringSectionContent(document, metadata_list[section_id].path);
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>
@@ -303,7 +307,7 @@ SectionManager::ExtractSections(const DocumentProto& document) const {
   std::vector<Section> sections;
   for (const auto& section_metadata : metadata_list) {
     auto section_content_or =
-        GetSectionContent(document, section_metadata.path);
+        GetStringSectionContent(document, section_metadata.path);
     // Adds to result vector if section is found in document
     if (section_content_or.ok()) {
       sections.emplace_back(SectionMetadata(section_metadata),

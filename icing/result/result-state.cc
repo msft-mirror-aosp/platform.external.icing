@@ -47,7 +47,7 @@ ResultState::ResultState(std::vector<ScoredDocumentHit> scored_document_hits,
       num_returned_(0),
       scored_document_hit_comparator_(scoring_spec.order_by() ==
                                       ScoringSpecProto::Order::DESC) {
-  for (const ResultSpecProto::TypePropertyMask& type_field_mask :
+  for (const TypePropertyMask& type_field_mask :
        result_spec.type_property_masks()) {
     projection_tree_map_.insert(
         {type_field_mask.schema_type(), ProjectionTree(type_field_mask)});

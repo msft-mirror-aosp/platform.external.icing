@@ -464,6 +464,20 @@ bool Filesystem::Write(const char* filename, const void* data,
   return success;
 }
 
+bool Filesystem::CopyFile(const char* src, const char* dst) const {
+  ScopedFd src_fd(OpenForRead(src));
+  ScopedFd dst_fd(OpenForWrite(dst));
+  if (!src_fd.is_valid() || !dst_fd.is_valid()) {
+    return false;
+  }
+  uint64_t size = GetFileSize(*src_fd);
+  std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+  if (!Read(*src_fd, buf.get(), size)) {
+    return false;
+  }
+  return Write(*dst_fd, buf.get(), size);
+}
+
 bool Filesystem::PWrite(int fd, off_t offset, const void* data,
                         size_t data_size) const {
   size_t write_len = data_size;

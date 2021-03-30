@@ -18,8 +18,10 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/scoring.pb.h"
-#include "icing/store/document-associated-score-data.h"
+#include "icing/scoring/bm25f-calculator.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
@@ -33,10 +35,11 @@ class DocumentScoreScorer : public Scorer {
                                double default_score)
       : document_store_(*document_store), default_score_(default_score) {}
 
-  double GetScore(DocumentId document_id) override {
+  double GetScore(const DocHitInfo& hit_info,
+                  const DocHitInfoIterator*) override {
     ICING_ASSIGN_OR_RETURN(
         DocumentAssociatedScoreData score_data,
-        document_store_.GetDocumentAssociatedScoreData(document_id),
+        document_store_.GetDocumentAssociatedScoreData(hit_info.document_id()),
         default_score_);
 
     return static_cast<double>(score_data.document_score());
@@ -53,10 +56,11 @@ class DocumentCreationTimestampScorer : public Scorer {
                                            double default_score)
       : document_store_(*document_store), default_score_(default_score) {}
 
-  double GetScore(DocumentId document_id) override {
+  double GetScore(const DocHitInfo& hit_info,
+                  const DocHitInfoIterator*) override {
     ICING_ASSIGN_OR_RETURN(
         DocumentAssociatedScoreData score_data,
-        document_store_.GetDocumentAssociatedScoreData(document_id),
+        document_store_.GetDocumentAssociatedScoreData(hit_info.document_id()),
         default_score_);
 
     return static_cast<double>(score_data.creation_timestamp_ms());
@@ -64,6 +68,33 @@ class DocumentCreationTimestampScorer : public Scorer {
 
  private:
   const DocumentStore& document_store_;
+  double default_score_;
+};
+
+class RelevanceScoreScorer : public Scorer {
+ public:
+  explicit RelevanceScoreScorer(
+      std::unique_ptr<Bm25fCalculator> bm25f_calculator, double default_score)
+      : bm25f_calculator_(std::move(bm25f_calculator)),
+        default_score_(default_score) {}
+
+  void PrepareToScore(
+      std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+          query_term_iterators) override {
+    bm25f_calculator_->PrepareToScore(query_term_iterators);
+  }
+
+  double GetScore(const DocHitInfo& hit_info,
+                  const DocHitInfoIterator* query_it) override {
+    if (!query_it) {
+      return default_score_;
+    }
+    return static_cast<double>(
+        bm25f_calculator_->ComputeScore(query_it, hit_info, default_score_));
+  }
+
+ private:
+  std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   double default_score_;
 };
 
@@ -77,10 +108,11 @@ class UsageScorer : public Scorer {
         ranking_strategy_(ranking_strategy),
         default_score_(default_score) {}
 
-  double GetScore(DocumentId document_id) override {
-    ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
-                           document_store_.GetUsageScores(document_id),
-                           default_score_);
+  double GetScore(const DocHitInfo& hit_info,
+                  const DocHitInfoIterator*) override {
+    ICING_ASSIGN_OR_RETURN(
+        UsageStore::UsageScores usage_scores,
+        document_store_.GetUsageScores(hit_info.document_id()), default_score_);
 
     switch (ranking_strategy_) {
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:
@@ -113,7 +145,10 @@ class NoScorer : public Scorer {
  public:
   explicit NoScorer(double default_score) : default_score_(default_score) {}
 
-  double GetScore(DocumentId document_id) override { return default_score_; }
+  double GetScore(const DocHitInfo& hit_info,
+                  const DocHitInfoIterator*) override {
+    return default_score_;
+  }
 
  private:
   double default_score_;
@@ -131,6 +166,11 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP:
       return std::make_unique<DocumentCreationTimestampScorer>(document_store,
                                                                default_score);
+    case ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE: {
+      auto bm25f_calculator = std::make_unique<Bm25fCalculator>(document_store);
+      return std::make_unique<RelevanceScoreScorer>(std::move(bm25f_calculator),
+                                                    default_score);
+    }
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:
       [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT:
@@ -144,9 +184,6 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
       return std::make_unique<UsageScorer>(document_store, rank_by,
                                            default_score);
-    case ScoringSpecProto::RankingStrategy::
-        RELEVANCE_SCORE_NONFUNCTIONAL_PLACEHOLDER:
-      [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);
   }

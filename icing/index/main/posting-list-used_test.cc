@@ -73,37 +73,37 @@ TEST(PostingListTest, PostingListUsedPrependHitNotFull) {
           static_cast<void *>(hits_buf.get()), kHitsSize));
 
   // Make used.
-  Hit hit0(/*section_id=*/0, 0, /*score=*/56);
+  Hit hit0(/*section_id=*/0, 0, /*term_frequency=*/56);
   pl_used.PrependHit(hit0);
   // Size = sizeof(uncompressed hit0)
   int expected_size = sizeof(Hit);
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit0)));
 
-  Hit hit1(/*section_id=*/0, 1, Hit::kDefaultHitScore);
+  Hit hit1(/*section_id=*/0, 1, Hit::kDefaultTermFrequency);
   pl_used.PrependHit(hit1);
   // Size = sizeof(uncompressed hit1)
-  //        + sizeof(hit0-hit1) + sizeof(hit0::score)
-  expected_size += 2 + sizeof(Hit::Score);
+  //        + sizeof(hit0-hit1) + sizeof(hit0::term_frequency)
+  expected_size += 2 + sizeof(Hit::TermFrequency);
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit1, hit0)));
 
-  Hit hit2(/*section_id=*/0, 2, /*score=*/56);
+  Hit hit2(/*section_id=*/0, 2, /*term_frequency=*/56);
   pl_used.PrependHit(hit2);
   // Size = sizeof(uncompressed hit2)
   //        + sizeof(hit1-hit2)
-  //        + sizeof(hit0-hit1) + sizeof(hit0::score)
+  //        + sizeof(hit0-hit1) + sizeof(hit0::term_frequency)
   expected_size += 2;
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
 
-  Hit hit3(/*section_id=*/0, 3, Hit::kDefaultHitScore);
+  Hit hit3(/*section_id=*/0, 3, Hit::kDefaultTermFrequency);
   pl_used.PrependHit(hit3);
   // Size = sizeof(uncompressed hit3)
-  //        + sizeof(hit2-hit3) + sizeof(hit2::score)
+  //        + sizeof(hit2-hit3) + sizeof(hit2::term_frequency)
   //        + sizeof(hit1-hit2)
-  //        + sizeof(hit0-hit1) + sizeof(hit0::score)
-  expected_size += 2 + sizeof(Hit::Score);
+  //        + sizeof(hit0-hit1) + sizeof(hit0::term_frequency)
+  expected_size += 2 + sizeof(Hit::TermFrequency);
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(),
               IsOkAndHolds(ElementsAre(hit3, hit2, hit1, hit0)));
@@ -122,7 +122,7 @@ TEST(PostingListTest, PostingListUsedPrependHitAlmostFull) {
   // Adding hit0: EMPTY -> NOT_FULL
   // Adding hit1: NOT_FULL -> NOT_FULL
   // Adding hit2: NOT_FULL -> NOT_FULL
-  Hit hit0(/*section_id=*/0, 0, Hit::kDefaultHitScore);
+  Hit hit0(/*section_id=*/0, 0, Hit::kDefaultTermFrequency);
   Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/2);
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/2);
   ICING_EXPECT_OK(pl_used.PrependHit(hit0));
@@ -189,7 +189,8 @@ TEST(PostingListTest, PostingListUsedMinSize) {
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(IsEmpty()));
 
   // Add a hit, PL should shift to ALMOST_FULL state
-  Hit hit0(/*section_id=*/0, 0, /*score=*/0, /*is_in_prefix_section=*/false,
+  Hit hit0(/*section_id=*/0, 0, /*term_frequency=*/0,
+           /*is_in_prefix_section=*/false,
            /*is_prefix_hit=*/true);
   ICING_EXPECT_OK(pl_used.PrependHit(hit0));
   // Size = sizeof(uncompressed hit0)
@@ -197,9 +198,10 @@ TEST(PostingListTest, PostingListUsedMinSize) {
   EXPECT_THAT(pl_used.BytesUsed(), Le(expected_size));
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit0)));
 
-  // Add the smallest hit possible - no score and a delta of 1. PL should shift
-  // to FULL state.
-  Hit hit1(/*section_id=*/0, 0, /*score=*/0, /*is_in_prefix_section=*/true,
+  // Add the smallest hit possible - no term_frequency and a delta of 1. PL
+  // should shift to FULL state.
+  Hit hit1(/*section_id=*/0, 0, /*term_frequency=*/0,
+           /*is_in_prefix_section=*/true,
            /*is_prefix_hit=*/false);
   ICING_EXPECT_OK(pl_used.PrependHit(hit1));
   // Size = sizeof(uncompressed hit1) + sizeof(uncompressed hit0)
@@ -208,7 +210,8 @@ TEST(PostingListTest, PostingListUsedMinSize) {
   EXPECT_THAT(pl_used.GetHits(), IsOkAndHolds(ElementsAre(hit1, hit0)));
 
   // Try to add the smallest hit possible. Should fail
-  Hit hit2(/*section_id=*/0, 0, /*score=*/0, /*is_in_prefix_section=*/false,
+  Hit hit2(/*section_id=*/0, 0, /*term_frequency=*/0,
+           /*is_in_prefix_section=*/false,
            /*is_prefix_hit=*/false);
   EXPECT_THAT(pl_used.PrependHit(hit2),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -227,7 +230,7 @@ TEST(PostingListTest, PostingListPrependHitArrayMinSizePostingList) {
                                  static_cast<void *>(hits_buf.get()), size));
 
   std::vector<HitElt> hits_in;
-  hits_in.emplace_back(Hit(1, 0, Hit::kDefaultHitScore));
+  hits_in.emplace_back(Hit(1, 0, Hit::kDefaultTermFrequency));
   hits_in.emplace_back(
       CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
   hits_in.emplace_back(
@@ -268,7 +271,7 @@ TEST(PostingListTest, PostingListPrependHitArrayPostingList) {
                                  static_cast<void *>(hits_buf.get()), size));
 
   std::vector<HitElt> hits_in;
-  hits_in.emplace_back(Hit(1, 0, Hit::kDefaultHitScore));
+  hits_in.emplace_back(Hit(1, 0, Hit::kDefaultTermFrequency));
   hits_in.emplace_back(
       CreateHit(hits_in.rbegin()->hit, /*desired_byte_length=*/1));
   hits_in.emplace_back(
@@ -332,7 +335,7 @@ TEST(PostingListTest, PostingListPrependHitArrayPostingList) {
   // 14-11  Hit #11
   // 10  <unused>
   // 9-5    kSpecialHit
-  // 4-0    Offset=22
+  // 4-0    Offset=11
   // ----------------------
   byte_size += 11;
 
@@ -423,9 +426,9 @@ TEST(PostingListTest, PostingListPrependHitArrayPostingList) {
 TEST(PostingListTest, PostingListPrependHitArrayTooManyHits) {
   static constexpr int kNumHits = 128;
   static constexpr int kDeltaSize = 1;
-  static constexpr int kScoreSize = 1;
+  static constexpr int kTermFrequencySize = 1;
   static constexpr size_t kHitsSize =
-      ((kNumHits * (kDeltaSize + kScoreSize)) / 5) * 5;
+      ((kNumHits * (kDeltaSize + kTermFrequencySize)) / 5) * 5;
 
   std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kHitsSize);
 
@@ -652,6 +655,57 @@ TEST(PostingListTest, MoveToPostingListTooSmall) {
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
   EXPECT_THAT(pl_used2.GetHits(),
               IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+}
+
+TEST(PostingListTest, PopHitsWithScores) {
+  int size = 2 * posting_list_utils::min_posting_list_size();
+  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
+  ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl_used,
+                             PostingListUsed::CreateFromUnitializedRegion(
+                                 static_cast<void *>(hits_buf1.get()), size));
+
+  // This posting list is 20-bytes. Create four hits that will have deltas of
+  // two bytes each and all of whom will have a non-default score. This posting
+  // list will be almost_full.
+  //
+  // ----------------------
+  // 19     score(Hit #0)
+  // 18-17  delta(Hit #0)
+  // 16     score(Hit #1)
+  // 15-14  delta(Hit #1)
+  // 13     score(Hit #2)
+  // 12-11  delta(Hit #2)
+  // 10     <unused>
+  // 9-5    Hit #3
+  // 4-0    kInvalidHitVal
+  // ----------------------
+  Hit hit0(/*section_id=*/0, /*document_id=*/0, /*score=*/5);
+  Hit hit1 = CreateHit(hit0, /*desired_byte_length=*/2);
+  Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/2);
+  Hit hit3 = CreateHit(hit2, /*desired_byte_length=*/2);
+  ICING_ASSERT_OK(pl_used.PrependHit(hit0));
+  ICING_ASSERT_OK(pl_used.PrependHit(hit1));
+  ICING_ASSERT_OK(pl_used.PrependHit(hit2));
+  ICING_ASSERT_OK(pl_used.PrependHit(hit3));
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Hit> hits_out, pl_used.GetHits());
+  EXPECT_THAT(hits_out, ElementsAre(hit3, hit2, hit1, hit0));
+
+  // Now, pop the last hit. The posting list should contain the first three
+  // hits.
+  //
+  // ----------------------
+  // 19     score(Hit #0)
+  // 18-17  delta(Hit #0)
+  // 16     score(Hit #1)
+  // 15-14  delta(Hit #1)
+  // 13-10  <unused>
+  // 9-5    Hit #2
+  // 4-0    kInvalidHitVal
+  // ----------------------
+  ICING_ASSERT_OK(pl_used.PopFrontHits(1));
+  ICING_ASSERT_OK_AND_ASSIGN(hits_out, pl_used.GetHits());
+  EXPECT_THAT(hits_out, ElementsAre(hit2, hit1, hit0));
 }
 
 }  // namespace lib

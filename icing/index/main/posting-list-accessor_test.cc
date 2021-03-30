@@ -82,7 +82,7 @@ TEST(PostingListAccessorStorageTest, PreexistingPLKeepOnSameBlock) {
   ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
                              PostingListAccessor::Create(&flash_index_storage));
   // Add a single hit. This will fit in a min-sized posting list.
-  Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultHitScore);
+  Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
       PostingListAccessor::Finalize(std::move(pl_accessor));
@@ -324,14 +324,14 @@ TEST(PostingListAccessorStorageTest, HitsNotDecreasingReturnsInvalidArgument) {
                              FlashIndexStorage::Create(file_name, &filesystem));
   ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
                              PostingListAccessor::Create(&flash_index_storage));
-  Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultHitScore);
+  Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
 
-  Hit hit2(/*section_id=*/6, /*document_id=*/1, Hit::kDefaultHitScore);
+  Hit hit2(/*section_id=*/6, /*document_id=*/1, Hit::kDefaultTermFrequency);
   EXPECT_THAT(pl_accessor.PrependHit(hit2),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  Hit hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultHitScore);
+  Hit hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency);
   EXPECT_THAT(pl_accessor.PrependHit(hit3),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -364,7 +364,7 @@ TEST(PostingListAccessorStorageTest, PreexistingPostingListNoHitsAdded) {
                              FlashIndexStorage::Create(file_name, &filesystem));
   ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
                              PostingListAccessor::Create(&flash_index_storage));
-  Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultHitScore);
+  Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
       PostingListAccessor::Finalize(std::move(pl_accessor));

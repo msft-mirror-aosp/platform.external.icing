@@ -31,50 +31,43 @@ using ::testing::Ne;
 constexpr DocumentId kSomeDocumentId = 12;
 constexpr DocumentId kSomeOtherDocumentId = 54;
 
-TEST(DocHitInfoTest, InitialMaxHitScores) {
+TEST(DocHitInfoTest, InitialMaxHitTermFrequencies) {
   DocHitInfo info(kSomeDocumentId);
   for (SectionId i = 0; i <= kMaxSectionId; ++i) {
-    EXPECT_THAT(info.max_hit_score(i), Eq(Hit::kDefaultHitScore));
+    EXPECT_THAT(info.hit_term_frequency(i), Eq(Hit::kNoTermFrequency));
   }
 }
 
-TEST(DocHitInfoTest, UpdateHitScores) {
+TEST(DocHitInfoTest, UpdateHitTermFrequenciesForTheFirstTime) {
   DocHitInfo info(kSomeDocumentId);
-  ASSERT_THAT(info.max_hit_score(3), Eq(Hit::kDefaultHitScore));
+  ASSERT_THAT(info.hit_term_frequency(3), Eq(Hit::kNoTermFrequency));
 
-  // Updating a section for the first time, should change its max hit score,
-  // even though the hit score (16) may be lower than the current value returned
-  // by info.max_hit_score(3) (kDefaultHitScore)
+  // Updating a section for the first time, should change its hit
+  // term_frequency
   info.UpdateSection(3, 16);
-  EXPECT_THAT(info.max_hit_score(3), Eq(16));
+  EXPECT_THAT(info.hit_term_frequency(3), Eq(16));
+}
 
-  // Updating a section with a hit score lower than the previously set one
-  // should not update max hit score.
+TEST(DocHitInfoTest, UpdateSectionLowerHitTermFrequencyHasNoEffect) {
+  DocHitInfo info(kSomeDocumentId);
+  info.UpdateSection(3, 16);
+  ASSERT_THAT(info.hit_term_frequency(3), Eq(16));
+
+  // Updating a section with a term frequency lower than the previously set
+  // one should have no effect.
   info.UpdateSection(3, 15);
-  EXPECT_THAT(info.max_hit_score(3), Eq(16));
+  EXPECT_THAT(info.hit_term_frequency(3), Eq(16));
+}
 
-  // Updating a section with a hit score higher than the previously set one
-  // should update the max hit score.
-  info.UpdateSection(3, 17);
-  EXPECT_THAT(info.max_hit_score(3), Eq(17));
-
-  // Updating a section with kDefaultHitScore should *never* set the
-  // max_hit_score to kDefaultHitScore (unless it already was kDefaultHitScore)
-  // because kDefaultHitScore is the lowest possible valid hit score.
-  info.UpdateSection(3, Hit::kDefaultHitScore);
-  EXPECT_THAT(info.max_hit_score(3), Eq(17));
-
-  // Updating a section with kMaxHitScore should *always* set the max hit
-  // score to kMaxHitScore (regardless of what value kMaxHitScore is
-  // defined with).
-  info.UpdateSection(3, Hit::kMaxHitScore);
-  EXPECT_THAT(info.max_hit_score(3), Eq(Hit::kMaxHitScore));
-
-  // Updating a section that has had kMaxHitScore explicitly set, should
-  // *never* change the max hit score (regardless of what value kMaxHitScore
-  // is defined with).
+TEST(DocHitInfoTest, UpdateSectionHigherHitTermFrequencyHasNoEffect) {
+  DocHitInfo info(kSomeDocumentId);
   info.UpdateSection(3, 16);
-  EXPECT_THAT(info.max_hit_score(3), Eq(Hit::kMaxHitScore));
+  ASSERT_THAT(info.hit_term_frequency(3), Eq(16));
+
+  // Updating a section with a term frequency higher than the previously set
+  // one should have no effect.
+  info.UpdateSection(3, 17);
+  EXPECT_THAT(info.hit_term_frequency(3), Eq(16));
 }
 
 TEST(DocHitInfoTest, UpdateSectionIdMask) {
@@ -99,7 +92,7 @@ TEST(DocHitInfoTest, MergeSectionsFromDifferentDocumentId) {
   DocHitInfo info2(kSomeOtherDocumentId);
   info2.UpdateSection(7, 12);
   info1.MergeSectionsFrom(info2);
-  EXPECT_THAT(info1.max_hit_score(7), Eq(12));
+  EXPECT_THAT(info1.hit_term_frequency(7), Eq(12));
   EXPECT_THAT(info1.document_id(), Eq(kSomeDocumentId));
 }
 
@@ -110,7 +103,7 @@ TEST(DocHitInfoTest, MergeSectionsFromKeepsOldSection) {
   info1.UpdateSection(3, 16);
   DocHitInfo info2(kSomeDocumentId);
   info1.MergeSectionsFrom(info2);
-  EXPECT_THAT(info1.max_hit_score(3), Eq(16));
+  EXPECT_THAT(info1.hit_term_frequency(3), Eq(16));
 }
 
 TEST(DocHitInfoTest, MergeSectionsFromAddsNewSection) {
@@ -120,29 +113,29 @@ TEST(DocHitInfoTest, MergeSectionsFromAddsNewSection) {
   DocHitInfo info2(kSomeDocumentId);
   info2.UpdateSection(7, 12);
   info1.MergeSectionsFrom(info2);
-  EXPECT_THAT(info1.max_hit_score(7), Eq(12));
+  EXPECT_THAT(info1.hit_term_frequency(7), Eq(12));
 }
 
-TEST(DocHitInfoTest, MergeSectionsFromSetsHigherHitScore) {
-  // Merging should override the value of a section in info1 if the same section
-  // is present in info2 with a higher hit score.
+TEST(DocHitInfoTest, MergeSectionsFromHigherHitTermFrequencyHasNoEffect) {
+  // Merging should not override the value of a section in info1 if the same
+  // section is present in info2.
   DocHitInfo info1(kSomeDocumentId);
   info1.UpdateSection(2, 77);
   DocHitInfo info2(kSomeDocumentId);
   info2.UpdateSection(2, 89);
   info1.MergeSectionsFrom(info2);
-  EXPECT_THAT(info1.max_hit_score(2), Eq(89));
+  EXPECT_THAT(info1.hit_term_frequency(2), Eq(77));
 }
 
-TEST(DocHitInfoTest, MergeSectionsFromDoesNotSetLowerHitScore) {
+TEST(DocHitInfoTest, MergeSectionsFromLowerHitScoreHasNoEffect) {
   // Merging should not override the hit score of a section in info1 if the same
-  // section is present in info2 but with a lower hit score.
+  // section is present in info2.
   DocHitInfo info1(kSomeDocumentId);
   info1.UpdateSection(5, 108);
   DocHitInfo info2(kSomeDocumentId);
   info2.UpdateSection(5, 13);
   info1.MergeSectionsFrom(info2);
-  EXPECT_THAT(info1.max_hit_score(5), Eq(108));
+  EXPECT_THAT(info1.hit_term_frequency(5), Eq(108));
 }
 
 TEST(DocHitInfoTest, Comparison) {
@@ -156,7 +149,7 @@ TEST(DocHitInfoTest, Comparison) {
 
   DocHitInfo high_section_id_info(kDocumentId);
   high_section_id_info.UpdateSection(1, 12);
-  high_section_id_info.UpdateSection(6, Hit::kDefaultHitScore);
+  high_section_id_info.UpdateSection(6, Hit::kDefaultTermFrequency);
 
   std::vector<DocHitInfo> infos{info, high_document_id_info,
                                 high_section_id_info};
@@ -166,10 +159,10 @@ TEST(DocHitInfoTest, Comparison) {
 
   // There are no requirements for how DocHitInfos with the same DocumentIds and
   // hit masks will compare, but they must not be equal.
-  DocHitInfo different_hit_score_info(kDocumentId);
-  different_hit_score_info.UpdateSection(1, 76);
-  EXPECT_THAT(info < different_hit_score_info,
-              Ne(different_hit_score_info < info));
+  DocHitInfo different_term_frequency_info(kDocumentId);
+  different_term_frequency_info.UpdateSection(1, 76);
+  EXPECT_THAT(info < different_term_frequency_info,
+              Ne(different_term_frequency_info < info));
 }
 
 }  // namespace lib
