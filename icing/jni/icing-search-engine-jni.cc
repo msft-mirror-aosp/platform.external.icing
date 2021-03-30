@@ -357,12 +357,19 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativePersistToDisk(
-    JNIEnv* env, jclass clazz, jobject object) {
+    JNIEnv* env, jclass clazz, jobject object, jint persist_type_code) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
+  if (!icing::lib::PersistType::Code_IsValid(persist_type_code)) {
+    ICING_LOG(ERROR) << persist_type_code
+                     << " is an invalid value for PersistType::Code";
+    return nullptr;
+  }
+  icing::lib::PersistType::Code persist_type_code_enum =
+      static_cast<icing::lib::PersistType::Code>(persist_type_code);
   icing::lib::PersistToDiskResultProto persist_to_disk_result_proto =
-      icing->PersistToDisk();
+      icing->PersistToDisk(persist_type_code_enum);
 
   return SerializeProtoToJniByteArray(env, persist_to_disk_result_proto);
 }
