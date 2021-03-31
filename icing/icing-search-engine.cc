@@ -967,7 +967,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   // Gets unordered results from query processor
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), language_segmenter_.get(), normalizer_.get(),
-      document_store_.get(), schema_store_.get(), clock_.get());
+      document_store_.get(), schema_store_.get());
   if (!query_processor_or.ok()) {
     TransformStatus(query_processor_or.status(), result_status);
     return result_proto;
@@ -985,6 +985,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
   ICING_VLOG(2) << "Deleting the docs that matched the query.";
   int num_deleted = 0;
+
   while (query_results.root_iterator->Advance().ok()) {
     ICING_VLOG(3) << "Deleting doc "
                   << query_results.root_iterator->doc_hit_info().document_id();
@@ -996,6 +997,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       return result_proto;
     }
   }
+
   if (num_deleted > 0) {
     result_proto.mutable_status()->set_code(StatusProto::OK);
   } else {
@@ -1346,7 +1348,7 @@ SearchResultProto IcingSearchEngine::Search(
   // Gets unordered results from query processor
   auto query_processor_or = QueryProcessor::Create(
       index_.get(), language_segmenter_.get(), normalizer_.get(),
-      document_store_.get(), schema_store_.get(), clock_.get());
+      document_store_.get(), schema_store_.get());
   if (!query_processor_or.ok()) {
     TransformStatus(query_processor_or.status(), result_status);
     return result_proto;
@@ -1449,7 +1451,7 @@ SearchResultProto IcingSearchEngine::Search(
   query_stats->set_latency_ms(overall_timer->GetElapsedMilliseconds());
   query_stats->set_num_results_returned_current_page(
       result_proto.results_size());
-  query_stats->set_num_results_snippeted(
+  query_stats->set_num_results_with_snippets(
       std::min(result_proto.results_size(),
                result_spec.snippet_spec().num_to_snippet()));
   return result_proto;
@@ -1533,7 +1535,7 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
       std::max(page_result_state.snippet_context.snippet_spec.num_to_snippet() -
                    page_result_state.num_previously_returned,
                0);
-  query_stats->set_num_results_snippeted(
+  query_stats->set_num_results_with_snippets(
       std::min(result_proto.results_size(), num_left_to_snippet));
   return result_proto;
 }

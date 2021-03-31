@@ -32,6 +32,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -80,6 +81,14 @@ const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
                      << "' in DocumentStorageInfoProto.";
   return std::move(NamespaceStorageInfoProto());
 }
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
                               int64 timestamp_ms,
@@ -141,28 +150,22 @@ class DocumentStoreTest : public ::testing::Test {
     filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("email");
-
-    auto subject = type_config->add_properties();
-    subject->set_property_name("subject");
-    subject->set_data_type(PropertyConfigProto::DataType::STRING);
-    subject->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    subject->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    subject->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
-    auto body = type_config->add_properties();
-    body->set_property_name("body");
-    body->set_data_type(PropertyConfigProto::DataType::STRING);
-    body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    body->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    body->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("email")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("subject")
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("body")
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
@@ -742,14 +745,12 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
 }
 
 TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeOk) {
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
-  type_config = schema.add_types();
-  type_config->set_schema_type("person");
-
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .AddType(SchemaTypeConfigBuilder().SetType("person"))
+          .Build();
   std::string schema_store_dir = schema_store_dir_ + "_custom";
   filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
@@ -829,13 +830,12 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeOk) {
 }
 
 TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
-  type_config = schema.add_types();
-  type_config->set_schema_type("person");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .AddType(SchemaTypeConfigBuilder().SetType("person"))
+          .Build();
 
   std::string schema_store_dir = schema_store_dir_ + "_custom";
   filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
@@ -1004,11 +1004,11 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNoExistingDocumentsNotFound) {
 }
 
 TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   std::string schema_store_dir = schema_store_dir_ + "_custom";
   filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
@@ -1088,11 +1088,11 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
 }
 
 TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   std::string schema_store_dir = schema_store_dir_ + "_custom";
   filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
@@ -1157,10 +1157,10 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
   filesystem_.DeleteFile(header_file.c_str());
   filesystem_.Write(header_file.c_str(), &header, sizeof(header));
 
-  SchemaProto new_schema;
-  type_config = new_schema.add_types();
-  type_config->set_schema_type("message");
-
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
       new_schema, /*ignore_errors_and_delete_documents=*/true));
 
@@ -2311,11 +2311,11 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("email");
-    type_config = schema.add_types();
-    type_config->set_schema_type("message");
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email"))
+            .AddType(SchemaTypeConfigBuilder().SetType("message"))
+            .Build();
     ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
@@ -2376,9 +2376,10 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
+
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
@@ -2424,11 +2425,11 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   // Set a schema
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2476,11 +2477,10 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
   // this should change the SchemaTypeIds.
-  schema.clear_types();
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
-  type_config = schema.add_types();
-  type_config->set_schema_type("email");
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("message"))
+               .AddType(SchemaTypeConfigBuilder().SetType("email"))
+               .Build();
 
   ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
@@ -2511,18 +2511,14 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   // Set a schema
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-
-  auto property_config = type_config->add_properties();
-  property_config->set_property_name("subject");
-  property_config->set_data_type(PropertyConfigProto::DataType::STRING);
-  property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property_config->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  property_config->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2589,11 +2585,11 @@ TEST_F(DocumentStoreTest,
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   // Set a schema
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2633,9 +2629,10 @@ TEST_F(DocumentStoreTest,
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
 
-  SchemaProto new_schema;
-  type_config = new_schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_EXPECT_OK(
       schema_store->SetSchema(new_schema,
@@ -2658,11 +2655,11 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   // Set a schema
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2710,11 +2707,10 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
   // this should change the SchemaTypeIds.
-  schema.clear_types();
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
-  type_config = schema.add_types();
-  type_config->set_schema_type("email");
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("message"))
+               .AddType(SchemaTypeConfigBuilder().SetType("email"))
+               .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaStore::SetSchemaResult set_schema_result,
                              schema_store->SetSchema(schema));
@@ -2747,18 +2743,14 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   // Set a schema
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-
-  auto property_config = type_config->add_properties();
-  property_config->set_property_name("subject");
-  property_config->set_data_type(PropertyConfigProto::DataType::STRING);
-  property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property_config->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  property_config->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2828,11 +2820,11 @@ TEST_F(DocumentStoreTest,
   filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
 
   // Set a schema
-  SchemaProto schema;
-  auto type_config = schema.add_types();
-  type_config->set_schema_type("email");
-  type_config = schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -2872,9 +2864,10 @@ TEST_F(DocumentStoreTest,
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
 
-  SchemaProto new_schema;
-  type_config = new_schema.add_types();
-  type_config->set_schema_type("message");
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
