@@ -39,6 +39,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/document-generator.h"
 #include "icing/testing/random-string.h"
@@ -461,6 +462,70 @@ BENCHMARK(BM_MutlipleIndices)
     ->ArgPair(10, 8192)
     ->ArgPair(10, 32768)
     ->ArgPair(10, 131072);
+
+void BM_SearchNoStackOverflow(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TermMatchType::PREFIX,
+                                     StringIndexingConfig::TokenizerType::PLAIN)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document that has the term "foo"
+  DocumentProto base_document = DocumentBuilder()
+                                    .SetSchema("Message")
+                                    .SetNamespace("namespace")
+                                    .AddStringProperty("body", "foo")
+                                    .Build();
+
+  // Insert a lot of documents with the term "foo"
+  int64_t num_docs = state.range(0);
+  for (int64_t i = 0; i < num_docs; ++i) {
+    DocumentProto document =
+        DocumentBuilder(base_document).SetUri(std::to_string(i)).Build();
+    ASSERT_THAT(icing->Put(document).status(), ProtoIsOk());
+  }
+
+  // Do a query and exclude documents with the term "foo". The way this is
+  // currently implemented is that we'll iterate over all the documents in the
+  // index, then apply the exclusion check. Since all our documents have "foo",
+  // we'll consider it a "miss". Previously with recursion, we would have
+  // recursed until we got a success, which would never happen causing us to
+  // recurse through all the documents and trigger a stack overflow. With
+  // the iterative implementation, we should avoid this.
+  SearchSpecProto search_spec;
+  search_spec.set_query("-foo");
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+
+  ResultSpecProto result_spec;
+  ScoringSpecProto scoring_spec;
+  for (auto s : state) {
+    icing->Search(search_spec, scoring_spec, result_spec);
+  }
+}
+// For other reasons, we hit a limit when inserting the ~350,000th document. So
+// cap the limit to 1 << 18.
+BENCHMARK(BM_SearchNoStackOverflow)
+    ->Range(/*start=*/1 << 10, /*limit=*/1 << 18);
 
 }  // namespace
 

@@ -21,6 +21,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -45,17 +46,52 @@ constexpr char kPropertyEmails[] = "emails";
 constexpr char kDefaultNamespace[] = "icing";
 constexpr char kDefaultString[] = "This is a string.";
 
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
+    PropertyConfigProto_Cardinality_Code_REQUIRED;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
+
+constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
+    PropertyConfigProto_DataType_Code_STRING;
+
 class DocumentValidatorTest : public ::testing::Test {
  protected:
   DocumentValidatorTest() {}
 
   void SetUp() override {
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    CreateEmailTypeConfig(type_config);
-
-    type_config = schema.add_types();
-    CreateConversationTypeConfig(type_config);
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType(kTypeEmail)
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertySubject)
+                                     .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyText)
+                                     .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyRecipients)
+                                     .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_REPEATED)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType(kTypeConversation)
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyName)
+                                     .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPropertyEmails)
+                            .SetDataTypeDocument(
+                                kTypeEmail, /*index_nested_properties=*/true)
+                            .SetCardinality(CARDINALITY_REPEATED)))
+            .Build();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
@@ -66,25 +102,6 @@ class DocumentValidatorTest : public ::testing::Test {
         std::make_unique<DocumentValidator>(schema_store_.get());
   }
 
-  static void CreateEmailTypeConfig(SchemaTypeConfigProto* type_config) {
-    type_config->set_schema_type(kTypeEmail);
-
-    auto subject = type_config->add_properties();
-    subject->set_property_name(kPropertySubject);
-    subject->set_data_type(PropertyConfigProto::DataType::STRING);
-    subject->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-    auto text = type_config->add_properties();
-    text->set_property_name(kPropertyText);
-    text->set_data_type(PropertyConfigProto::DataType::STRING);
-    text->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-
-    auto recipients = type_config->add_properties();
-    recipients->set_property_name(kPropertyRecipients);
-    recipients->set_data_type(PropertyConfigProto::DataType::STRING);
-    recipients->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
-  }
-
   static DocumentBuilder SimpleEmailBuilder() {
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "email/1")
@@ -93,21 +110,6 @@ class DocumentValidatorTest : public ::testing::Test {
         .AddStringProperty(kPropertyText, kDefaultString)
         .AddStringProperty(kPropertyRecipients, kDefaultString, kDefaultString,
                            kDefaultString);
-  }
-
-  static void CreateConversationTypeConfig(SchemaTypeConfigProto* type_config) {
-    type_config->set_schema_type(kTypeConversation);
-
-    auto name = type_config->add_properties();
-    name->set_property_name(kPropertyName);
-    name->set_data_type(PropertyConfigProto::DataType::STRING);
-    name->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-    auto emails = type_config->add_properties();
-    emails->set_property_name(kPropertyEmails);
-    emails->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-    emails->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
-    emails->set_schema_type(kTypeEmail);
   }
 
   static DocumentBuilder SimpleConversationBuilder() {
@@ -326,12 +328,26 @@ TEST_F(DocumentValidatorTest, ValidateNestedPropertyInvalid) {
 }
 
 TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
-  SchemaProto email_schema;
-  auto type_config = email_schema.add_types();
-  CreateEmailTypeConfig(type_config);
+  SchemaProto email_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kTypeEmail)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName(kPropertySubject)
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName(kPropertyText)
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName(kPropertyRecipients)
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
 
-  // Create a custom directory so we don't collide with the test's preset schema
-  // in SetUp
+  // Create a custom directory so we don't collide
+  // with the test's preset schema in SetUp
   const std::string custom_schema_dir = GetTestTempDir() + "/custom_schema";
   filesystem_.DeleteDirectoryRecursively(custom_schema_dir.c_str());
   filesystem_.CreateDirectoryRecursively(custom_schema_dir.c_str());
@@ -352,9 +368,21 @@ TEST_F(DocumentValidatorTest, HandleTypeConfigMapChangesOk) {
                        HasSubstr("'Conversation' not found")));
 
   // Add the 'Conversation' type
-  SchemaProto email_and_conversation_schema = email_schema;
-  type_config = email_and_conversation_schema.add_types();
-  CreateConversationTypeConfig(type_config);
+  SchemaProto email_and_conversation_schema =
+      SchemaBuilder(email_schema)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kTypeConversation)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName(kPropertyName)
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName(kPropertyEmails)
+                               .SetDataTypeDocument(
+                                   kTypeEmail, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
 
   // DocumentValidator should be able to handle the SchemaStore getting updated
   // separately
