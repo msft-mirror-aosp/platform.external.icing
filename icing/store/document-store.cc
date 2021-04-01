@@ -950,7 +950,7 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
   // existing Status.
   auto document_id_or = GetDocumentId(name_space, uri);
   if (absl_ports::IsNotFound(document_id_or.status())) {
-    ICING_LOG(ERROR) << document_id_or.status().error_message();
+    ICING_VLOG(1) << document_id_or.status().error_message();
     return libtextclassifier3::Status(
         document_id_or.status().CanonicalCode(),
         IcingStringUtil::StringPrintf("Document (%s, %s) not found.",

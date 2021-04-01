@@ -125,7 +125,7 @@ message PutDocumentStatsProto {
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 15
+// Next tag: 16
 message QueryStatsProto {
   // Number of terms in the query string.
   optional int32 num_terms = 1;
@@ -154,7 +154,7 @@ message QueryStatsProto {
   optional int32 num_documents_scored = 8;
 
   // How many of the results in the page returned were snippeted.
-  optional bool num_results_snippeted = 9;
+  optional int32 num_results_with_snippets = 15;
 
   // Overall time used for the function call.
   optional int32 latency_ms = 10;
@@ -172,6 +172,8 @@ message QueryStatsProto {
   // Time used to fetch the document protos. Note that it includes the
   // time to snippet if ‘has_snippets’ is true.
   optional int32 document_retrieval_latency_ms = 14;
+
+  reserved 9;
 }
 
 // Stats of the top-level functions IcingSearchEngine::Delete,
