@@ -42,24 +42,25 @@ constexpr float k1_ = 1.2f;
 constexpr float b_ = 0.7f;
 
 // TODO(b/158603900): add tests for Bm25fCalculator
-Bm25fCalculator::Bm25fCalculator(const DocumentStore *document_store)
+Bm25fCalculator::Bm25fCalculator(const DocumentStore* document_store)
     : document_store_(document_store) {}
 
 // During initialization, Bm25fCalculator iterates through
 // hit-iterators for each query term to pre-compute n(q_i) for each corpus under
 // consideration.
 void Bm25fCalculator::PrepareToScore(
-    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-        *query_term_iterators) {
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+        query_term_iterators) {
   Clear();
   TermId term_id = 0;
-  for (auto &iter : *query_term_iterators) {
-    const std::string &term = iter.first;
+  for (auto& iter : *query_term_iterators) {
+    const std::string& term = iter.first;
     if (term_id_map_.find(term) != term_id_map_.end()) {
       continue;
     }
     term_id_map_[term] = ++term_id;
-    DocHitInfoIterator *term_it = iter.second.get();
+    DocHitInfoIterator* term_it = iter.second.get();
+
     while (term_it->Advance().ok()) {
       auto status_or = document_store_->GetDocumentAssociatedScoreData(
           term_it->doc_hit_info().document_id());
@@ -89,8 +90,8 @@ void Bm25fCalculator::Clear() {
 // where IDF(q_i) is the Inverse Document Frequency (IDF) weight of the query
 // term q_i in the corpus with document D, and tf(q_i, D) is the weighted and
 // normalized term frequency of query term q_i in the document D.
-float Bm25fCalculator::ComputeScore(const DocHitInfoIterator *query_it,
-                                    const DocHitInfo &hit_info,
+float Bm25fCalculator::ComputeScore(const DocHitInfoIterator* query_it,
+                                    const DocHitInfo& hit_info,
                                     double default_score) {
   auto status_or =
       document_store_->GetDocumentAssociatedScoreData(hit_info.document_id());
@@ -103,7 +104,7 @@ float Bm25fCalculator::ComputeScore(const DocHitInfoIterator *query_it,
   query_it->PopulateMatchedTermsStats(&matched_terms_stats);
 
   float score = 0;
-  for (const TermMatchInfo &term_match_info : matched_terms_stats) {
+  for (const TermMatchInfo& term_match_info : matched_terms_stats) {
     float idf_weight =
         GetCorpusIdfWeightForTerm(term_match_info.term, data.corpus_id());
     float normalized_tf =
@@ -186,8 +187,8 @@ float Bm25fCalculator::GetCorpusAvgDocLength(CorpusId corpus_id) {
 // |D| is the #tokens in D, avgdl is the average document length in the corpus,
 // k1 and b are smoothing parameters.
 float Bm25fCalculator::ComputedNormalizedTermFrequency(
-    const TermMatchInfo &term_match_info, const DocHitInfo &hit_info,
-    const DocumentAssociatedScoreData &data) {
+    const TermMatchInfo& term_match_info, const DocHitInfo& hit_info,
+    const DocumentAssociatedScoreData& data) {
   uint32_t dl = data.length_in_tokens();
   float avgdl = GetCorpusAvgDocLength(data.corpus_id());
   float f_q =
@@ -204,7 +205,7 @@ float Bm25fCalculator::ComputedNormalizedTermFrequency(
 // Note: once we support section weights, we should update this function to
 // compute the weighted term frequency.
 float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
-    CorpusId corpus_id, const TermMatchInfo &term_match_info) const {
+    CorpusId corpus_id, const TermMatchInfo& term_match_info) const {
   float sum = 0.0f;
   SectionIdMask sections = term_match_info.section_ids_mask;
   while (sections != 0) {
