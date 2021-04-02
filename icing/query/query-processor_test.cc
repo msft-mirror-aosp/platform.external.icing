@@ -32,6 +32,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -60,30 +61,16 @@ using ::testing::SizeIs;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
 
-SchemaTypeConfigProto* AddSchemaType(SchemaProto* schema,
-                                     std::string schema_type) {
-  SchemaTypeConfigProto* type_config = schema->add_types();
-  type_config->set_schema_type(schema_type);
-  return type_config;
-}
+constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
+    PropertyConfigProto_DataType_Code_STRING;
 
-void AddIndexedProperty(SchemaTypeConfigProto* type_config, std::string name) {
-  PropertyConfigProto* property_config = type_config->add_properties();
-  property_config->set_property_name(name);
-  property_config->set_data_type(PropertyConfigProto::DataType::STRING);
-  property_config->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  property_config->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  property_config->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
-}
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
 
-void AddUnindexedProperty(SchemaTypeConfigProto* type_config,
-                          std::string name) {
-  PropertyConfigProto* property_config = type_config->add_properties();
-  property_config->set_property_name(name);
-  property_config->set_data_type(PropertyConfigProto::DataType::STRING);
-}
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
 
 class QueryProcessorTest : public Test {
  protected:
@@ -159,37 +146,33 @@ TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
       QueryProcessor::Create(/*index=*/nullptr, language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+                             schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), /*language_segmenter=*/nullptr,
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+                             schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              /*normalizer=*/nullptr, document_store_.get(),
-                             schema_store_.get(), &fake_clock_),
+                             schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), /*document_store=*/nullptr,
-                             schema_store_.get(), &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                                     normalizer_.get(), document_store_.get(),
-                                     /*schema_store=*/nullptr, &fake_clock_),
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), language_segmenter_.get(), normalizer_.get(),
+                  /*document_store=*/nullptr, schema_store_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                                      normalizer_.get(), document_store_.get(),
-                                     schema_store_.get(), /*clock=*/nullptr),
+                                     /*schema_store=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -221,7 +204,7 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("()");
@@ -238,8 +221,9 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
 
 TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -271,7 +255,7 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("");
@@ -288,8 +272,9 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
 
 TEST_F(QueryProcessorTest, QueryTermNormalized) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -330,7 +315,7 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hElLo WORLD");
@@ -363,8 +348,9 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
 
 TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -402,7 +388,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("he");
@@ -430,8 +416,9 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
 
 TEST_F(QueryProcessorTest, OneTermExactMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -469,7 +456,7 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -497,8 +484,9 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
 
 TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -536,7 +524,7 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello hello");
@@ -566,8 +554,9 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
 
 TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -608,7 +597,7 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello world");
@@ -640,8 +629,9 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
 
 TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -679,7 +669,7 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("he he");
@@ -709,8 +699,9 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
 
 TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -751,7 +742,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("he wo");
@@ -784,8 +775,9 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
 
 TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -826,7 +818,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello wo");
@@ -859,8 +851,9 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
 
 TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -906,7 +899,7 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR world");
@@ -947,8 +940,9 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
 
 TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -994,7 +988,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("he OR wo");
@@ -1034,8 +1028,9 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
 
 TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1080,7 +1075,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR wo");
@@ -1120,8 +1115,9 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
 
 TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1179,7 +1175,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   {
     // OR gets precedence over AND, this is parsed as ((puppy OR kitten) AND
@@ -1305,8 +1301,9 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
 
 TEST_F(QueryProcessorTest, OneGroup) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1356,7 +1353,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   // Without grouping, this would be parsed as ((puppy OR kitten) AND foo) and
   // no documents would match. But with grouping, Document 1 matches puppy
@@ -1380,8 +1377,9 @@ TEST_F(QueryProcessorTest, OneGroup) {
 
 TEST_F(QueryProcessorTest, TwoGroups) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1430,7 +1428,7 @@ TEST_F(QueryProcessorTest, TwoGroups) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   // Without grouping, this would be parsed as (puppy AND (dog OR kitten) AND
   // cat) and wouldn't match any documents. But with grouping, Document 1
@@ -1457,8 +1455,9 @@ TEST_F(QueryProcessorTest, TwoGroups) {
 
 TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1508,7 +1507,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   // Without grouping, this would be parsed as ((puppy OR kitten) AND foo) and
   // no documents would match. But with grouping, Document 1 matches puppy
@@ -1532,8 +1531,9 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
 
 TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1583,7 +1583,7 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   // Document 1 will match puppy and Document 2 matches (kitten AND (cat))
   SearchSpecProto search_spec;
@@ -1608,8 +1608,9 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
 
 TEST_F(QueryProcessorTest, ExcludeTerm) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1652,7 +1653,7 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("-hello");
@@ -1672,8 +1673,9 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
 
 TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1715,7 +1717,7 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("-foo");
@@ -1734,8 +1736,9 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
 
 TEST_F(QueryProcessorTest, ExcludeAnd) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1785,7 +1788,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   {
     SearchSpecProto search_spec;
@@ -1823,8 +1826,9 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
 
 TEST_F(QueryProcessorTest, ExcludeOr) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1874,7 +1878,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   {
     SearchSpecProto search_spec;
@@ -1918,8 +1922,9 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
 
 TEST_F(QueryProcessorTest, DeletedFilter) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -1970,7 +1975,7 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
@@ -1991,8 +1996,9 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
 
 TEST_F(QueryProcessorTest, NamespaceFilter) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -2042,7 +2048,7 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
@@ -2064,9 +2070,11 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
 
 TEST_F(QueryProcessorTest, SchemaTypeFilter) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
-  AddSchemaType(&schema, "message");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email"))
+          .AddType(SchemaTypeConfigBuilder().SetType("message"))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -2112,7 +2120,7 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
@@ -2134,11 +2142,15 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
 
 TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
   // Create the schema and document store
-  SchemaProto schema;
-  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
   // First and only indexed property, so it gets a section_id of 0
-  AddIndexedProperty(email_type, "subject");
   int subject_section_id = 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2174,7 +2186,7 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
@@ -2196,18 +2208,31 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
 
 TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
   // Create the schema and document store
-  SchemaProto schema;
-  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(email_type, "a");  // Section "a" would get sectionId 0
-  AddIndexedProperty(email_type, "foo");
-  int email_foo_section_id = 1;
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       // Section "a" would get sectionId 0
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("a")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("foo")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
 
-  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
   // SectionIds are assigned in ascending order per schema type,
   // alphabetically.
-  AddIndexedProperty(message_type, "foo");
+  int email_foo_section_id = 1;
   int message_foo_section_id = 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2253,7 +2278,7 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
@@ -2277,18 +2302,20 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
 }
 
 TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
-  // Create the schema and document store
-  SchemaProto schema;
-  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(email_type, "foo");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
   int email_foo_section_id = 0;
-
-  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(message_type, "foo");
   int message_foo_section_id = 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2334,7 +2361,7 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
@@ -2359,17 +2386,20 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
 
 TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
   // Create the schema and document store
-  SchemaProto schema;
-  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(email_type, "foo");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("bar")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
   int email_foo_section_id = 0;
-
-  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(message_type, "bar");
   int message_foo_section_id = 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2417,7 +2447,7 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
@@ -2441,8 +2471,9 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
 
 TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -2477,7 +2508,7 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
@@ -2499,9 +2530,17 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
 
 TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   // Create the schema and document store
-  SchemaProto schema;
-  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  AddUnindexedProperty(email_type, "foo");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       // Add an unindexed property so we generate section
+                       // metadata on it
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
@@ -2536,7 +2575,7 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
@@ -2557,17 +2596,20 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
 
 TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
   // Create the schema and document store
-  SchemaProto schema;
-  SchemaTypeConfigProto* email_type = AddSchemaType(&schema, "email");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(email_type, "foo");
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
   int email_foo_section_id = 0;
-
-  SchemaTypeConfigProto* message_type = AddSchemaType(&schema, "message");
-  // SectionIds are assigned in ascending order per schema type,
-  // alphabetically.
-  AddIndexedProperty(message_type, "foo");
   int message_foo_section_id = 0;
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2615,7 +2657,7 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
@@ -2641,27 +2683,34 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
 
 TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
+  // Arbitrary value, just has to be less than the document's creation
+  // timestamp + ttl
+  FakeClock fake_clock;
+  fake_clock.SetSystemTimeMilliseconds(50);
+
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock,
                             schema_store_.get()));
   document_store_ = std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .SetCreationTimestampMs(0)
-                                                      .SetTtlMs(100)
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "1")
+                               .SetSchema("email")
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(100)
+                               .Build()));
 
   // Populate the index
   int section_id = 0;
@@ -2671,17 +2720,12 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Arbitrary value, just has to be less than the document's creation
-  // timestamp + ttl
-  FakeClock fake_clock;
-  fake_clock.SetSystemTimeMilliseconds(50);
-
   // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock_));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -2698,27 +2742,34 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
 
 TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   // Create the schema and document store
-  SchemaProto schema;
-  AddSchemaType(&schema, "email");
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
+  // Arbitrary value, just has to be greater than the document's creation
+  // timestamp + ttl
+  FakeClock fake_clock;
+  fake_clock.SetSystemTimeMilliseconds(200);
+
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock,
                             schema_store_.get()));
   document_store_ = std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             document_store_->Put(DocumentBuilder()
-                                                      .SetKey("namespace", "1")
-                                                      .SetSchema("email")
-                                                      .SetCreationTimestampMs(0)
-                                                      .SetTtlMs(100)
-                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "1")
+                               .SetSchema("email")
+                               .SetCreationTimestampMs(50)
+                               .SetTtlMs(100)
+                               .Build()));
 
   // Populate the index
   int section_id = 0;
@@ -2728,17 +2779,12 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Arbitrary value, just has to be greater than the document's creation
-  // timestamp + ttl
-  FakeClock fake_clock;
-  fake_clock.SetSystemTimeMilliseconds(200);
-
   // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index_.get(), language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
-                             schema_store_.get(), &fake_clock));
+                             schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
