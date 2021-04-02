@@ -427,9 +427,8 @@ TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
       IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(), options,
-                             &fake_clock_));
+      index_processor_, IndexProcessor::Create(normalizer_.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -470,9 +469,8 @@ TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
       IndexProcessor::Options::TokenLimitBehavior::kSuppressError;
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(), options,
-                             &fake_clock_));
+      index_processor_, IndexProcessor::Create(normalizer_.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -515,9 +513,8 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
                                  /*max_term_byte_size=*/4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer.get(), index_.get(), options,
-                             &fake_clock_));
+      index_processor_, IndexProcessor::Create(normalizer.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -686,8 +683,8 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(),
-                             processor_options, &fake_clock_));
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
