@@ -15,10 +15,12 @@
 #ifndef ICING_RESULT_RESULT_STATE_H_
 #define ICING_RESULT_RESULT_STATE_H_
 
+#include <iostream>
 #include <vector>
 
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/scoring/scored-document-hit.h"
 
@@ -52,6 +54,15 @@ class ResultState {
   // constructor.
   const SnippetContext& snippet_context() const { return snippet_context_; }
 
+  // Returns a vector of TypePropertyMasks generated from the specs passed in
+  // via constructor.
+  const std::unordered_map<std::string, ProjectionTree>& projection_tree_map()
+      const {
+    return projection_tree_map_;
+  }
+
+  int num_per_page() const { return num_per_page_; }
+
   // The number of results that have already been returned. This number is
   // increased when GetNextPage() is called.
   int num_returned() const { return num_returned_; }
@@ -64,6 +75,9 @@ class ResultState {
 
   // Information needed for snippeting.
   SnippetContext snippet_context_;
+
+  // Information needed for projection.
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map_;
 
   // Number of results to return in each page.
   int num_per_page_;

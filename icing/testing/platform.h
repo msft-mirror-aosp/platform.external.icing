@@ -36,6 +36,22 @@ inline bool IsReverseJniTokenization() {
   return false;
 }
 
+// Whether the running test is an Android test.
+inline bool IsAndroidPlatform() {
+#if defined(__ANDROID__)
+  return true;
+#endif  // defined(__ANDROID__)
+  return false;
+}
+
+// Whether the running test is an iOS test.
+inline bool IsIosPlatform() {
+#if defined(__APPLE__)
+  return true;
+#endif  // defined(__APPLE__)
+  return false;
+}
+
 }  // namespace lib
 }  // namespace icing
 
