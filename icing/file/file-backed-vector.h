@@ -175,13 +175,37 @@ class FileBackedVector {
   // synced by the system and the checksum will be updated.
   ~FileBackedVector();
 
-  // Accesses the element at idx.
+  // Gets a copy of the element at idx.
+  //
+  // This is useful if you think the FileBackedVector may grow before you need
+  // to access this return value. When the FileBackedVector grows, the
+  // underlying mmap will be unmapped and remapped, which will invalidate any
+  // pointers to the previously mapped region. Getting a copy will avoid
+  // referencing the now-invalidated region.
+  //
+  // Returns:
+  //   OUT_OF_RANGE_ERROR if idx < 0 or > num_elements()
+  libtextclassifier3::StatusOr<T> GetCopy(int32_t idx) const;
+
+  // Gets a pointer to the element at idx.
+  //
+  // WARNING: Subsequent calls to Set may invalidate the pointer returned by
+  // Get.
+  //
+  // This is useful if you do not think the FileBackedVector will grow before
+  // you need to reference this value, and you want to avoid a copy. When the
+  // FileBackedVector grows, the underlying mmap will be unmapped and remapped,
+  // which will invalidate this pointer to the previously mapped region.
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if idx < 0 or > num_elements()
   libtextclassifier3::StatusOr<const T*> Get(int32_t idx) const;
 
   // Writes the value at idx.
+  //
+  // May grow the underlying file and mmapped region as needed to fit the new
+  // value. If it does grow, then any pointers to previous values returned
+  // from Get() may be invalidated.
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if idx < 0 or file cannot be grown idx size
@@ -468,6 +492,13 @@ FileBackedVector<T>::~FileBackedVector() {
 }
 
 template <typename T>
+libtextclassifier3::StatusOr<T> FileBackedVector<T>::GetCopy(
+    int32_t idx) const {
+  ICING_ASSIGN_OR_RETURN(const T* value, Get(idx));
+  return *value;
+}
+
+template <typename T>
 libtextclassifier3::StatusOr<const T*> FileBackedVector<T>::Get(
     int32_t idx) const {
   if (idx < 0) {
@@ -491,8 +522,6 @@ libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx,
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Index, %d, was less than 0", idx));
   }
-
-  int32_t start_byte = idx * sizeof(T);
 
   ICING_RETURN_IF_ERROR(GrowIfNecessary(idx + 1));
 
@@ -518,6 +547,8 @@ libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx,
       changes_end_ = 0;
       header_->vector_checksum = 0;
     } else {
+      int32_t start_byte = idx * sizeof(T);
+
       changes_.push_back(idx);
       saved_original_buffer_.append(
           reinterpret_cast<char*>(const_cast<T*>(array())) + start_byte,
