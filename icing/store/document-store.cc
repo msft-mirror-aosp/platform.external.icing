@@ -1165,7 +1165,7 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
-  auto score_data_or = score_cache_->Get(document_id);
+  auto score_data_or = score_cache_->GetCopy(document_id);
   if (!score_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
                      << " from score_cache_";
@@ -1173,7 +1173,7 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
   }
 
   DocumentAssociatedScoreData document_associated_score_data =
-      *std::move(score_data_or).ValueOrDie();
+      std::move(score_data_or).ValueOrDie();
   if (document_associated_score_data.document_score() < 0) {
     // An negative / invalid score means that the score data has been deleted.
     return absl_ports::NotFoundError("Document score data not found.");
@@ -1183,13 +1183,13 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
 
 libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
 DocumentStore::GetCorpusAssociatedScoreData(CorpusId corpus_id) const {
-  auto score_data_or = corpus_score_cache_->Get(corpus_id);
+  auto score_data_or = corpus_score_cache_->GetCopy(corpus_id);
   if (!score_data_or.ok()) {
     return score_data_or.status();
   }
 
   CorpusAssociatedScoreData corpus_associated_score_data =
-      *std::move(score_data_or).ValueOrDie();
+      std::move(score_data_or).ValueOrDie();
   return corpus_associated_score_data;
 }
 
@@ -1211,14 +1211,14 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
 
 libtextclassifier3::StatusOr<DocumentFilterData>
 DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
-  auto filter_data_or = filter_cache_->Get(document_id);
+  auto filter_data_or = filter_cache_->GetCopy(document_id);
   if (!filter_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
                      << " from filter_cache_";
     return filter_data_or.status();
   }
   DocumentFilterData document_filter_data =
-      *std::move(filter_data_or).ValueOrDie();
+      std::move(filter_data_or).ValueOrDie();
   if (document_filter_data.namespace_id() == kInvalidNamespaceId) {
     // An invalid namespace id means that the filter data has been deleted.
     return absl_ports::NotFoundError("Document filter data not found.");
