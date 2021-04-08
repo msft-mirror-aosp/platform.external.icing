@@ -527,6 +527,56 @@ void BM_SearchNoStackOverflow(benchmark::State& state) {
 BENCHMARK(BM_SearchNoStackOverflow)
     ->Range(/*start=*/1 << 10, /*limit=*/1 << 18);
 
+// Added for b/184373205. Ensure that we can repeatedly put documents even if
+// the underlying mmapped areas grow past a few page sizes.
+void BM_RepeatedPut(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TermMatchType::PREFIX,
+                                     StringIndexingConfig::TokenizerType::PLAIN)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document that has the term "foo"
+  DocumentProto base_document = DocumentBuilder()
+                                    .SetSchema("Message")
+                                    .SetNamespace("namespace")
+                                    .AddStringProperty("body", "foo")
+                                    .Build();
+
+  // Insert a lot of documents with the term "foo"
+  int64_t num_docs = state.range(0);
+  for (auto s : state) {
+    for (int64_t i = 0; i < num_docs; ++i) {
+      DocumentProto document =
+          DocumentBuilder(base_document).SetUri("uri").Build();
+      ASSERT_THAT(icing->Put(document).status(), ProtoIsOk());
+    }
+  }
+}
+// For other reasons, we hit a limit when inserting the ~350,000th document. So
+// cap the limit to 1 << 18.
+BENCHMARK(BM_RepeatedPut)->Range(/*start=*/100, /*limit=*/1 << 18);
+
 }  // namespace
 
 }  // namespace lib
