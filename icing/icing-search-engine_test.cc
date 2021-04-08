@@ -32,8 +32,8 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
-#include "icing/proto/persist.pb.h"
 #include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
@@ -5002,8 +5002,8 @@ TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiNamespaceGrouping) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
 
-  EXPECT_THAT(search_result_proto,
-              EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -6850,7 +6850,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
   exp_stats.set_requested_page_size(2);
   exp_stats.set_num_results_returned_current_page(2);
   exp_stats.set_num_documents_scored(5);
-  exp_stats.set_num_results_snippeted(2);
+  exp_stats.set_num_results_with_snippets(2);
   exp_stats.set_latency_ms(5);
   exp_stats.set_parse_query_latency_ms(5);
   exp_stats.set_scoring_latency_ms(5);
@@ -6868,7 +6868,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
   exp_stats.set_is_first_page(false);
   exp_stats.set_requested_page_size(2);
   exp_stats.set_num_results_returned_current_page(2);
-  exp_stats.set_num_results_snippeted(1);
+  exp_stats.set_num_results_with_snippets(1);
   exp_stats.set_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
@@ -6883,7 +6883,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
   exp_stats.set_is_first_page(false);
   exp_stats.set_requested_page_size(2);
   exp_stats.set_num_results_returned_current_page(1);
-  exp_stats.set_num_results_snippeted(0);
+  exp_stats.set_num_results_with_snippets(0);
   exp_stats.set_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));

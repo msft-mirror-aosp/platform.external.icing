@@ -66,6 +66,8 @@ class DocHitInfoIterator {
 
   // Returns:
   //   OK if was able to advance to a new document_id.
+  //   INVALID_ARGUMENT if there are less than 2 iterators for an AND/OR
+  //       iterator
   //   RESOUCE_EXHAUSTED if we've run out of document_ids to iterate over
   virtual libtextclassifier3::Status Advance() = 0;
 
