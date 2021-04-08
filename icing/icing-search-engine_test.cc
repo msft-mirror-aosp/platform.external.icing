@@ -32,8 +32,8 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
-#include "icing/proto/persist.pb.h"
 #include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
@@ -5002,8 +5002,8 @@ TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiNamespaceGrouping) {
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
 
-  EXPECT_THAT(search_result_proto,
-              EqualsSearchResultIgnoreStatsAndScores(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineTest,
