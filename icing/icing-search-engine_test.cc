@@ -92,6 +92,8 @@ constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
     PropertyConfigProto_Cardinality_Code_OPTIONAL;
 constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
     PropertyConfigProto_Cardinality_Code_REQUIRED;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
 
 constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
     StringIndexingConfig_TokenizerType_Code_PLAIN;
@@ -6982,6 +6984,102 @@ TEST_F(IcingSearchEngineTest, StorageInfoTest) {
   StorageInfoResultProto result = icing.GetStorageInfo();
   EXPECT_THAT(result.status(), ProtoIsOk());
   EXPECT_THAT(result.storage_info().total_storage_size(), Ge(0));
+}
+
+TEST_F(IcingSearchEngineTest, SnippetErrorTest) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Generic").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetScore(10)
+          .SetSchema("Generic")
+          .AddStringProperty("subject", "I like cats", "I like dogs",
+                             "I like birds", "I like fish")
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetScore(20)
+          .SetSchema("Generic")
+          .AddStringProperty("subject", "I like red", "I like green",
+                             "I like blue", "I like yellow")
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetScore(5)
+          .SetSchema("Generic")
+          .AddStringProperty("subject", "I like cupcakes", "I like donuts",
+                             "I like eclairs", "I like froyo")
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.add_schema_type_filters("Generic");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("like");
+  ScoringSpecProto scoring_spec;
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ResultSpecProto result_spec;
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(2);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(3);
+  result_spec.mutable_snippet_spec()->set_max_window_bytes(4);
+  SearchResultProto search_results =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  ASSERT_THAT(search_results.results(), SizeIs(3));
+  const SearchResultProto::ResultProto* result = &search_results.results(0);
+  EXPECT_THAT(result->document().uri(), Eq("uri2"));
+  ASSERT_THAT(result->snippet().entries(), SizeIs(3));
+  const SnippetProto::EntryProto* entry = &result->snippet().entries(0);
+  EXPECT_THAT(entry->property_name(), "subject[0]");
+  std::string_view content = GetString(&result->document(), "subject[0]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(1);
+  EXPECT_THAT(entry->property_name(), "subject[1]");
+  content = GetString(&result->document(), "subject[1]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(2);
+  EXPECT_THAT(entry->property_name(), "subject[2]");
+  content = GetString(&result->document(), "subject[2]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  result = &search_results.results(1);
+  EXPECT_THAT(result->document().uri(), Eq("uri1"));
+  ASSERT_THAT(result->snippet().entries(), SizeIs(3));
+  entry = &result->snippet().entries(0);
+  EXPECT_THAT(entry->property_name(), "subject[0]");
+  content = GetString(&result->document(), "subject[0]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(1);
+  ASSERT_THAT(entry->property_name(), "subject[1]");
+  content = GetString(&result->document(), "subject[1]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(2);
+  ASSERT_THAT(entry->property_name(), "subject[2]");
+  content = GetString(&result->document(), "subject[2]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  result = &search_results.results(2);
+  ASSERT_THAT(result->document().uri(), Eq("uri3"));
+  ASSERT_THAT(result->snippet().entries(), IsEmpty());
 }
 
 }  // namespace

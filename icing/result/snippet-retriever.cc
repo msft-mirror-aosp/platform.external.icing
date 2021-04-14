@@ -405,8 +405,7 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
 
     MatchOptions match_options = {snippet_spec};
     match_options.max_matches_remaining =
-        std::min(snippet_spec.num_to_snippet() - snippet_proto.entries_size(),
-                 snippet_spec.num_matches_per_property());
+        snippet_spec.num_matches_per_property();
 
     // Determine the section name and match type.
     auto section_metadata_or =
