@@ -122,11 +122,11 @@ class UsageScorer : public Scorer {
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT:
         return usage_scores.usage_type3_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type1_last_used_timestamp_s;
+        return usage_scores.usage_type1_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type2_last_used_timestamp_s;
+        return usage_scores.usage_type2_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type3_last_used_timestamp_s;
+        return usage_scores.usage_type3_last_used_timestamp_s * 1000.0;
       default:
         // This shouldn't happen if this scorer is used correctly.
         return default_score_;
