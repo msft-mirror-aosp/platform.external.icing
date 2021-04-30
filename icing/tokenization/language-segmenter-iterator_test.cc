@@ -16,8 +16,8 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
+#include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -143,8 +143,7 @@ TEST_F(LanguageSegmenterIteratorTest, ResetToTermEndingBeforeWithOffsetInText) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(LanguageSegmenterIteratorTest,
-       ResetToTermEndingBeforeWithZeroNotFound) {
+TEST_F(LanguageSegmenterIteratorTest, ResetToTermEndingBeforeWithZeroNotFound) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
