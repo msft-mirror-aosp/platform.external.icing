@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_PLATFORM_H_
-#define ICING_TESTING_PLATFORM_H_
+#ifndef ICING_PORTABLE_PLATFORM_H_
+#define ICING_PORTABLE_PLATFORM_H_
 
 // This file is meant to hold util functions for tests that help the test
 // determine which platform-specific configuration it may be running in.
@@ -52,7 +52,27 @@ inline bool IsIosPlatform() {
   return false;
 }
 
+enum Architecture {
+  UNKNOWN,
+  BIT_32,
+  BIT_64,
+};
+
+// Returns which architecture we're running on.
+//
+// Architecture macros pulled from
+// https://developer.android.com/ndk/guides/cpu-features
+inline Architecture GetArchitecture() {
+#if defined(__arm__) || defined(__i386__)
+  return BIT_32;
+#elif defined(__aarch64__) || defined(__x86_64__)
+  return BIT_64;
+#else
+  return UNKNOWN;
+#endif
+}
+
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_PLATFORM_H_
+#endif  // ICING_PORTABLE_PLATFORM_H_
