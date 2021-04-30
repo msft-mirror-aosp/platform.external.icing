@@ -53,9 +53,11 @@ import java.io.Closeable;
  *
  * <p>If this instance has been closed, the instance is no longer usable.
  *
+ * <p>Keep this class to be non-Final so that it can be mocked in AppSearch.
+ *
  * <p>NOTE: This class is NOT thread-safe.
  */
-public final class IcingSearchEngine implements Closeable {
+public class IcingSearchEngine implements Closeable {
 
   private static final String TAG = "IcingSearchEngine";
   private static final ExtensionRegistryLite EXTENSION_REGISTRY_LITE =

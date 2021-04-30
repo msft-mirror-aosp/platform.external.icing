@@ -53,16 +53,6 @@ namespace lib {
 // TODO(cassiewang) Top-level comments and links to design-doc.
 class IcingSearchEngine {
  public:
-  struct Header {
-    static constexpr int32_t kMagic = 0x6e650d0a;
-
-    // Holds the magic as a quick sanity check against file corruption.
-    int32_t magic;
-
-    // Checksum of the IcingSearchEngine's sub-component's checksums.
-    uint32_t checksum;
-  };
-
   // Note: It is only required to provide a pointer to a valid instance of
   // JniCache if this instance needs to perform reverse-jni calls. Users on
   // Linux and iOS should always provide a nullptr.
@@ -508,11 +498,15 @@ class IcingSearchEngine {
   // Do any initialization/recovery necessary to create a DocumentStore
   // instance.
   //
+  // See comments on DocumentStore::Create for explanation of
+  // force_recovery_and_revalidate_documents.
+  //
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
   libtextclassifier3::Status InitializeDocumentStore(
+      bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -577,29 +571,19 @@ class IcingSearchEngine {
   // call Index::Reset first.
   //
   // Returns:
-  //   OK on success
+  //   On success, OK and a bool indicating whether or not restoration was
+  //     needed.
+  //   DATA_LOSS, if an error during index merging caused us to lose indexed
+  //     data in the main index. Despite the data loss, this is still considered
+  //     a successful run and needed_restoration will be set to true.
   //   RESOURCE_EXHAUSTED if the index fills up before finishing indexing
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL_ERROR on any IO errors
-  libtextclassifier3::Status RestoreIndexIfNeeded()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Computes the combined checksum of the IcingSearchEngine - includes all its
-  // subcomponents
-  //
-  // Returns:
-  //   Combined checksum on success
-  //   INTERNAL_ERROR on compute error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Checks if the header exists already. This does not create the header file
-  // if it doesn't exist.
-  bool HeaderExists() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Update, replace and persist the header file. Creates the header file if it
-  // doesn't exist.
-  libtextclassifier3::Status UpdateHeader(const Crc32& checksum)
+  struct IndexRestorationResult {
+    libtextclassifier3::Status status;
+    bool needed_restoration;
+  };
+  IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // If we lost the schema during a previous failure, it may "look" the same as

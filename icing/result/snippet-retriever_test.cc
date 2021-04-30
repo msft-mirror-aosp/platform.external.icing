@@ -24,6 +24,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
@@ -36,7 +37,6 @@
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/platform.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -182,6 +182,58 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeSmallerThanMatch) {
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre(""));
+}
+
+TEST_F(SnippetRetrieverTest,
+       SnippetingWindowMaxWindowSizeEqualToMatch_OddLengthMatch) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four.... five")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"three"}}};
+
+  // Window starts at the beginning of "three" and at the exact end of
+  // "three". len=5, orig_window= "three"
+  snippet_spec_.set_max_window_bytes(5);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("three"));
+}
+
+TEST_F(SnippetRetrieverTest,
+       SnippetingWindowMaxWindowSizeEqualToMatch_EvenLengthMatch) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four.... five")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"four"}}};
+
+  // Window starts at the beginning of "four" and at the exact end of
+  // "four". len=4, orig_window= "four"
+  snippet_spec_.set_max_window_bytes(4);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("four"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsInWhitespace) {

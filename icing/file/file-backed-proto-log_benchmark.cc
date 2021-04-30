@@ -164,6 +164,48 @@ BENCHMARK(BM_Read)
                               // 16MiB, and we need some extra space for the
                               // rest of the document properties
 
+static void BM_ComputeChecksum(benchmark::State& state) {
+  const Filesystem filesystem;
+  const std::string file_path = GetTestTempDir() + "/proto.log";
+  int max_proto_size = (1 << 24) - 1;  // 16 MiB
+  bool compress = true;
+
+  // Make sure it doesn't already exist.
+  filesystem.DeleteFile(file_path.c_str());
+
+  auto proto_log =
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem, file_path,
+          FileBackedProtoLog<DocumentProto>::Options(compress, max_proto_size))
+          .ValueOrDie()
+          .proto_log;
+
+  DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
+
+  // Make each document 1KiB
+  int string_length = 1024;
+  std::default_random_engine random;
+  const std::string rand_str =
+      RandomString(kAlNumAlphabet, string_length, &random);
+
+  auto document_properties = document.add_properties();
+  document_properties->set_name("string property");
+  document_properties->add_string_values(rand_str);
+
+  int num_docs = state.range(0);
+  for (int i = 0; i < num_docs; ++i) {
+    ICING_ASSERT_OK(proto_log->WriteProto(document));
+  }
+
+  for (auto _ : state) {
+    testing::DoNotOptimize(proto_log->ComputeChecksum());
+  }
+
+  // Cleanup after ourselves
+  filesystem.DeleteFile(file_path.c_str());
+}
+BENCHMARK(BM_ComputeChecksum)->Range(1024, 1 << 20);
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing
