@@ -109,6 +109,11 @@ class DocumentStore {
   // previously initialized with this directory, it will reload the files saved
   // by the last instance.
   //
+  // force_recovery_and_revalidate_documents=true will pre-emptively throw out
+  // the derived files and validate each document while recreating them. This
+  // can be used to indicate that the schema (and type ids) may have changed and
+  // those changes might not have been applied to the document store.
+  //
   // If initialize_stats is present, the fields related to DocumentStore will be
   // populated.
   //
@@ -125,6 +130,7 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
+      bool force_recovery_and_revalidate_documents = false,
       InitializeStatsProto* initialize_stats = nullptr);
 
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
@@ -197,13 +203,10 @@ class DocumentStore {
   bool DoesDocumentExist(DocumentId document_id) const;
 
   // Deletes the document identified by the given namespace and uri. The
-  // document proto will be marked as deleted if 'soft_delete' is true,
-  // otherwise the document proto will be erased immediately.
+  // document proto will be erased immediately.
   //
   // NOTE:
-  // 1. The soft deletion uses less CPU power, it can be applied on
-  //    non-sensitive data.
-  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    Space is not reclaimed for deleted documents until Optimize() is
   //    called.
   //
   // Returns:
@@ -211,26 +214,20 @@ class DocumentStore {
   //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
-                                    std::string_view uri,
-                                    bool soft_delete = false);
+                                    std::string_view uri);
 
-  // Deletes the document identified by the given document_id. The
-  // document proto will be marked as deleted if 'soft_delete' is true,
-  // otherwise the document proto will be erased immediately.
+  // Deletes the document identified by the given document_id. The document
+  // proto will be erased immediately.
   //
   // NOTE:
-  // 1. If possible, please use the other method Delete(name_space, uri,
-  //    soft_delete) for soft deletes because we need namespace and uri to
-  //    perform soft deletes.
-  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    Space is not reclaimed for deleted documents until Optimize() is
   //    called.
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT if document_id is invalid.
-  libtextclassifier3::Status Delete(DocumentId document_id,
-                                    bool soft_delete = false);
+  libtextclassifier3::Status Delete(DocumentId document_id);
 
   // Returns the NamespaceId of the string namespace
   //
@@ -314,38 +311,30 @@ class DocumentStore {
   libtextclassifier3::Status ReportUsage(const UsageReport& usage_report);
 
   // Deletes all documents belonging to the given namespace. The documents will
-  // be marked as deleted if 'soft_delete' is true, otherwise they will be
-  // erased immediately.
+  // be erased immediately.
   //
   // NOTE:
-  // 1. The soft deletion uses less CPU power, it can be applied on
-  //    non-sensitive data.
-  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    Space is not reclaimed for deleted documents until Optimize() is
   //    called.
   //
   // Returns:
   //   OK on success
   //   NOT_FOUND if namespace doesn't exist
   //   INTERNAL_ERROR on IO error
-  DeleteByGroupResult DeleteByNamespace(std::string_view name_space,
-                                        bool soft_delete = false);
+  DeleteByGroupResult DeleteByNamespace(std::string_view name_space);
 
   // Deletes all documents belonging to the given schema type. The documents
-  // will be marked as deleted if 'soft_delete' is true, otherwise they will be
-  // erased immediately.
+  // will be erased immediately.
   //
   // NOTE:
-  // 1. The soft deletion uses less CPU power, it can be applied on
-  //    non-sensitive data.
-  // 2. Space is not reclaimed for deleted documents until Optimize() is
+  //    Space is not reclaimed for deleted documents until Optimize() is
   //    called.
   //
   // Returns:
   //   OK on success
   //   NOT_FOUND if schema_type doesn't exist
   //   INTERNAL_ERROR on IO error
-  DeleteByGroupResult DeleteBySchemaType(std::string_view schema_type,
-                                         bool soft_delete = false);
+  DeleteByGroupResult DeleteBySchemaType(std::string_view schema_type);
 
   // Syncs all the data and metadata changes to disk.
   //
@@ -508,6 +497,7 @@ class DocumentStore {
   bool initialized_ = false;
 
   libtextclassifier3::StatusOr<DataLoss> Initialize(
+      bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
@@ -517,6 +507,9 @@ class DocumentStore {
   libtextclassifier3::Status InitializeDerivedFiles();
 
   // Re-generates all files derived from the ground truth: the document log.
+  //
+  // revalidate_documents=true will also cause each document to be revalidated
+  // the schema as it is read out of the document log.
   //
   // NOTE: if this function fails, the only thing we can do is to retry it until
   // it succeeds or prevent the initialization of a DocumentStore. The
@@ -528,7 +521,7 @@ class DocumentStore {
   //   document_id
   //      mapper.
   //   3. Create header and store the updated combined checksum
-  libtextclassifier3::Status RegenerateDerivedFiles();
+  libtextclassifier3::Status RegenerateDerivedFiles(bool revalidate_documents);
 
   // Resets the unique_ptr to the document_key_mapper, deletes the underlying
   // file, and re-creates a new instance of the document_key_mapper .
@@ -591,9 +584,8 @@ class DocumentStore {
   // Helper function to do batch deletes. Documents with the given
   // "namespace_id" and "schema_type_id" will be deleted. If callers don't need
   // to specify the namespace or schema type, pass in kInvalidNamespaceId or
-  // kInvalidSchemaTypeId. The document protos will be marked as deleted if
-  // 'soft_delete' is true, otherwise the document protos with their derived
-  // data will be erased / cleared immediately.
+  // kInvalidSchemaTypeId. The document protos with their derived data will be
+  // erased / cleared immediately.
   //
   // NOTE: Space is not reclaimed in the derived files until Optimize() is
   // called.
@@ -602,28 +594,7 @@ class DocumentStore {
   //   Number of documents that were actually updated to be deleted
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> BatchDelete(NamespaceId namespace_id,
-                                                SchemaTypeId schema_type_id,
-                                                bool soft_delete);
-
-  // Marks the document identified by the given name_space, uri and document_id
-  // as deleted, to be removed later during Optimize().
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status SoftDelete(std::string_view name_space,
-                                        std::string_view uri,
-                                        DocumentId document_id);
-
-  // Erases the document at the given document_log_offset from the document_log
-  // and clears the derived data identified by the given document_id. The space
-  // will be reclaimed later during Optimize().
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status HardDelete(DocumentId document_id,
-                                        int64_t document_log_offset);
+                                                SchemaTypeId schema_type_id);
 
   // Helper method to find a DocumentId that is associated with the given
   // namespace and uri.
