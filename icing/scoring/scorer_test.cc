@@ -397,7 +397,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time1));
-  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(1000));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
@@ -406,7 +406,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/5000,
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time5));
-  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(5000));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
@@ -415,7 +415,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
       /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/3000,
       UsageReport::USAGE_TYPE1);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1_time3));
-  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(5000));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
@@ -458,7 +458,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time1));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(1000));
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report usage with timestamp = 5000ms, score should be updated.
@@ -467,7 +467,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time5));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(5000));
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 
   // Report usage with timestamp = 3000ms, score should not be updated.
@@ -476,7 +476,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
       UsageReport::USAGE_TYPE2);
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type2_time3));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
-  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(5000));
   EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(0));
 }
 
@@ -519,7 +519,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time1));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(1));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(1000));
 
   // Report usage with timestamp = 5000ms, score should be updated.
   UsageReport usage_report_type3_time5 = CreateUsageReport(
@@ -528,7 +528,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time5));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5000));
 
   // Report usage with timestamp = 3000ms, score should not be updated.
   UsageReport usage_report_type3_time3 = CreateUsageReport(
@@ -537,7 +537,7 @@ TEST_F(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
   ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type3_time3));
   EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(0));
   EXPECT_THAT(scorer2->GetScore(docHitInfo), Eq(0));
-  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5));
+  EXPECT_THAT(scorer3->GetScore(docHitInfo), Eq(5000));
 }
 
 TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
@@ -563,6 +563,37 @@ TEST_F(ScorerTest, NoScorerShouldAlwaysReturnDefaultScore) {
   EXPECT_THAT(scorer->GetScore(docHitInfo1), Eq(111));
   EXPECT_THAT(scorer->GetScore(docHitInfo2), Eq(111));
   EXPECT_THAT(scorer->GetScore(docHitInfo3), Eq(111));
+}
+
+TEST_F(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(fake_clock1().GetSystemTimeMilliseconds())
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer1,
+      Scorer::Create(
+          ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
+          /*default_score=*/0, document_store()));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  // Create usage report for the maximum allowable timestamp.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1",
+      /*timestamp_ms=*/std::numeric_limits<uint32_t>::max() * 1000.0,
+      UsageReport::USAGE_TYPE1);
+
+  double max_int_usage_timestamp_score =
+      std::numeric_limits<uint32_t>::max() * 1000.0;
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_type1));
+  EXPECT_THAT(scorer1->GetScore(docHitInfo), Eq(max_int_usage_timestamp_score));
 }
 
 }  // namespace

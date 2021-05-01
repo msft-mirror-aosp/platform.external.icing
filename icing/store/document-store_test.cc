@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
@@ -29,6 +30,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
@@ -41,7 +43,6 @@
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -89,6 +90,9 @@ constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
     StringIndexingConfig_TokenizerType_Code_PLAIN;
 
 constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+
+constexpr PropertyConfigProto_DataType_Code TYPE_INT =
+    PropertyConfigProto_DataType_Code_INT64;
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
                               int64 timestamp_ms,
@@ -179,6 +183,19 @@ class DocumentStoreTest : public ::testing::Test {
 
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  }
+
+  void CorruptDocStoreHeaderChecksumFile() {
+    // Change the DocStore's header combined checksum so that it won't match the
+    // recalculated checksum on initialization. This will force a regeneration
+    // of derived files from ground truth.
+    const std::string header_file =
+        absl_ports::StrCat(document_store_dir_, "/document_store_header");
+    DocumentStore::Header header;
+    header.magic = DocumentStore::Header::kMagic;
+    header.checksum = 10;  // Arbitrary garbage checksum
+    filesystem_.DeleteFile(header_file.c_str());
+    filesystem_.Write(header_file.c_str(), &header, sizeof(header));
   }
 
   const Filesystem filesystem_;
@@ -342,7 +359,7 @@ TEST_F(DocumentStoreTest, IsDocumentExisting) {
               IsFalse());
 }
 
-TEST_F(DocumentStoreTest, GetSoftDeletedDocumentNotFound) {
+TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -356,29 +373,7 @@ TEST_F(DocumentStoreTest, GetSoftDeletedDocumentNotFound) {
       IsOkAndHolds(EqualsProto(test_document1_)));
 
   ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri(),
-                                         /*soft_delete=*/true));
-  EXPECT_THAT(
-      document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-}
-
-TEST_F(DocumentStoreTest, GetHardDeletedDocumentNotFound) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  ICING_EXPECT_OK(document_store->Put(DocumentProto(test_document1_)));
-  EXPECT_THAT(
-      document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
-      IsOkAndHolds(EqualsProto(test_document1_)));
-
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri(),
-                                         /*soft_delete=*/false));
+                                         test_document1_.uri()));
   EXPECT_THAT(
       document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -488,7 +483,7 @@ TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, SoftDeleteByNamespaceOk) {
+TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -519,7 +514,7 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceOk) {
   // DELETE namespace.1. document1 and document 4 should be deleted. document2
   // and document3 should still be retrievable.
   DocumentStore::DeleteByGroupResult group_result =
-      doc_store->DeleteByNamespace("namespace.1", /*soft_delete=*/true);
+      doc_store->DeleteByNamespace("namespace.1");
   EXPECT_THAT(group_result.status, IsOk());
   EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
   EXPECT_THAT(doc_store->Get(document1.namespace_(), document1.uri()),
@@ -532,51 +527,7 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceOk) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, HardDeleteByNamespaceOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  DocumentProto document1 = test_document1_;
-  document1.set_namespace_("namespace.1");
-  document1.set_uri("uri1");
-  ICING_ASSERT_OK(doc_store->Put(document1));
-
-  DocumentProto document2 = test_document1_;
-  document2.set_namespace_("namespace.2");
-  document2.set_uri("uri1");
-  ICING_ASSERT_OK(doc_store->Put(document2));
-
-  DocumentProto document3 = test_document1_;
-  document3.set_namespace_("namespace.3");
-  document3.set_uri("uri1");
-  ICING_ASSERT_OK(doc_store->Put(document3));
-
-  DocumentProto document4 = test_document1_;
-  document4.set_namespace_("namespace.1");
-  document4.set_uri("uri2");
-  ICING_ASSERT_OK(doc_store->Put(document4));
-
-  // DELETE namespace.1. document1 and document 4 should be deleted. document2
-  // and document3 should still be retrievable.
-  DocumentStore::DeleteByGroupResult group_result =
-      doc_store->DeleteByNamespace("namespace.1", /*soft_delete=*/false);
-  EXPECT_THAT(group_result.status, IsOk());
-  EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
-  EXPECT_THAT(doc_store->Get(document1.namespace_(), document1.uri()),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(doc_store->Get(document2.namespace_(), document2.uri()),
-              IsOkAndHolds(EqualsProto(document2)));
-  EXPECT_THAT(doc_store->Get(document3.namespace_(), document3.uri()),
-              IsOkAndHolds(EqualsProto(document3)));
-  EXPECT_THAT(doc_store->Get(document4.namespace_(), document4.uri()),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-}
-
-TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNonexistentNamespaceNotFound) {
+TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -589,10 +540,7 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNonexistentNamespaceNotFound) {
   int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(doc_store
-                  ->DeleteByNamespace("nonexistent_namespace",
-                                      /*soft_delete=*/true)
-                  .status,
+  EXPECT_THAT(doc_store->DeleteByNamespace("nonexistent_namespace").status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
@@ -600,31 +548,7 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNonexistentNamespaceNotFound) {
   EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
-TEST_F(DocumentStoreTest, HardDeleteByNamespaceNonexistentNamespaceNotFound) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  // Validates that deleting something non-existing won't append anything to
-  // ground truth
-  int64_t document_log_size_before = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-
-  EXPECT_THAT(doc_store
-                  ->DeleteByNamespace("nonexistent_namespace",
-                                      /*soft_delete=*/false)
-                  .status,
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
-}
-
-TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNoExistingDocumentsNotFound) {
+TEST_F(DocumentStoreTest, DeleteByNamespaceNoExistingDocumentsNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -639,33 +563,9 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNoExistingDocumentsNotFound) {
   // At this point, there are no existing documents with the namespace, even
   // though Icing's derived files know about this namespace. We should still
   // return NOT_FOUND since nothing existing has this namespace.
-  EXPECT_THAT(document_store
-                  ->DeleteByNamespace(test_document1_.namespace_(),
-                                      /*soft_delete=*/true)
-                  .status,
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-}
-
-TEST_F(DocumentStoreTest, HardDeleteByNamespaceNoExistingDocumentsNotFound) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
-
-  // At this point, there are no existing documents with the namespace, even
-  // though Icing's derived files know about this namespace. We should still
-  // return NOT_FOUND since nothing existing has this namespace.
-  EXPECT_THAT(document_store
-                  ->DeleteByNamespace(test_document1_.namespace_(),
-                                      /*soft_delete=*/false)
-                  .status,
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      document_store->DeleteByNamespace(test_document1_.namespace_()).status,
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
@@ -710,17 +610,7 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   }  // Destructors should update checksum and persist all data to file.
 
-  // Change the DocStore's header combined checksum so that it won't match the
-  // recalculated checksum on initialization. This will force a regeneration of
-  // derived files from ground truth.
-  const std::string header_file =
-      absl_ports::StrCat(document_store_dir_, "/document_store_header");
-  DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
-  header.checksum = 10;  // Arbitrary garbage checksum
-  filesystem_.DeleteFile(header_file.c_str());
-  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
-
+  CorruptDocStoreHeaderChecksumFile();
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -744,92 +634,7 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeOk) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email"))
-          .AddType(SchemaTypeConfigBuilder().SetType("message"))
-          .AddType(SchemaTypeConfigBuilder().SetType("person"))
-          .Build();
-  std::string schema_store_dir = schema_store_dir_ + "_custom";
-  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
-  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  DocumentProto email_document_1 = DocumentBuilder()
-                                       .SetKey("namespace1", "1")
-                                       .SetSchema("email")
-                                       .SetCreationTimestampMs(1)
-                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_1_document_id,
-                             document_store->Put(email_document_1));
-
-  DocumentProto email_document_2 = DocumentBuilder()
-                                       .SetKey("namespace2", "2")
-                                       .SetSchema("email")
-                                       .SetCreationTimestampMs(1)
-                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_2_document_id,
-                             document_store->Put(email_document_2));
-
-  DocumentProto message_document = DocumentBuilder()
-                                       .SetKey("namespace", "3")
-                                       .SetSchema("message")
-                                       .SetCreationTimestampMs(1)
-                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
-                             document_store->Put(message_document));
-
-  DocumentProto person_document = DocumentBuilder()
-                                      .SetKey("namespace", "4")
-                                      .SetSchema("person")
-                                      .SetCreationTimestampMs(1)
-                                      .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id,
-                             document_store->Put(person_document));
-
-  // Delete the "email" type and ensure that it works across both
-  // email_document's namespaces. And that other documents aren't affected.
-  DocumentStore::DeleteByGroupResult group_result =
-      document_store->DeleteBySchemaType("email", /*soft_delete=*/true);
-  EXPECT_THAT(group_result.status, IsOk());
-  EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
-  EXPECT_THAT(document_store->Get(email_1_document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(document_store->Get(email_2_document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(document_store->Get(message_document_id),
-              IsOkAndHolds(EqualsProto(message_document)));
-  EXPECT_THAT(document_store->Get(person_document_id),
-              IsOkAndHolds(EqualsProto(person_document)));
-
-  // Delete the "message" type and check that other documents aren't affected
-  group_result =
-      document_store->DeleteBySchemaType("message", /*soft_delete=*/true);
-  EXPECT_THAT(group_result.status, IsOk());
-  EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
-  EXPECT_THAT(document_store->Get(email_1_document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(document_store->Get(email_2_document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(document_store->Get(message_document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(document_store->Get(person_document_id),
-              IsOkAndHolds(EqualsProto(person_document)));
-}
-
-TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -888,7 +693,7 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
   // Delete the "email" type and ensure that it works across both
   // email_document's namespaces. And that other documents aren't affected.
   DocumentStore::DeleteByGroupResult group_result =
-      document_store->DeleteBySchemaType("email", /*soft_delete=*/true);
+      document_store->DeleteBySchemaType("email");
   EXPECT_THAT(group_result.status, IsOk());
   EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
   EXPECT_THAT(document_store->Get(email_1_document_id),
@@ -901,8 +706,7 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
               IsOkAndHolds(EqualsProto(person_document)));
 
   // Delete the "message" type and check that other documents aren't affected
-  group_result =
-      document_store->DeleteBySchemaType("message", /*soft_delete=*/true);
+  group_result = document_store->DeleteBySchemaType("message");
   EXPECT_THAT(group_result.status, IsOk());
   EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
   EXPECT_THAT(document_store->Get(email_1_document_id),
@@ -915,7 +719,7 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
               IsOkAndHolds(EqualsProto(person_document)));
 }
 
-TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -928,10 +732,7 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   int64_t document_log_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(document_store
-                  ->DeleteBySchemaType("nonexistent_type",
-                                       /*soft_delete=*/true)
-                  .status,
+  EXPECT_THAT(document_store->DeleteBySchemaType("nonexistent_type").status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
@@ -940,32 +741,7 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
-TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  // Validates that deleting something non-existing won't append anything to
-  // ground truth
-  int64_t document_log_size_before = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-
-  EXPECT_THAT(document_store
-                  ->DeleteBySchemaType("nonexistent_type",
-                                       /*soft_delete=*/false)
-                  .status,
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
-
-  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
-}
-
-TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNoExistingDocumentsNotFound) {
+TEST_F(DocumentStoreTest, DeleteBySchemaTypeNoExistingDocumentsNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -977,30 +753,9 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNoExistingDocumentsNotFound) {
   ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
                                          test_document1_.uri()));
 
-  EXPECT_THAT(document_store
-                  ->DeleteBySchemaType(test_document1_.schema(),
-                                       /*soft_delete=*/true)
-                  .status,
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-}
-
-TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNoExistingDocumentsNotFound) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
-
-  EXPECT_THAT(document_store
-                  ->DeleteBySchemaType(test_document1_.schema(),
-                                       /*soft_delete=*/false)
-                  .status,
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      document_store->DeleteBySchemaType(test_document1_.schema()).status,
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
@@ -1057,17 +812,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   }  // Destructors should update checksum and persist all data to file.
 
-  // Change the DocumentStore's header combined checksum so that it won't match
-  // the recalculated checksum on initialization. This will force a regeneration
-  // of derived files from ground truth.
-  const std::string header_file =
-      absl_ports::StrCat(document_store_dir_, "/document_store_header");
-  DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
-  header.checksum = 10;  // Arbitrary garbage checksum
-  filesystem_.DeleteFile(header_file.c_str());
-  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
-
+  CorruptDocStoreHeaderChecksumFile();
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -1146,16 +891,7 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
   }  // Destructors should update checksum and persist all data to file.
 
-  // Change the DocumentStore's header combined checksum so that it won't match
-  // the recalculated checksum on initialization. This will force a regeneration
-  // of derived files from ground truth.
-  const std::string header_file =
-      absl_ports::StrCat(document_store_dir_, "/document_store_header");
-  DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
-  header.checksum = 10;  // Arbitrary garbage checksum
-  filesystem_.DeleteFile(header_file.c_str());
-  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
+  CorruptDocStoreHeaderChecksumFile();
 
   SchemaProto new_schema =
       SchemaBuilder()
@@ -1484,17 +1220,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
                 IsOkAndHolds(EqualsProto(test_document2_)));
   }
 
-  // Change the DocStore's header combined checksum so that it won't match the
-  // recalculated checksum on initialization. This will force a regeneration of
-  // derived files from ground truth.
-  const std::string header_file =
-      absl_ports::StrCat(document_store_dir_, "/document_store_header");
-  DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
-  header.checksum = 10;  // Arbitrary garbage checksum
-  filesystem_.DeleteFile(header_file.c_str());
-  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
-
+  CorruptDocStoreHeaderChecksumFile();
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -1912,7 +1638,7 @@ TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataOutOfRange) {
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
-TEST_F(DocumentStoreTest, SoftDeletionDoesNotClearFilterCache) {
+TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1930,59 +1656,13 @@ TEST_F(DocumentStoreTest, SoftDeletionDoesNotClearFilterCache) {
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
 
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/true));
-  // Associated entry of the deleted document is removed.
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id).status(), IsOk());
-}
-
-TEST_F(DocumentStoreTest, HardDeleteClearsFilterCache) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_));
-
-  EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
-          /*namespace_id=*/0,
-          /*schema_type_id=*/0,
-          /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
-
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/false));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   // Associated entry of the deleted document is removed.
   EXPECT_THAT(doc_store->GetDocumentFilterData(document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, SoftDeletionDoesNotClearScoreCache) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_, /*num_tokens=*/4));
-
-  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
-              IsOkAndHolds(DocumentAssociatedScoreData(
-                  /*corpus_id=*/0, /*document_score=*/document1_score_,
-                  /*creation_timestamp_ms=*/document1_creation_timestamp_,
-                  /*length_in_tokens=*/4)));
-
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/true));
-  // Associated entry of the deleted document is removed.
-  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id).status(),
-              IsOk());
-}
-
-TEST_F(DocumentStoreTest, HardDeleteClearsScoreCache) {
+TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -2000,13 +1680,13 @@ TEST_F(DocumentStoreTest, HardDeleteClearsScoreCache) {
                   /*creation_timestamp_ms=*/document1_creation_timestamp_,
                   /*length_in_tokens=*/4)));
 
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/false));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   // Associated entry of the deleted document is removed.
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, SoftDeleteDoesNotClearUsageScores) {
+TEST_F(DocumentStoreTest, DeleteShouldClearUsageScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -2028,38 +1708,8 @@ TEST_F(DocumentStoreTest, SoftDeleteDoesNotClearUsageScores) {
   ASSERT_THAT(doc_store->GetUsageScores(document_id),
               IsOkAndHolds(expected_scores));
 
-  // Soft delete the document.
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/true));
-
-  // The scores should be the same.
-  ASSERT_THAT(doc_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
-}
-
-TEST_F(DocumentStoreTest, HardDeleteShouldClearUsageScores) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_));
-
-  // Report usage with type 1.
-  UsageReport usage_report_type1 = CreateUsageReport(
-      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
-      UsageReport::USAGE_TYPE1);
-  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
-
-  UsageStore::UsageScores expected_scores;
-  expected_scores.usage_type1_count = 1;
-  ASSERT_THAT(doc_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
-
-  // Hard delete the document.
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/false));
+  // Delete the document.
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
 
   // The scores should be cleared.
   expected_scores.usage_type1_count = 0;
@@ -2356,16 +2006,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
   }  // Everything destructs and commits changes to file
 
-  // Change the DocumentStore's header combined checksum so that it won't match
-  // the recalculated checksum on initialization. This will force a regeneration
-  // of derived files from ground truth.
-  const std::string header_file =
-      absl_ports::StrCat(document_store_dir_, "/document_store_header");
-  DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
-  header.checksum = 10;  // Arbitrary garbage checksum
-  filesystem_.DeleteFile(header_file.c_str());
-  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
+  CorruptDocStoreHeaderChecksumFile();
 
   // Change the schema so that we don't know of the Document's type anymore.
   // Since we can't set backwards incompatible changes, we do some file-level
@@ -3155,17 +2796,7 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
                 IsOkAndHolds(expected_scores));
   }
 
-  // Change the DocStore's header combined checksum so that it won't match the
-  // recalculated checksum on initialization. This will force a regeneration of
-  // derived files from ground truth.
-  const std::string header_file =
-      absl_ports::StrCat(document_store_dir_, "/document_store_header");
-  DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
-  header.checksum = 10;  // Arbitrary garbage checksum
-  filesystem_.DeleteFile(header_file.c_str());
-  filesystem_.Write(header_file.c_str(), &header, sizeof(header));
-
+  CorruptDocStoreHeaderChecksumFile();
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -3262,45 +2893,6 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   // Usage scores should be the same.
   EXPECT_THAT(document_store->GetUsageScores(updated_document_id),
               IsOkAndHolds(expected_scores));
-}
-
-TEST_F(DocumentStoreTest,
-       UsageScoresShouldNotBeCopiedOverFromOldSoftDeletedDocs) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
-      document_store->Put(DocumentProto(test_document1_)));
-
-  // Report usage with type 1.
-  UsageReport usage_report_type1 = CreateUsageReport(
-      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
-      UsageReport::USAGE_TYPE1);
-  ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
-
-  UsageStore::UsageScores expected_scores;
-  ++expected_scores.usage_type1_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
-
-  // Soft delete the doc.
-  ICING_ASSERT_OK(document_store->Delete(document_id, /*soft_delete=*/true));
-
-  // Put the same document.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId updated_document_id,
-      document_store->Put(DocumentProto(test_document1_)));
-  // We should get a different document id.
-  ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
-
-  // Usage scores should be cleared.
-  EXPECT_THAT(document_store->GetUsageScores(updated_document_id),
-              IsOkAndHolds(UsageStore::UsageScores()));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
@@ -3431,6 +3023,15 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
   ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
 }
 
+// TODO(b/185845269) Re-enable this test by copying over a full valid set of
+// document store files. Right now this test only includes the score_cache and
+// the document store header.
+//
+// This causes a problem now because this cl changes behavior to not consider an
+// InitializeDerivedFiles failure to be a recovery if there is nothing to
+// recover because the doocument store is empty.
+#define DISABLE_BACKWARDS_COMPAT_TEST
+#ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   // The directory testdata/v0/document_store contains only the scoring_cache
   // and the document_store_header (holding the crc for the scoring_cache). If
@@ -3471,7 +3072,9 @@ TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get(), &initialize_stats));
+                            schema_store_.get(),
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   // The store_cache trigger regeneration because its element size is
@@ -3479,6 +3082,7 @@ TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   // score_cache).
   EXPECT_TRUE(initialize_stats.has_document_store_recovery_cause());
 }
+#endif  // DISABLE_BACKWARDS_COMPAT_TEST
 
 TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -3587,6 +3191,399 @@ TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
               Eq(0));
   EXPECT_THAT(namespace_storage_info.num_expired_documents_usage_type3(),
               Eq(0));
+}
+
+TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
+  // Start fresh and set the schema with one type.
+  filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  // The typeid for "email" should be 0.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+  DocumentId docid = kInvalidDocumentId;
+  {
+    // Create the document store the first time and add an email document.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "email/1")
+            .SetSchema("email")
+            .AddStringProperty("subject", "subject foo")
+            .AddStringProperty("body", "body bar")
+            .SetScore(document1_score_)
+            .SetCreationTimestampMs(
+                document1_creation_timestamp_)  // A random timestamp
+            .SetTtlMs(document1_ttl_)
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
+
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
+  }
+
+  // Add another type to the schema before the email type.
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("alarm")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("name")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("time")
+                                        .SetDataType(TYPE_INT)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(email_type_config)
+          .Build();
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  // Adding a new type should cause ids to be reassigned. Ids are assigned in
+  // order of appearance so 'alarm' should be 0 and 'email' should be 1.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(1));
+
+  {
+    // Create the document store the second time and force recovery
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/true));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    // Ensure that the type id of the email document has been correctly updated.
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(1));
+  }
+}
+
+TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
+  // Start fresh and set the schema with one type.
+  filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  // The typeid for "email" should be 0.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+
+  DocumentId docid = kInvalidDocumentId;
+  {
+    // Create the document store the first time and add an email document.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "email/1")
+            .SetSchema("email")
+            .AddStringProperty("subject", "subject foo")
+            .AddStringProperty("body", "body bar")
+            .SetScore(document1_score_)
+            .SetCreationTimestampMs(
+                document1_creation_timestamp_)  // A random timestamp
+            .SetTtlMs(document1_ttl_)
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
+
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
+  }
+
+  // Add another type to the schema.
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("alarm")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("name")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("time")
+                                        .SetDataType(TYPE_INT)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(email_type_config)
+          .Build();
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  // Adding a new type should cause ids to be reassigned. Ids are assigned in
+  // order of appearance so 'alarm' should be 0 and 'email' should be 1.
+  ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
+  ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(1));
+
+  {
+    // Create the document store the second time. Don't force recovery.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    // Check that the type id of the email document has not been updated.
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
+  }
+}
+
+TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
+  // Start fresh and set the schema with one type.
+  filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+
+  DocumentId docid = kInvalidDocumentId;
+  DocumentProto docWithBody =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .AddStringProperty("body", "body bar")
+          .SetScore(document1_score_)
+          .SetCreationTimestampMs(
+              document1_creation_timestamp_)  // A random timestamp
+          .SetTtlMs(document1_ttl_)
+          .Build();
+  DocumentProto docWithoutBody =
+      DocumentBuilder()
+          .SetKey("icing", "email/2")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetScore(document1_score_)
+          .SetCreationTimestampMs(
+              document1_creation_timestamp_)  // A random timestamp
+          .SetTtlMs(document1_ttl_)
+          .Build();
+
+  {
+    // Create the document store the first time and add two email documents: one
+    // that has the 'body' section and one that doesn't.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithBody));
+    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithoutBody));
+
+    ASSERT_THAT(doc_store->Get(docWithBody.namespace_(), docWithBody.uri()),
+                IsOkAndHolds(EqualsProto(docWithBody)));
+    ASSERT_THAT(
+        doc_store->Get(docWithoutBody.namespace_(), docWithoutBody.uri()),
+        IsOkAndHolds(EqualsProto(docWithoutBody)));
+  }
+
+  // Delete the 'body' property from the 'email' type, making all pre-existing
+  // documents with the 'body' property invalid.
+  email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  schema = SchemaBuilder().AddType(email_type_config).Build();
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/true),
+              IsOk());
+
+  {
+    // Create the document store the second time and force recovery
+    CorruptDocStoreHeaderChecksumFile();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/true));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    ASSERT_THAT(doc_store->Get(docWithBody.namespace_(), docWithBody.uri()),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+    ASSERT_THAT(
+        doc_store->Get(docWithoutBody.namespace_(), docWithoutBody.uri()),
+        IsOkAndHolds(EqualsProto(docWithoutBody)));
+  }
+}
+
+TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
+  // Start fresh and set the schema with one type.
+  filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+
+  DocumentId docid = kInvalidDocumentId;
+  DocumentProto docWithBody =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .AddStringProperty("body", "body bar")
+          .SetScore(document1_score_)
+          .SetCreationTimestampMs(
+              document1_creation_timestamp_)  // A random timestamp
+          .SetTtlMs(document1_ttl_)
+          .Build();
+  DocumentProto docWithoutBody =
+      DocumentBuilder()
+          .SetKey("icing", "email/2")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetScore(document1_score_)
+          .SetCreationTimestampMs(
+              document1_creation_timestamp_)  // A random timestamp
+          .SetTtlMs(document1_ttl_)
+          .Build();
+
+  {
+    // Create the document store the first time and add two email documents: one
+    // that has the 'body' section and one that doesn't.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithBody));
+    ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(docWithoutBody));
+
+    ASSERT_THAT(doc_store->Get(docWithBody.namespace_(), docWithBody.uri()),
+                IsOkAndHolds(EqualsProto(docWithBody)));
+    ASSERT_THAT(
+        doc_store->Get(docWithoutBody.namespace_(), docWithoutBody.uri()),
+        IsOkAndHolds(EqualsProto(docWithoutBody)));
+  }
+
+  // Delete the 'body' property from the 'email' type, making all pre-existing
+  // documents with the 'body' property invalid.
+  email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  schema = SchemaBuilder().AddType(email_type_config).Build();
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/true),
+              IsOk());
+
+  {
+    // Corrupt the document store header checksum so that we will perform
+    // recovery, but without revalidation.
+    CorruptDocStoreHeaderChecksumFile();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    ASSERT_THAT(doc_store->Get(docWithBody.namespace_(), docWithBody.uri()),
+                IsOkAndHolds(EqualsProto(docWithBody)));
+    ASSERT_THAT(
+        doc_store->Get(docWithoutBody.namespace_(), docWithoutBody.uri()),
+        IsOkAndHolds(EqualsProto(docWithoutBody)));
+  }
 }
 
 }  // namespace

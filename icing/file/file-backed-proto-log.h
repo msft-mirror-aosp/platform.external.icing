@@ -70,6 +70,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/portable/zlib.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
@@ -422,7 +423,8 @@ class FileBackedProtoLog {
   static constexpr int kDeflateCompressionLevel = 3;
 
   // Chunks of the file to mmap at a time, so we don't mmap the entire file.
-  static constexpr int kMmapChunkSize = 4 * 1024;
+  // Only used on 32-bit devices
+  static constexpr int kMmapChunkSize = 4 * 1024 * 1024;  // 4MiB
 
   ScopedFd fd_;
   const Filesystem* const filesystem_;
@@ -631,6 +633,14 @@ libtextclassifier3::StatusOr<Crc32> FileBackedProtoLog<ProtoT>::ComputeChecksum(
         file_path.c_str(), static_cast<long long>(start)));
   }
 
+  if (end < start) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Ending checksum offset of file '%s' must be greater than start "
+        "'%lld', was '%lld'",
+        file_path.c_str(), static_cast<long long>(start),
+        static_cast<long long>(end)));
+  }
+
   int64_t file_size = filesystem->GetFileSize(file_path.c_str());
   if (end > file_size) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
@@ -640,17 +650,41 @@ libtextclassifier3::StatusOr<Crc32> FileBackedProtoLog<ProtoT>::ComputeChecksum(
         static_cast<long long>(end)));
   }
 
-  for (int i = start; i < end; i += kMmapChunkSize) {
-    // Don't read past the file size.
-    int next_chunk_size = kMmapChunkSize;
-    if ((i + kMmapChunkSize) >= end) {
-      next_chunk_size = end - i;
+  Architecture architecture = GetArchitecture();
+  switch (architecture) {
+    case Architecture::BIT_64: {
+      // Don't mmap in chunks here since mmapping can be harmful on 64-bit
+      // devices where mmap/munmap calls need the mmap write semaphore, which
+      // blocks mmap/munmap/mprotect and all page faults from executing while
+      // they run. On 64-bit devices, this doesn't actually load into memory, it
+      // just makes the file faultable. So the whole file should be ok.
+      // b/185822878.
+      ICING_RETURN_IF_ERROR(mmapped_file.Remap(start, end - start));
+      auto mmap_str = std::string_view(mmapped_file.region(), end - start);
+      new_crc.Append(mmap_str);
+      break;
     }
+    case Architecture::BIT_32:
+      [[fallthrough]];
+    case Architecture::UNKNOWN: {
+      // 32-bit devices only have 4GB of RAM. Mmap in chunks to not use up too
+      // much memory at once. If we're unknown, then also chunk it because we're
+      // not sure what the device can handle.
+      for (int i = start; i < end; i += kMmapChunkSize) {
+        // Don't read past the file size.
+        int next_chunk_size = kMmapChunkSize;
+        if ((i + kMmapChunkSize) >= end) {
+          next_chunk_size = end - i;
+        }
 
-    ICING_RETURN_IF_ERROR(mmapped_file.Remap(i, next_chunk_size));
+        ICING_RETURN_IF_ERROR(mmapped_file.Remap(i, next_chunk_size));
 
-    auto mmap_str = std::string_view(mmapped_file.region(), next_chunk_size);
-    new_crc.Append(mmap_str);
+        auto mmap_str =
+            std::string_view(mmapped_file.region(), next_chunk_size);
+        new_crc.Append(mmap_str);
+      }
+      break;
+    }
   }
 
   return new_crc;
@@ -670,7 +704,8 @@ libtextclassifier3::StatusOr<int64_t> FileBackedProtoLog<ProtoT>::WriteProto(
         static_cast<long long>(proto_size), header_->max_proto_size));
   }
 
-  // At this point, we've guaranteed that proto_size is under kMaxProtoSize (see
+  // At this point, we've guaranteed that proto_size is under kMaxProtoSize
+  // (see
   // ::Create), so we can safely store it in an int.
   int final_size = 0;
 
@@ -735,8 +770,8 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   MemoryMappedFile mmapped_file(*filesystem_, file_path_,
                                 MemoryMappedFile::Strategy::READ_ONLY);
   if (file_offset >= file_size) {
-    // file_size points to the next byte to write at, so subtract one to get the
-    // inclusive, actual size of file.
+    // file_size points to the next byte to write at, so subtract one to get
+    // the inclusive, actual size of file.
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Trying to read from a location, %lld, "
                                       "out of range of the file size, %lld",
@@ -778,8 +813,8 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::EraseProto(
     int64_t file_offset) {
   int64_t file_size = filesystem_->GetFileSize(fd_.get());
   if (file_offset >= file_size) {
-    // file_size points to the next byte to write at, so subtract one to get the
-    // inclusive, actual size of file.
+    // file_size points to the next byte to write at, so subtract one to get
+    // the inclusive, actual size of file.
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
         "Trying to erase data at a location, %lld, "
         "out of range of the file size, %lld",
@@ -798,12 +833,12 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::EraseProto(
   ICING_RETURN_IF_ERROR(mmapped_file.Remap(file_offset + sizeof(metadata),
                                            GetProtoSize(metadata)));
 
-  // We need to update the crc checksum if the erased area is before the rewind
-  // position.
+  // We need to update the crc checksum if the erased area is before the
+  // rewind position.
   if (file_offset + sizeof(metadata) < header_->rewind_offset) {
     // We need to calculate [original string xor 0s].
-    // The xored string is the same as the original string because 0 xor 0 = 0,
-    // 1 xor 0 = 1.
+    // The xored string is the same as the original string because 0 xor 0 =
+    // 0, 1 xor 0 = 1.
     const std::string_view xored_str(mmapped_file.region(),
                                      mmapped_file.region_size());
 
@@ -896,7 +931,8 @@ int64_t FileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
 template <typename ProtoT>
 typename FileBackedProtoLog<ProtoT>::Iterator
 FileBackedProtoLog<ProtoT>::GetIterator() {
-  return Iterator(*filesystem_, file_path_, /*initial_offset=*/sizeof(Header));
+  return Iterator(*filesystem_, file_path_,
+                  /*initial_offset=*/sizeof(Header));
 }
 
 template <typename ProtoT>

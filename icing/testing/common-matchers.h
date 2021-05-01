@@ -25,7 +25,6 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/search.proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
