@@ -15,8 +15,6 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
-// This file is meant to hold util functions for tests that help the test
-// determine which platform-specific configuration it may be running in.
 namespace icing {
 namespace lib {
 
