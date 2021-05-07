@@ -30,6 +30,7 @@
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/optimize.pb.h"
@@ -44,7 +45,6 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
-#include "icing/testing/platform.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
@@ -92,6 +92,8 @@ constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
     PropertyConfigProto_Cardinality_Code_OPTIONAL;
 constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
     PropertyConfigProto_Cardinality_Code_REQUIRED;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
 
 constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
     StringIndexingConfig_TokenizerType_Code_PLAIN;
@@ -3384,125 +3386,6 @@ TEST_F(IcingSearchEngineTest, RecoverFromMissingHeaderFile) {
               ProtoIsOk());
 }
 
-TEST_F(IcingSearchEngineTest, RecoverFromInvalidHeaderMagic) {
-  SearchSpecProto search_spec;
-  search_spec.set_query("message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-
-  GetResultProto expected_get_result_proto;
-  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_get_result_proto.mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-
-  {
-    // Basic initialization/setup
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-    EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-                ProtoIsOk());
-    EXPECT_THAT(
-        icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
-        EqualsProto(expected_get_result_proto));
-    SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
-    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                         expected_search_result_proto));
-  }  // This should shut down IcingSearchEngine and persist anything it needs to
-
-  // Change the header's magic value
-  int32_t invalid_magic = 1;  // Anything that's not the actual kMagic value.
-  filesystem()->PWrite(GetHeaderFilename().c_str(),
-                       offsetof(IcingSearchEngine::Header, magic),
-                       &invalid_magic, sizeof(invalid_magic));
-
-  // We should be able to recover from this and access all our previous data
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-  // Checks that DocumentLog is still ok
-  EXPECT_THAT(
-      icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
-      EqualsProto(expected_get_result_proto));
-
-  // Checks that the index is still ok so we can search over it
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
-
-  // Checks that Schema is still since it'll be needed to validate the document
-  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-              ProtoIsOk());
-}
-
-TEST_F(IcingSearchEngineTest, RecoverFromInvalidHeaderChecksum) {
-  SearchSpecProto search_spec;
-  search_spec.set_query("message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-
-  GetResultProto expected_get_result_proto;
-  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_get_result_proto.mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-
-  {
-    // Basic initialization/setup
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-    EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-                ProtoIsOk());
-    EXPECT_THAT(
-        icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
-        EqualsProto(expected_get_result_proto));
-    SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
-    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                         expected_search_result_proto));
-  }  // This should shut down IcingSearchEngine and persist anything it needs to
-
-  // Change the header's checksum value
-  uint32_t invalid_checksum =
-      1;  // Anything that's not the actual checksum value
-  filesystem()->PWrite(GetHeaderFilename().c_str(),
-                       offsetof(IcingSearchEngine::Header, checksum),
-                       &invalid_checksum, sizeof(invalid_checksum));
-
-  // We should be able to recover from this and access all our previous data
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-  // Checks that DocumentLog is still ok
-  EXPECT_THAT(
-      icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
-      EqualsProto(expected_get_result_proto));
-
-  // Checks that the index is still ok so we can search over it
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
-
-  // Checks that Schema is still since it'll be needed to validate the document
-  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-              ProtoIsOk());
-}
-
 TEST_F(IcingSearchEngineTest, UnableToRecoverFromCorruptSchema) {
   {
     // Basic initialization/setup
@@ -3574,9 +3457,10 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
   {
     // Initializes folder and schema
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    IcingSearchEngine icing(options, GetTestJniCache());
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
 
     SchemaProto schema;
@@ -3650,6 +3534,13 @@ TEST_F(IcingSearchEngineTest, RecoverFromInconsistentSchemaStore) {
     property->mutable_string_indexing_config()->set_tokenizer_type(
         StringIndexingConfig::TokenizerType::PLAIN);
 
+    // Write the marker file
+    std::string marker_filepath =
+        absl_ports::StrCat(options.base_dir(), "/set_schema_marker");
+    ScopedFd sfd(filesystem()->OpenForWrite(marker_filepath.c_str()));
+    ASSERT_TRUE(sfd.is_valid());
+
+    // Write the new schema
     FakeClock fake_clock;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -5217,7 +5108,7 @@ TEST_F(IcingSearchEngineTest, ResetOk) {
   EXPECT_THAT(icing.SetSchema(empty_schema).status(), ProtoIsOk());
 }
 
-TEST_F(IcingSearchEngineTest, ResetAbortedError) {
+TEST_F(IcingSearchEngineTest, ResetDeleteFailureCausesAbortedError) {
   auto mock_filesystem = std::make_unique<MockFilesystem>();
 
   // This fails IcingSearchEngine::Reset(). But since we didn't actually delete
@@ -5251,22 +5142,27 @@ TEST_F(IcingSearchEngineTest, ResetAbortedError) {
               ProtoIsOk());
 }
 
-TEST_F(IcingSearchEngineTest, ResetInternalError) {
+TEST_F(IcingSearchEngineTest, ResetCreateFailureCausesInternalError) {
   auto mock_filesystem = std::make_unique<MockFilesystem>();
 
-  // Let all other calls succeed.
-  EXPECT_CALL(*mock_filesystem, Write(Matcher<const char*>(_), _, _))
+  // Let all other delete directory calls succeed.
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(Matcher<const char*>(_)))
       .WillRepeatedly(Return(true));
 
-  // This prevents IcingSearchEngine from creating a DocumentStore instance on
-  // reinitialization
-  const std::string document_log_path =
-      GetTestBaseDir() + "/document_dir/document_log";
+  // This prevents IcingSearchEngine from deleting our base dir when resetting
+  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(Matcher<const char*>(
+                                    StrEq(GetTestBaseDir().c_str()))))
+      .WillOnce(Return(false));
+
+  // The first call will show our base directory had 100 bytes, but after we
+  // falied to delete, we lost those 100 bytes. So this will be reported as an
+  // INTERNAL error since data was lost.
   EXPECT_CALL(
       *mock_filesystem,
-      Write(Matcher<const char*>(StrEq(document_log_path.c_str())), _, _))
-      .WillOnce(Return(true))
-      .WillOnce(Return(false));
+      GetDiskUsage(Matcher<const char*>(StrEq(GetTestBaseDir().c_str()))))
+      .WillOnce(Return(100))
+      .WillOnce(Return(0));
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
                               std::move(mock_filesystem),
@@ -6111,14 +6007,14 @@ TEST_F(IcingSearchEngineTest,
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::COMPLETE_LOSS));
-    // The complete rewind of ground truth causes the mismatch of total
-    // checksum, so index should be restored.
+    // The complete rewind of ground truth causes us to clear the index, but
+    // that's not considered a restoration.
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
-        Eq(InitializeStatsProto::TOTAL_CHECKSUM_MISMATCH));
+        Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
-                Eq(10));
+                Eq(0));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .schema_store_recovery_cause(),
                 Eq(InitializeStatsProto::NONE));
@@ -6185,26 +6081,51 @@ TEST_F(IcingSearchEngineTest,
 }
 
 TEST_F(IcingSearchEngineTest,
-       InitializeShouldLogRecoveryCauseTotalChecksumMismatch) {
+       InitializeShouldLogRecoveryCauseSchemaChangesOutofSync) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", "message body")
                                .Build();
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
   {
     // Initialize and put one document.
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    IcingSearchEngine icing(options, GetTestJniCache());
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
   {
-    // Change the header's checksum value to a random value.
-    uint32_t invalid_checksum = 1;
-    filesystem()->PWrite(GetHeaderFilename().c_str(),
-                         offsetof(IcingSearchEngine::Header, checksum),
-                         &invalid_checksum, sizeof(invalid_checksum));
+    // Simulate a schema change where power is lost after the schema is written.
+    SchemaProto new_schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Message")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("body")
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("subject")
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
+    // Write the marker file
+    std::string marker_filepath =
+        absl_ports::StrCat(options.base_dir(), "/set_schema_marker");
+    ScopedFd sfd(filesystem()->OpenForWrite(marker_filepath.c_str()));
+    ASSERT_TRUE(sfd.is_valid());
+
+    // Write the new schema
+    FakeClock fake_clock;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+    ICING_EXPECT_OK(schema_store->SetSchema(new_schema));
   }
 
   {
@@ -6219,16 +6140,49 @@ TEST_F(IcingSearchEngineTest,
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
-        Eq(InitializeStatsProto::TOTAL_CHECKSUM_MISMATCH));
+        Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(10));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .document_store_recovery_cause(),
-                Eq(InitializeStatsProto::TOTAL_CHECKSUM_MISMATCH));
+                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .document_store_recovery_latency_ms(),
                 Eq(10));
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().document_store_data_status(),
+        Eq(InitializeStatsProto::NO_DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(0));
+  }
+
+  {
+    // No recovery should be needed.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(0));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Eq(0));
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::NO_DATA_LOSS));
@@ -6841,6 +6795,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
 
   // Check the stats
   QueryStatsProto exp_stats;
+  exp_stats.set_query_length(7);
   exp_stats.set_num_terms(1);
   exp_stats.set_num_namespaces_filtered(1);
   exp_stats.set_num_schema_types_filtered(1);
@@ -6982,6 +6937,102 @@ TEST_F(IcingSearchEngineTest, StorageInfoTest) {
   StorageInfoResultProto result = icing.GetStorageInfo();
   EXPECT_THAT(result.status(), ProtoIsOk());
   EXPECT_THAT(result.storage_info().total_storage_size(), Ge(0));
+}
+
+TEST_F(IcingSearchEngineTest, SnippetErrorTest) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Generic").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetScore(10)
+          .SetSchema("Generic")
+          .AddStringProperty("subject", "I like cats", "I like dogs",
+                             "I like birds", "I like fish")
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetScore(20)
+          .SetSchema("Generic")
+          .AddStringProperty("subject", "I like red", "I like green",
+                             "I like blue", "I like yellow")
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetScore(5)
+          .SetSchema("Generic")
+          .AddStringProperty("subject", "I like cupcakes", "I like donuts",
+                             "I like eclairs", "I like froyo")
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.add_schema_type_filters("Generic");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("like");
+  ScoringSpecProto scoring_spec;
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ResultSpecProto result_spec;
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(2);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(3);
+  result_spec.mutable_snippet_spec()->set_max_window_bytes(4);
+  SearchResultProto search_results =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  ASSERT_THAT(search_results.results(), SizeIs(3));
+  const SearchResultProto::ResultProto* result = &search_results.results(0);
+  EXPECT_THAT(result->document().uri(), Eq("uri2"));
+  ASSERT_THAT(result->snippet().entries(), SizeIs(3));
+  const SnippetProto::EntryProto* entry = &result->snippet().entries(0);
+  EXPECT_THAT(entry->property_name(), "subject[0]");
+  std::string_view content = GetString(&result->document(), "subject[0]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(1);
+  EXPECT_THAT(entry->property_name(), "subject[1]");
+  content = GetString(&result->document(), "subject[1]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(2);
+  EXPECT_THAT(entry->property_name(), "subject[2]");
+  content = GetString(&result->document(), "subject[2]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  result = &search_results.results(1);
+  EXPECT_THAT(result->document().uri(), Eq("uri1"));
+  ASSERT_THAT(result->snippet().entries(), SizeIs(3));
+  entry = &result->snippet().entries(0);
+  EXPECT_THAT(entry->property_name(), "subject[0]");
+  content = GetString(&result->document(), "subject[0]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(1);
+  ASSERT_THAT(entry->property_name(), "subject[1]");
+  content = GetString(&result->document(), "subject[1]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  entry = &result->snippet().entries(2);
+  ASSERT_THAT(entry->property_name(), "subject[2]");
+  content = GetString(&result->document(), "subject[2]");
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("like"));
+
+  result = &search_results.results(2);
+  ASSERT_THAT(result->document().uri(), Eq("uri3"));
+  ASSERT_THAT(result->snippet().entries(), IsEmpty());
 }
 
 }  // namespace

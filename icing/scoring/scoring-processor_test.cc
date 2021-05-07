@@ -610,9 +610,9 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   DocHitInfo doc_hit_info2(document_id2);
   DocHitInfo doc_hit_info3(document_id3);
   ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
-                                         /*score=*/1);
+                                         /*score=*/1000);
   ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
-                                         /*score=*/5);
+                                         /*score=*/5000);
   ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
                                          /*score=*/0);
 
