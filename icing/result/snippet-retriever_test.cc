@@ -1134,6 +1134,201 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelSingleValue) {
                   "B[0].Z", "B[1].Z", "C[0].X", "C[1].X", "C[0].Z", "C[1].Z"));
 }
 
+TEST_F(SnippetRetrieverTest, CJKSnippetMatchTest) {
+  // String:     "我每天走路去上班。"
+  //              ^ ^  ^   ^^
+  // UTF8 idx:    0 3  9  15 18
+  // UTF16 idx:   0 1  3   5 6
+  // Breaks into segments: "我", "每天", "走路", "去", "上班"
+  constexpr std::string_view kChinese = "我每天走路去上班。";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kChinese)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"走"}}};
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("走路"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(3));
+  EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
+}
+
+TEST_F(SnippetRetrieverTest, CJKSnippetWindowTest) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_SIMPLIFIED_CHINESE);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      language_segmenter_,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  // String:     "我每天走路去上班。"
+  //              ^ ^  ^   ^^
+  // UTF8 idx:    0 3  9  15 18
+  // UTF16 idx:   0 1  3   5 6
+  // Breaks into segments: "我", "每天", "走路", "去", "上班"
+  constexpr std::string_view kChinese = "我每天走路去上班。";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kChinese)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"走"}}};
+
+  // Set a twenty byte window. This will produce a window like this:
+  // String:     "我每天走路去上班。"
+  //                ^       ^
+  // UTF8 idx:      3       18
+  // UTF16 idx:     1       6
+  snippet_spec_.set_max_window_bytes(20);
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetWindows(content, *entry), ElementsAre("每天走路去"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.window_utf16_position(), Eq(1));
+  EXPECT_THAT(match_proto.window_utf16_length(), Eq(5));
+}
+
+TEST_F(SnippetRetrieverTest, Utf16MultiCodeUnitSnippetMatchTest) {
+  // The following string has four-byte UTF-8 characters. Most importantly, it
+  // is also two code units in UTF-16.
+  // String:     "𐀀𐀁 𐀂𐀃 𐀄"
+  //              ^  ^  ^
+  // UTF8 idx:    0  9  18
+  // UTF16 idx:   0  5  10
+  // Breaks into segments: "𐀀𐀁", "𐀂𐀃", "𐀄"
+  constexpr std::string_view kText = "𐀀𐀁 𐀂𐀃 𐀄";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kText)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"𐀂"}}};
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("𐀂𐀃"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(5));
+  EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(4));
+}
+
+TEST_F(SnippetRetrieverTest, Utf16MultiCodeUnitWindowTest) {
+  // The following string has four-byte UTF-8 characters. Most importantly, it
+  // is also two code units in UTF-16.
+  // String:     "𐀀𐀁 𐀂𐀃 𐀄"
+  //              ^  ^  ^
+  // UTF8 idx:    0  9  18
+  // UTF16 idx:   0  5  10
+  // Breaks into segments: "𐀀𐀁", "𐀂𐀃", "𐀄"
+  constexpr std::string_view kText = "𐀀𐀁 𐀂𐀃 𐀄";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kText)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"𐀂"}}};
+
+  // Set a twenty byte window. This will produce a window like this:
+  // String:     "𐀀𐀁 𐀂𐀃 𐀄"
+  //                 ^   ^
+  // UTF8 idx:       9   22
+  // UTF16 idx:      5   12
+  snippet_spec_.set_max_window_bytes(20);
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetWindows(content, *entry), ElementsAre("𐀂𐀃 𐀄"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.window_utf16_position(), Eq(5));
+  EXPECT_THAT(match_proto.window_utf16_length(), Eq(7));
+}
+
 }  // namespace
 
 }  // namespace lib

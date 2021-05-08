@@ -327,7 +327,7 @@ TEST_F(DocumentStoreTest, PutSameKey) {
   EXPECT_THAT(doc_store->Put(document3), IsOkAndHolds(Not(document_id1)));
 }
 
-TEST_F(DocumentStoreTest, IsDocumentExisting) {
+TEST_F(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
