@@ -832,6 +832,19 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
               IsOkAndHolds(EqualsProto(message_document)));
 }
 
+TEST_F(DocumentStoreTest, PutDeleteThenPut) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  ICING_EXPECT_OK(doc_store->Put(test_document1_));
+  ICING_EXPECT_OK(
+      doc_store->Delete(test_document1_.namespace_(), test_document1_.uri()));
+  ICING_EXPECT_OK(doc_store->Put(test_document1_));
+}
+
 TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
   SchemaProto schema =
       SchemaBuilder()
