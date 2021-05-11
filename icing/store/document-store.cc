@@ -839,8 +839,13 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
         usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
                                        /*to_document_id=*/new_document_id));
 
-    // Delete the old document.
-    ICING_RETURN_IF_ERROR(Delete(old_document_id));
+    // Delete the old document. It's fine if it's not found since it might have
+    // been deleted previously.
+    auto delete_status = Delete(old_document_id);
+    if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+      // Real error, pass it up.
+      return delete_status;
+    }
   }
 
   if (put_document_stats != nullptr) {
@@ -885,8 +890,9 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
   auto document_log_offset_or = document_id_mapper_->Get(document_id);
   if (!document_log_offset_or.ok()) {
-    // Since we've just checked that our document_id is valid a few lines above,
-    // there's no reason this should fail and an error should never happen.
+    // Since we've just checked that our document_id is valid a few lines
+    // above, there's no reason this should fail and an error should never
+    // happen.
     return absl_ports::InternalError("Failed to find document offset.");
   }
   int64_t document_log_offset = *document_log_offset_or.ValueOrDie();
@@ -998,8 +1004,8 @@ bool DocumentStore::IsDeleted(DocumentId document_id) const {
     // This would only happen if document_id is out of range of the
     // document_id_mapper, meaning we got some invalid document_id. Callers
     // should already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return true since the document
-    // doesn't exist.
+    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // document doesn't exist.
     return true;
   }
   int64_t file_offset = *file_offset_or.ValueOrDie();
@@ -1012,8 +1018,8 @@ bool DocumentStore::IsExpired(DocumentId document_id) const {
     // This would only happen if document_id is out of range of the
     // filter_cache, meaning we got some invalid document_id. Callers should
     // already have checked that their document_id is valid or used
-    // DoesDocumentExist(WithStatus). Regardless, return true since the document
-    // doesn't exist.
+    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // document doesn't exist.
     return true;
   }
   const DocumentFilterData* filter_data = filter_data_or.ValueOrDie();
@@ -1226,8 +1232,8 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
       continue;
     }
 
-    // The document has the desired namespace and schema type, it either exists
-    // or has expired.
+    // The document has the desired namespace and schema type, it either
+    // exists or has expired.
     libtextclassifier3::Status delete_status = Delete(document_id);
     if (absl_ports::IsNotFound(delete_status)) {
       continue;
