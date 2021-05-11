@@ -136,18 +136,29 @@ message ResultSpecProto {
 }
 
 // The representation of a single match within a DocumentProto property.
-// Next tag: 6
+// Next tag: 10
 message SnippetMatchProto {
-  // The position and length within the matched string at which the exact
-  // match begins.
-  optional int32 exact_match_position = 2;
+  // The index of the byte in the string at which the match begins and the
+  // length in bytes of the match.
+  optional int32 exact_match_byte_position = 2;
+  optional int32 exact_match_byte_length = 3;
 
-  optional int32 exact_match_bytes = 3;
+  // The index of the UTF-16 code unit in the string at which the match begins
+  // and the length in UTF-16 code units of the match. This is for use with
+  // UTF-16 encoded strings like Java.lang.String.
+  optional int32 exact_match_utf16_position = 6;
+  optional int32 exact_match_utf16_length = 7;
 
-  // The position and length of the suggested snippet window.
-  optional int32 window_position = 4;
+  // The index of the byte in the string at which the suggested snippet window
+  // begins and the length in bytes of the window.
+  optional int32 window_byte_position = 4;
+  optional int32 window_byte_length = 5;
 
-  optional int32 window_bytes = 5;
+  // The index of the UTF-16 code unit in the string at which the suggested
+  // snippet window begins and the length in UTF-16 code units of the window.
+  // This is for use with UTF-16 encoded strings like Java.lang.String.
+  optional int32 window_utf16_position = 8;
+  optional int32 window_utf16_length = 9;
 
   reserved 1;
 }

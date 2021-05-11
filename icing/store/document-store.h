@@ -198,6 +198,12 @@ class DocumentStore {
   // Check if a document exists. Existence means it hasn't been deleted and it
   // hasn't expired yet.
   //
+  // NOTE: This should be used when callers don't care about error messages,
+  // expect documents to be deleted/not found, or in frequently called code
+  // paths that could cause performance issues. A signficant amount of CPU
+  // cycles can be saved if we don't construct strings and create new Status
+  // objects on the heap. See b/185822483.
+  //
   // Returns:
   //   boolean whether a document exists or not
   bool DoesDocumentExist(DocumentId document_id) const;
@@ -625,21 +631,45 @@ class DocumentStore {
   libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
   GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const;
 
-  // Helper method to validate the document id and return the file offset of the
-  // associated document in document_log_.
-  //
-  // This can be a more informative call than just DoesDocumentExist because it
-  // can return more status errors on whether the Document actually doesn't
-  // exist or if there was an internal error while accessing files.
+  // Check if a document exists. Existence means it hasn't been deleted and it
+  // hasn't expired yet.
   //
   // Returns:
-  //   The file offset on success
+  //   OK if the document exists
   //   INVALID_ARGUMENT if document_id is less than 0 or greater than the
   //                    maximum value
   //   NOT_FOUND if the document doesn't exist (i.e. deleted or expired)
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<int64_t> DoesDocumentExistAndGetFileOffset(
+  libtextclassifier3::Status DoesDocumentExistWithStatus(
       DocumentId document_id) const;
+
+  // Check if a document exists. Existence means it hasn't been deleted and it
+  // hasn't expired yet.
+  //
+  // This is for internal-use only because we assume that the document_id is
+  // already valid. If you're unsure if the document_id is valid, use
+  // DoesDocumentExist(document_id) instead, which will perform those additional
+  // checks.
+  //
+  // Returns:
+  //   boolean whether a document exists or not
+  bool InternalDoesDocumentExist(DocumentId document_id) const;
+
+  // Checks if a document has been deleted
+  //
+  // This is for internal-use only because we assume that the document_id is
+  // already valid. If you're unsure if the document_id is valid, use
+  // DoesDocumentExist(document_id) instead, which will perform those additional
+  // checks.
+  bool IsDeleted(DocumentId document_id) const;
+
+  // Checks if a document has expired.
+  //
+  // This is for internal-use only because we assume that the document_id is
+  // already valid. If you're unsure if the document_id is valid, use
+  // DoesDocumentExist(document_id) instead, which will perform those additional
+  // checks.
+  bool IsExpired(DocumentId document_id) const;
 
   // Updates the entry in the score cache for document_id.
   libtextclassifier3::Status UpdateDocumentAssociatedScoreCache(
