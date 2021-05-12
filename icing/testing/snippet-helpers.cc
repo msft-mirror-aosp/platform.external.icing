@@ -61,8 +61,8 @@ std::vector<std::string_view> GetWindows(
     std::string_view content, const SnippetProto::EntryProto& snippet_proto) {
   std::vector<std::string_view> windows;
   for (const SnippetMatchProto& match : snippet_proto.snippet_matches()) {
-    windows.push_back(
-        content.substr(match.window_position(), match.window_bytes()));
+    windows.push_back(content.substr(match.window_byte_position(),
+                                     match.window_byte_length()));
   }
   return windows;
 }
@@ -71,8 +71,8 @@ std::vector<std::string_view> GetMatches(
     std::string_view content, const SnippetProto::EntryProto& snippet_proto) {
   std::vector<std::string_view> matches;
   for (const SnippetMatchProto& match : snippet_proto.snippet_matches()) {
-    matches.push_back(content.substr(match.exact_match_position(),
-                                     match.exact_match_bytes()));
+    matches.push_back(content.substr(match.exact_match_byte_position(),
+                                     match.exact_match_byte_length()));
   }
   return matches;
 }
