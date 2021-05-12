@@ -45,7 +45,7 @@ add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
 # Compile libandroidicu
 set(ICU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../icu/libandroidicu")
 set(ICU_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/icu-target")
-add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
+add_subdirectory("${ICU_SOURCE_DIR}/static_shim" ${ICU_TARGET_BINARY_DIR})
 
 # Glob Icing proto sources. Results look like this: icing/proto/document.proto
 file(
