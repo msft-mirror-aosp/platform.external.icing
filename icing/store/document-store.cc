@@ -459,44 +459,42 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
       schema_type_id = schema_type_id_or.ValueOrDie();
     }
 
-      ICING_ASSIGN_OR_RETURN(
-          NamespaceId namespace_id,
-          namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
-                                      namespace_mapper_->num_keys()));
+    ICING_ASSIGN_OR_RETURN(
+        NamespaceId namespace_id,
+        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
+                                    namespace_mapper_->num_keys()));
 
-      // Update corpus maps
-      std::string corpus =
-          MakeFingerprint(document_wrapper.document().namespace_(),
-                          document_wrapper.document().schema());
-      ICING_ASSIGN_OR_RETURN(
-          CorpusId corpusId,
-          corpus_mapper_->GetOrPut(corpus, corpus_mapper_->num_keys()));
+    // Update corpus maps
+    std::string corpus =
+        MakeFingerprint(document_wrapper.document().namespace_(),
+                        document_wrapper.document().schema());
+    ICING_ASSIGN_OR_RETURN(
+        CorpusId corpusId,
+        corpus_mapper_->GetOrPut(corpus, corpus_mapper_->num_keys()));
 
-      ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
-                             GetCorpusAssociatedScoreDataToUpdate(corpusId));
-      scoring_data.AddDocument(
-          document_wrapper.document().internal_fields().length_in_tokens());
+    ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
+                           GetCorpusAssociatedScoreDataToUpdate(corpusId));
+    scoring_data.AddDocument(
+        document_wrapper.document().internal_fields().length_in_tokens());
 
-      ICING_RETURN_IF_ERROR(
-          UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
+    ICING_RETURN_IF_ERROR(
+        UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
 
-      ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
-          new_document_id,
-          DocumentAssociatedScoreData(
-              corpusId, document_wrapper.document().score(),
-              document_wrapper.document().creation_timestamp_ms(),
-              document_wrapper.document()
-                  .internal_fields()
-                  .length_in_tokens())));
+    ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
+        new_document_id,
+        DocumentAssociatedScoreData(
+            corpusId, document_wrapper.document().score(),
+            document_wrapper.document().creation_timestamp_ms(),
+            document_wrapper.document().internal_fields().length_in_tokens())));
 
-      int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
-          document_wrapper.document().creation_timestamp_ms(),
-          document_wrapper.document().ttl_ms());
+    int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
+        document_wrapper.document().creation_timestamp_ms(),
+        document_wrapper.document().ttl_ms());
 
-      ICING_RETURN_IF_ERROR(UpdateFilterCache(
-          new_document_id, DocumentFilterData(namespace_id, schema_type_id,
-                                              expiration_timestamp_ms)));
-      iterator_status = iterator.Advance();
+    ICING_RETURN_IF_ERROR(UpdateFilterCache(
+        new_document_id, DocumentFilterData(namespace_id, schema_type_id,
+                                            expiration_timestamp_ms)));
+    iterator_status = iterator.Advance();
   }
 
   if (!absl_ports::IsOutOfRange(iterator_status)) {
@@ -833,18 +831,20 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
                                           expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
+    // The old document exists, copy over the usage scores and delete the old
+    // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
-    auto offset_or = DoesDocumentExistAndGetFileOffset(old_document_id);
 
-    if (offset_or.ok()) {
-      // The old document exists, copy over the usage scores.
-      ICING_RETURN_IF_ERROR(
-          usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
-                                         /*to_document_id=*/new_document_id));
+    ICING_RETURN_IF_ERROR(
+        usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
+                                       /*to_document_id=*/new_document_id));
 
-      // Delete the old document.
-      ICING_RETURN_IF_ERROR(document_log_->EraseProto(offset_or.ValueOrDie()));
-      ICING_RETURN_IF_ERROR(ClearDerivedData(old_document_id));
+    // Delete the old document. It's fine if it's not found since it might have
+    // been deleted previously.
+    auto delete_status = Delete(old_document_id);
+    if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+      // Real error, pass it up.
+      return delete_status;
     }
   }
 
@@ -886,8 +886,16 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     DocumentId document_id, bool clear_internal_fields) const {
-  ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
-                         DoesDocumentExistAndGetFileOffset(document_id));
+  ICING_RETURN_IF_ERROR(DoesDocumentExistWithStatus(document_id));
+
+  auto document_log_offset_or = document_id_mapper_->Get(document_id);
+  if (!document_log_offset_or.ok()) {
+    // Since we've just checked that our document_id is valid a few lines
+    // above, there's no reason this should fail and an error should never
+    // happen.
+    return absl_ports::InternalError("Failed to find document offset.");
+  }
+  int64_t document_log_offset = *document_log_offset_or.ValueOrDie();
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -938,7 +946,7 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
     }
     const DocumentFilterData* data = status_or_data.ValueOrDie();
 
-    if (DoesDocumentExist(document_id)) {
+    if (InternalDoesDocumentExist(document_id)) {
       existing_namespace_ids.insert(data->namespace_id());
     }
   }
@@ -951,40 +959,74 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
   return existing_namespaces;
 }
 
-libtextclassifier3::StatusOr<int64_t>
-DocumentStore::DoesDocumentExistAndGetFileOffset(DocumentId document_id) const {
+bool DocumentStore::DoesDocumentExist(DocumentId document_id) const {
   if (!IsDocumentIdValid(document_id)) {
-    return absl_ports::InvalidArgumentError(
-        IcingStringUtil::StringPrintf("DocumentId %d is invalid", document_id));
+    return false;
   }
 
-  auto file_offset_or = document_id_mapper_->Get(document_id);
-
-  bool deleted =
-      file_offset_or.ok() && *file_offset_or.ValueOrDie() == kDocDeletedFlag;
-  if (deleted || absl_ports::IsOutOfRange(file_offset_or.status())) {
-    // Document has been deleted or doesn't exist
-    return absl_ports::NotFoundError(
-        IcingStringUtil::StringPrintf("Document %d not found", document_id));
+  if (document_id >= document_id_mapper_->num_elements()) {
+    // Somehow got an validly constructed document_id that the document store
+    // doesn't know about
+    return false;
   }
 
-  ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
-                         filter_cache_->Get(document_id));
-  if (clock_.GetSystemTimeMilliseconds() >=
-      filter_data->expiration_timestamp_ms()) {
-    // Past the expiration time, so also return NOT FOUND since it *shouldn't*
-    // exist anymore.
-    return absl_ports::NotFoundError(
-        IcingStringUtil::StringPrintf("Document %d not found", document_id));
-  }
-
-  ICING_RETURN_IF_ERROR(file_offset_or.status());
-  return *file_offset_or.ValueOrDie();
+  return InternalDoesDocumentExist(document_id);
 }
 
-bool DocumentStore::DoesDocumentExist(DocumentId document_id) const {
-  // If we can successfully get the document log offset, the document exists.
-  return DoesDocumentExistAndGetFileOffset(document_id).ok();
+libtextclassifier3::Status DocumentStore::DoesDocumentExistWithStatus(
+    DocumentId document_id) const {
+  if (!IsDocumentIdValid(document_id)) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Document id '%d' invalid.", document_id));
+  }
+
+  if (document_id >= document_id_mapper_->num_elements()) {
+    // Somehow got a validly constructed document_id that the document store
+    // doesn't know about.
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Unknown document id '%d'.", document_id));
+  }
+
+  if (!InternalDoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Document id '%d' doesn't exist", document_id));
+  };
+  return libtextclassifier3::Status::OK;
+}
+
+bool DocumentStore::InternalDoesDocumentExist(DocumentId document_id) const {
+  return !IsDeleted(document_id) && !IsExpired(document_id);
+}
+
+bool DocumentStore::IsDeleted(DocumentId document_id) const {
+  auto file_offset_or = document_id_mapper_->Get(document_id);
+  if (!file_offset_or.ok()) {
+    // This would only happen if document_id is out of range of the
+    // document_id_mapper, meaning we got some invalid document_id. Callers
+    // should already have checked that their document_id is valid or used
+    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // document doesn't exist.
+    return true;
+  }
+  int64_t file_offset = *file_offset_or.ValueOrDie();
+  return file_offset == kDocDeletedFlag;
+}
+
+bool DocumentStore::IsExpired(DocumentId document_id) const {
+  auto filter_data_or = filter_cache_->Get(document_id);
+  if (!filter_data_or.ok()) {
+    // This would only happen if document_id is out of range of the
+    // filter_cache, meaning we got some invalid document_id. Callers should
+    // already have checked that their document_id is valid or used
+    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // document doesn't exist.
+    return true;
+  }
+  const DocumentFilterData* filter_data = filter_data_or.ValueOrDie();
+
+  // Check if it's past the expiration time
+  return clock_.GetSystemTimeMilliseconds() >=
+         filter_data->expiration_timestamp_ms();
 }
 
 libtextclassifier3::Status DocumentStore::Delete(
@@ -1001,9 +1043,14 @@ libtextclassifier3::Status DocumentStore::Delete(
 }
 
 libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id) {
-  // Copy out the document to get namespace and uri.
-  ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
-                         DoesDocumentExistAndGetFileOffset(document_id));
+  ICING_RETURN_IF_ERROR(DoesDocumentExistWithStatus(document_id));
+
+  auto document_log_offset_or = document_id_mapper_->Get(document_id);
+  if (!document_log_offset_or.ok()) {
+    return absl_ports::InternalError("Failed to find document offset.");
+  }
+  int64_t document_log_offset = *document_log_offset_or.ValueOrDie();
+
   // Erases document proto.
   ICING_RETURN_IF_ERROR(document_log_->EraseProto(document_log_offset));
   return ClearDerivedData(document_id);
@@ -1185,8 +1232,8 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
       continue;
     }
 
-    // The document has the desired namespace and schema type, it either exists
-    // or has expired.
+    // The document has the desired namespace and schema type, it either
+    // exists or has expired.
     libtextclassifier3::Status delete_status = Delete(document_id);
     if (absl_ports::IsNotFound(delete_status)) {
       continue;
@@ -1262,15 +1309,9 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
   for (DocumentId document_id = 0;
        document_id < document_id_mapper_->num_elements(); ++document_id) {
     // Check if it's deleted first.
-    auto location_or = document_id_mapper_->Get(document_id);
-    if (!location_or.ok()) {
-      ICING_VLOG(1) << "Error trying to get document offsets for document "
-                       "store storage info counts.";
-      continue;
-    }
-    if (*location_or.ValueOrDie() == kDocDeletedFlag) {
-      // We don't have the namespace id of hard deleted documents anymore, so we
-      // can't add to our namespace storage info.
+    if (IsDeleted(document_id)) {
+      // We don't have the namespace id of hard deleted documents anymore, so
+      // we can't add to our namespace storage info.
       ++total_num_deleted;
       continue;
     }
@@ -1308,23 +1349,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
     UsageStore::UsageScores usage_scores = usage_scores_or.ValueOrDie();
 
     // Update our stats
-    if (DoesDocumentExist(document_id)) {
-      ++total_num_alive;
-      namespace_storage_info.set_num_alive_documents(
-          namespace_storage_info.num_alive_documents() + 1);
-      if (usage_scores.usage_type1_count > 0) {
-        namespace_storage_info.set_num_alive_documents_usage_type1(
-            namespace_storage_info.num_alive_documents_usage_type1() + 1);
-      }
-      if (usage_scores.usage_type2_count > 0) {
-        namespace_storage_info.set_num_alive_documents_usage_type2(
-            namespace_storage_info.num_alive_documents_usage_type2() + 1);
-      }
-      if (usage_scores.usage_type3_count > 0) {
-        namespace_storage_info.set_num_alive_documents_usage_type3(
-            namespace_storage_info.num_alive_documents_usage_type3() + 1);
-      }
-    } else {
+    if (IsExpired(document_id)) {
       ++total_num_expired;
       namespace_storage_info.set_num_expired_documents(
           namespace_storage_info.num_expired_documents() + 1);
@@ -1339,6 +1364,22 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
       if (usage_scores.usage_type3_count > 0) {
         namespace_storage_info.set_num_expired_documents_usage_type3(
             namespace_storage_info.num_expired_documents_usage_type3() + 1);
+      }
+    } else {
+      ++total_num_alive;
+      namespace_storage_info.set_num_alive_documents(
+          namespace_storage_info.num_alive_documents() + 1);
+      if (usage_scores.usage_type1_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type1(
+            namespace_storage_info.num_alive_documents_usage_type1() + 1);
+      }
+      if (usage_scores.usage_type2_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type2(
+            namespace_storage_info.num_alive_documents_usage_type2() + 1);
+      }
+      if (usage_scores.usage_type3_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type3(
+            namespace_storage_info.num_alive_documents_usage_type3() + 1);
       }
     }
   }
@@ -1422,16 +1463,9 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
 
   int size = document_id_mapper_->num_elements();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
-    auto exists_or = DoesDocumentExistAndGetFileOffset(document_id);
-    if (absl_ports::IsNotFound(exists_or.status())) {
+    if (!InternalDoesDocumentExist(document_id)) {
       // Skip nonexistent documents
       continue;
-    } else if (!exists_or.ok()) {
-      // Real error, pass up
-      return absl_ports::Annotate(
-          exists_or.status(),
-          IcingStringUtil::StringPrintf("Failed to retrieve DocumentId %d",
-                                        document_id));
     }
 
     // Guaranteed that the document exists now.
@@ -1508,11 +1542,9 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
-      // Don't optimize nonexistent documents, but collect stats
-      auto location_or = document_id_mapper_->Get(document_id);
-      if (location_or.ok() && *location_or.ValueOrDie() == kDocDeletedFlag) {
+      if (IsDeleted(document_id)) {
         ++num_deleted;
-      } else {
+      } else if (IsExpired(document_id)) {
         ++num_expired;
       }
       continue;
@@ -1576,7 +1608,7 @@ DocumentStore::GetOptimizeInfo() const {
   int32_t num_documents = document_id_mapper_->num_elements();
   for (DocumentId document_id = kMinDocumentId; document_id < num_documents;
        ++document_id) {
-    if (!DoesDocumentExist(document_id)) {
+    if (!InternalDoesDocumentExist(document_id)) {
       ++optimize_info.optimizable_docs;
     }
 
@@ -1614,10 +1646,10 @@ DocumentStore::GetOptimizeInfo() const {
   ICING_ASSIGN_OR_RETURN(const int64_t document_key_mapper_size,
                          document_key_mapper_->GetElementsSize());
 
-  // We don't include the namespace_mapper or the corpus_mapper because it's not
-  // clear if we could recover any space even if Optimize were called. Deleting
-  // 100s of documents could still leave a few documents of a namespace, and
-  // then there would be no change.
+  // We don't include the namespace_mapper or the corpus_mapper because it's
+  // not clear if we could recover any space even if Optimize were called.
+  // Deleting 100s of documents could still leave a few documents of a
+  // namespace, and then there would be no change.
 
   int64_t total_size = document_log_file_size + document_key_mapper_size +
                        document_id_mapper_file_size + score_cache_file_size +
@@ -1647,8 +1679,8 @@ libtextclassifier3::Status DocumentStore::UpdateFilterCache(
 libtextclassifier3::Status DocumentStore::ClearDerivedData(
     DocumentId document_id) {
   // We intentionally leave the data in key_mapper_ because locating that data
-  // requires fetching namespace and uri. Leaving data in key_mapper_ should be
-  // fine because the data is hashed.
+  // requires fetching namespace and uri. Leaving data in key_mapper_ should
+  // be fine because the data is hashed.
 
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(document_id, kDocDeletedFlag));
 
