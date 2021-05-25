@@ -310,8 +310,6 @@ libtextclassifier3::Status LiteIndex::AddHit(uint32_t term_id, const Hit& hit) {
     return absl_ports::ResourceExhaustedError("Hit buffer is full!");
   }
 
-  header_->set_last_added_docid(hit.document_id());
-
   TermIdHitPair term_id_hit_pair(term_id, hit);
   uint32_t cur_size = header_->cur_size();
   TermIdHitPair::Value* valp =
