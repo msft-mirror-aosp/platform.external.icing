@@ -225,6 +225,9 @@ class LiteIndex {
   DocumentId last_added_document_id() const {
     return header_->last_added_docid();
   }
+  void set_last_added_document_id(DocumentId document_id) const {
+    header_->set_last_added_docid(document_id);
+  }
 
   const IcingDynamicTrie& lexicon() const { return lexicon_; }
 

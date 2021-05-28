@@ -95,6 +95,10 @@ class ScorerTest : public testing::Test {
 
   const FakeClock& fake_clock2() { return fake_clock2_; }
 
+  void SetFakeClock1Time(int64_t new_time) {
+    fake_clock1_.SetSystemTimeMilliseconds(new_time);
+  }
+
  private:
   const std::string test_dir_;
   const std::string doc_store_dir_;
@@ -123,7 +127,7 @@ TEST_F(ScorerTest, CreationWithNullPointerShouldFail) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ScorerTest, ShouldGetDefaultScore) {
+TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentDoesntExist) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
       Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
@@ -132,6 +136,66 @@ TEST_F(ScorerTest, ShouldGetDefaultScore) {
   // Non existent document id
   DocHitInfo docHitInfo = DocHitInfo(/*document_id_in=*/1);
   // The caller-provided default score is returned
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
+}
+
+TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentIsDeleted) {
+  // Creates a test document with a provided score
+  DocumentProto test_document = DocumentBuilder()
+                                    .SetKey("icing", "email/1")
+                                    .SetSchema("email")
+                                    .AddStringProperty("subject", "subject foo")
+                                    .SetScore(42)
+                                    .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
+                     /*default_score=*/10, document_store()));
+
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  // The document's score is returned
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(42));
+
+  // Delete the document and check that the caller-provided default score is
+  // returned
+  EXPECT_THAT(document_store()->Delete(document_id), IsOk());
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
+}
+
+TEST_F(ScorerTest, ShouldGetDefaultScoreIfDocumentIsExpired) {
+  // Creates a test document with a provided score
+  int64_t creation_time = fake_clock1().GetSystemTimeMilliseconds();
+  int64_t ttl = 100;
+  DocumentProto test_document = DocumentBuilder()
+                                    .SetKey("icing", "email/1")
+                                    .SetSchema("email")
+                                    .AddStringProperty("subject", "subject foo")
+                                    .SetScore(42)
+                                    .SetCreationTimestampMs(creation_time)
+                                    .SetTtlMs(ttl)
+                                    .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store()->Put(test_document));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      Scorer::Create(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
+                     /*default_score=*/10, document_store()));
+
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  // The document's score is returned since the document hasn't expired yet.
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(42));
+
+  // Expire the document and check that the caller-provided default score is
+  // returned
+  SetFakeClock1Time(creation_time + ttl + 10);
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
 }
 
