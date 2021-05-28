@@ -64,6 +64,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
         "DocumentId %d must be greater than last added document_id %d",
         document_id, index_->last_added_document_id()));
   }
+  index_->set_last_added_document_id(document_id);
   uint32_t num_tokens = 0;
   libtextclassifier3::Status overall_status;
   for (const TokenizedSection& section : tokenized_document.sections()) {

@@ -256,16 +256,9 @@ class DocumentStore {
   // Returns the DocumentAssociatedScoreData of the document specified by the
   // DocumentId.
   //
-  // NOTE: This does not check if the document exists and will return the
-  // DocumentFilterData of the document even if it has been deleted. Users
-  // should check DoesDocumentExist(document_id) if they only want existing
-  // documents' DocumentFilterData.
-  //
   // Returns:
   //   DocumentAssociatedScoreData on success
-  //   OUT_OF_RANGE if document_id is negative or exceeds previously seen
-  //                DocumentIds
-  //   NOT_FOUND if no score data is found
+  //   NOT_FOUND if the document or the score data is not found
   libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
   GetDocumentAssociatedScoreData(DocumentId document_id) const;
 
@@ -302,8 +295,8 @@ class DocumentStore {
   //
   // Returns:
   //   UsageScores on success
+  //   NOT_FOUND if document_id no longer exists.
   //   INVALID_ARGUMENT if document_id is invalid
-  //   INTERNAL_ERROR on I/O errors
   libtextclassifier3::StatusOr<UsageStore::UsageScores> GetUsageScores(
       DocumentId document_id) const;
 
