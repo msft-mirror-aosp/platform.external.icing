@@ -1068,6 +1068,11 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
+  if (!DoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+  }
+
   auto score_data_or = score_cache_->GetCopy(document_id);
   if (!score_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
@@ -1131,6 +1136,10 @@ DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
 
 libtextclassifier3::StatusOr<UsageStore::UsageScores>
 DocumentStore::GetUsageScores(DocumentId document_id) const {
+  if (!DoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+  }
   return usage_store_->GetUsageScores(document_id);
 }
 
@@ -1139,6 +1148,17 @@ libtextclassifier3::Status DocumentStore::ReportUsage(
   ICING_ASSIGN_OR_RETURN(DocumentId document_id,
                          GetDocumentId(usage_report.document_namespace(),
                                        usage_report.document_uri()));
+  // We can use the internal version here because we got our document_id from
+  // our internal data structures. We would have thrown some error if the
+  // namespace and/or uri were incorrect.
+  if (!InternalDoesDocumentExist(document_id)) {
+    // Document was probably deleted or expired.
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "Couldn't report usage on a nonexistent document: (namespace: '",
+        usage_report.document_namespace(), "', uri: '",
+        usage_report.document_uri(), "')"));
+  }
+
   return usage_store_->AddUsageReport(usage_report, document_id);
 }
 
@@ -1587,6 +1607,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
                            usage_store_->GetUsageScores(document_id));
+
     DocumentId new_document_id = new_document_id_or.ValueOrDie();
     ICING_RETURN_IF_ERROR(
         new_doc_store->SetUsageScores(new_document_id, usage_scores));
