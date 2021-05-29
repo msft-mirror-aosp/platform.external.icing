@@ -1639,7 +1639,7 @@ TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreDataDifferentCorpus) {
           /*length_in_tokens=*/7)));
 }
 
-TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataOutOfRange) {
+TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1648,7 +1648,7 @@ TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataOutOfRange) {
       std::move(create_result.document_store);
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(/*document_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
@@ -1699,7 +1699,7 @@ TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(DocumentStoreTest, DeleteShouldClearUsageScores) {
+TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1724,10 +1724,63 @@ TEST_F(DocumentStoreTest, DeleteShouldClearUsageScores) {
   // Delete the document.
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
 
-  // The scores should be cleared.
-  expected_scores.usage_type1_count = 0;
+  // Can't report or get usage scores on the deleted document
+  ASSERT_THAT(
+      doc_store->ReportUsage(usage_report_type1),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
+               HasSubstr("Couldn't report usage on a nonexistent document")));
+
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
+                       HasSubstr("Can't get usage scores")));
+}
+
+TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "email/1")
+                               .SetSchema("email")
+                               .AddStringProperty("subject", "subject foo")
+                               .AddStringProperty("body", "body bar")
+                               .SetScore(document1_score_)
+                               .SetCreationTimestampMs(10)
+                               .SetTtlMs(100)
+                               .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
+
+  // Some arbitrary time before the document's creation time (10) + ttl (100)
+  fake_clock_.SetSystemTimeMilliseconds(109);
+
+  // Report usage with type 1.
+  UsageReport usage_report_type1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
+
+  UsageStore::UsageScores expected_scores;
+  expected_scores.usage_type1_count = 1;
   ASSERT_THAT(doc_store->GetUsageScores(document_id),
               IsOkAndHolds(expected_scores));
+
+  // Some arbitrary time past the document's creation time (10) + ttl (100)
+  fake_clock_.SetSystemTimeMilliseconds(200);
+
+  // Can't report or get usage scores on the expired document
+  ASSERT_THAT(
+      doc_store->ReportUsage(usage_report_type1),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
+               HasSubstr("Couldn't report usage on a nonexistent document")));
+
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
+                       HasSubstr("Can't get usage scores")));
 }
 
 TEST_F(DocumentStoreTest,

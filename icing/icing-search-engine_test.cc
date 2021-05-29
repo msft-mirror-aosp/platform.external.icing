@@ -97,8 +97,11 @@ constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
 
 constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
     StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_NONE =
+    StringIndexingConfig_TokenizerType_Code_NONE;
 
 constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+constexpr TermMatchType_Code MATCH_NONE = TermMatchType_Code_UNKNOWN;
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -5723,6 +5726,88 @@ TEST_F(IcingSearchEngineTest, RestoreIndexLoseIndex) {
     // Only the first document should be retrievable.
     ASSERT_THAT(results.results(), SizeIs(1));
     EXPECT_THAT(results.results(0).document().uri(), Eq("fake_type/0"));
+  }
+}
+
+TEST_F(IcingSearchEngineTest,
+       DocumentWithNoIndexedContentDoesntCauseRestoreIndex) {
+  // 1. Create an index with a single document in it that has no indexed
+  // content.
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Set a schema for a single type that has no indexed properties.
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("unindexedField")
+                    .SetDataTypeString(MATCH_NONE, TOKENIZER_NONE)
+                    .SetCardinality(CARDINALITY_REQUIRED)))
+            .Build();
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+    // Add a document that contains no indexed content.
+    DocumentProto document =
+        DocumentBuilder()
+            .SetKey("icing", "fake_type/0")
+            .SetSchema("Message")
+            .AddStringProperty("unindexedField",
+                               "Don't you dare search over this!")
+            .Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // 2. Create the index again. This should NOT trigger a recovery of any kind.
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    EXPECT_THAT(init_result.status(), ProtoIsOk());
+    EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+                Eq(InitializeStatsProto::NO_DATA_LOSS));
+    EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+  }
+}
+
+TEST_F(IcingSearchEngineTest,
+       DocumentWithNoValidIndexedContentDoesntCauseRestoreIndex) {
+  // 1. Create an index with a single document in it that has no valid indexed
+  // tokens in its content.
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Set a schema for a single type that has no indexed properties.
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    // Add a document that contains no valid indexed content - just punctuation.
+    DocumentProto document = DocumentBuilder()
+                                 .SetKey("icing", "fake_type/0")
+                                 .SetSchema("Message")
+                                 .AddStringProperty("body", "?...!")
+                                 .Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // 2. Create the index again. This should NOT trigger a recovery of any kind.
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    EXPECT_THAT(init_result.status(), ProtoIsOk());
+    EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+                Eq(InitializeStatsProto::NO_DATA_LOSS));
+    EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
   }
 }
 
