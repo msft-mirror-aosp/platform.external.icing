@@ -127,6 +127,16 @@ class Index {
     return main_index_->last_added_document_id();
   }
 
+  // Sets last_added_document_id to document_id so long as document_id >
+  // last_added_document_id()
+  void set_last_added_document_id(DocumentId document_id) {
+    DocumentId lite_document_id = lite_index_->last_added_document_id();
+    if (lite_document_id == kInvalidDocumentId ||
+        document_id >= lite_document_id) {
+      lite_index_->set_last_added_document_id(document_id);
+    }
+  }
+
   // Returns debug information for the index in out.
   // verbosity <= 0, simplest debug information - just the lexicons and lite
   //                 index.

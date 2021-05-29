@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/reverse_jni/reverse-jni-language-segmenter-test.h"
+#include <jni.h>
 
 #include <memory>
 #include <string_view>
 
+#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "unicode/uloc.h"
@@ -119,6 +121,14 @@ std::vector<std::string_view> GetAllTermsResetBefore(
   }
   return terms;
 }
+
+class ReverseJniLanguageSegmenterTest
+    : public testing::TestWithParam<const char*> {
+ protected:
+  static std::string GetLocale() { return GetParam(); }
+
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
+};
 
 }  // namespace
 

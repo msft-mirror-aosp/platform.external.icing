@@ -261,7 +261,23 @@ TEST_F(IndexProcessorTest, NoTermMatchTypeContent) {
                                 document));
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kInvalidDocumentId));
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+}
+
+TEST_F(IndexProcessorTest, NoValidContent) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kExactProperty), "?...!")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 
 TEST_F(IndexProcessorTest, OneDoc) {
