@@ -21,12 +21,12 @@
 JNIEnv* g_jenv = nullptr;
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_icing_tokenization_reverse_1jni_ReverseJniLanguageSegmenterTest_testsMain(
-    JNIEnv* env, jclass ignored) {
+Java_icing_jni_ReverseJniLanguageSegmenterJniTest_testsMain(JNIEnv* env,
+                                                            jclass ignored) {
   g_jenv = env;
 
   std::vector<char*> my_argv;
-  char arg[] = "reverse-jni-language-segmenter-test-lib";
+  char arg[] = "jni-test-lib";
   my_argv.push_back(arg);
   int argc = 1;
   char** argv = &(my_argv[0]);
