@@ -1595,7 +1595,7 @@ TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
           /*length_in_tokens=*/7)));
 }
 
-TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreDataDifferentCorpus) {
+TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1648,6 +1648,18 @@ TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataNotFound) {
       std::move(create_result.document_store);
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(/*document_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(DocumentStoreTest, NonexistentDocumentFilterDataNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  EXPECT_THAT(doc_store->GetDocumentFilterData(/*document_id=*/0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -3099,36 +3111,39 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
 #define DISABLE_BACKWARDS_COMPAT_TEST
 #ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
-  // The directory testdata/v0/document_store contains only the scoring_cache
-  // and the document_store_header (holding the crc for the scoring_cache). If
-  // the current code is compatible with the format of the v0 scoring_cache,
-  // then an empty document store should be initialized, but the non-empty
-  // scoring_cache should be retained.
-  // The current document-asscoiated-score-data has a new field with respect to
-  // the ones stored in testdata/v0, hence the document store's initialization
-  // requires regenerating its derived files.
+  // The directory testdata/score_cache_without_length_in_tokens/document_store
+  // contains only the scoring_cache and the document_store_header (holding the
+  // crc for the scoring_cache). If the current code is compatible with the
+  // format of the v0 scoring_cache, then an empty document store should be
+  // initialized, but the non-empty scoring_cache should be retained. The
+  // current document-asscoiated-score-data has a new field with respect to the
+  // ones stored in testdata/score_cache_Without_length_in_tokens, hence the
+  // document store's initialization requires regenerating its derived files.
 
   // Create dst directory
   ASSERT_THAT(filesystem_.CreateDirectory(document_store_dir_.c_str()), true);
 
   // Get src files
-  std::string document_store_v0;
+  std::string document_store_without_length_in_tokens;
   if (IsAndroidPlatform() || IsIosPlatform()) {
-    document_store_v0 = GetTestFilePath(
-        "icing/testdata/v0/document_store_android_ios_compatible");
+    document_store_without_length_in_tokens = GetTestFilePath(
+        "icing/testdata/score_cache_without_length_in_tokens/"
+        "document_store_android_ios_compatible");
   } else {
-    document_store_v0 =
-        GetTestFilePath("icing/testdata/v0/document_store");
+    document_store_without_length_in_tokens = GetTestFilePath(
+        "icing/testdata/score_cache_without_length_in_tokens/"
+        "document_store");
   }
   std::vector<std::string> document_store_files;
   Filesystem filesystem;
-  filesystem.ListDirectory(document_store_v0.c_str(), &document_store_files);
+  filesystem.ListDirectory(document_store_without_length_in_tokens.c_str(),
+                           &document_store_files);
 
-  VLOG(1) << "Copying files " << document_store_v0 << ' '
-          << document_store_files.size();
+  ICING_LOG(INFO) << "Copying files " << document_store_without_length_in_tokens
+                  << ' ' << document_store_files.size();
   for (size_t i = 0; i != document_store_files.size(); i++) {
-    std::string src =
-        absl_ports::StrCat(document_store_v0, "/", document_store_files[i]);
+    std::string src = absl_ports::StrCat(
+        document_store_without_length_in_tokens, "/", document_store_files[i]);
     std::string dst =
         absl_ports::StrCat(document_store_dir_, "/", document_store_files[i]);
     ASSERT_THAT(filesystem_.CopyFile(src.c_str(), dst.c_str()), true);
