@@ -147,80 +147,92 @@ class PortableFileBackedProtoLog {
       Crc32 crc;
 
       // Get a string_view of all the fields of the Header, excluding the
-      // magic_nbytes and header_checksum_nbytes
-      std::string_view header_str(reinterpret_cast<const char*>(this) +
-                                      offsetof(Header, header_checksum_nbytes) +
-                                      sizeof(header_checksum_nbytes),
-                                  sizeof(Header) - sizeof(magic_nbytes) -
-                                      sizeof(header_checksum_nbytes));
+      // magic_nbytes_ and header_checksum_nbytes_
+      std::string_view header_str(
+          reinterpret_cast<const char*>(this) +
+              offsetof(Header, header_checksum_nbytes_) +
+              sizeof(header_checksum_nbytes_),
+          sizeof(Header) - sizeof(magic_nbytes_) -
+              sizeof(header_checksum_nbytes_));
       crc.Append(header_str);
       return crc.Get();
     }
 
-    int32_t GetMagic() const { return gntohl(magic_nbytes); }
+    int32_t GetMagic() const { return gntohl(magic_nbytes_); }
 
-    void SetMagic(int32_t magic_in) { magic_nbytes = ghtonl(magic_in); }
+    void SetMagic(int32_t magic_in) { magic_nbytes_ = ghtonl(magic_in); }
 
     int32_t GetFileFormatVersion() const {
-      return gntohl(file_format_version_nbytes);
+      return gntohl(file_format_version_nbytes_);
     }
 
     void SetFileFormatVersion(int32_t file_format_version_in) {
-      file_format_version_nbytes = ghtonl(file_format_version_in);
+      file_format_version_nbytes_ = ghtonl(file_format_version_in);
     }
 
-    int32_t GetMaxProtoSize() const { return gntohl(max_proto_size_nbytes); }
+    int32_t GetMaxProtoSize() const { return gntohl(max_proto_size_nbytes_); }
 
     void SetMaxProtoSize(int32_t max_proto_size_in) {
-      max_proto_size_nbytes = ghtonl(max_proto_size_in);
+      max_proto_size_nbytes_ = ghtonl(max_proto_size_in);
     }
 
-    int32_t GetLogChecksum() const { return gntohl(log_checksum_nbytes); }
+    int32_t GetLogChecksum() const { return gntohl(log_checksum_nbytes_); }
 
     void SetLogChecksum(int32_t log_checksum_in) {
-      log_checksum_nbytes = ghtonl(log_checksum_in);
+      log_checksum_nbytes_ = ghtonl(log_checksum_in);
     }
 
-    int64_t GetRewindOffset() const { return gntohll(rewind_offset_nbytes); }
+    int64_t GetRewindOffset() const { return gntohll(rewind_offset_nbytes_); }
 
     void SetRewindOffset(int64_t rewind_offset_in) {
-      rewind_offset_nbytes = ghtonll(rewind_offset_in);
+      rewind_offset_nbytes_ = ghtonll(rewind_offset_in);
     }
 
-    int32_t GetHeaderChecksum() const { return gntohl(header_checksum_nbytes); }
+    int32_t GetHeaderChecksum() const {
+      return gntohl(header_checksum_nbytes_);
+    }
 
     void SetHeaderChecksum(int32_t header_checksum_in) {
-      header_checksum_nbytes = ghtonl(header_checksum_in);
+      header_checksum_nbytes_ = ghtonl(header_checksum_in);
     }
 
-    bool GetCompressFlag() const {
-      uint16_t host_order_flags = gntohs(flags_nbytes);
-      return bit_util::BitfieldGet(host_order_flags, kCompressBit, /*len=*/1);
-    }
+    bool GetCompressFlag() const { return GetFlag(kCompressBit); }
 
-    void SetCompressFlag(bool compress) {
-      uint16_t host_order_flags = gntohs(flags_nbytes);
-      bit_util::BitfieldSet(compress, kCompressBit,
-                            /*len=*/1, &host_order_flags);
-      flags_nbytes = ghtons(host_order_flags);
-    }
+    void SetCompressFlag(bool compress) { SetFlag(kCompressBit, compress); }
+
+    bool GetDirtyFlag() { return GetFlag(kDirtyBit); }
+
+    void SetDirtyFlag(bool dirty) { SetFlag(kDirtyBit, dirty); }
 
    private:
     // The least-significant bit offset at which the compress flag is stored in
-    // 'flags_nbytes'. Represents whether the protos in the log are compressed
+    // 'flags_nbytes_'. Represents whether the protos in the log are compressed
     // or not.
     static constexpr int32_t kCompressBit = 0;
+
+    // The least-significant bit offset at which the dirty flag is stored in
+    // 'flags'. Represents whether the checksummed portion of the log has been
+    // modified after the last checksum was computed.
+    static constexpr int32_t kDirtyBit = 1;
+
+    bool GetFlag(int offset) const {
+      return bit_util::BitfieldGet(flags_, offset, /*len=*/1);
+    }
+
+    void SetFlag(int offset, bool value) {
+      bit_util::BitfieldSet(value, offset, /*len=*/1, &flags_);
+    }
 
     // Holds the magic as a quick sanity check against file corruption.
     //
     // Field is in network-byte order.
-    int32_t magic_nbytes = ghtonl(kMagic);
+    int32_t magic_nbytes_ = ghtonl(kMagic);
 
     // Must be at the beginning after kMagic. Contains the crc checksum of
     // the following fields.
     //
     // Field is in network-byte order.
-    uint32_t header_checksum_nbytes = 0;
+    uint32_t header_checksum_nbytes_ = 0;
 
     // Last known good offset at which the log and its checksum were updated.
     // If we crash between writing to the log and updating the checksum, we can
@@ -228,7 +240,7 @@ class PortableFileBackedProtoLog {
     // valid instead of throwing away the entire log.
     //
     // Field is in network-byte order.
-    int64_t rewind_offset_nbytes = ghtonll(kHeaderReservedBytes);
+    int64_t rewind_offset_nbytes_ = ghtonll(kHeaderReservedBytes);
 
     // Version number tracking how we serialize the file to disk. If we change
     // how/what we write to disk, this version should be updated and this class
@@ -237,23 +249,23 @@ class PortableFileBackedProtoLog {
     // Currently at kFileFormatVersion.
     //
     // Field is in network-byte order.
-    int32_t file_format_version_nbytes = 0;
+    int32_t file_format_version_nbytes_ = 0;
 
     // The maximum proto size that can be written to the log.
     //
     // Field is in network-byte order.
-    int32_t max_proto_size_nbytes = 0;
+    int32_t max_proto_size_nbytes_ = 0;
 
     // Checksum of the log elements, doesn't include the header fields.
     //
     // Field is in network-byte order.
-    uint32_t log_checksum_nbytes = 0;
+    uint32_t log_checksum_nbytes_ = 0;
 
     // Bits are used to hold various flags.
     //   Lowest bit is whether the protos are compressed or not.
     //
-    // Field is in network-byte order.
-    uint16_t flags_nbytes = 0;
+    // Field is only 1 byte, so is byte-order agnostic.
+    uint8_t flags_ = 0;
 
     // NOTE: New fields should *almost always* be added to the end here. Since
     // this class may have already been written to disk, appending fields
@@ -270,7 +282,14 @@ class PortableFileBackedProtoLog {
     // happen if the file is corrupted or some previously added data was
     // unpersisted. This may be used to signal that any derived data off of the
     // proto log may need to be regenerated.
-    DataLoss data_loss;
+    DataLoss data_loss = DataLoss::NONE;
+
+    // Whether the proto log had to recalculate the checksum to check its
+    // integrity. This can be avoided if no changes were made or the log was
+    // able to update its checksum before shutting down. But it may have to
+    // recalculate if it's unclear if we crashed after updating the log, but
+    // before updating our checksum.
+    bool recalculated_checksum = false;
 
     bool has_data_loss() {
       return data_loss == DataLoss::PARTIAL || data_loss == DataLoss::COMPLETE;
@@ -638,7 +657,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
                                                  std::move(header))),
-      /*data_loss=*/DataLoss::NONE};
+      /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
 
   return create_result;
 }
@@ -649,6 +668,7 @@ libtextclassifier3::StatusOr<
 PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
     const Filesystem* filesystem, const std::string& file_path,
     const Options& options, int64_t file_size) {
+  bool header_changed = false;
   if (file_size < kHeaderReservedBytes) {
     return absl_ports::InternalError(
         absl_ports::StrCat("File header too short for: ", file_path));
@@ -687,61 +707,85 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
         header->GetCompressFlag(), options.compress));
   }
 
-  if (header->GetMaxProtoSize() > options.max_proto_size) {
+  int32_t existing_max_proto_size = header->GetMaxProtoSize();
+  if (existing_max_proto_size > options.max_proto_size) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Max proto size cannot be smaller than previous "
         "instantiations, previous size %d, wanted size %d",
         header->GetMaxProtoSize(), options.max_proto_size));
+  } else if (existing_max_proto_size < options.max_proto_size) {
+    // It's fine if our new max size is greater than our previous one. Existing
+    // data is still valid.
+    header->SetMaxProtoSize(options.max_proto_size);
+    header_changed = true;
   }
-  header->SetMaxProtoSize(options.max_proto_size);
 
   DataLoss data_loss = DataLoss::NONE;
-  ICING_ASSIGN_OR_RETURN(
-      Crc32 calculated_log_checksum,
-      ComputeChecksum(filesystem, file_path, Crc32(),
-                      /*start=*/kHeaderReservedBytes, /*end=*/file_size));
 
-  // Double check that the log checksum is the same as the one that was
-  // persisted last time. If not, we start recovery logic.
-  if (header->GetLogChecksum() != calculated_log_checksum.Get()) {
-    // Need to rewind the proto log since the checksums don't match.
-    // Worst case, we have to rewind the entire log back to just the header
-    int64_t last_known_good = kHeaderReservedBytes;
+  // If we have any documents in our tail, get rid of them since they're not in
+  // our checksum. Our checksum reflects content up to the rewind offset.
+  if (file_size > header->GetRewindOffset()) {
+    if (!filesystem->Truncate(file_path.c_str(), header->GetRewindOffset())) {
+      return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+          "Failed to truncate '%s' to size %lld", file_path.data(),
+          static_cast<long long>(header->GetRewindOffset())));
+    };
+    data_loss = DataLoss::PARTIAL;
+  }
 
-    // Calculate the checksum of the log contents just up to the last rewind
-    // offset point. This will be valid if we just appended contents to the log
-    // without updating the checksum, and we can rewind back to this point
-    // safely.
-    ICING_ASSIGN_OR_RETURN(calculated_log_checksum,
-                           ComputeChecksum(filesystem, file_path, Crc32(),
-                                           /*start=*/kHeaderReservedBytes,
-                                           /*end=*/header->GetRewindOffset()));
-    if (header->GetLogChecksum() == calculated_log_checksum.Get()) {
-      // Check if it matches our last rewind state. If so, this becomes our last
-      // good state and we can safely truncate and recover from here.
-      last_known_good = header->GetRewindOffset();
-      data_loss = DataLoss::PARTIAL;
-    } else {
-      // Otherwise, we're going to truncate the entire log and this resets the
-      // checksum to an empty log state.
-      header->SetLogChecksum(0);
-      data_loss = DataLoss::COMPLETE;
+  bool recalculated_checksum = false;
+
+  // If our dirty flag is set, that means we might have crashed in the middle of
+  // erasing a proto. This could have happened anywhere between:
+  //   A. Set dirty flag to true and update header checksum
+  //   B. Erase the proto
+  //   C. Set dirty flag to false, update log checksum, update header checksum
+  //
+  // Scenario 1: We went down between A and B. Maybe our dirty flag is a
+  // false alarm and we can keep all our data.
+  //
+  // Scenario 2: We went down between B and C. Our data is compromised and
+  // we need to throw everything out.
+  if (header->GetDirtyFlag()) {
+    // Recompute the log's checksum to detect which scenario we're in.
+    ICING_ASSIGN_OR_RETURN(
+        Crc32 calculated_log_checksum,
+        ComputeChecksum(filesystem, file_path, Crc32(),
+                        /*start=*/kHeaderReservedBytes, /*end=*/file_size));
+
+    if (header->GetLogChecksum() != calculated_log_checksum.Get()) {
+      // Still doesn't match, we're in Scenario 2. Throw out all our data now
+      // and initialize as a new instance.
+      ICING_ASSIGN_OR_RETURN(CreateResult create_result,
+                             InitializeNewFile(filesystem, file_path, options));
+      create_result.data_loss = DataLoss::COMPLETE;
+      create_result.recalculated_checksum = true;
+      return create_result;
     }
+    // Otherwise we're good, checksum matches our contents so continue
+    // initializing like normal.
+    recalculated_checksum = true;
 
-    if (!filesystem->Truncate(file_path.c_str(), last_known_good)) {
+    // Update our header.
+    header->SetDirtyFlag(false);
+    header_changed = true;
+  }
+
+  if (header_changed) {
+    header->SetHeaderChecksum(header->CalculateHeaderChecksum());
+
+    if (!filesystem->PWrite(file_path.c_str(), /*offset=*/0, header.get(),
+                            sizeof(Header))) {
       return absl_ports::InternalError(
-          absl_ports::StrCat("Error truncating file: ", file_path));
+          absl_ports::StrCat("Failed to update header to: ", file_path));
     }
-
-    ICING_LOG(INFO) << "Truncated '" << file_path << "' to size "
-                    << last_known_good;
   }
 
   CreateResult create_result = {
       std::unique_ptr<PortableFileBackedProtoLog<ProtoT>>(
           new PortableFileBackedProtoLog<ProtoT>(filesystem, file_path,
                                                  std::move(header))),
-      data_loss};
+      data_loss, recalculated_checksum};
 
   return create_result;
 }
@@ -963,7 +1007,18 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
 
   // We need to update the crc checksum if the erased area is before the
   // rewind position.
-  if (file_offset + sizeof(metadata) < header_->GetRewindOffset()) {
+  int32_t new_crc;
+  int64_t erased_proto_offset = file_offset + sizeof(metadata);
+  if (erased_proto_offset < header_->GetRewindOffset()) {
+    // Set to "dirty" before we start writing anything.
+    header_->SetDirtyFlag(true);
+    header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
+    if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
+                             sizeof(Header))) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Failed to update dirty bit of header to: ", file_path_));
+    }
+
     // We need to calculate [original string xor 0s].
     // The xored string is the same as the original string because 0 xor 0 =
     // 0, 1 xor 0 = 1.
@@ -972,13 +1027,20 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
 
     Crc32 crc(header_->GetLogChecksum());
     ICING_ASSIGN_OR_RETURN(
-        uint32_t new_crc,
-        crc.UpdateWithXor(xored_str,
-                          /*full_data_size=*/header_->GetRewindOffset() -
-                              kHeaderReservedBytes,
-                          /*position=*/file_offset + sizeof(metadata) -
-                              kHeaderReservedBytes));
+        new_crc, crc.UpdateWithXor(
+                     xored_str,
+                     /*full_data_size=*/header_->GetRewindOffset() -
+                         kHeaderReservedBytes,
+                     /*position=*/erased_proto_offset - kHeaderReservedBytes));
+  }
 
+  // Clear the region.
+  memset(mmapped_file.mutable_region(), '\0', mmapped_file.region_size());
+
+  // If we cleared something in our checksummed area, we should update our
+  // checksum and reset our dirty bit.
+  if (erased_proto_offset < header_->GetRewindOffset()) {
+    header_->SetDirtyFlag(false);
     header_->SetLogChecksum(new_crc);
     header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
 
@@ -989,7 +1051,6 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     }
   }
 
-  memset(mmapped_file.mutable_region(), '\0', mmapped_file.region_size());
   return libtextclassifier3::Status::OK;
 }
 
