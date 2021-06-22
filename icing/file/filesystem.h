@@ -83,6 +83,9 @@ class Filesystem {
   // success or if the directory did not yet exist.
   virtual bool DeleteDirectoryRecursively(const char* dir_name) const;
 
+  // Copies the src file to the dst file.
+  virtual bool CopyFile(const char* src, const char* dst) const;
+
   // Returns true if a file exists.  False if the file doesn't exist.
   // If there is an error getting stat on the file, it logs the error and //
   // asserts.

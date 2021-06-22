@@ -20,6 +20,22 @@
 namespace icing {
 namespace lib {
 
+// A fake timer class for tests. It makes sure that the elapsed time changes
+// every time it's requested.
+class FakeTimer : public Timer {
+ public:
+  int64_t GetElapsedMilliseconds() override {
+    return fake_elapsed_milliseconds_;
+  }
+
+  void SetElapsedMilliseconds(int64_t elapsed_milliseconds) {
+    fake_elapsed_milliseconds_ = elapsed_milliseconds;
+  }
+
+ private:
+  int64_t fake_elapsed_milliseconds_ = 0;
+};
+
 // Wrapper around real-time clock functions. This is separated primarily so
 // tests can override this clock and inject it into the class under test.
 class FakeClock : public Clock {
@@ -30,8 +46,17 @@ class FakeClock : public Clock {
     milliseconds_ = milliseconds;
   }
 
+  std::unique_ptr<Timer> GetNewTimer() const override {
+    return std::make_unique<FakeTimer>(fake_timer_);
+  }
+
+  void SetTimerElapsedMilliseconds(int64_t timer_elapsed_milliseconds) {
+    fake_timer_.SetElapsedMilliseconds(timer_elapsed_milliseconds);
+  }
+
  private:
   int64_t milliseconds_ = 0;
+  FakeTimer fake_timer_;
 };
 
 }  // namespace lib

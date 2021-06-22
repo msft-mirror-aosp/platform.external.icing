@@ -22,11 +22,13 @@ bool EnsureLocalCapacity(JNIEnv* env, int capacity) {
   return env->EnsureLocalCapacity(capacity) == JNI_OK;
 }
 
-bool JniExceptionCheckAndClear(JNIEnv* env) {
+bool JniExceptionCheckAndClear(JNIEnv* env, bool print_exception_on_error) {
   TC3_CHECK(env != nullptr);
   const bool result = env->ExceptionCheck();
   if (result) {
-    env->ExceptionDescribe();
+    if (print_exception_on_error) {
+      env->ExceptionDescribe();
+    }
     env->ExceptionClear();
   }
   return result;

@@ -334,7 +334,8 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
         snippet_spec.num_matches_per_property();
 
     // Retrieve values and snippet them.
-    auto values_or = schema_store_.GetSectionContent(document, metadata->path);
+    auto values_or =
+        schema_store_.GetStringSectionContent(document, metadata->path);
     if (!values_or.ok()) {
       continue;
     }
@@ -344,7 +345,7 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
       // If we couldn't create the tokenizer properly, just skip this section.
       continue;
     }
-    std::vector<std::string> values = values_or.ValueOrDie();
+    std::vector<std::string_view> values = values_or.ValueOrDie();
     for (int value_index = 0; value_index < values.size(); ++value_index) {
       if (match_options.max_matches_remaining <= 0) {
         break;

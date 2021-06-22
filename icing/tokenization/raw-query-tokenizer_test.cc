@@ -18,10 +18,12 @@
 #include "gtest/gtest.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -32,10 +34,12 @@ using ::testing::HasSubstr;
 class RawQueryTokenizerTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
   }
 };
 
@@ -46,8 +50,10 @@ TEST_F(RawQueryTokenizerTest, CreationWithNullPointerShouldFail) {
 }
 
 TEST_F(RawQueryTokenizerTest, Simple) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -56,11 +62,17 @@ TEST_F(RawQueryTokenizerTest, Simple) {
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("Hello World!"),
               IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
                                        EqualsToken(Token::REGULAR, "World"))));
+
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("hElLo WORLD"),
+              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "hElLo"),
+                                       EqualsToken(Token::REGULAR, "WORLD"))));
 }
 
 TEST_F(RawQueryTokenizerTest, Parentheses) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -159,8 +171,10 @@ TEST_F(RawQueryTokenizerTest, Parentheses) {
 }
 
 TEST_F(RawQueryTokenizerTest, Exclustion) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -226,8 +240,10 @@ TEST_F(RawQueryTokenizerTest, Exclustion) {
 }
 
 TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -284,6 +300,12 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
                                EqualsToken(Token::REGULAR, "term2"))));
 
   EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("property1:今天:天气"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
+                               EqualsToken(Token::REGULAR, "今天"),
+                               EqualsToken(Token::REGULAR, "天气"))));
+
+  EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("property1:term1-"),
       IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
                                EqualsToken(Token::REGULAR, "term1"))));
@@ -314,8 +336,10 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
 }
 
 TEST_F(RawQueryTokenizerTest, OR) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -435,24 +459,45 @@ TEST_F(RawQueryTokenizerTest, OR) {
 // CJKT are treated the same way by language segmenter and raw tokenizer, so
 // here we test Chinese and Japanese to represent CJKT.
 TEST_F(RawQueryTokenizerTest, CJKT) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
   // Exclusion only applies to the term right after it.
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-今天天气很好"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                       EqualsToken(Token::REGULAR, "今天"),
-                                       EqualsToken(Token::REGULAR, "天气"),
-                                       EqualsToken(Token::REGULAR, "很好"))));
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(
+        raw_query_tokenizer->TokenizeAll("-今天天气很好"),
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
+                                 EqualsToken(Token::REGULAR, "今天"),
+                                 EqualsToken(Token::REGULAR, "天气"),
+                                 EqualsToken(Token::REGULAR, "很"),
+                                 EqualsToken(Token::REGULAR, "好"))));
+  } else {
+    EXPECT_THAT(
+        raw_query_tokenizer->TokenizeAll("-今天天气很好"),
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
+                                 EqualsToken(Token::REGULAR, "今天"),
+                                 EqualsToken(Token::REGULAR, "天气"),
+                                 EqualsToken(Token::REGULAR, "很好"))));
+  }
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1:你好"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "你好"))));
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:你好"),
+                IsOkAndHolds(
+                    ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
+                                EqualsToken(Token::REGULAR, "你"),
+                                EqualsToken(Token::REGULAR, "好"))));
+  } else {
+    EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:你好"),
+                IsOkAndHolds(
+                    ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
+                                EqualsToken(Token::REGULAR, "你好"))));
+  }
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("标题:你好"),
@@ -488,8 +533,10 @@ TEST_F(RawQueryTokenizerTest, CJKT) {
 // Raw tokenizer identifies all characters that it doesn't know as OTHER type,
 // so we can choose comma "," to represent all OTHER characters.
 TEST_F(RawQueryTokenizerTest, OtherChars) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
@@ -533,28 +580,51 @@ TEST_F(RawQueryTokenizerTest, OtherChars) {
 }
 
 TEST_F(RawQueryTokenizerTest, Mix) {
-  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
-                             language_segmenter_factory::Create());
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Tokenizer> raw_query_tokenizer,
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll(
-          "こんにちはgood afternoon, title:今天 OR (ในวันนี้ -B12)"),
-      IsOkAndHolds(ElementsAre(
-          EqualsToken(Token::REGULAR, "こんにちは"),
-          EqualsToken(Token::REGULAR, "good"),
-          EqualsToken(Token::REGULAR, "afternoon"),
-          EqualsToken(Token::QUERY_PROPERTY, "title"),
-          EqualsToken(Token::REGULAR, "今天"), EqualsToken(Token::QUERY_OR, ""),
-          EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-          EqualsToken(Token::REGULAR, "ใน"), EqualsToken(Token::REGULAR, "วัน"),
-          EqualsToken(Token::REGULAR, "นี้"),
-          EqualsToken(Token::QUERY_EXCLUSION, ""),
-          EqualsToken(Token::REGULAR, "B12"),
-          EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(raw_query_tokenizer->TokenizeAll(
+                    "こんにちはgood afternoon, title:今天 OR (ในวันนี้ -B12)"),
+                IsOkAndHolds(ElementsAre(
+                    EqualsToken(Token::REGULAR, "こんにちは"),
+                    EqualsToken(Token::REGULAR, "good"),
+                    EqualsToken(Token::REGULAR, "afternoon"),
+                    EqualsToken(Token::QUERY_PROPERTY, "title"),
+                    EqualsToken(Token::REGULAR, "今天"),
+                    EqualsToken(Token::QUERY_OR, ""),
+                    EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
+                    EqualsToken(Token::REGULAR, "ใน"),
+                    EqualsToken(Token::REGULAR, "วันนี้"),
+                    EqualsToken(Token::QUERY_EXCLUSION, ""),
+                    EqualsToken(Token::REGULAR, "B12"),
+                    EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+  } else {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::vector<Token> tokens,
+        raw_query_tokenizer->TokenizeAll(
+            "こんにちはgood afternoon, title:今天 OR (ในวันนี้ -B12)"));
+    EXPECT_THAT(tokens,
+                ElementsAre(EqualsToken(Token::REGULAR, "こんにちは"),
+                            EqualsToken(Token::REGULAR, "good"),
+                            EqualsToken(Token::REGULAR, "afternoon"),
+                            EqualsToken(Token::QUERY_PROPERTY, "title"),
+                            EqualsToken(Token::REGULAR, "今天"),
+                            EqualsToken(Token::QUERY_OR, ""),
+                            EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
+                            EqualsToken(Token::REGULAR, "ใน"),
+                            EqualsToken(Token::REGULAR, "วัน"),
+                            EqualsToken(Token::REGULAR, "นี้"),
+                            EqualsToken(Token::QUERY_EXCLUSION, ""),
+                            EqualsToken(Token::REGULAR, "B12"),
+                            EqualsToken(Token::QUERY_RIGHT_PARENTHESES, "")));
+  }
 }
 
 }  // namespace

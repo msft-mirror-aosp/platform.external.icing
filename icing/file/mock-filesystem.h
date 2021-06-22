@@ -225,6 +225,8 @@ class MockFilesystem : public Filesystem {
   MOCK_METHOD(bool, DeleteDirectoryRecursively, (const char* dir_name),
               (const));
 
+  MOCK_METHOD(bool, CopyFile, (const char* src, const char* dst), (const));
+
   MOCK_METHOD(bool, FileExists, (const char* file_name), (const));
 
   MOCK_METHOD(bool, DirectoryExists, (const char* dir_name), (const));

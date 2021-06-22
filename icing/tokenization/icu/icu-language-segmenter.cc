@@ -169,7 +169,7 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
   // Returns true on success
   bool Initialize() {
     UErrorCode status = U_ZERO_ERROR;
-    utext_openUTF8(&u_text_, text_.data(), /*length=*/-1, &status);
+    utext_openUTF8(&u_text_, text_.data(), text_.length(), &status);
     break_iterator_ = ubrk_open(UBRK_WORD, locale_.data(), /*text=*/nullptr,
                                 /*textLength=*/0, &status);
     ubrk_setUText(break_iterator_, &u_text_, &status);

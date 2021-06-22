@@ -746,6 +746,222 @@ TEST_F(IcingDynamicTrieTest, Compact) {
   }
 }
 
+TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenRootIsLeaf) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts a key, the root is a leaf.
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("foo", &value));
+  ASSERT_TRUE(trie.Find("foo", &value));
+
+  // Deletes the key.
+  EXPECT_TRUE(trie.Delete("foo"));
+  EXPECT_FALSE(trie.Find("foo", &value));
+}
+
+TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenLastCharIsLeaf) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts "bar" and "ba", the trie structure looks like:
+  //       root
+  //         |
+  //         b
+  //         |
+  //         a
+  //        / \
+  //     null  r
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("bar", &value));
+  ASSERT_TRUE(trie.Insert("ba", &value));
+  ASSERT_TRUE(trie.Find("bar", &value));
+  ASSERT_TRUE(trie.Find("ba", &value));
+
+  // Deletes "bar". "r" is a leaf node in the trie.
+  EXPECT_TRUE(trie.Delete("bar"));
+  EXPECT_FALSE(trie.Find("bar", &value));
+  EXPECT_TRUE(trie.Find("ba", &value));
+}
+
+TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithTerminationNode) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts "bar" and "ba", the trie structure looks like:
+  //       root
+  //         |
+  //         b
+  //         |
+  //         a
+  //        / \
+  //     null  r
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("bar", &value));
+  ASSERT_TRUE(trie.Insert("ba", &value));
+  ASSERT_TRUE(trie.Find("bar", &value));
+  ASSERT_TRUE(trie.Find("ba", &value));
+
+  // Deletes "ba" which is a key with termination node in the trie.
+  EXPECT_TRUE(trie.Delete("ba"));
+  EXPECT_FALSE(trie.Find("ba", &value));
+  EXPECT_TRUE(trie.Find("bar", &value));
+}
+
+TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleNexts) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts "ba", "bb", "bc", and "bd", the trie structure looks like:
+  //       root
+  //         |
+  //         b
+  //      / | | \
+  //     a  b c  d
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("ba", &value));
+  ASSERT_TRUE(trie.Insert("bb", &value));
+  ASSERT_TRUE(trie.Insert("bc", &value));
+  ASSERT_TRUE(trie.Insert("bd", &value));
+  ASSERT_TRUE(trie.Find("ba", &value));
+  ASSERT_TRUE(trie.Find("bb", &value));
+  ASSERT_TRUE(trie.Find("bc", &value));
+  ASSERT_TRUE(trie.Find("bd", &value));
+
+  // Deletes "bc".
+  EXPECT_TRUE(trie.Delete("bc"));
+  EXPECT_FALSE(trie.Find("bc", &value));
+  EXPECT_TRUE(trie.Find("ba", &value));
+  EXPECT_TRUE(trie.Find("bb", &value));
+  EXPECT_TRUE(trie.Find("bd", &value));
+}
+
+TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleTrieBranches) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts "batter", "battle", and "bar", the trie structure looks like:
+  //       root
+  //         |
+  //         b
+  //         |
+  //         a
+  //        / \
+  //       t   r
+  //       |
+  //       t
+  //      / \
+  //     e   l
+  //     |   |
+  //     r   e
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("batter", &value));
+  ASSERT_TRUE(trie.Insert("battle", &value));
+  ASSERT_TRUE(trie.Insert("bar", &value));
+  ASSERT_TRUE(trie.Find("batter", &value));
+  ASSERT_TRUE(trie.Find("battle", &value));
+  ASSERT_TRUE(trie.Find("bar", &value));
+
+  // Deletes "batter".
+  EXPECT_TRUE(trie.Delete("batter"));
+  EXPECT_FALSE(trie.Find("batter", &value));
+  EXPECT_TRUE(trie.Find("battle", &value));
+  EXPECT_TRUE(trie.Find("bar", &value));
+}
+
+TEST_F(IcingDynamicTrieTest, InsertionShouldWorkAfterDeletion) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts some keys.
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("bar", &value));
+  ASSERT_TRUE(trie.Insert("bed", &value));
+  ASSERT_TRUE(trie.Insert("foo", &value));
+
+  // Deletes a key
+  ASSERT_TRUE(trie.Delete("bed"));
+  ASSERT_FALSE(trie.Find("bed", &value));
+
+  // Inserts after deletion
+  EXPECT_TRUE(trie.Insert("bed", &value));
+  EXPECT_TRUE(trie.Insert("bedroom", &value));
+  EXPECT_TRUE(trie.Find("bed", &value));
+  EXPECT_TRUE(trie.Find("bedroom", &value));
+}
+
+TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterDeletion) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts some keys.
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("bar", &value));
+  ASSERT_TRUE(trie.Insert("bed", &value));
+  ASSERT_TRUE(trie.Insert("foo", &value));
+
+  // Deletes a key
+  ASSERT_TRUE(trie.Delete("bed"));
+
+  // Iterates through all keys
+  IcingDynamicTrie::Iterator iterator_all(trie, "");
+  std::vector<std::string> results;
+  for (; iterator_all.IsValid(); iterator_all.Advance()) {
+    results.emplace_back(iterator_all.GetKey());
+  }
+  EXPECT_THAT(results, ElementsAre("bar", "foo"));
+
+  // Iterates through keys that start with "b"
+  IcingDynamicTrie::Iterator iterator_b(trie, "b");
+  results.clear();
+  for (; iterator_b.IsValid(); iterator_b.Advance()) {
+    results.emplace_back(iterator_b.GetKey());
+  }
+  EXPECT_THAT(results, ElementsAre("bar"));
+}
+
+TEST_F(IcingDynamicTrieTest, DeletingNonExistingKeyShouldReturnTrue) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
+  ASSERT_TRUE(trie.Init());
+
+  // Inserts some keys.
+  uint32_t value = 1;
+  ASSERT_TRUE(trie.Insert("bar", &value));
+  ASSERT_TRUE(trie.Insert("bed", &value));
+
+  // "ba" and bedroom are not keys in the trie.
+  EXPECT_TRUE(trie.Delete("ba"));
+  EXPECT_TRUE(trie.Delete("bedroom"));
+
+  // The original keys are not affected.
+  EXPECT_TRUE(trie.Find("bar", &value));
+  EXPECT_TRUE(trie.Find("bed", &value));
+}
+
 }  // namespace
 
 // The tests below are accessing private methods and fields of IcingDynamicTrie
