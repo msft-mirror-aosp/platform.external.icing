@@ -231,6 +231,7 @@ class DocumentStore {
   //
   // Returns:
   //   OK on success
+  //   NOT_FOUND if the document doesn't exist (i.e. deleted or expired)
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT if document_id is invalid.
   libtextclassifier3::Status Delete(DocumentId document_id);
@@ -278,16 +279,11 @@ class DocumentStore {
 
   // Returns the DocumentFilterData of the document specified by the DocumentId.
   //
-  // NOTE: This does not check if the document exists and will return the
-  // DocumentFilterData of the document even if it has been deleted. Users
-  // should check DoesDocumentExist(document_id) if they only want existing
-  // documents' DocumentFilterData.
-  //
   // Returns:
   //   DocumentFilterData on success
   //   OUT_OF_RANGE if document_id is negative or exceeds previously seen
   //                DocumentIds
-  //   NOT_FOUND if no filter data is found
+  //   NOT_FOUND if the document or the filter data is not found
   libtextclassifier3::StatusOr<DocumentFilterData> GetDocumentFilterData(
       DocumentId document_id) const;
 
