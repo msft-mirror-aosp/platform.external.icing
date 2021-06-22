@@ -154,6 +154,11 @@ class LiteIndex {
 
   uint32_t size() const { return header_->cur_size(); }
 
+  bool WantsMerge() const {
+    return size() >= (options_.hit_buffer_want_merge_bytes /
+                      sizeof(TermIdHitPair::Value));
+  }
+
   class const_iterator {
     friend class LiteIndex;
 

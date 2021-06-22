@@ -14,6 +14,7 @@
 
 #include "icing/result/result-state.h"
 
+#include "icing/result/projection-tree.h"
 #include "icing/scoring/ranker.h"
 #include "icing/util/logging.h"
 
@@ -46,6 +47,11 @@ ResultState::ResultState(std::vector<ScoredDocumentHit> scored_document_hits,
       num_returned_(0),
       scored_document_hit_comparator_(scoring_spec.order_by() ==
                                       ScoringSpecProto::Order::DESC) {
+  for (const TypePropertyMask& type_field_mask :
+       result_spec.type_property_masks()) {
+    projection_tree_map_.insert(
+        {type_field_mask.schema_type(), ProjectionTree(type_field_mask)});
+  }
   BuildHeapInPlace(&scored_document_hits_, scored_document_hit_comparator_);
 }
 

@@ -31,9 +31,31 @@ libtextclassifier3::StatusOr<std::unique_ptr<UsageStore>> UsageStore::Create(
     const Filesystem* filesystem, const std::string& base_dir) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
 
+  if (!filesystem->CreateDirectoryRecursively(base_dir.c_str())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to create UsageStore directory: ", base_dir));
+  }
+
+  const std::string score_cache_filename =
+      MakeUsageScoreCacheFilename(base_dir);
+
   auto usage_score_cache_or = FileBackedVector<UsageScores>::Create(
-      *filesystem, MakeUsageScoreCacheFilename(base_dir),
+      *filesystem, score_cache_filename,
       MemoryMappedFile::READ_WRITE_AUTO_SYNC);
+
+  if (absl_ports::IsFailedPrecondition(usage_score_cache_or.status())) {
+    // File checksum doesn't match the stored checksum. Delete and recreate the
+    // file.
+    ICING_RETURN_IF_ERROR(
+        FileBackedVector<int64_t>::Delete(*filesystem, score_cache_filename));
+
+    ICING_VLOG(1) << "The score cache file in UsageStore is corrupted, all "
+                     "scores have been reset.";
+
+    usage_score_cache_or = FileBackedVector<UsageScores>::Create(
+        *filesystem, score_cache_filename,
+        MemoryMappedFile::READ_WRITE_AUTO_SYNC);
+  }
 
   if (!usage_score_cache_or.ok()) {
     ICING_LOG(ERROR) << usage_score_cache_or.status().error_message()
@@ -111,9 +133,7 @@ libtextclassifier3::Status UsageStore::AddUsageReport(const UsageReport& report,
   }
 
   // Write updated usage scores to file.
-  ICING_RETURN_IF_ERROR(usage_score_cache_->Set(document_id, usage_scores));
-
-  return libtextclassifier3::Status::OK;
+  return usage_score_cache_->Set(document_id, usage_scores);
 }
 
 libtextclassifier3::Status UsageStore::DeleteUsageScores(
@@ -123,10 +143,13 @@ libtextclassifier3::Status UsageStore::DeleteUsageScores(
         "Document id %d is invalid.", document_id));
   }
 
-  // Clear all the scores of the document.
-  ICING_RETURN_IF_ERROR(usage_score_cache_->Set(document_id, UsageScores()));
+  if (document_id >= usage_score_cache_->num_elements()) {
+    // Nothing to delete.
+    return libtextclassifier3::Status::OK;
+  }
 
-  return libtextclassifier3::Status::OK;
+  // Clear all the scores of the document.
+  return usage_score_cache_->Set(document_id, UsageScores());
 }
 
 libtextclassifier3::StatusOr<UsageStore::UsageScores>
@@ -149,20 +172,59 @@ UsageStore::GetUsageScores(DocumentId document_id) {
 }
 
 libtextclassifier3::Status UsageStore::SetUsageScores(
-    DocumentId document_id, UsageScores usage_scores) {
+    DocumentId document_id, const UsageScores& usage_scores) {
   if (!IsDocumentIdValid(document_id)) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Document id %d is invalid.", document_id));
   }
 
-  ICING_RETURN_IF_ERROR(usage_score_cache_->Set(document_id, usage_scores));
+  return usage_score_cache_->Set(document_id, usage_scores);
+}
 
-  return libtextclassifier3::Status::OK;
+libtextclassifier3::Status UsageStore::CloneUsageScores(
+    DocumentId from_document_id, DocumentId to_document_id) {
+  if (!IsDocumentIdValid(from_document_id)) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "from_document_id %d is invalid.", from_document_id));
+  }
+
+  if (!IsDocumentIdValid(to_document_id)) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "to_document_id %d is invalid.", to_document_id));
+  }
+
+  auto usage_scores_or = usage_score_cache_->Get(from_document_id);
+  if (usage_scores_or.ok()) {
+    return usage_score_cache_->Set(to_document_id,
+                                   *std::move(usage_scores_or).ValueOrDie());
+  } else if (absl_ports::IsOutOfRange(usage_scores_or.status())) {
+    // No usage scores found. Set default scores to to_document_id.
+    return usage_score_cache_->Set(to_document_id, UsageScores());
+  }
+
+  // Real error
+  return usage_scores_or.status();
 }
 
 libtextclassifier3::Status UsageStore::PersistToDisk() {
-  ICING_RETURN_IF_ERROR(usage_score_cache_->PersistToDisk());
-  return libtextclassifier3::Status::OK;
+  return usage_score_cache_->PersistToDisk();
+}
+
+libtextclassifier3::StatusOr<Crc32> UsageStore::ComputeChecksum() {
+  return usage_score_cache_->ComputeChecksum();
+}
+
+libtextclassifier3::StatusOr<int64_t> UsageStore::GetElementsFileSize() const {
+  return usage_score_cache_->GetElementsFileSize();
+}
+
+libtextclassifier3::Status UsageStore::TruncateTo(DocumentId num_documents) {
+  if (num_documents >= usage_score_cache_->num_elements()) {
+    // No need to truncate
+    return libtextclassifier3::Status::OK;
+  }
+  // "+1" because document ids start from 0.
+  return usage_score_cache_->TruncateTo(num_documents);
 }
 
 libtextclassifier3::Status UsageStore::Reset() {
@@ -186,7 +248,7 @@ libtextclassifier3::Status UsageStore::Reset() {
   }
   usage_score_cache_ = std::move(usage_score_cache_or).ValueOrDie();
 
-  return libtextclassifier3::Status::OK;
+  return PersistToDisk();
 }
 
 }  // namespace lib

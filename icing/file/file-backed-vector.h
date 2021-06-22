@@ -149,6 +149,12 @@ class FileBackedVector {
   //             within a directory that already exists.
   // mmap_strategy : Strategy/optimizations to access the content in the vector,
   //                 see MemoryMappedFile::Strategy for more details
+  //
+  // Return:
+  //   FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
+  //                             checksum.
+  //   INTERNAL_ERROR on I/O errors.
+  //   UNIMPLEMENTED_ERROR if created with strategy READ_WRITE_MANUAL_SYNC.
   static libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
   Create(const Filesystem& filesystem, const std::string& file_path,
          MemoryMappedFile::Strategy mmap_strategy);
@@ -402,7 +408,7 @@ FileBackedVector<T>::InitializeExistingFile(
 
   // Check header
   if (header->header_checksum != header->CalculateHeaderChecksum()) {
-    return absl_ports::InternalError(
+    return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid header crc for ", file_path));
   }
 
@@ -420,7 +426,7 @@ FileBackedVector<T>::InitializeExistingFile(
   vector_checksum.Append(vector_contents);
 
   if (vector_checksum.Get() != header->vector_checksum) {
-    return absl_ports::InternalError(
+    return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid vector contents for ", file_path));
   }
 
