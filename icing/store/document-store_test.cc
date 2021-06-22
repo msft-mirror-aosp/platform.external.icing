@@ -27,17 +27,25 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/corpus-associated-scoring-data.h"
+#include "icing/store/corpus-id.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/platform.h"
+#include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/util/crc32.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -98,6 +106,19 @@ class DocumentStoreTest : public ::testing::Test {
   }
 
   void SetUp() override {
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      // If we've specified using the reverse-JNI method for segmentation (i.e.
+      // not ICU), then we won't have the ICU data file included to set up.
+      // Technically, we could choose to use reverse-JNI for segmentation AND
+      // include an ICU data file, but that seems unlikely and our current BUILD
+      // setup doesn't do this.
+      // File generated via icu_data_file rule in //icing/BUILD.
+      std::string icu_data_file_path =
+          GetTestFilePath("icing/icu.dat");
+      ICING_ASSERT_OK(
+          icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
+    }
+
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
@@ -129,6 +150,11 @@ class DocumentStoreTest : public ::testing::Test {
         schema_store_,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+    language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        lang_segmenter_,
+        language_segmenter_factory::Create(std::move(segmenter_options)));
   }
 
   void TearDown() override {
@@ -143,6 +169,7 @@ class DocumentStoreTest : public ::testing::Test {
   DocumentProto test_document1_;
   DocumentProto test_document2_;
   std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<LanguageSegmenter> lang_segmenter_;
 
   // Document1 values
   const int document1_score_ = 1;
@@ -471,8 +498,10 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceOk) {
 
   // DELETE namespace.1. document1 and document 4 should be deleted. document2
   // and document3 should still be retrievable.
-  ICING_EXPECT_OK(
-      doc_store->DeleteByNamespace("namespace.1", /*soft_delete=*/true));
+  DocumentStore::DeleteByGroupResult group_result =
+      doc_store->DeleteByNamespace("namespace.1", /*soft_delete=*/true);
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
   EXPECT_THAT(doc_store->Get(document1.namespace_(), document1.uri()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(doc_store->Get(document2.namespace_(), document2.uri()),
@@ -513,8 +542,10 @@ TEST_F(DocumentStoreTest, HardDeleteByNamespaceOk) {
 
   // DELETE namespace.1. document1 and document 4 should be deleted. document2
   // and document3 should still be retrievable.
-  ICING_EXPECT_OK(
-      doc_store->DeleteByNamespace("namespace.1", /*soft_delete=*/false));
+  DocumentStore::DeleteByGroupResult group_result =
+      doc_store->DeleteByNamespace("namespace.1", /*soft_delete=*/false);
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
   EXPECT_THAT(doc_store->Get(document1.namespace_(), document1.uri()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(doc_store->Get(document2.namespace_(), document2.uri()),
@@ -538,8 +569,10 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNonexistentNamespaceNotFound) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(doc_store->DeleteByNamespace("nonexistent_namespace",
-                                           /*soft_delete=*/true),
+  EXPECT_THAT(doc_store
+                  ->DeleteByNamespace("nonexistent_namespace",
+                                      /*soft_delete=*/true)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
@@ -560,8 +593,10 @@ TEST_F(DocumentStoreTest, HardDeleteByNamespaceNonexistentNamespaceNotFound) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(doc_store->DeleteByNamespace("nonexistent_namespace",
-                                           /*soft_delete=*/false),
+  EXPECT_THAT(doc_store
+                  ->DeleteByNamespace("nonexistent_namespace",
+                                      /*soft_delete=*/false)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
@@ -584,8 +619,10 @@ TEST_F(DocumentStoreTest, SoftDeleteByNamespaceNoExistingDocumentsNotFound) {
   // At this point, there are no existing documents with the namespace, even
   // though Icing's derived files know about this namespace. We should still
   // return NOT_FOUND since nothing existing has this namespace.
-  EXPECT_THAT(document_store->DeleteByNamespace(test_document1_.namespace_(),
-                                                /*soft_delete=*/true),
+  EXPECT_THAT(document_store
+                  ->DeleteByNamespace(test_document1_.namespace_(),
+                                      /*soft_delete=*/true)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -604,8 +641,10 @@ TEST_F(DocumentStoreTest, HardDeleteByNamespaceNoExistingDocumentsNotFound) {
   // At this point, there are no existing documents with the namespace, even
   // though Icing's derived files know about this namespace. We should still
   // return NOT_FOUND since nothing existing has this namespace.
-  EXPECT_THAT(document_store->DeleteByNamespace(test_document1_.namespace_(),
-                                                /*soft_delete=*/false),
+  EXPECT_THAT(document_store
+                  ->DeleteByNamespace(test_document1_.namespace_(),
+                                      /*soft_delete=*/false)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -642,7 +681,10 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
 
     // DELETE namespace.1. document1 and document 4 should be deleted. document2
     // and document3 should still be retrievable.
-    ICING_EXPECT_OK(doc_store->DeleteByNamespace("namespace.1"));
+    DocumentStore::DeleteByGroupResult group_result =
+        doc_store->DeleteByNamespace("namespace.1");
+    EXPECT_THAT(group_result.status, IsOk());
+    EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
 
     ground_truth_size_before = filesystem_.GetFileSize(
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
@@ -741,8 +783,10 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeOk) {
 
   // Delete the "email" type and ensure that it works across both
   // email_document's namespaces. And that other documents aren't affected.
-  ICING_EXPECT_OK(
-      document_store->DeleteBySchemaType("email", /*soft_delete=*/true));
+  DocumentStore::DeleteByGroupResult group_result =
+      document_store->DeleteBySchemaType("email", /*soft_delete=*/true);
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
   EXPECT_THAT(document_store->Get(email_1_document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(document_store->Get(email_2_document_id),
@@ -753,8 +797,10 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeOk) {
               IsOkAndHolds(EqualsProto(person_document)));
 
   // Delete the "message" type and check that other documents aren't affected
-  ICING_EXPECT_OK(
-      document_store->DeleteBySchemaType("message", /*soft_delete=*/true));
+  group_result =
+      document_store->DeleteBySchemaType("message", /*soft_delete=*/true);
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
   EXPECT_THAT(document_store->Get(email_1_document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(document_store->Get(email_2_document_id),
@@ -824,8 +870,10 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
 
   // Delete the "email" type and ensure that it works across both
   // email_document's namespaces. And that other documents aren't affected.
-  ICING_EXPECT_OK(
-      document_store->DeleteBySchemaType("email", /*soft_delete=*/false));
+  DocumentStore::DeleteByGroupResult group_result =
+      document_store->DeleteBySchemaType("email", /*soft_delete=*/true);
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
   EXPECT_THAT(document_store->Get(email_1_document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(document_store->Get(email_2_document_id),
@@ -836,8 +884,10 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeOk) {
               IsOkAndHolds(EqualsProto(person_document)));
 
   // Delete the "message" type and check that other documents aren't affected
-  ICING_EXPECT_OK(
-      document_store->DeleteBySchemaType("message", /*soft_delete=*/false));
+  group_result =
+      document_store->DeleteBySchemaType("message", /*soft_delete=*/true);
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
   EXPECT_THAT(document_store->Get(email_1_document_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(document_store->Get(email_2_document_id),
@@ -861,8 +911,10 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(document_store->DeleteBySchemaType("nonexistent_type",
-                                                 /*soft_delete=*/true),
+  EXPECT_THAT(document_store
+                  ->DeleteBySchemaType("nonexistent_type",
+                                       /*soft_delete=*/true)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
@@ -884,8 +936,10 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   int64_t ground_truth_size_before = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
 
-  EXPECT_THAT(document_store->DeleteBySchemaType("nonexistent_type",
-                                                 /*soft_delete=*/false),
+  EXPECT_THAT(document_store
+                  ->DeleteBySchemaType("nonexistent_type",
+                                       /*soft_delete=*/false)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t ground_truth_size_after = filesystem_.GetFileSize(
@@ -906,8 +960,10 @@ TEST_F(DocumentStoreTest, SoftDeleteBySchemaTypeNoExistingDocumentsNotFound) {
   ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
                                          test_document1_.uri()));
 
-  EXPECT_THAT(document_store->DeleteBySchemaType(test_document1_.schema(),
-                                                 /*soft_delete=*/true),
+  EXPECT_THAT(document_store
+                  ->DeleteBySchemaType(test_document1_.schema(),
+                                       /*soft_delete=*/true)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -923,8 +979,10 @@ TEST_F(DocumentStoreTest, HardDeleteBySchemaTypeNoExistingDocumentsNotFound) {
   ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
                                          test_document1_.uri()));
 
-  EXPECT_THAT(document_store->DeleteBySchemaType(test_document1_.schema(),
-                                                 /*soft_delete=*/false),
+  EXPECT_THAT(document_store
+                  ->DeleteBySchemaType(test_document1_.schema(),
+                                       /*soft_delete=*/false)
+                  .status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -973,7 +1031,10 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
                                document_store->Put(message_document));
 
     // Delete "email". "message" documents should still be retrievable.
-    ICING_EXPECT_OK(document_store->DeleteBySchemaType("email"));
+    DocumentStore::DeleteByGroupResult group_result =
+        document_store->DeleteBySchemaType("email");
+    EXPECT_THAT(group_result.status, IsOk());
+    EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
 
     ground_truth_size_before = filesystem_.GetFileSize(
         absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
@@ -1054,7 +1115,10 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
                                document_store->Put(message_document));
 
     // Delete "email". "message" documents should still be retrievable.
-    ICING_EXPECT_OK(document_store->DeleteBySchemaType("email"));
+    DocumentStore::DeleteByGroupResult group_result =
+        document_store->DeleteBySchemaType("email");
+    EXPECT_THAT(group_result.status, IsOk());
+    EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
 
     EXPECT_THAT(document_store->Get(email_document_id),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -1143,9 +1207,10 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
       filesystem_.GetFileSize(original_document_log.c_str());
 
   // Optimizing into the same directory is not allowed
-  EXPECT_THAT(doc_store->OptimizeInto(document_store_dir_),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-                       HasSubstr("directory is the same")));
+  EXPECT_THAT(
+      doc_store->OptimizeInto(document_store_dir_, lang_segmenter_.get()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("directory is the same")));
 
   std::string optimized_dir = document_store_dir_ + "_optimize";
   std::string optimized_document_log = optimized_dir + "/document_log";
@@ -1154,7 +1219,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // deleted
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(doc_store->OptimizeInto(optimized_dir));
+  ICING_ASSERT_OK(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   int64_t optimized_size1 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_EQ(original_size, optimized_size1);
@@ -1164,7 +1230,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1"));
-  ICING_ASSERT_OK(doc_store->OptimizeInto(optimized_dir));
+  ICING_ASSERT_OK(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   int64_t optimized_size2 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(original_size, Gt(optimized_size2));
@@ -1177,7 +1244,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // expired
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(doc_store->OptimizeInto(optimized_dir));
+  ICING_ASSERT_OK(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   int64_t optimized_size3 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(optimized_size2, Gt(optimized_size3));
@@ -1194,14 +1262,32 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(document_id1,
-                               doc_store->Put(DocumentProto(test_document1_)));
-    ICING_ASSERT_OK_AND_ASSIGN(document_id2,
-                               doc_store->Put(DocumentProto(test_document2_)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id1,
+        doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id2,
+        doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
                 IsOkAndHolds(EqualsProto(test_document2_)));
+    // Checks derived score cache
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id1),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id2),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+                IsOkAndHolds(CorpusAssociatedScoreData(
+                    /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+
+    // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -1240,9 +1326,14 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
-  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
-              IsOkAndHolds(DocumentAssociatedScoreData(
-                  document2_score_, document2_creation_timestamp_)));
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id2),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+          /*length_in_tokens=*/4)));
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
@@ -1256,14 +1347,31 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(document_id1,
-                               doc_store->Put(DocumentProto(test_document1_)));
-    ICING_ASSERT_OK_AND_ASSIGN(document_id2,
-                               doc_store->Put(DocumentProto(test_document2_)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id1,
+        doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id2,
+        doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
                 IsOkAndHolds(EqualsProto(test_document2_)));
+    // Checks derived score cache
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id1),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id2),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+                IsOkAndHolds(CorpusAssociatedScoreData(
+                    /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+    // Delete document 1
     EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -1287,6 +1395,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
               IsOk());
 
   // Successfully recover from a corrupt derived file issue.
+  // NOTE: this doesn't trigger RegenerateDerivedFiles.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1304,10 +1413,16 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
               IsOkAndHolds(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
-  // Checks derived score cache
-  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
-              IsOkAndHolds(DocumentAssociatedScoreData(
-                  document2_score_, document2_creation_timestamp_)));
+  // Checks derived score cache - note that they aren't regenerated from
+  // scratch.
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id2),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+          /*length_in_tokens=*/4)));
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
@@ -1321,14 +1436,30 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(document_id1,
-                               doc_store->Put(DocumentProto(test_document1_)));
-    ICING_ASSERT_OK_AND_ASSIGN(document_id2,
-                               doc_store->Put(DocumentProto(test_document2_)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id1,
+        doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id2,
+        doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
     EXPECT_THAT(doc_store->Get(document_id1),
                 IsOkAndHolds(EqualsProto(test_document1_)));
     EXPECT_THAT(doc_store->Get(document_id2),
                 IsOkAndHolds(EqualsProto(test_document2_)));
+    // Checks derived score cache
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id1),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id2),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+                IsOkAndHolds(CorpusAssociatedScoreData(
+                    /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
     EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -1366,9 +1497,14 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
-  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
-              IsOkAndHolds(DocumentAssociatedScoreData(
-                  document2_score_, document2_creation_timestamp_)));
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id2),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+          /*length_in_tokens=*/4)));
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
 }
 
 TEST_F(DocumentStoreTest, GetDiskUsage) {
@@ -1461,6 +1597,12 @@ TEST_F(DocumentStoreTest, GetNamespaceId) {
   // DocumentStore
   EXPECT_THAT(doc_store->GetNamespaceId("namespace2"), IsOkAndHolds(Eq(1)));
 
+  // DELETE namespace1 - document_namespace1 is deleted.
+  DocumentStore::DeleteByGroupResult group_result =
+      doc_store->DeleteByNamespace("namespace1");
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
+
   // NamespaceMapper doesn't care if the document has been deleted
   EXPECT_THAT(doc_store->GetNamespaceId("namespace1"), IsOkAndHolds(Eq(0)));
 }
@@ -1495,6 +1637,261 @@ TEST_F(DocumentStoreTest, NonexistentNamespaceNotFound) {
 
   EXPECT_THAT(doc_store->GetNamespaceId("nonexistent_namespace"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(DocumentStoreTest, GetCorpusDuplicateCorpusId) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "1").SetSchema("email").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "2").SetSchema("email").Build();
+
+  ICING_ASSERT_OK(doc_store->Put(document1));
+  ICING_ASSERT_OK(doc_store->Put(document2));
+
+  // CorpusId of 0 since it was the first namespace seen by the DocumentStore
+  EXPECT_THAT(doc_store->GetCorpusId("namespace", "email"),
+              IsOkAndHolds(Eq(0)));
+}
+
+TEST_F(DocumentStoreTest, GetCorpusId) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document_corpus1 =
+      DocumentBuilder().SetKey("namespace1", "1").SetSchema("email").Build();
+  DocumentProto document_corpus2 =
+      DocumentBuilder().SetKey("namespace2", "2").SetSchema("email").Build();
+
+  ICING_ASSERT_OK(doc_store->Put(DocumentProto(document_corpus1)));
+  ICING_ASSERT_OK(doc_store->Put(DocumentProto(document_corpus2)));
+
+  // CorpusId of 0 since it was the first corpus seen by the DocumentStore
+  EXPECT_THAT(doc_store->GetCorpusId("namespace1", "email"),
+              IsOkAndHolds(Eq(0)));
+
+  // CorpusId of 1 since it was the second corpus seen by the
+  // DocumentStore
+  EXPECT_THAT(doc_store->GetCorpusId("namespace2", "email"),
+              IsOkAndHolds(Eq(1)));
+
+  // DELETE namespace1 - document_corpus1 is deleted.
+  DocumentStore::DeleteByGroupResult group_result =
+      doc_store->DeleteByNamespace("namespace1");
+  EXPECT_THAT(group_result.status, IsOk());
+  EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
+
+  // CorpusMapper doesn't care if the document has been deleted
+  EXPECT_THAT(doc_store->GetNamespaceId("namespace1"), IsOkAndHolds(Eq(0)));
+}
+
+TEST_F(DocumentStoreTest, NonexistentCorpusNotFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  EXPECT_THAT(
+      doc_store->GetCorpusId("nonexistent_namespace", "nonexistent_schema"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  DocumentProto document_corpus =
+      DocumentBuilder().SetKey("namespace1", "1").SetSchema("email").Build();
+  ICING_ASSERT_OK(doc_store->Put(DocumentProto(document_corpus)));
+
+  EXPECT_THAT(doc_store->GetCorpusId("nonexistent_namespace", "email"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(doc_store->GetCorpusId("namespace1", "nonexistent_schema"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/1),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreDataSameCorpus) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "1").SetSchema("email").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "2").SetSchema("email").Build();
+
+  ICING_ASSERT_OK(doc_store->Put(document1, /*num_tokens=*/5));
+  ICING_ASSERT_OK(doc_store->Put(document2, /*num_tokens=*/7));
+
+  // CorpusId of 0 since it was the first namespace seen by the DocumentStore
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/2, /*sum_length_in_tokens=*/12)));
+  // Only one corpus exists
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/1),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreData) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document_corpus1 =
+      DocumentBuilder().SetKey("namespace1", "1").SetSchema("email").Build();
+  DocumentProto document_corpus2 =
+      DocumentBuilder().SetKey("namespace2", "2").SetSchema("email").Build();
+
+  ICING_ASSERT_OK(
+      doc_store->Put(DocumentProto(document_corpus1), /*num_tokens=*/5));
+  ICING_ASSERT_OK(
+      doc_store->Put(DocumentProto(document_corpus2), /*num_tokens=*/7));
+
+  // CorpusId of 0 since it was the first corpus seen by the DocumentStore
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/5)));
+
+  // CorpusId of 1 since it was the second corpus seen by the
+  // DocumentStore
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/1),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/7)));
+
+  // DELETE namespace1 - document_corpus1 is deleted.
+  ICING_EXPECT_OK(doc_store->DeleteByNamespace("namespace1").status);
+
+  // Corpus score cache doesn't care if the document has been deleted
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/5)));
+}
+
+TEST_F(DocumentStoreTest, NonexistentCorpusAssociatedScoreDataOutOfRange) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "1")
+          .SetSchema("email")
+          .SetScore(document1_score_)
+          .SetCreationTimestampMs(
+              document1_creation_timestamp_)  // A random timestamp
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "2")
+          .SetSchema("email")
+          .SetScore(document2_score_)
+          .SetCreationTimestampMs(
+              document2_creation_timestamp_)  // A random timestamp
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      doc_store->Put(DocumentProto(document1), /*num_tokens=*/5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      doc_store->Put(DocumentProto(document2), /*num_tokens=*/7));
+
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id1),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
+          /*length_in_tokens=*/5)));
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id2),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+          /*length_in_tokens=*/7)));
+}
+
+TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreDataDifferentCorpus) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "1")
+          .SetSchema("email")
+          .SetScore(document1_score_)
+          .SetCreationTimestampMs(
+              document1_creation_timestamp_)  // A random timestamp
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "2")
+          .SetSchema("email")
+          .SetScore(document2_score_)
+          .SetCreationTimestampMs(
+              document2_creation_timestamp_)  // A random timestamp
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      doc_store->Put(DocumentProto(document1), /*num_tokens=*/5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      doc_store->Put(DocumentProto(document2), /*num_tokens=*/7));
+
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id1),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
+          /*length_in_tokens=*/5)));
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id2),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/1, document2_score_, document2_creation_timestamp_,
+          /*length_in_tokens=*/7)));
+}
+
+TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataOutOfRange) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(/*document_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
 TEST_F(DocumentStoreTest, SoftDeletionDoesNotClearFilterCache) {
@@ -1553,12 +1950,13 @@ TEST_F(DocumentStoreTest, SoftDeletionDoesNotClearScoreCache) {
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(test_document1_, /*num_tokens=*/4));
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
               IsOkAndHolds(DocumentAssociatedScoreData(
-                  /*document_score=*/document1_score_,
-                  /*creation_timestamp_ms=*/document1_creation_timestamp_)));
+                  /*corpus_id=*/0, /*document_score=*/document1_score_,
+                  /*creation_timestamp_ms=*/document1_creation_timestamp_,
+                  /*length_in_tokens=*/4)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/true));
   // Associated entry of the deleted document is removed.
@@ -1575,12 +1973,14 @@ TEST_F(DocumentStoreTest, HardDeleteClearsScoreCache) {
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
-                             doc_store->Put(test_document1_));
+                             doc_store->Put(test_document1_, /*num_tokens=*/4));
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
               IsOkAndHolds(DocumentAssociatedScoreData(
+                  /*corpus_id=*/0,
                   /*document_score=*/document1_score_,
-                  /*creation_timestamp_ms=*/document1_creation_timestamp_)));
+                  /*creation_timestamp_ms=*/document1_creation_timestamp_,
+                  /*length_in_tokens=*/4)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1", /*soft_delete=*/false));
   // Associated entry of the deleted document is removed.
@@ -1784,11 +2184,15 @@ TEST_F(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id1),
               IsOkAndHolds(DocumentAssociatedScoreData(
-                  /*document_score=*/0, /*creation_timestamp_ms=*/0)));
+                  /*corpus_id=*/0,
+                  /*document_score=*/0, /*creation_timestamp_ms=*/0,
+                  /*length_in_tokens=*/0)));
 
   EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id2),
               IsOkAndHolds(DocumentAssociatedScoreData(
-                  /*document_score=*/5, /*creation_timestamp_ms=*/0)));
+                  /*corpus_id=*/0,
+                  /*document_score=*/5, /*creation_timestamp_ms=*/0,
+                  /*length_in_tokens=*/0)));
 }
 
 TEST_F(DocumentStoreTest, ComputeChecksumSameBetweenCalls) {
@@ -2489,7 +2893,8 @@ TEST_F(DocumentStoreTest, GetOptimizeInfo) {
   std::string optimized_dir = document_store_dir_ + "_optimize";
   EXPECT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   EXPECT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(document_store->OptimizeInto(optimized_dir));
+  ICING_ASSERT_OK(
+      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   document_store.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
       create_result, DocumentStore::Create(&filesystem_, optimized_dir,
@@ -2899,7 +3304,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   // Run optimize
   std::string optimized_dir = document_store_dir_ + "/optimize_test";
   filesystem_.CreateDirectoryRecursively(optimized_dir.c_str());
-  ICING_ASSERT_OK(document_store->OptimizeInto(optimized_dir));
+  ICING_ASSERT_OK(
+      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
 
   // Get optimized document store
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2994,6 +3400,55 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
+}
+
+TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
+  // The directory testdata/v0/document_store contains only the scoring_cache
+  // and the document_store_header (holding the crc for the scoring_cache). If
+  // the current code is compatible with the format of the v0 scoring_cache,
+  // then an empty document store should be initialized, but the non-empty
+  // scoring_cache should be retained.
+  // The current document-asscoiated-score-data has a new field with respect to
+  // the ones stored in testdata/v0, hence the document store's initialization
+  // requires regenerating its derived files.
+
+  // Create dst directory
+  ASSERT_THAT(filesystem_.CreateDirectory(document_store_dir_.c_str()), true);
+
+  // Get src files
+  std::string document_store_v0;
+  if (IsAndroidPlatform() || IsIosPlatform()) {
+    document_store_v0 = GetTestFilePath(
+        "icing/testdata/v0/document_store_android_ios_compatible");
+  } else {
+    document_store_v0 =
+        GetTestFilePath("icing/testdata/v0/document_store");
+  }
+  std::vector<std::string> document_store_files;
+  Filesystem filesystem;
+  filesystem.ListDirectory(document_store_v0.c_str(), &document_store_files);
+
+  VLOG(1) << "Copying files " << document_store_v0 << ' '
+          << document_store_files.size();
+  for (size_t i = 0; i != document_store_files.size(); i++) {
+    std::string src =
+        absl_ports::StrCat(document_store_v0, "/", document_store_files[i]);
+    std::string dst =
+        absl_ports::StrCat(document_store_dir_, "/", document_store_files[i]);
+    ASSERT_THAT(filesystem_.CopyFile(src.c_str(), dst.c_str()), true);
+  }
+
+  NativeInitializeStats initializeStats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get(), &initializeStats));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  // The store_cache trigger regeneration because its element size is
+  // inconsistent: expected 20 (current new size), actual 12 (as per the v0
+  // score_cache).
+  EXPECT_TRUE(initializeStats.has_document_store_recovery_cause());
 }
 
 }  // namespace

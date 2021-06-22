@@ -15,6 +15,8 @@
 #ifndef ICING_TESTING_COMMON_MATCHERS_H_
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
+#include <cmath>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -23,6 +25,8 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/search.proto.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
@@ -65,15 +69,15 @@ MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
   SectionIdMask section_mask = kSectionIdMaskNone;
 
   bool term_frequency_as_expected = true;
-  std::vector<Hit::Score> expected_tfs;
-  std::vector<Hit::Score> actual_tfs;
+  std::vector<Hit::TermFrequency> expected_tfs;
+  std::vector<Hit::TermFrequency> actual_tfs;
   for (auto itr = section_ids_to_term_frequencies_map.begin();
        itr != section_ids_to_term_frequencies_map.end(); itr++) {
     SectionId section_id = itr->first;
     section_mask |= 1U << section_id;
     expected_tfs.push_back(itr->second);
-    actual_tfs.push_back(actual.max_hit_score(section_id));
-    if (actual.max_hit_score(section_id) != itr->second) {
+    actual_tfs.push_back(actual.hit_term_frequency(section_id));
+    if (actual.hit_term_frequency(section_id) != itr->second) {
       term_frequency_as_expected = false;
     }
   }
@@ -101,7 +105,7 @@ MATCHER_P(EqualsScoredDocumentHit, expected_scored_document_hit, "") {
   if (arg.document_id() != expected_scored_document_hit.document_id() ||
       arg.hit_section_id_mask() !=
           expected_scored_document_hit.hit_section_id_mask() ||
-      arg.score() != expected_scored_document_hit.score()) {
+      std::fabs(arg.score() - expected_scored_document_hit.score()) > 1e-6) {
     *result_listener << IcingStringUtil::StringPrintf(
         "Expected: document_id=%d, hit_section_id_mask=%d, score=%.2f. Actual: "
         "document_id=%d, hit_section_id_mask=%d, score=%.2f",
@@ -370,6 +374,18 @@ MATCHER_P2(ProtoStatusIs, status_code, error_matcher, "") {
     return false;
   }
   return ExplainMatchResult(error_matcher, arg.message(), result_listener);
+}
+
+MATCHER_P(EqualsSearchResultIgnoreStats, expected, "") {
+  SearchResultProto actual_copy = arg;
+  actual_copy.clear_query_stats();
+  actual_copy.clear_debug_info();
+
+  SearchResultProto expected_copy = expected;
+  expected_copy.clear_query_stats();
+  expected_copy.clear_debug_info();
+  return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
+                            result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
