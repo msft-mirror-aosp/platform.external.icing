@@ -22,6 +22,7 @@
 #include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
@@ -43,6 +44,8 @@ class PlainTokenizerTest : public ::testing::Test {
               GetTestFilePath("icing/icu.dat")));
     }
   }
+
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
 };
 
 TEST_F(PlainTokenizerTest, CreationWithNullPointerShouldFail) {
@@ -53,7 +56,8 @@ TEST_F(PlainTokenizerTest, CreationWithNullPointerShouldFail) {
 }
 
 TEST_F(PlainTokenizerTest, Simple) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -87,7 +91,8 @@ TEST_F(PlainTokenizerTest, Simple) {
 }
 
 TEST_F(PlainTokenizerTest, Whitespace) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -115,7 +120,8 @@ TEST_F(PlainTokenizerTest, Whitespace) {
 }
 
 TEST_F(PlainTokenizerTest, Punctuation) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -161,7 +167,8 @@ TEST_F(PlainTokenizerTest, Punctuation) {
 }
 
 TEST_F(PlainTokenizerTest, SpecialCharacters) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -187,7 +194,8 @@ TEST_F(PlainTokenizerTest, CJKT) {
   // In plain tokenizer, CJKT characters are handled the same way as non-CJKT
   // characters, just add these tests as sanity checks.
   // Chinese
-  language_segmenter_factory::SegmenterOptions options(ULOC_SIMPLIFIED_CHINESE);
+  language_segmenter_factory::SegmenterOptions options(ULOC_SIMPLIFIED_CHINESE,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -202,7 +210,8 @@ TEST_F(PlainTokenizerTest, CJKT) {
                                        EqualsToken(Token::REGULAR, "去"),
                                        EqualsToken(Token::REGULAR, "上班"))));
   // Japanese
-  options = language_segmenter_factory::SegmenterOptions(ULOC_JAPANESE);
+  options = language_segmenter_factory::SegmenterOptions(ULOC_JAPANESE,
+                                                         jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -272,7 +281,8 @@ TEST_F(PlainTokenizerTest, CJKT) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -291,7 +301,8 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -310,7 +321,8 @@ TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
@@ -360,7 +372,8 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
 }
 
 TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
-  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
