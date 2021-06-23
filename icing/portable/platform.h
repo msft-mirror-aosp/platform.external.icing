@@ -34,11 +34,19 @@ inline bool IsReverseJniTokenization() {
   return false;
 }
 
-// Whether the running test is an Android test.
-inline bool IsAndroidPlatform() {
-#if defined(__ANDROID__)
+// Whether we're running on android_x86
+inline bool IsAndroidX86() {
+#if defined(__ANDROID__) && defined(__i386__)
   return true;
-#endif  // defined(__ANDROID__)
+#endif  // defined(__ANDROID__) && defined(__i386__)
+  return false;
+}
+
+// Whether we're running on android_armeabi-v7a
+inline bool IsAndroidArm() {
+#if defined(__ANDROID__) && defined(__arm__)
+  return true;
+#endif  // defined(__ANDROID__) && defined(__arm__)
   return false;
 }
 

@@ -99,11 +99,13 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     return text_.substr(term_start_.utf8_index(), term_length);
   }
 
-  libtextclassifier3::StatusOr<CharacterIterator> CalculateTermStart() {
+  libtextclassifier3::StatusOr<CharacterIterator> CalculateTermStart()
+      override {
     return term_start_;
   }
 
-  libtextclassifier3::StatusOr<CharacterIterator> CalculateTermEndExclusive() {
+  libtextclassifier3::StatusOr<CharacterIterator> CalculateTermEndExclusive()
+      override {
     return term_end_exclusive_;
   }
 

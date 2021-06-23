@@ -496,12 +496,13 @@ public final class IcingSearchEngineTest {
     assertStatusOk(
         icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false).getStatus());
 
-    // String:     "我每天走路去上班。"
-    //              ^ ^  ^   ^^
-    // UTF16 idx:   0 1  3   5 6
-    // Breaks into segments: "我", "每天", "走路", "去", "上班"
-    String chinese = "我每天走路去上班。";
-    assertThat(chinese.length()).isEqualTo(9);
+    // String:     "天是蓝的"
+    //              ^ ^^ ^
+    // UTF16 idx:   0 1 2 3
+    // Breaks into segments: "天", "是", "蓝", "的"
+    // "The sky is blue"
+    String chinese = "天是蓝的";
+    assertThat(chinese.length()).isEqualTo(4);
     DocumentProto emailDocument1 =
         createEmailDocument("namespace", "uri1").toBuilder()
             .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues(chinese))
@@ -511,7 +512,7 @@ public final class IcingSearchEngineTest {
     // Search and request snippet matching but no windowing.
     SearchSpecProto searchSpec =
         SearchSpecProto.newBuilder()
-            .setQuery("每")
+            .setQuery("是")
             .setTermMatchType(TermMatchType.Code.PREFIX)
             .build();
     ResultSpecProto resultSpecProto =
@@ -550,9 +551,9 @@ public final class IcingSearchEngineTest {
     int matchStart = matchProto.getExactMatchUtf16Position();
     int matchEnd = matchStart + matchProto.getExactMatchUtf16Length();
     assertThat(matchStart).isEqualTo(1);
-    assertThat(matchEnd).isEqualTo(3);
+    assertThat(matchEnd).isEqualTo(2);
     String match = content.substring(matchStart, matchEnd);
-    assertThat(match).isEqualTo("每天");
+    assertThat(match).isEqualTo("是");
   }
 
   @Test
