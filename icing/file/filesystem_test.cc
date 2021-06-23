@@ -38,6 +38,7 @@ using ::testing::Gt;
 using ::testing::Le;
 using ::testing::Ne;
 using ::testing::UnorderedElementsAre;
+using ::testing::UnorderedElementsAreArray;
 
 namespace icing {
 namespace lib {
@@ -448,6 +449,48 @@ TEST_F(FilesystemTest, ReadWrite) {
   EXPECT_TRUE(
       filesystem.PRead(foo_file.c_str(), &hello[0], strlen("hello"), 0));
   EXPECT_THAT(hello, Eq("hello"));
+}
+
+TEST_F(FilesystemTest, CopyDirectory) {
+  Filesystem filesystem;
+
+  // File structure:
+  // <temp_dir>/
+  //   src_dir/
+  //     file1
+  //     file2
+  //     sub_dir/
+  //       file3
+  const std::string src_dir = temp_dir_ + "/src_dir";
+  const std::string sub_dir = "sub_dir";
+  const std::string sub_dir_path = src_dir + "/" + sub_dir;
+  vector<std::string> some_files = {"file1", "file2", sub_dir + "/file3"};
+
+  // Make sure there is no pre-existing test-dir structure
+  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(src_dir.c_str()));
+
+  // Setup a test-dir structure
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(
+      sub_dir_path.c_str()));  // deepest path for test
+  CreateTestFiles(some_files, src_dir);
+
+  const std::string dst_dir = temp_dir_ + "/dst_dir";
+  EXPECT_TRUE(filesystem.CopyDirectory(src_dir.c_str(), dst_dir.c_str(),
+                                       /*recursive=*/true));
+
+  vector<std::string> src_dir_files;
+  EXPECT_TRUE(filesystem.ListDirectory(src_dir.c_str(), /*exclude=*/{},
+                                       /*recursive=*/true, &src_dir_files));
+
+  vector<std::string> dst_dir_files;
+  EXPECT_TRUE(filesystem.ListDirectory(dst_dir.c_str(), /*exclude=*/{},
+                                       /*recursive=*/true, &dst_dir_files));
+
+  EXPECT_THAT(dst_dir_files, UnorderedElementsAreArray(src_dir_files));
+
+  // Clean up
+  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(src_dir.c_str()));
+  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(dst_dir.c_str()));
 }
 
 }  // namespace lib
