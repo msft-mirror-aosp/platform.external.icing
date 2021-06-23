@@ -1119,6 +1119,11 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
 
 libtextclassifier3::StatusOr<DocumentFilterData>
 DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
+  if (!DoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Can't get filter data, document id '%d' doesn't exist", document_id));
+  }
+
   auto filter_data_or = filter_cache_->GetCopy(document_id);
   if (!filter_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
@@ -1127,10 +1132,6 @@ DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
   }
   DocumentFilterData document_filter_data =
       std::move(filter_data_or).ValueOrDie();
-  if (document_filter_data.namespace_id() == kInvalidNamespaceId) {
-    // An invalid namespace id means that the filter data has been deleted.
-    return absl_ports::NotFoundError("Document filter data not found.");
-  }
   return document_filter_data;
 }
 
