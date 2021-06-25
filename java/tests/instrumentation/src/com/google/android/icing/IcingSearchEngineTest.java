@@ -59,7 +59,6 @@ import java.util.HashMap;
 import java.util.Map;
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -490,7 +489,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  @Ignore("b/190845688")
   public void testCJKTSnippets() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
