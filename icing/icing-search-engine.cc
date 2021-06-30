@@ -1705,24 +1705,22 @@ ResetResultProto IcingSearchEngine::Reset() {
   ResetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
-  int64_t before_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
+  absl_ports::unique_lock l(&mutex_);
+
+  initialized_ = false;
+
+  // Resets members variables
+  schema_store_.reset();
+  document_store_.reset();
+  language_segmenter_.reset();
+  normalizer_.reset();
+  index_.reset();
 
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
-    int64_t after_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
-    if (after_size != before_size) {
-      // Our filesystem doesn't atomically delete. If we have a discrepancy in
-      // size, then that means we may have deleted some files, but not others.
-      // So our data is in an invalid state now.
-      result_status->set_code(StatusProto::INTERNAL);
-      return result_proto;
-    }
-
-    result_status->set_code(StatusProto::ABORTED);
+    result_status->set_code(StatusProto::INTERNAL);
     return result_proto;
   }
 
-  absl_ports::unique_lock l(&mutex_);
-  initialized_ = false;
   if (InternalInitialize().status().code() != StatusProto::OK) {
     // We shouldn't hit the following Initialize errors:
     //   NOT_FOUND: all data was cleared, we aren't expecting anything
