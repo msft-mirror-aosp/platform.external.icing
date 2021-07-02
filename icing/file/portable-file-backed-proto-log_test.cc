@@ -113,7 +113,8 @@ TEST_F(PortableFileBackedProtoLogTest, ReservedSpaceForHeader) {
 
   // With no protos written yet, the log should be minimum the size of the
   // reserved header space.
-  ASSERT_EQ(filesystem_.GetFileSize(file_path_.c_str()), kHeaderReservedBytes);
+  ASSERT_EQ(filesystem_.GetFileSize(file_path_.c_str()),
+            PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes);
 }
 
 TEST_F(PortableFileBackedProtoLogTest, WriteProtoTooLarge) {
@@ -417,8 +418,9 @@ TEST_F(PortableFileBackedProtoLogTest,
 
     // We still have the corrupted content in our file, we didn't throw
     // everything out.
-    EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-                Gt(kHeaderReservedBytes));
+    EXPECT_THAT(
+        filesystem_.GetFileSize(file_path_.c_str()),
+        Gt(PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes));
   }
 }
 
@@ -456,9 +458,10 @@ TEST_F(PortableFileBackedProtoLogTest,
     DocumentProto document =
         DocumentBuilder().SetKey("invalid_namespace", "invalid_uri").Build();
     std::string serialized_document = document.SerializeAsString();
-    ASSERT_TRUE(filesystem_.PWrite(file_path_.c_str(), kHeaderReservedBytes,
-                                   serialized_document.data(),
-                                   serialized_document.size()));
+    ASSERT_TRUE(filesystem_.PWrite(
+        file_path_.c_str(),
+        PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes,
+        serialized_document.data(), serialized_document.size()));
 
     Header header = ReadHeader(filesystem_, file_path_);
 
@@ -484,8 +487,9 @@ TEST_F(PortableFileBackedProtoLogTest,
     EXPECT_TRUE(create_result.recalculated_checksum);
 
     // We lost everything, file size is back down to the header.
-    EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-                Eq(kHeaderReservedBytes));
+    EXPECT_THAT(
+        filesystem_.GetFileSize(file_path_.c_str()),
+        Eq(PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes));
 
     // At least the log is no longer dirty.
     Header header = ReadHeader(filesystem_, file_path_);
