@@ -83,28 +83,6 @@
 namespace icing {
 namespace lib {
 
-namespace {
-
-// Number of bytes we reserve for the heading at the beginning of the proto log.
-// We reserve this so the header can grow without running into the contents of
-// the proto log, triggering an unnecessary migration of the data.
-constexpr int kHeaderReservedBytes = 256;
-
-bool IsEmptyBuffer(const char* buffer, int size) {
-  return std::all_of(buffer, buffer + size,
-                     [](const char byte) { return byte == 0; });
-}
-
-// Helper function to get stored proto size from the metadata.
-// Metadata format: 8 bits magic + 24 bits size
-int GetProtoSize(int metadata) { return metadata & 0x00FFFFFF; }
-
-// Helper function to get stored proto magic from the metadata.
-// Metadata format: 8 bits magic + 24 bits size
-uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
-
-}  // namespace
-
 template <typename ProtoT>
 class PortableFileBackedProtoLog {
  public:
@@ -134,6 +112,11 @@ class PortableFileBackedProtoLog {
                      const int32_t max_proto_size_in = kMaxProtoSize)
         : compress(compress_in), max_proto_size(max_proto_size_in) {}
   };
+
+  // Number of bytes we reserve for the heading at the beginning of the proto
+  // log. We reserve this so the header can grow without running into the
+  // contents of the proto log, triggering an unnecessary migration of the data.
+  static constexpr int kHeaderReservedBytes = 256;
 
   // Header stored at the beginning of the file before the rest of the log
   // contents. Stores metadata on the log.
@@ -540,6 +523,19 @@ class PortableFileBackedProtoLog {
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::Status WriteProtoMetadata(
       const Filesystem* filesystem, int fd, int32_t host_order_metadata);
+
+  static bool IsEmptyBuffer(const char* buffer, int size) {
+    return std::all_of(buffer, buffer + size,
+                       [](const char byte) { return byte == 0; });
+  }
+
+  // Helper function to get stored proto size from the metadata.
+  // Metadata format: 8 bits magic + 24 bits size
+  static int GetProtoSize(int metadata) { return metadata & 0x00FFFFFF; }
+
+  // Helper function to get stored proto magic from the metadata.
+  // Metadata format: 8 bits magic + 24 bits size
+  static uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
 
   // Magic number added in front of every proto. Used when reading out protos
   // as a first check for corruption in each entry in the file. Even if there is
