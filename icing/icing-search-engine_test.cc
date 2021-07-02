@@ -42,6 +42,7 @@
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
@@ -100,8 +101,25 @@ constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
 constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_NONE =
     StringIndexingConfig_TokenizerType_Code_NONE;
 
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
 constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
 constexpr TermMatchType_Code MATCH_NONE = TermMatchType_Code_UNKNOWN;
+
+PortableFileBackedProtoLog<DocumentWrapper>::Header ReadDocumentLogHeader(
+    Filesystem filesystem, const std::string& file_path) {
+  PortableFileBackedProtoLog<DocumentWrapper>::Header header;
+  filesystem.PRead(file_path.c_str(), &header,
+                   sizeof(PortableFileBackedProtoLog<DocumentWrapper>::Header),
+                   /*offset=*/0);
+  return header;
+}
+
+void WriteDocumentLogHeader(
+    Filesystem filesystem, const std::string& file_path,
+    PortableFileBackedProtoLog<DocumentWrapper>::Header& header) {
+  filesystem.Write(file_path.c_str(), &header,
+                   sizeof(PortableFileBackedProtoLog<DocumentWrapper>::Header));
+}
 
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
@@ -990,7 +1008,8 @@ TEST_F(IcingSearchEngineTest, SetSchema) {
               HasSubstr("'Photo' not found"));
 }
 
-TEST_F(IcingSearchEngineTest, SetSchemaTriggersIndexRestorationAndReturnsOk) {
+TEST_F(IcingSearchEngineTest,
+       SetSchemaTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
@@ -2074,7 +2093,8 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldRemoveDeletedDocs) {
     // Deletes document1
     ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
     const std::string document_log_path =
-        icing_options.base_dir() + "/document_dir/document_log";
+        icing_options.base_dir() + "/document_dir/" +
+        DocumentLogCreator::GetDocumentLogFilename();
     int64_t document_log_size_before =
         filesystem()->GetFileSize(document_log_path.c_str());
     ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
@@ -3438,8 +3458,8 @@ TEST_F(IcingSearchEngineTest, UnableToRecoverFromCorruptDocumentLog) {
         EqualsProto(expected_get_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
-  const std::string document_log_file =
-      absl_ports::StrCat(GetDocumentDir(), "/document_log");
+  const std::string document_log_file = absl_ports::StrCat(
+      GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
   const std::string corrupt_data = "1234";
   EXPECT_TRUE(filesystem()->Write(document_log_file.c_str(),
                                   corrupt_data.data(), corrupt_data.size()));
@@ -5616,15 +5636,16 @@ TEST_F(IcingSearchEngineTest, RestoreIndexLoseLiteIndex) {
 
   // 2. Delete the last document from the document log
   {
-    const std::string document_log_file =
-        absl_ports::StrCat(GetDocumentDir(), "/document_log");
+    const std::string document_log_file = absl_ports::StrCat(
+        GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
     filesystem()->DeleteFile(document_log_file.c_str());
-    ICING_ASSERT_OK_AND_ASSIGN(auto create_result,
-                               FileBackedProtoLog<DocumentWrapper>::Create(
-                                   filesystem(), document_log_file.c_str(),
-                                   FileBackedProtoLog<DocumentWrapper>::Options(
-                                       /*compress_in=*/true)));
-    std::unique_ptr<FileBackedProtoLog<DocumentWrapper>> document_log =
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto create_result,
+        PortableFileBackedProtoLog<DocumentWrapper>::Create(
+            filesystem(), document_log_file.c_str(),
+            PortableFileBackedProtoLog<DocumentWrapper>::Options(
+                /*compress_in=*/true)));
+    std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log =
         std::move(create_result.proto_log);
 
     document = DocumentBuilder(document).SetUri("fake_type/0").Build();
@@ -5689,15 +5710,16 @@ TEST_F(IcingSearchEngineTest, RestoreIndexLoseIndex) {
 
   // 2. Delete the last two documents from the document log.
   {
-    const std::string document_log_file =
-        absl_ports::StrCat(GetDocumentDir(), "/document_log");
+    const std::string document_log_file = absl_ports::StrCat(
+        GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
     filesystem()->DeleteFile(document_log_file.c_str());
-    ICING_ASSERT_OK_AND_ASSIGN(auto create_result,
-                               FileBackedProtoLog<DocumentWrapper>::Create(
-                                   filesystem(), document_log_file.c_str(),
-                                   FileBackedProtoLog<DocumentWrapper>::Options(
-                                       /*compress_in=*/true)));
-    std::unique_ptr<FileBackedProtoLog<DocumentWrapper>> document_log =
+    ICING_ASSERT_OK_AND_ASSIGN(
+        auto create_result,
+        PortableFileBackedProtoLog<DocumentWrapper>::Create(
+            filesystem(), document_log_file.c_str(),
+            PortableFileBackedProtoLog<DocumentWrapper>::Options(
+                /*compress_in=*/true)));
+    std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log =
         std::move(create_result.proto_log);
 
     document = DocumentBuilder(document).SetUri("fake_type/0").Build();
@@ -5994,8 +6016,8 @@ TEST_F(IcingSearchEngineTest, InitializeShouldLogRecoveryCausePartialDataLoss) {
     // Append a non-checksummed document. This will mess up the checksum of the
     // proto log, forcing it to rewind and later return a DATA_LOSS error.
     const std::string serialized_document = document.SerializeAsString();
-    const std::string document_log_file =
-        absl_ports::StrCat(GetDocumentDir(), "/document_log");
+    const std::string document_log_file = absl_ports::StrCat(
+        GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
 
     int64_t file_size = filesystem()->GetFileSize(document_log_file.c_str());
     filesystem()->PWrite(document_log_file.c_str(), file_size,
@@ -6045,31 +6067,47 @@ TEST_F(IcingSearchEngineTest,
                                 .SetSchema("Message")
                                 .AddStringProperty("body", "message body")
                                 .Build();
+
+  const std::string document_log_file = absl_ports::StrCat(
+      GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
+  int64_t corruptible_offset;
+
   {
     // Initialize and put a document.
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // There's some space at the beginning of the file (e.g. header, kmagic,
+    // etc) that is necessary to initialize the FileBackedProtoLog. We can't
+    // corrupt that region, so we need to figure out the offset at which
+    // documents will be written to - which is the file size after
+    // initialization.
+    corruptible_offset = filesystem()->GetFileSize(document_log_file.c_str());
+
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
   }
 
   {
-    // Modify the document log checksum to trigger a complete document log
-    // rewind.
-    const std::string document_log_file =
-        absl_ports::StrCat(GetDocumentDir(), "/document_log");
+    // "Corrupt" the content written in the log. Make the corrupt document
+    // smaller than our original one so we don't accidentally write past our
+    // file.
+    DocumentProto document =
+        DocumentBuilder().SetKey("invalid_namespace", "invalid_uri").Build();
+    std::string serialized_document = document.SerializeAsString();
+    ASSERT_TRUE(filesystem()->PWrite(
+        document_log_file.c_str(), corruptible_offset,
+        serialized_document.data(), serialized_document.size()));
 
-    FileBackedProtoLog<DocumentWrapper>::Header document_log_header;
-    filesystem()->PRead(document_log_file.c_str(), &document_log_header,
-                        sizeof(FileBackedProtoLog<DocumentWrapper>::Header),
-                        /*offset=*/0);
-    // Set a garbage checksum.
-    document_log_header.log_checksum = 10;
-    document_log_header.header_checksum =
-        document_log_header.CalculateHeaderChecksum();
-    filesystem()->PWrite(document_log_file.c_str(), /*offset=*/0,
-                         &document_log_header,
-                         sizeof(FileBackedProtoLog<DocumentWrapper>::Header));
+    PortableFileBackedProtoLog<DocumentWrapper>::Header header =
+        ReadDocumentLogHeader(*filesystem(), document_log_file);
+
+    // Set dirty bit to true to reflect that something changed in the log.
+    header.SetDirtyFlag(true);
+    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+
+    WriteDocumentLogHeader(*filesystem(), document_log_file, header);
   }
 
   {
@@ -7181,6 +7219,177 @@ TEST_F(IcingSearchEngineTest, CJKSnippetTest) {
   EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(3));
   EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
 }
+
+// We skip this test case when we're running in a jni_test since the data files
+// will be stored in the android-instrumented storage location, rather than the
+// normal cc_library runfiles directory. To get that storage location, it's
+// recommended to use the TestStorage APIs which handles different API
+// levels/absolute vs relative/etc differences. Since that's only accessible on
+// the java-side, and I haven't figured out a way to pass that directory path to
+// this native side yet, we're just going to disable this. The functionality is
+// already well-tested across 4 different emulated OS's so we're not losing much
+// test coverage here.
+#ifndef ICING_JNI_TEST
+// Disable backwards compat test. This test is enabled in google3, but disabled
+// in jetpack/framework because we didn't want to keep the binary testdata files
+// in our repo.
+#define DISABLE_BACKWARDS_COMPAT_TEST
+#ifndef DISABLE_BACKWARDS_COMPAT_TEST
+TEST_F(IcingSearchEngineTest, MigrateToPortableFileBackedProtoLog) {
+  // Copy the testdata files into our IcingSearchEngine directory
+  std::string dir_without_portable_log;
+  if (IsAndroidX86()) {
+    dir_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_android_x86");
+  } else if (IsAndroidArm()) {
+    dir_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_android_arm");
+  } else if (IsIosPlatform()) {
+    dir_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_ios");
+  } else {
+    dir_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_linux");
+  }
+
+  // Create dst directory that we'll initialize the IcingSearchEngine over.
+  std::string base_dir = GetTestBaseDir() + "_migrate";
+  ASSERT_THAT(filesystem()->DeleteDirectoryRecursively(base_dir.c_str()), true);
+  ASSERT_THAT(filesystem()->CreateDirectoryRecursively(base_dir.c_str()), true);
+
+  ASSERT_TRUE(filesystem()->CopyDirectory(dir_without_portable_log.c_str(),
+                                          base_dir.c_str(),
+                                          /*recursive=*/true));
+
+  IcingSearchEngineOptions icing_options;
+  icing_options.set_base_dir(base_dir);
+
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  InitializeResultProto init_result = icing.Initialize();
+  EXPECT_THAT(init_result.status(), ProtoIsOk());
+  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+
+  // Set up schema, this is the one used to validate documents in the testdata
+  // files. Do not change unless you're also updating the testdata files.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("body")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Make sure our schema is still the same as we expect. If not, there's
+  // definitely no way we're getting the documents back that we expect.
+  GetSchemaResultProto expected_get_schema_result_proto;
+  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_schema_result_proto.mutable_schema() = schema;
+  ASSERT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
+
+  // These are the documents that are stored in the testdata files. Do not
+  // change unless you're also updating the testdata files.
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .AddStringProperty("body", "bar")
+                                .Build();
+
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(20)
+                                .SetScore(321)
+                                .AddStringProperty("body", "baz bat")
+                                .Build();
+
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace2", "uri1")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(30)
+                                .SetScore(123)
+                                .AddStringProperty("subject", "phoo")
+                                .Build();
+
+  // Document 1 and 3 were put normally, and document 2 was deleted in our
+  // testdata files.
+  EXPECT_THAT(icing
+                  .Get(document1.namespace_(), document1.uri(),
+                       GetResultSpecProto::default_instance())
+                  .document(),
+              EqualsProto(document1));
+  EXPECT_THAT(icing
+                  .Get(document2.namespace_(), document2.uri(),
+                       GetResultSpecProto::default_instance())
+                  .status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+  EXPECT_THAT(icing
+                  .Get(document3.namespace_(), document3.uri(),
+                       GetResultSpecProto::default_instance())
+                  .document(),
+              EqualsProto(document3));
+
+  // Searching for "foo" should get us document1.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("foo");
+
+  SearchResultProto expected_document1;
+  expected_document1.mutable_status()->set_code(StatusProto::OK);
+  *expected_document1.mutable_results()->Add()->mutable_document() = document1;
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(expected_document1));
+
+  // Searching for "baz" would've gotten us document2, except it got deleted.
+  // Make sure that it's cleared from our index too.
+  search_spec.set_query("baz");
+
+  SearchResultProto expected_no_documents;
+  expected_no_documents.mutable_status()->set_code(StatusProto::OK);
+
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
+
+  // Searching for "phoo" should get us document3.
+  search_spec.set_query("phoo");
+
+  SearchResultProto expected_document3;
+  expected_document3.mutable_status()->set_code(StatusProto::OK);
+  *expected_document3.mutable_results()->Add()->mutable_document() = document3;
+
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(expected_document3));
+}
+#endif  // DISABLE_BACKWARDS_COMPAT_TEST
+#endif  // !ICING_JNI_TEST
 
 }  // namespace
 }  // namespace lib
