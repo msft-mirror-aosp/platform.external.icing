@@ -508,12 +508,6 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     return result_proto;
   }
 
-  libtextclassifier3::Status status = SchemaUtil::Validate(new_schema);
-  if (!status.ok()) {
-    TransformStatus(status, result_status);
-    return result_proto;
-  }
-
   auto lost_previous_schema_or = LostPreviousSchema();
   if (!lost_previous_schema_or.ok()) {
     TransformStatus(lost_previous_schema_or.status(), result_status);
@@ -549,6 +543,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     result_proto.add_incompatible_schema_types(incompatible_type);
   }
 
+  libtextclassifier3::Status status;
   if (set_schema_result.success) {
     if (lost_previous_schema) {
       // No previous schema to calculate a diff against. We have to go through
@@ -910,6 +905,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
   DeleteStatsProto* delete_stats = result_proto.mutable_delete_stats();
   delete_stats->set_delete_type(DeleteStatsProto::DeleteType::QUERY);
+
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   libtextclassifier3::Status status =
