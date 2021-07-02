@@ -49,6 +49,8 @@ using ::testing::Pointee;
 
 constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
     PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
 
 constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
     StringIndexingConfig_TokenizerType_Code_PLAIN;
@@ -520,6 +522,73 @@ TEST_F(SchemaStoreTest, SetSchemaThatRequiresReindexingOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+}
+
+TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // Make two schemas. One that sets index_nested_properties to false and one
+  // that sets it to true.
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto no_nested_index_schema =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("emails")
+                  .SetDataTypeDocument("email",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaProto nested_index_schema =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("emails")
+                  .SetDataTypeDocument("email",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Set schema with index_nested_properties=false to start.
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  EXPECT_THAT(schema_store->SetSchema(no_nested_index_schema),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
+
+  // Set schema with index_nested_properties=true and confirm that the change to
+  // 'person' is index incompatible.
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.index_incompatible = true;
+  EXPECT_THAT(schema_store->SetSchema(nested_index_schema),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(nested_index_schema));
+
+  // Set schema with index_nested_properties=false and confirm that the change
+  // to 'person' is index incompatible.
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.index_incompatible = true;
+  EXPECT_THAT(schema_store->SetSchema(no_nested_index_schema),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
