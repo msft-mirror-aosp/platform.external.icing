@@ -577,6 +577,120 @@ void BM_RepeatedPut(benchmark::State& state) {
 // cap the limit to 1 << 18.
 BENCHMARK(BM_RepeatedPut)->Range(/*start=*/100, /*limit=*/1 << 18);
 
+// This is different from BM_RepeatedPut since we're just trying to benchmark
+// one Put call, not thousands of them at once.
+void BM_Put(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document
+  DocumentProto document = DocumentBuilder()
+                               .SetSchema("Message")
+                               .SetNamespace("namespace")
+                               .SetUri("uri")
+                               .Build();
+
+  for (auto s : state) {
+    benchmark::DoNotOptimize(icing->Put(document));
+  }
+}
+BENCHMARK(BM_Put);
+
+void BM_Get(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document
+  DocumentProto document = DocumentBuilder()
+                               .SetSchema("Message")
+                               .SetNamespace("namespace")
+                               .SetUri("uri")
+                               .Build();
+
+  ASSERT_THAT(icing->Put(document).status(), ProtoIsOk());
+  for (auto s : state) {
+    benchmark::DoNotOptimize(
+        icing->Get("namespace", "uri", GetResultSpecProto::default_instance()));
+  }
+}
+BENCHMARK(BM_Get);
+
+void BM_Delete(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document
+  DocumentProto document = DocumentBuilder()
+                               .SetSchema("Message")
+                               .SetNamespace("namespace")
+                               .SetUri("uri")
+                               .Build();
+
+  ASSERT_THAT(icing->Put(document).status(), ProtoIsOk());
+  for (auto s : state) {
+    state.PauseTiming();
+    icing->Put(document);
+    state.ResumeTiming();
+
+    benchmark::DoNotOptimize(icing->Delete("namespace", "uri"));
+  }
+}
+BENCHMARK(BM_Delete);
+
 }  // namespace
 
 }  // namespace lib
