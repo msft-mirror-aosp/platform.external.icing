@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -34,6 +35,7 @@ using ::testing::HasSubstr;
 
 // Properties/fields in a schema type
 constexpr char kEmailType[] = "EmailMessage";
+constexpr char kMessageType[] = "Text";
 constexpr char kPersonType[] = "Person";
 
 constexpr PropertyConfigProto_DataType_Code TYPE_DOCUMENT =
@@ -62,6 +64,367 @@ constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
 constexpr TermMatchType_Code MATCH_UNKNOWN = TermMatchType_Code_UNKNOWN;
 constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
 constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+
+TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
+  // Create a schema with the following dependencies:
+  //         C
+  //       /   \
+  // A - B       E - F
+  //       \   /
+  //         D
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("C", /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("d")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("D", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("e")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("E", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_d =
+      SchemaTypeConfigBuilder()
+          .SetType("D")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("e")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("E", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder()
+          .SetType("E")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("f")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("F", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_f =
+      SchemaTypeConfigBuilder()
+          .SetType("F")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("text")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+
+  // Provide these in alphabetical (also parent-child) order: A, B, C, D, E, F
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_a)
+                           .AddType(type_b)
+                           .AddType(type_c)
+                           .AddType(type_d)
+                           .AddType(type_e)
+                           .AddType(type_f)
+                           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependencyMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, testing::SizeIs(5));
+  EXPECT_THAT(d_map["F"],
+              testing::UnorderedElementsAre("A", "B", "C", "D", "E"));
+  EXPECT_THAT(d_map["E"], testing::UnorderedElementsAre("A", "B", "C", "D"));
+  EXPECT_THAT(d_map["D"], testing::UnorderedElementsAre("A", "B"));
+  EXPECT_THAT(d_map["C"], testing::UnorderedElementsAre("A", "B"));
+  EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
+}
+
+TEST(SchemaUtilTest, DependencyGraphReverseAlphabeticalOrder) {
+  // Create a schema with the following dependencies:
+  //         C
+  //       /   \
+  // A - B       E - F
+  //       \   /
+  //         D
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("C", /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("d")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("D", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("e")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("E", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_d =
+      SchemaTypeConfigBuilder()
+          .SetType("D")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("e")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("E", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder()
+          .SetType("E")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("f")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("F", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_f =
+      SchemaTypeConfigBuilder()
+          .SetType("F")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("text")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+
+  // Provide these in reverse alphabetical (also child-parent) order:
+  //   F, E, D, C, B, A
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_f)
+                           .AddType(type_e)
+                           .AddType(type_d)
+                           .AddType(type_c)
+                           .AddType(type_b)
+                           .AddType(type_a)
+                           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependencyMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, testing::SizeIs(5));
+  EXPECT_THAT(d_map["F"],
+              testing::UnorderedElementsAre("A", "B", "C", "D", "E"));
+  EXPECT_THAT(d_map["E"], testing::UnorderedElementsAre("A", "B", "C", "D"));
+  EXPECT_THAT(d_map["D"], testing::UnorderedElementsAre("A", "B"));
+  EXPECT_THAT(d_map["C"], testing::UnorderedElementsAre("A", "B"));
+  EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
+}
+
+TEST(SchemaUtilTest, DependencyGraphMixedOrder) {
+  // Create a schema with the following dependencies:
+  //         C
+  //       /   \
+  // A - B       E - F
+  //       \   /
+  //         D
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("C", /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("d")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("D", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("e")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("E", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_d =
+      SchemaTypeConfigBuilder()
+          .SetType("D")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("e")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("E", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder()
+          .SetType("E")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("f")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("F", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_f =
+      SchemaTypeConfigBuilder()
+          .SetType("F")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("text")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+
+  // Provide these in a random order: C, E, F, A, B, D
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_c)
+                           .AddType(type_e)
+                           .AddType(type_f)
+                           .AddType(type_a)
+                           .AddType(type_b)
+                           .AddType(type_d)
+                           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependencyMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, testing::SizeIs(5));
+  EXPECT_THAT(d_map["F"],
+              testing::UnorderedElementsAre("A", "B", "C", "D", "E"));
+  EXPECT_THAT(d_map["E"], testing::UnorderedElementsAre("A", "B", "C", "D"));
+  EXPECT_THAT(d_map["D"], testing::UnorderedElementsAre("A", "B"));
+  EXPECT_THAT(d_map["C"], testing::UnorderedElementsAre("A", "B"));
+  EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
+}
+
+TEST(SchemaUtilTest, TopLevelCycle) {
+  // Create a schema with the following dependencies:
+  // A - B - B - B - B....
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("Infinite loop")));
+}
+
+TEST(SchemaUtilTest, MultiLevelCycle) {
+  // Create a schema with the following dependencies:
+  // A - B - C - A - B - C - A ...
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("C", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/true))
+          .Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(SchemaUtilTest, NonExistentType) {
+  // Create a schema with the following dependencies:
+  // A - B - C - X (does not exist)
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("c")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("C", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("x")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("X", /*index_nested_properties=*/true))
+          .Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
 
 TEST(SchemaUtilTest, EmptySchemaProtoIsValid) {
   SchemaProto schema;
@@ -309,7 +672,7 @@ TEST(SchemaUtilTest, NoMatchingSchemaTypeIsInvalid) {
           .Build();
 
   ASSERT_THAT(SchemaUtil::Validate(schema),
-              StatusIs(libtextclassifier3::StatusCode::UNKNOWN,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                        HasSubstr("Undefined 'schema_type'")));
 }
 
@@ -342,8 +705,9 @@ TEST(SchemaUtilTest, NewOptionalPropertyIsCompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema,
-                                                    new_schema_with_optional),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema_with_optional, no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -377,8 +741,9 @@ TEST(SchemaUtilTest, NewRequiredPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema,
-                                                    new_schema_with_required),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema_with_required, no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -412,7 +777,9 @@ TEST(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -442,16 +809,17 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
   // We can't have a new schema be more restrictive, REPEATED->OPTIONAL
   SchemaUtil::SchemaDelta incompatible_schema_delta;
   incompatible_schema_delta.schema_types_incompatible.emplace(kEmailType);
+  SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/less_restrictive_schema,
-                  /*new_schema=*/more_restrictive_schema),
+                  /*new_schema=*/more_restrictive_schema, no_dependencies_map),
               Eq(incompatible_schema_delta));
 
   // We can have the new schema be less restrictive, OPTIONAL->REPEATED;
   SchemaUtil::SchemaDelta compatible_schema_delta;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/more_restrictive_schema,
-                  /*new_schema=*/less_restrictive_schema),
+                  /*new_schema=*/less_restrictive_schema, no_dependencies_map),
               Eq(compatible_schema_delta));
 }
 
@@ -480,7 +848,9 @@ TEST(SchemaUtilTest, DifferentDataTypeIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -490,6 +860,12 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop")
+                                        .SetDataType(TYPE_INT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kMessageType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("prop")
                                         .SetDataType(TYPE_INT)
@@ -514,19 +890,32 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
                                         .SetDataType(TYPE_INT)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kMessageType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop")
+                                        .SetDataType(TYPE_INT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeDocument(
-                                   kEmailType, /*index_nested_properties=*/true)
-                               .SetCardinality(CARDINALITY_REPEATED)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeDocument(
+                                            kMessageType,
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
-              Eq(schema_delta));
+  // kEmailType depends on kMessageType
+  SchemaUtil::DependencyMap dependencies_map = {{kMessageType, {kEmailType}}};
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, dependencies_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+  EXPECT_THAT(actual.index_incompatible, testing::IsFalse());
+  EXPECT_THAT(actual.schema_types_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
 }
 
 TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
@@ -558,13 +947,16 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
   schema_delta.index_incompatible = true;
 
   // New schema gained a new indexed property.
+  SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  schema_with_indexed_property, schema_with_unindexed_property),
+                  schema_with_indexed_property, schema_with_unindexed_property,
+                  no_dependencies_map),
               Eq(schema_delta));
 
   // New schema lost an indexed property.
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  schema_with_indexed_property, schema_with_unindexed_property),
+                  schema_with_indexed_property, schema_with_unindexed_property,
+                  no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -600,7 +992,9 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.index_incompatible = true;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -637,7 +1031,9 @@ TEST(SchemaUtilTest, AddingTypeIsCompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map),
               Eq(schema_delta));
 }
 
@@ -676,8 +1072,103 @@ TEST(SchemaUtilTest, DeletingTypeIsNoted) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_deleted.emplace(kPersonType);
-  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema),
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map),
               Eq(schema_delta));
+}
+
+TEST(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property2")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Remove Property2 and make Property1 indexed now. Removing Property2 should
+  // be incompatible.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property1")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.emplace(kEmailType);
+  schema_delta.index_incompatible = true;
+  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, no_dependencies_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+}
+
+TEST(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
+  // Make two schemas. One that sets index_nested_properties to false and one
+  // that sets it to true.
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto no_nested_index_schema =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emails")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaProto nested_index_schema =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("emails")
+                               .SetDataTypeDocument(
+                                   kEmailType, /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Going from index_nested_properties=false to index_nested_properties=true
+  // should make kPersonType index_incompatible. kEmailType should be
+  // unaffected.
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.index_incompatible = true;
+  SchemaUtil::DependencyMap dependencies_map = {{kEmailType, {kPersonType}}};
+  SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
+      no_nested_index_schema, nested_index_schema, dependencies_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+
+  // Going from index_nested_properties=true to index_nested_properties=false
+  // should also make kPersonType index_incompatible. kEmailType should be
+  // unaffected.
+  actual = SchemaUtil::ComputeCompatibilityDelta(
+      nested_index_schema, no_nested_index_schema, dependencies_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
 }
 
 TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
