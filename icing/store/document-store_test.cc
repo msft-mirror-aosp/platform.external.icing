@@ -15,6 +15,7 @@
 #include "icing/store/document-store.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <string>
@@ -40,6 +41,7 @@
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-log-creator.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -103,6 +105,22 @@ UsageReport CreateUsageReport(std::string name_space, std::string uri,
   usage_report.set_usage_timestamp_ms(timestamp_ms);
   usage_report.set_usage_type(usage_type);
   return usage_report;
+}
+
+PortableFileBackedProtoLog<DocumentWrapper>::Header ReadDocumentLogHeader(
+    Filesystem filesystem, const std::string& file_path) {
+  PortableFileBackedProtoLog<DocumentWrapper>::Header header;
+  filesystem.PRead(file_path.c_str(), &header,
+                   sizeof(PortableFileBackedProtoLog<DocumentWrapper>::Header),
+                   /*offset=*/0);
+  return header;
+}
+
+void WriteDocumentLogHeader(
+    Filesystem filesystem, const std::string& file_path,
+    PortableFileBackedProtoLog<DocumentWrapper>::Header& header) {
+  filesystem.Write(file_path.c_str(), &header,
+                   sizeof(PortableFileBackedProtoLog<DocumentWrapper>::Header));
 }
 
 class DocumentStoreTest : public ::testing::Test {
@@ -452,14 +470,18 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
   // Validates that deleting something non-existing won't append anything to
   // ground truth
   int64_t document_log_size_before = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
 
   EXPECT_THAT(
       document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
   EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
@@ -538,13 +560,17 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceNotFound) {
   // Validates that deleting something non-existing won't append anything to
   // ground truth
   int64_t document_log_size_before = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
 
   EXPECT_THAT(doc_store->DeleteByNamespace("nonexistent_namespace").status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
   EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
@@ -607,7 +633,9 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
     EXPECT_THAT(group_result.num_docs_deleted, Eq(2));
 
     document_log_size_before = filesystem_.GetFileSize(
-        absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+        absl_ports::StrCat(document_store_dir_, "/",
+                           DocumentLogCreator::GetDocumentLogFilename())
+            .c_str());
   }  // Destructors should update checksum and persist all data to file.
 
   CorruptDocStoreHeaderChecksumFile();
@@ -621,7 +649,9 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
 
   // Make sure we didn't add anything to the ground truth after we recovered.
   int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
   EXPECT_EQ(document_log_size_before, document_log_size_after);
 
   EXPECT_THAT(doc_store->Get(document1.namespace_(), document1.uri()),
@@ -730,13 +760,17 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   // Validates that deleting something non-existing won't append anything to
   // ground truth
   int64_t document_log_size_before = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
 
   EXPECT_THAT(document_store->DeleteBySchemaType("nonexistent_type").status,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
 
   EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
@@ -809,7 +843,9 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
     EXPECT_THAT(group_result.num_docs_deleted, Eq(1));
 
     document_log_size_before = filesystem_.GetFileSize(
-        absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+        absl_ports::StrCat(document_store_dir_, "/",
+                           DocumentLogCreator::GetDocumentLogFilename())
+            .c_str());
   }  // Destructors should update checksum and persist all data to file.
 
   CorruptDocStoreHeaderChecksumFile();
@@ -823,7 +859,9 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
 
   // Make sure we didn't add anything to the ground truth after we recovered.
   int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
   EXPECT_EQ(document_log_size_before, document_log_size_after);
 
   EXPECT_THAT(document_store->Get(email_document_id),
@@ -901,7 +939,9 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
                 IsOkAndHolds(EqualsProto(message_document)));
 
     document_log_size_before = filesystem_.GetFileSize(
-        absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+        absl_ports::StrCat(document_store_dir_, "/",
+                           DocumentLogCreator::GetDocumentLogFilename())
+            .c_str());
   }  // Destructors should update checksum and persist all data to file.
 
   CorruptDocStoreHeaderChecksumFile();
@@ -923,7 +963,9 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
 
   // Make sure we didn't add anything to the ground truth after we recovered.
   int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/document_log").c_str());
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
   EXPECT_EQ(document_log_size_before, document_log_size_after);
 
   EXPECT_THAT(document_store->Get(email_document_id),
@@ -968,7 +1010,9 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   ICING_ASSERT_OK(doc_store->Put(document2));
   ICING_ASSERT_OK(doc_store->Put(document3));
 
-  std::string original_document_log = document_store_dir_ + "/document_log";
+  std::string original_document_log = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
+
   int64_t original_size =
       filesystem_.GetFileSize(original_document_log.c_str());
 
@@ -979,7 +1023,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
                HasSubstr("directory is the same")));
 
   std::string optimized_dir = document_store_dir_ + "_optimize";
-  std::string optimized_document_log = optimized_dir + "/document_log";
+  std::string optimized_document_log =
+      optimized_dir + "/" + DocumentLogCreator::GetDocumentLogFilename();
 
   // Validates that the optimized document log has the same size if nothing is
   // deleted
@@ -1067,8 +1112,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
   const std::string serialized_document = document.SerializeAsString();
 
-  const std::string document_log_file =
-      absl_ports::StrCat(document_store_dir_, "/document_log");
+  const std::string document_log_file = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
   int64_t file_size = filesystem_.GetFileSize(document_log_file.c_str());
   filesystem_.PWrite(document_log_file.c_str(), file_size,
                      serialized_document.data(), serialized_document.size());
@@ -2919,8 +2964,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
   const std::string serialized_document = document.SerializeAsString();
 
-  const std::string document_log_file =
-      absl_ports::StrCat(document_store_dir_, "/document_log");
+  const std::string document_log_file = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
   int64_t file_size = filesystem_.GetFileSize(document_log_file.c_str());
   filesystem_.PWrite(document_log_file.c_str(), file_size,
                      serialized_document.data(), serialized_document.size());
@@ -3043,7 +3088,9 @@ TEST_F(DocumentStoreTest, DetectPartialDataLoss) {
   const std::string serialized_document = document.SerializeAsString();
 
   const std::string document_log_file =
-      absl_ports::StrCat(document_store_dir_, "/document_log");
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str();
   int64_t file_size = filesystem_.GetFileSize(document_log_file.c_str());
   filesystem_.PWrite(document_log_file.c_str(), file_size,
                      serialized_document.data(), serialized_document.size());
@@ -3060,8 +3107,8 @@ TEST_F(DocumentStoreTest, DetectPartialDataLoss) {
 
 TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
   int64_t corruptible_offset;
-  const std::string document_log_file =
-      absl_ports::StrCat(document_store_dir_, "/document_log");
+  const std::string document_log_file = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
   {
     // Can put and delete fine.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -3088,8 +3135,30 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
   // "Corrupt" the persisted content written in the log. We can't recover if
   // the persisted data was corrupted.
   std::string corruption = "abc";
-  filesystem_.PWrite(document_log_file.c_str(), /*offset=*/corruptible_offset,
-                     corruption.data(), corruption.size());
+  filesystem_.PWrite(document_log_file.c_str(),
+                     /*offset=*/corruptible_offset, corruption.data(),
+                     corruption.size());
+
+  {
+    // "Corrupt" the content written in the log. Make the corrupt document
+    // smaller than our original one so we don't accidentally write past our
+    // file.
+    DocumentProto document =
+        DocumentBuilder().SetKey("invalid_namespace", "invalid_uri").Build();
+    std::string serialized_document = document.SerializeAsString();
+    ASSERT_TRUE(filesystem_.PWrite(
+        document_log_file.c_str(), corruptible_offset,
+        serialized_document.data(), serialized_document.size()));
+
+    PortableFileBackedProtoLog<DocumentWrapper>::Header header =
+        ReadDocumentLogHeader(filesystem_, document_log_file);
+
+    // Set dirty bit to true to reflect that something changed in the log.
+    header.SetDirtyFlag(true);
+    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+
+    WriteDocumentLogHeader(filesystem_, document_log_file, header);
+  }
 
   // Successfully recover from a data loss issue.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -3106,8 +3175,8 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
 // the document store header.
 //
 // This causes a problem now because this cl changes behavior to not consider an
-// InitializeDerivedFiles failure to be a recovery if there is nothing to
-// recover because the doocument store is empty.
+// InitializeExistingDerivedFiles failure to be a recovery if there is nothing
+// to recover because the doocument store is empty.
 #define DISABLE_BACKWARDS_COMPAT_TEST
 #ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
@@ -3666,6 +3735,128 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
         IsOkAndHolds(EqualsProto(docWithoutBody)));
   }
 }
+
+#ifndef DISABLE_BACKWARDS_COMPAT_TEST
+TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
+  // Set up schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("body")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  std::string schema_store_dir = schema_store_dir_ + "_migrate";
+  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
+  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+
+  // Create dst directory that we'll initialize the DocumentStore over.
+  std::string document_store_dir = document_store_dir_ + "_migrate";
+  ASSERT_THAT(
+      filesystem_.DeleteDirectoryRecursively(document_store_dir.c_str()), true);
+  ASSERT_THAT(
+      filesystem_.CreateDirectoryRecursively(document_store_dir.c_str()), true);
+
+  // Copy the testdata files into our DocumentStore directory
+  std::string document_store_without_portable_log;
+  if (IsAndroidX86()) {
+    document_store_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_android_x86/document_dir");
+  } else if (IsAndroidArm()) {
+    document_store_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_android_arm/document_dir");
+  } else if (IsIosPlatform()) {
+    document_store_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_ios/document_dir");
+  } else {
+    document_store_without_portable_log = GetTestFilePath(
+        "icing/testdata/not_portable_log/"
+        "icing_search_engine_linux/document_dir");
+  }
+
+  ASSERT_TRUE(filesystem_.CopyDirectory(
+      document_store_without_portable_log.c_str(), document_store_dir.c_str(),
+      /*recursive=*/true));
+
+  // Initialize the DocumentStore over our copied files.
+  InitializeStatsProto initialize_stats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir, &fake_clock_,
+                            schema_store.get(),
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            &initialize_stats));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // These are the documents that are stored in the testdata files. Do not
+  // change unless you're also updating the testdata files.
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .AddStringProperty("body", "bar")
+                                .Build();
+
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(20)
+                                .SetScore(321)
+                                .AddStringProperty("body", "baz bat")
+                                .Build();
+
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace2", "uri1")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(30)
+                                .SetScore(123)
+                                .AddStringProperty("subject", "phoo")
+                                .Build();
+
+  // Check that we didn't lose anything. A migration also doesn't technically
+  // count as a recovery.
+  EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
+  EXPECT_FALSE(initialize_stats.has_document_store_recovery_cause());
+
+  // Document 1 and 3 were put normally, and document 2 was deleted in our
+  // testdata files.
+  //
+  // Check by namespace, uri
+  EXPECT_THAT(document_store->Get(document1.namespace_(), document1.uri()),
+              IsOkAndHolds(EqualsProto(document1)));
+  EXPECT_THAT(document_store->Get(document2.namespace_(), document2.uri()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(document_store->Get(document3.namespace_(), document3.uri()),
+              IsOkAndHolds(EqualsProto(document3)));
+
+  // Check by document_id
+  EXPECT_THAT(document_store->Get(/*document_id=*/0),
+              IsOkAndHolds(EqualsProto(document1)));
+  EXPECT_THAT(document_store->Get(/*document_id=*/1),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(document_store->Get(/*document_id=*/2),
+              IsOkAndHolds(EqualsProto(document3)));
+}
+#endif  // DISABLE_BACKWARDS_COMPAT_TEST
 
 }  // namespace
 

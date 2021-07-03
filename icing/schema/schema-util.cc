@@ -95,43 +95,175 @@ bool IsTermMatchTypeCompatible(const StringIndexingConfig& old_indexed,
 
 }  // namespace
 
-libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
-  // Tracks SchemaTypeConfigs that we've validated already.
-  std::unordered_set<std::string_view> known_schema_types;
+libtextclassifier3::Status ExpandTranstiveDependencies(
+    const SchemaUtil::DependencyMap& child_to_direct_parent_map,
+    std::string_view type,
+    SchemaUtil::DependencyMap* expanded_child_to_parent_map,
+    std::unordered_set<std::string_view>* pending_expansions,
+    std::unordered_set<std::string_view>* orphaned_types) {
+  auto expanded_itr = expanded_child_to_parent_map->find(type);
+  if (expanded_itr != expanded_child_to_parent_map->end()) {
+    // We've already expanded this type. Just return.
+    return libtextclassifier3::Status::OK;
+  }
+  auto itr = child_to_direct_parent_map.find(type);
+  if (itr == child_to_direct_parent_map.end()) {
+    // It's an orphan. Just return.
+    orphaned_types->insert(type);
+    return libtextclassifier3::Status::OK;
+  }
+  pending_expansions->insert(type);
+  std::unordered_set<std::string_view> expanded_dependencies;
 
-  // Tracks SchemaTypeConfigs that have been mentioned (by other
-  // SchemaTypeConfigs), but we haven't validated yet.
-  std::unordered_set<std::string_view> unknown_schema_types;
+  // Add all of the direct parent dependencies.
+  expanded_dependencies.reserve(itr->second.size());
+  expanded_dependencies.insert(itr->second.begin(), itr->second.end());
+
+  // Iterate through each direct parent and add their indirect parents.
+  for (std::string_view dep : itr->second) {
+    // 1. Check if we're in the middle of expanding this type - IOW there's a
+    // cycle!
+    if (pending_expansions->count(dep) > 0) {
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Infinite loop detected in type configs. '", type,
+                             "' references itself."));
+    }
+
+    // 2. Expand this type as needed.
+    ICING_RETURN_IF_ERROR(ExpandTranstiveDependencies(
+        child_to_direct_parent_map, dep, expanded_child_to_parent_map,
+        pending_expansions, orphaned_types));
+    if (orphaned_types->count(dep) > 0) {
+      // Dep is an orphan. Just skip to the next dep.
+      continue;
+    }
+
+    // 3. Dep has been fully expanded. Add all of its dependencies to this
+    // type's dependencies.
+    auto dep_expanded_itr = expanded_child_to_parent_map->find(dep);
+    expanded_dependencies.reserve(expanded_dependencies.size() +
+                                  dep_expanded_itr->second.size());
+    expanded_dependencies.insert(dep_expanded_itr->second.begin(),
+                                 dep_expanded_itr->second.end());
+  }
+  expanded_child_to_parent_map->insert(
+      {type, std::move(expanded_dependencies)});
+  pending_expansions->erase(type);
+  return libtextclassifier3::Status::OK;
+}
+
+// Expands the dependencies represented by the child_to_direct_parent_map to
+// also include indirect parents.
+//
+// Ex. Suppose we have a schema with four types A, B, C, D. A has a property of
+// type B and B has a property of type C. C and D only have non-document
+// properties.
+//
+// The child to direct parent dependency map for this schema would be:
+// C -> B
+// B -> A
+//
+// This function would expand it so that A is also present as an indirect parent
+// of C.
+libtextclassifier3::StatusOr<SchemaUtil::DependencyMap>
+ExpandTranstiveDependencies(
+    const SchemaUtil::DependencyMap& child_to_direct_parent_map) {
+  SchemaUtil::DependencyMap expanded_child_to_parent_map;
+
+  // Types that we are expanding.
+  std::unordered_set<std::string_view> pending_expansions;
+
+  // Types that have no parents that depend on them.
+  std::unordered_set<std::string_view> orphaned_types;
+  for (const auto& kvp : child_to_direct_parent_map) {
+    ICING_RETURN_IF_ERROR(ExpandTranstiveDependencies(
+        child_to_direct_parent_map, kvp.first, &expanded_child_to_parent_map,
+        &pending_expansions, &orphaned_types));
+  }
+  return expanded_child_to_parent_map;
+}
+
+// Builds a transitive child-parent dependency map. 'Orphaned' types (types with
+// no parents) will not be present in the map.
+//
+// Ex. Suppose we have a schema with four types A, B, C, D. A has a property of
+// type B and B has a property of type C. C and D only have non-document
+// properties.
+//
+// The transitive child-parent dependency map for this schema would be:
+// C -> A, B
+// B -> A
+//
+// A and D would be considered orphaned properties because no type refers to
+// them.
+//
+// RETURNS:
+//   On success, a transitive child-parent dependency map of all types in the
+//   schema.
+//   INVALID_ARGUMENT if the schema contains a cycle or an undefined type.
+//   ALREADY_EXISTS if a schema type is specified more than once in the schema
+libtextclassifier3::StatusOr<SchemaUtil::DependencyMap>
+BuildTransitiveDependencyGraph(const SchemaProto& schema) {
+  // Child to parent map.
+  SchemaUtil::DependencyMap child_to_direct_parent_map;
+
+  // Add all first-order dependencies.
+  std::unordered_set<std::string_view> known_types;
+  std::unordered_set<std::string_view> unknown_types;
+  for (const auto& type_config : schema.types()) {
+    std::string_view schema_type(type_config.schema_type());
+    if (known_types.count(schema_type) > 0) {
+      return absl_ports::AlreadyExistsError(absl_ports::StrCat(
+          "Field 'schema_type' '", schema_type, "' is already defined"));
+    }
+    known_types.insert(schema_type);
+    unknown_types.erase(schema_type);
+    for (const auto& property_config : type_config.properties()) {
+      if (property_config.data_type() ==
+          PropertyConfigProto::DataType::DOCUMENT) {
+        // Need to know what schema_type these Document properties should be
+        // validated against
+        std::string_view property_schema_type(property_config.schema_type());
+        if (property_schema_type == schema_type) {
+          return absl_ports::InvalidArgumentError(
+              absl_ports::StrCat("Infinite loop detected in type configs. '",
+                                 schema_type, "' references itself."));
+        }
+        if (known_types.count(property_schema_type) == 0) {
+          unknown_types.insert(property_schema_type);
+        }
+        auto itr = child_to_direct_parent_map.find(property_schema_type);
+        if (itr == child_to_direct_parent_map.end()) {
+          child_to_direct_parent_map.insert(
+              {property_schema_type, std::unordered_set<std::string_view>()});
+          itr = child_to_direct_parent_map.find(property_schema_type);
+        }
+        itr->second.insert(schema_type);
+      }
+    }
+  }
+  if (!unknown_types.empty()) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Undefined 'schema_type's: ", absl_ports::StrJoin(unknown_types, ",")));
+  }
+  return ExpandTranstiveDependencies(child_to_direct_parent_map);
+}
+
+libtextclassifier3::StatusOr<SchemaUtil::DependencyMap> SchemaUtil::Validate(
+    const SchemaProto& schema) {
+  // 1. Build the dependency map. This will detect any cycles, non-existent or
+  // duplicate types in the schema.
+  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependencyMap dependency_map,
+                         BuildTransitiveDependencyGraph(schema));
 
   // Tracks PropertyConfigs within a SchemaTypeConfig that we've validated
   // already.
   std::unordered_set<std::string_view> known_property_names;
 
-  // Tracks which schemas reference other schemas. This is used to detect
-  // infinite loops between indexed schema references (e.g. A -> B -> C -> A).
-  // We could get into an infinite loop while trying to assign section ids.
-  //
-  // The key is the "child" schema that is being referenced within another
-  // schema.
-  // The value is a set of all the direct/indirect "parent" schemas that
-  // reference the "child" schema.
-  //
-  // For example, if A has a nested document property of type B, then A is the
-  // "parent" and B is the "child" and so schema_references will contain
-  // schema_references[B] == {A}.
-  std::unordered_map<std::string_view, std::unordered_set<std::string_view>>
-      schema_references;
-
+  // 2. Validate the properties of each type.
   for (const auto& type_config : schema.types()) {
     std::string_view schema_type(type_config.schema_type());
     ICING_RETURN_IF_ERROR(ValidateSchemaType(schema_type));
-
-    // We can't have duplicate schema_types
-    if (!known_schema_types.insert(schema_type).second) {
-      return absl_ports::AlreadyExistsError(absl_ports::StrCat(
-          "Field 'schema_type' '", schema_type, "' is already defined"));
-    }
-    unknown_schema_types.erase(schema_type);
 
     // We only care about properties being unique within one type_config
     known_property_names.clear();
@@ -164,56 +296,6 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
                                  "data_types in schema property '",
                                  schema_type, ".", property_name, "'"));
         }
-
-        if (property_schema_type == schema_type) {
-          // The schema refers to itself. This also causes a infinite loop.
-          //
-          // TODO(b/171996137): When clients can opt out of indexing document
-          // properties, then we don't need to do this if the document property
-          // isn't indexed. We only care about infinite loops while we're trying
-          // to assign section ids for indexing.
-          return absl_ports::InvalidArgumentError(
-              absl_ports::StrCat("Infinite loop detected in type configs. '",
-                                 schema_type, "' references itself."));
-        }
-
-        // Need to make sure we eventually see/validate this schema_type
-        if (known_schema_types.count(property_schema_type) == 0) {
-          unknown_schema_types.insert(property_schema_type);
-        }
-
-        // Start tracking the parent schemas that references this nested schema
-        // for infinite loop detection.
-        //
-        // TODO(b/171996137): When clients can opt out of indexing document
-        // properties, then we don't need to do this if the document property
-        // isn't indexed. We only care about infinite loops while we're trying
-        // to assign section ids for indexing.
-        std::unordered_set<std::string_view> parent_schemas;
-        parent_schemas.insert(schema_type);
-
-        for (const auto& parent : parent_schemas) {
-          // Check for any indirect parents
-          auto indirect_parents_iter = schema_references.find(parent);
-          if (indirect_parents_iter == schema_references.end()) {
-            continue;
-          }
-
-          // Our "parent" schema has parents as well. They're our indirect
-          // parents now.
-          for (const std::string_view& indirect_parent :
-               indirect_parents_iter->second) {
-            if (indirect_parent == property_schema_type) {
-              // We're our own indirect parent! Infinite loop found.
-              return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-                  "Infinite loop detected in type configs. '",
-                  property_schema_type, "' references itself."));
-            }
-            parent_schemas.insert(indirect_parent);
-          }
-        }
-
-        schema_references.insert({property_schema_type, parent_schemas});
       }
 
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
@@ -227,15 +309,7 @@ libtextclassifier3::Status SchemaUtil::Validate(const SchemaProto& schema) {
     }
   }
 
-  // A Document property claimed to be of a schema_type that we never
-  // saw/validated
-  if (!unknown_schema_types.empty()) {
-    return absl_ports::UnknownError(
-        absl_ports::StrCat("Undefined 'schema_type's: ",
-                           absl_ports::StrJoin(unknown_schema_types, ",")));
-  }
-
-  return libtextclassifier3::Status::OK;
+  return dependency_map;
 }
 
 libtextclassifier3::Status SchemaUtil::ValidateSchemaType(
@@ -355,7 +429,8 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
 }
 
 const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
-    const SchemaProto& old_schema, const SchemaProto& new_schema) {
+    const SchemaProto& old_schema, const SchemaProto& new_schema,
+    const DependencyMap& new_schema_dependency_map) {
   SchemaDelta schema_delta;
   schema_delta.index_incompatible = false;
 
@@ -385,7 +460,26 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // be reindexed.
     int32_t old_required_properties = 0;
     int32_t old_indexed_properties = 0;
+
+    // If there is a different number of properties, then there must have been a
+    // change.
+    bool is_incompatible = false;
+    bool is_index_incompatible = false;
     for (const auto& old_property_config : old_type_config.properties()) {
+      if (old_property_config.cardinality() ==
+          PropertyConfigProto::Cardinality::REQUIRED) {
+        ++old_required_properties;
+      }
+
+      // A non-default term_match_type indicates that this property is meant to
+      // be indexed.
+      bool is_indexed_property =
+          old_property_config.string_indexing_config().term_match_type() !=
+          TermMatchType::UNKNOWN;
+      if (is_indexed_property) {
+        ++old_indexed_properties;
+      }
+
       auto new_property_name_and_config =
           new_parsed_property_configs.property_config_map.find(
               old_property_config.property_name());
@@ -397,8 +491,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
             "Previously defined property type '", old_type_config.schema_type(),
             ".", old_property_config.property_name(),
             "' was not defined in new schema");
-        schema_delta.schema_types_incompatible.insert(
-            old_type_config.schema_type());
+        is_incompatible = true;
+        is_index_incompatible |= is_indexed_property;
         continue;
       }
 
@@ -409,27 +503,18 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         ICING_VLOG(1) << absl_ports::StrCat(
             "Property '", old_type_config.schema_type(), ".",
             old_property_config.property_name(), "' is incompatible.");
-        schema_delta.schema_types_incompatible.insert(
-            old_type_config.schema_type());
-      }
-
-      if (old_property_config.cardinality() ==
-          PropertyConfigProto::Cardinality::REQUIRED) {
-        ++old_required_properties;
-      }
-
-      // A non-default term_match_type indicates that this property is meant to
-      // be indexed.
-      if (old_property_config.string_indexing_config().term_match_type() !=
-          TermMatchType::UNKNOWN) {
-        ++old_indexed_properties;
+        is_incompatible = true;
       }
 
       // Any change in the indexed property requires a reindexing
       if (!IsTermMatchTypeCompatible(
               old_property_config.string_indexing_config(),
-              new_property_config->string_indexing_config())) {
-        schema_delta.index_incompatible = true;
+              new_property_config->string_indexing_config()) ||
+          old_property_config.document_indexing_config()
+                  .index_nested_properties() !=
+              new_property_config->document_indexing_config()
+                  .index_nested_properties()) {
+        is_index_incompatible = true;
       }
     }
 
@@ -444,8 +529,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
           "New schema '", old_type_config.schema_type(),
           "' has REQUIRED properties that are not "
           "present in the previously defined schema");
-      schema_delta.schema_types_incompatible.insert(
-          old_type_config.schema_type());
+      is_incompatible = true;
     }
 
     // If we've gained any new indexed properties, then the section ids may
@@ -457,8 +541,30 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
           "Set of indexed properties in schema type '",
           old_type_config.schema_type(),
           "' has  changed, required reindexing.");
+      is_index_incompatible = true;
+    }
+
+    if (is_incompatible) {
+      // If this type is incompatible, then every type that depends on it might
+      // also be incompatible. Use the dependency map to mark those ones as
+      // incompatible too.
+      schema_delta.schema_types_incompatible.insert(
+          old_type_config.schema_type());
+      auto parent_types_itr =
+          new_schema_dependency_map.find(old_type_config.schema_type());
+      if (parent_types_itr != new_schema_dependency_map.end()) {
+        schema_delta.schema_types_incompatible.reserve(
+            schema_delta.schema_types_incompatible.size() +
+            parent_types_itr->second.size());
+        schema_delta.schema_types_incompatible.insert(
+            parent_types_itr->second.begin(), parent_types_itr->second.end());
+      }
+    }
+
+    if (is_index_incompatible) {
       schema_delta.index_incompatible = true;
     }
+
   }
 
   return schema_delta;
