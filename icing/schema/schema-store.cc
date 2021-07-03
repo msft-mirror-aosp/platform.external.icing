@@ -322,6 +322,9 @@ SchemaStore::SetSchema(const SchemaProto& new_schema,
 libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
                        bool ignore_errors_and_delete_documents) {
+  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependencyMap new_dependency_map,
+                         SchemaUtil::Validate(new_schema));
+
   SetSchemaResult result;
 
   auto schema_proto_or = GetSchema();
@@ -345,7 +348,8 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
     // Different schema, track the differences and see if we can still write it
     SchemaUtil::SchemaDelta schema_delta =
-        SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema);
+        SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                              new_dependency_map);
 
     // An incompatible index is fine, we can just reindex
     result.index_incompatible = schema_delta.index_incompatible;

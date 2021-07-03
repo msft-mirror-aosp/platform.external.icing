@@ -26,6 +26,7 @@
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
@@ -438,7 +439,7 @@ class DocumentStore {
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
-  std::unique_ptr<FileBackedProtoLog<DocumentWrapper>> document_log_;
+  std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log_;
 
   // Key (namespace + uri) to DocumentId mapping
   std::unique_ptr<KeyMapper<DocumentId>> document_key_mapper_;
@@ -495,11 +496,35 @@ class DocumentStore {
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats);
 
+  // Initializes a new DocumentStore and sets up any underlying files.
+  //
+  // Returns:
+  //   Data loss status on success, effectively always DataLoss::NONE
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<DataLoss> InitializeNewStore(
+      InitializeStatsProto* initialize_stats);
+
+  // Initializes a DocumentStore over an existing directory of files.
+  //
+  // stats will be set if non-null
+  //
+  // Returns:
+  //   Data loss status on success
+  //   INTERNAL on I/O error
+  libtextclassifier3::StatusOr<DataLoss> InitializeExistingStore(
+      bool force_recovery_and_revalidate_documents,
+      InitializeStatsProto* initialize_stats);
+
+  libtextclassifier3::StatusOr<DataLoss> MigrateFromV0ToV1(
+      InitializeStatsProto* initialize_stats);
+
   // Creates sub-components and verifies the integrity of each sub-component.
+  // This assumes that the the underlying files already exist, and will return
+  // an error if it doesn't find what it's expecting.
   //
   // Returns an error if subcomponents failed to initialize successfully.
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status InitializeDerivedFiles();
+  libtextclassifier3::Status InitializeExistingDerivedFiles();
 
   // Re-generates all files derived from the ground truth: the document log.
   //
