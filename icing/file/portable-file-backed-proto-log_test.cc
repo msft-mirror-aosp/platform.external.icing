@@ -42,6 +42,20 @@ using ::testing::NotNull;
 using ::testing::Pair;
 using ::testing::Return;
 
+using Header = PortableFileBackedProtoLog<DocumentProto>::Header;
+
+Header ReadHeader(Filesystem filesystem, const std::string& file_path) {
+  Header header;
+  filesystem.PRead(file_path.c_str(), &header, sizeof(Header),
+                   /*offset=*/0);
+  return header;
+}
+
+void WriteHeader(Filesystem filesystem, const std::string& file_path,
+                 Header& header) {
+  filesystem.Write(file_path.c_str(), &header, sizeof(Header));
+}
+
 class PortableFileBackedProtoLogTest : public ::testing::Test {
  protected:
   // Adds a user-defined default construct because a const member variable may
@@ -79,6 +93,7 @@ TEST_F(PortableFileBackedProtoLogTest, Initialize) {
                                                              max_proto_size_)));
   EXPECT_THAT(create_result.proto_log, NotNull());
   EXPECT_FALSE(create_result.has_data_loss());
+  EXPECT_FALSE(create_result.recalculated_checksum);
 
   // Can't recreate the same file with different options.
   ASSERT_THAT(PortableFileBackedProtoLog<DocumentProto>::Create(
@@ -98,7 +113,8 @@ TEST_F(PortableFileBackedProtoLogTest, ReservedSpaceForHeader) {
 
   // With no protos written yet, the log should be minimum the size of the
   // reserved header space.
-  ASSERT_EQ(filesystem_.GetFileSize(file_path_.c_str()), kHeaderReservedBytes);
+  ASSERT_EQ(filesystem_.GetFileSize(file_path_.c_str()),
+            PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes);
 }
 
 TEST_F(PortableFileBackedProtoLogTest, WriteProtoTooLarge) {
@@ -300,12 +316,12 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptHeader) {
     EXPECT_FALSE(create_result.has_data_loss());
   }
 
-  int corrupt_value = 24;
+  int corrupt_checksum = 24;
 
-  // Offset after the kMagic and the header_checksum.
-  int offset_after_checksum = 8;
-  filesystem_.PWrite(file_path_.c_str(), offset_after_checksum, &corrupt_value,
-                     sizeof(corrupt_value));
+  // Write the corrupted header
+  Header header = ReadHeader(filesystem_, file_path_);
+  header.SetHeaderChecksum(corrupt_checksum);
+  WriteHeader(filesystem_, file_path_, header);
 
   {
     // Reinitialize the same proto_log
@@ -331,8 +347,12 @@ TEST_F(PortableFileBackedProtoLogTest, DifferentMagic) {
 
     // Corrupt the magic that's stored at the beginning of the header.
     int invalid_magic = -1;
-    filesystem_.PWrite(file_path_.c_str(), /*offset=*/0, &invalid_magic,
-                       sizeof(invalid_magic));
+    ASSERT_THAT(invalid_magic, Not(Eq(Header::kMagic)));
+
+    // Write the corrupted header
+    Header header = ReadHeader(filesystem_, file_path_);
+    header.SetMagic(invalid_magic);
+    WriteHeader(filesystem_, file_path_, header);
   }
 
   {
@@ -346,7 +366,17 @@ TEST_F(PortableFileBackedProtoLogTest, DifferentMagic) {
   }
 }
 
-TEST_F(PortableFileBackedProtoLogTest, CorruptContent) {
+TEST_F(PortableFileBackedProtoLogTest,
+       UnableToDetectCorruptContentWithoutDirtyBit) {
+  // This is intentional that we can't detect corruption. We're trading off
+  // earlier corruption detection for lower initialization latency. By not
+  // calculating the checksum on initialization, we can initialize much faster,
+  // but at the cost of detecting corruption. Note that even if we did detect
+  // corruption, there was nothing we could've done except throw an error to
+  // clients. We'll still do that, but at some later point when the log is
+  // attempting to be accessed and we can't actually deserialize a proto from
+  // it. See the description in cl/374278280 for more details.
+
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
@@ -361,19 +391,20 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptContent) {
         DocumentBuilder().SetKey("namespace1", "uri1").Build();
 
     // Write and persist an document.
-    ICING_ASSERT_OK_AND_ASSIGN(int document_offset,
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document_offset,
                                proto_log->WriteProto(document));
     ICING_ASSERT_OK(proto_log->PersistToDisk());
 
     // "Corrupt" the content written in the log.
     document.set_uri("invalid");
     std::string serialized_document = document.SerializeAsString();
-    filesystem_.PWrite(file_path_.c_str(), document_offset,
-                       serialized_document.data(), serialized_document.size());
+    ASSERT_TRUE(filesystem_.PWrite(file_path_.c_str(), document_offset,
+                                   serialized_document.data(),
+                                   serialized_document.size()));
   }
 
   {
-    // We can recover, but we have data loss.
+    // We can recover, and we don't have data loss.
     ICING_ASSERT_OK_AND_ASSIGN(
         PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
         PortableFileBackedProtoLog<DocumentProto>::Create(
@@ -381,17 +412,150 @@ TEST_F(PortableFileBackedProtoLogTest, CorruptContent) {
             PortableFileBackedProtoLog<DocumentProto>::Options(
                 compress_, max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    ASSERT_TRUE(create_result.has_data_loss());
-    ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
+    EXPECT_FALSE(create_result.has_data_loss());
+    EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
+    EXPECT_FALSE(create_result.recalculated_checksum);
 
-    // Lost everything in the log since the rewind position doesn't help if
-    // there's been data corruption within the persisted region
-    ASSERT_EQ(filesystem_.GetFileSize(file_path_.c_str()),
-              kHeaderReservedBytes);
+    // We still have the corrupted content in our file, we didn't throw
+    // everything out.
+    EXPECT_THAT(
+        filesystem_.GetFileSize(file_path_.c_str()),
+        Gt(PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes));
   }
 }
 
-TEST_F(PortableFileBackedProtoLogTest, PersistToDisk) {
+TEST_F(PortableFileBackedProtoLogTest,
+       DetectAndThrowOutCorruptContentWithDirtyBit) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    DocumentProto document =
+        DocumentBuilder()
+            .SetKey("namespace1", "uri1")
+            .AddStringProperty("string_property", "foo", "bar")
+            .Build();
+
+    // Write and persist the protos
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document_offset,
+                               proto_log->WriteProto(document));
+
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document_offset),
+                IsOkAndHolds(EqualsProto(document)));
+  }
+
+  {
+    // "Corrupt" the content written in the log. Make the corrupt document
+    // smaller than our original one so we don't accidentally write past our
+    // file.
+    DocumentProto document =
+        DocumentBuilder().SetKey("invalid_namespace", "invalid_uri").Build();
+    std::string serialized_document = document.SerializeAsString();
+    ASSERT_TRUE(filesystem_.PWrite(
+        file_path_.c_str(),
+        PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes,
+        serialized_document.data(), serialized_document.size()));
+
+    Header header = ReadHeader(filesystem_, file_path_);
+
+    // Set dirty bit to true to reflect that something changed in the log.
+    header.SetDirtyFlag(true);
+    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+
+    WriteHeader(filesystem_, file_path_, header);
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    EXPECT_TRUE(create_result.has_data_loss());
+    EXPECT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
+
+    // We had to recalculate the checksum to detect the corruption.
+    EXPECT_TRUE(create_result.recalculated_checksum);
+
+    // We lost everything, file size is back down to the header.
+    EXPECT_THAT(
+        filesystem_.GetFileSize(file_path_.c_str()),
+        Eq(PortableFileBackedProtoLog<DocumentProto>::kHeaderReservedBytes));
+
+    // At least the log is no longer dirty.
+    Header header = ReadHeader(filesystem_, file_path_);
+    EXPECT_FALSE(header.GetDirtyFlag());
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest, DirtyBitFalseAlarmKeepsData) {
+  DocumentProto document =
+      DocumentBuilder().SetKey("namespace1", "uri1").Build();
+  int64_t document_offset;
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Write and persist the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(document_offset,
+                               proto_log->WriteProto(document));
+
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document_offset),
+                IsOkAndHolds(EqualsProto(document)));
+  }
+
+  {
+    Header header = ReadHeader(filesystem_, file_path_);
+
+    // Simulate the dirty flag set as true, but no data has been changed yet.
+    // Maybe we crashed between writing the dirty flag and erasing a proto.
+    header.SetDirtyFlag(true);
+    header.SetHeaderChecksum(header.CalculateHeaderChecksum());
+
+    WriteHeader(filesystem_, file_path_, header);
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    EXPECT_FALSE(create_result.has_data_loss());
+
+    // Even though nothing changed, the false alarm dirty bit should have
+    // triggered us to recalculate our checksum.
+    EXPECT_TRUE(create_result.recalculated_checksum);
+
+    // Check that our document still exists even though dirty bit was true.
+    EXPECT_THAT(proto_log->ReadProto(document_offset),
+                IsOkAndHolds(EqualsProto(document)));
+
+    Header header = ReadHeader(filesystem_, file_path_);
+    EXPECT_FALSE(header.GetDirtyFlag());
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       PersistToDiskKeepsPersistedDataAndTruncatesExtraData) {
   DocumentProto document1 =
       DocumentBuilder().SetKey("namespace1", "uri1").Build();
   DocumentProto document2 =
@@ -426,6 +590,8 @@ TEST_F(PortableFileBackedProtoLogTest, PersistToDisk) {
 
     log_size = filesystem_.GetFileSize(file_path_.c_str());
     ASSERT_GT(log_size, 0);
+
+    // PersistToDisk happens implicitly during the destructor.
   }
 
   {
@@ -453,6 +619,7 @@ TEST_F(PortableFileBackedProtoLogTest, PersistToDisk) {
     auto proto_log = std::move(create_result.proto_log);
     ASSERT_TRUE(create_result.has_data_loss());
     ASSERT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
+    ASSERT_FALSE(create_result.recalculated_checksum);
 
     // Check that everything was persisted across instances
     ASSERT_THAT(proto_log->ReadProto(document1_offset),
@@ -462,6 +629,183 @@ TEST_F(PortableFileBackedProtoLogTest, PersistToDisk) {
 
     // We correctly rewound to the last good state.
     ASSERT_EQ(log_size, filesystem_.GetFileSize(file_path_.c_str()));
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       DirtyBitIsFalseAfterPutAndPersistToDisk) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    DocumentProto document =
+        DocumentBuilder().SetKey("namespace1", "uri1").Build();
+
+    // Write and persist the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document_offset,
+                               proto_log->WriteProto(document));
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document_offset),
+                IsOkAndHolds(EqualsProto(document)));
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+
+    // We previously persisted to disk so everything should be in a perfect
+    // state.
+    EXPECT_FALSE(create_result.has_data_loss());
+    EXPECT_FALSE(create_result.recalculated_checksum);
+
+    Header header = ReadHeader(filesystem_, file_path_);
+    EXPECT_FALSE(header.GetDirtyFlag());
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       DirtyBitIsFalseAfterDeleteAndPersistToDisk) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    DocumentProto document =
+        DocumentBuilder().SetKey("namespace1", "uri1").Build();
+
+    // Write, delete, and persist the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document_offset,
+                               proto_log->WriteProto(document));
+    ICING_ASSERT_OK(proto_log->EraseProto(document_offset));
+    ICING_ASSERT_OK(proto_log->PersistToDisk());
+
+    // The proto has been erased.
+    ASSERT_THAT(proto_log->ReadProto(document_offset),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+
+    // We previously persisted to disk so everything should be in a perfect
+    // state.
+    EXPECT_FALSE(create_result.has_data_loss());
+    EXPECT_FALSE(create_result.recalculated_checksum);
+
+    Header header = ReadHeader(filesystem_, file_path_);
+    EXPECT_FALSE(header.GetDirtyFlag());
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest, DirtyBitIsFalseAfterPutAndDestructor) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    DocumentProto document =
+        DocumentBuilder().SetKey("namespace1", "uri1").Build();
+
+    // Write and persist the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document_offset,
+                               proto_log->WriteProto(document));
+
+    // Check that what we read is what we wrote
+    ASSERT_THAT(proto_log->ReadProto(document_offset),
+                IsOkAndHolds(EqualsProto(document)));
+
+    // PersistToDisk is implicitly called as part of the destructor and
+    // PersistToDisk will clear the dirty bit.
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+
+    // We previously persisted to disk so everything should be in a perfect
+    // state.
+    EXPECT_FALSE(create_result.has_data_loss());
+    EXPECT_FALSE(create_result.recalculated_checksum);
+
+    Header header = ReadHeader(filesystem_, file_path_);
+    EXPECT_FALSE(header.GetDirtyFlag());
+  }
+}
+
+TEST_F(PortableFileBackedProtoLogTest,
+       DirtyBitIsFalseAfterDeleteAndDestructor) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    DocumentProto document =
+        DocumentBuilder().SetKey("namespace1", "uri1").Build();
+
+    // Write, delete, and persist the first proto
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document_offset,
+                               proto_log->WriteProto(document));
+    ICING_ASSERT_OK(proto_log->EraseProto(document_offset));
+
+    // The proto has been erased.
+    ASSERT_THAT(proto_log->ReadProto(document_offset),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+    // PersistToDisk is implicitly called as part of the destructor and
+    // PersistToDisk will clear the dirty bit.
+  }
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PortableFileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        PortableFileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            PortableFileBackedProtoLog<DocumentProto>::Options(
+                compress_, max_proto_size_)));
+
+    // We previously persisted to disk so everything should be in a perfect
+    // state.
+    EXPECT_FALSE(create_result.has_data_loss());
+    EXPECT_FALSE(create_result.recalculated_checksum);
+
+    Header header = ReadHeader(filesystem_, file_path_);
+    EXPECT_FALSE(header.GetDirtyFlag());
   }
 }
 
@@ -508,7 +852,7 @@ TEST_F(PortableFileBackedProtoLogTest, Iterator) {
   {
     // Iterator with bad filesystem
     MockFilesystem mock_filesystem;
-    ON_CALL(mock_filesystem, GetFileSize(A<const char *>()))
+    ON_CALL(mock_filesystem, GetFileSize(A<const char*>()))
         .WillByDefault(Return(Filesystem::kBadFileSize));
     PortableFileBackedProtoLog<DocumentProto>::Iterator bad_iterator(
         mock_filesystem, file_path_, /*initial_offset=*/0);
