@@ -30,6 +30,11 @@ int GetUTF8StartPosition(std::string_view text, int current_byte_index) {
 
 }  // namespace
 
+bool CharacterIterator::MoveToUtf8(int desired_utf8_index) {
+  return (desired_utf8_index > utf8_index_) ? AdvanceToUtf8(desired_utf8_index)
+                                            : RewindToUtf8(desired_utf8_index);
+}
+
 bool CharacterIterator::AdvanceToUtf8(int desired_utf8_index) {
   if (desired_utf8_index > text_.length()) {
     // Enforce the requirement.
@@ -50,6 +55,7 @@ bool CharacterIterator::AdvanceToUtf8(int desired_utf8_index) {
     }
     utf8_index_ += utf8_length;
     utf16_index_ += i18n_utils::GetUtf16Length(uchar32);
+    ++utf32_index_;
   }
   return true;
 }
@@ -76,8 +82,15 @@ bool CharacterIterator::RewindToUtf8(int desired_utf8_index) {
       return false;
     }
     utf16_index_ -= i18n_utils::GetUtf16Length(uchar32);
+    --utf32_index_;
   }
   return true;
+}
+
+bool CharacterIterator::MoveToUtf16(int desired_utf16_index) {
+  return (desired_utf16_index > utf16_index_)
+             ? AdvanceToUtf16(desired_utf16_index)
+             : RewindToUtf16(desired_utf16_index);
 }
 
 bool CharacterIterator::AdvanceToUtf16(int desired_utf16_index) {
@@ -100,6 +113,7 @@ bool CharacterIterator::AdvanceToUtf16(int desired_utf16_index) {
     }
     utf8_index_ += utf8_length;
     utf16_index_ += utf16_length;
+    ++utf32_index_;
   }
   return true;
 }
@@ -111,6 +125,11 @@ bool CharacterIterator::RewindToUtf16(int desired_utf16_index) {
   while (utf16_index_ > desired_utf16_index) {
     --utf8_index_;
     utf8_index_ = GetUTF8StartPosition(text_, utf8_index_);
+    if (utf8_index_ < 0) {
+      // Somehow, there wasn't a single UTF-8 lead byte at
+      // requested_byte_index or an earlier byte.
+      return false;
+    }
     // We've found the start of a unicode char!
     UChar32 uchar32 =
         i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
@@ -119,6 +138,59 @@ bool CharacterIterator::RewindToUtf16(int desired_utf16_index) {
       return false;
     }
     utf16_index_ -= i18n_utils::GetUtf16Length(uchar32);
+    --utf32_index_;
+  }
+  return true;
+}
+
+bool CharacterIterator::MoveToUtf32(int desired_utf32_index) {
+  return (desired_utf32_index > utf32_index_)
+             ? AdvanceToUtf32(desired_utf32_index)
+             : RewindToUtf32(desired_utf32_index);
+}
+
+bool CharacterIterator::AdvanceToUtf32(int desired_utf32_index) {
+  while (utf32_index_ < desired_utf32_index) {
+    UChar32 uchar32 =
+        i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
+    if (uchar32 == i18n_utils::kInvalidUChar32) {
+      // Unable to retrieve a valid UTF-32 character at the previous position.
+      return false;
+    }
+    int utf16_length = i18n_utils::GetUtf16Length(uchar32);
+    int utf8_length = i18n_utils::GetUtf8Length(uchar32);
+    if (utf8_index_ + utf8_length > text_.length()) {
+      // Enforce the requirement.
+      return false;
+    }
+    utf8_index_ += utf8_length;
+    utf16_index_ += utf16_length;
+    ++utf32_index_;
+  }
+  return true;
+}
+
+bool CharacterIterator::RewindToUtf32(int desired_utf32_index) {
+  if (desired_utf32_index < 0) {
+    return false;
+  }
+  while (utf32_index_ > desired_utf32_index) {
+    --utf8_index_;
+    utf8_index_ = GetUTF8StartPosition(text_, utf8_index_);
+    if (utf8_index_ < 0) {
+      // Somehow, there wasn't a single UTF-8 lead byte at
+      // requested_byte_index or an earlier byte.
+      return false;
+    }
+    // We've found the start of a unicode char!
+    UChar32 uchar32 =
+        i18n_utils::GetUChar32At(text_.data(), text_.length(), utf8_index_);
+    if (uchar32 == i18n_utils::kInvalidUChar32) {
+      // Unable to retrieve a valid UTF-32 character at the previous position.
+      return false;
+    }
+    utf16_index_ -= i18n_utils::GetUtf16Length(uchar32);
+    --utf32_index_;
   }
   return true;
 }
