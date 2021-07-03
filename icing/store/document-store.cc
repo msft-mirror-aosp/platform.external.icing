@@ -33,6 +33,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -44,6 +45,7 @@
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-log-creator.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
@@ -62,7 +64,6 @@ namespace {
 
 // Used in DocumentId mapper to mark a document as deleted
 constexpr int64_t kDocDeletedFlag = -1;
-constexpr char kDocumentLogFilename[] = "document_log";
 constexpr char kDocumentIdMapperFilename[] = "document_id_mapper";
 constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
@@ -91,10 +92,6 @@ std::string MakeHeaderFilename(const std::string& base_dir) {
 
 std::string MakeDocumentIdMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentIdMapperFilename);
-}
-
-std::string MakeDocumentLogFilename(const std::string& base_dir) {
-  return absl_ports::StrCat(base_dir, "/", kDocumentLogFilename);
 }
 
 std::string MakeScoreCacheFilename(const std::string& base_dir) {
@@ -224,30 +221,36 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
-  auto create_result_or = FileBackedProtoLog<DocumentWrapper>::Create(
-      filesystem_, MakeDocumentLogFilename(base_dir_),
-      FileBackedProtoLog<DocumentWrapper>::Options(
-          /*compress_in=*/true));
+  auto create_result_or = DocumentLogCreator::Create(filesystem_, base_dir_);
+
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   if (!create_result_or.ok()) {
     ICING_LOG(ERROR) << create_result_or.status().error_message()
-                     << "\nFailed to initialize DocumentLog";
+                     << "\nFailed to initialize DocumentLog.";
     return create_result_or.status();
   }
-  FileBackedProtoLog<DocumentWrapper>::CreateResult create_result =
+  DocumentLogCreator::CreateResult create_result =
       std::move(create_result_or).ValueOrDie();
-  document_log_ = std::move(create_result.proto_log);
 
-  if (force_recovery_and_revalidate_documents ||
-      create_result.has_data_loss()) {
-    if (create_result.has_data_loss() && initialize_stats != nullptr) {
+  document_log_ = std::move(create_result.log_create_result.proto_log);
+
+  if (create_result.regen_derived_files ||
+      force_recovery_and_revalidate_documents ||
+      create_result.log_create_result.has_data_loss()) {
+    // We can't rely on any existing derived files. Recreate them from scratch.
+    // Currently happens if:
+    //   1) This is a new log and we don't have derived files yet
+    //   2) Client wanted us to force a regeneration.
+    //   3) Log has some data loss, can't rely on existing derived data.
+    if (create_result.log_create_result.has_data_loss() &&
+        initialize_stats != nullptr) {
       ICING_LOG(WARNING)
           << "Data loss in document log, regenerating derived files.";
       initialize_stats->set_document_store_recovery_cause(
           InitializeStatsProto::DATA_LOSS);
 
-      if (create_result.data_loss == DataLoss::PARTIAL) {
+      if (create_result.log_create_result.data_loss == DataLoss::PARTIAL) {
         // Ground truth is partially lost.
         initialize_stats->set_document_store_data_status(
             InitializeStatsProto::PARTIAL_LOSS);
@@ -257,10 +260,16 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
             InitializeStatsProto::COMPLETE_LOSS);
       }
     }
+
     std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
     libtextclassifier3::Status status =
         RegenerateDerivedFiles(force_recovery_and_revalidate_documents);
-    if (initialize_stats != nullptr) {
+    if (initialize_stats != nullptr &&
+        (force_recovery_and_revalidate_documents ||
+         create_result.log_create_result.has_data_loss())) {
+      // Only consider it a recovery if the client forced a recovery or there
+      // was data loss. Otherwise, this could just be the first time we're
+      // initializing and generating derived files.
       initialize_stats->set_document_store_recovery_latency_ms(
           document_recovery_timer->GetElapsedMilliseconds());
     }
@@ -270,7 +279,7 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
       return status;
     }
   } else {
-    if (!InitializeDerivedFiles().ok()) {
+    if (!InitializeExistingDerivedFiles().ok()) {
       ICING_VLOG(1)
           << "Couldn't find derived files or failed to initialize them, "
              "regenerating derived files for DocumentStore.";
@@ -296,10 +305,10 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     initialize_stats->set_num_documents(document_id_mapper_->num_elements());
   }
 
-  return create_result.data_loss;
+  return create_result.log_create_result.data_loss;
 }
 
-libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
+libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   if (!HeaderExists()) {
     // Without a header, we don't know if things are consistent between each
     // other so the caller should just regenerate everything from ground
