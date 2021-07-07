@@ -70,6 +70,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::HasSubstr;
 
 // Icing GMSCore has, on average, 17 corpora on a device and 30 corpora at the
 // 95th pct. Most clients use a single type. This is a function of Icing's
@@ -690,6 +691,59 @@ void BM_Delete(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_Delete);
+
+void BM_PutMaxAllowedDocuments(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TermMatchType::PREFIX,
+                                     StringIndexingConfig::TokenizerType::PLAIN)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document that has the term "foo"
+  DocumentProto base_document = DocumentBuilder()
+                                    .SetSchema("Message")
+                                    .SetNamespace("namespace")
+                                    .AddStringProperty("body", "foo")
+                                    .Build();
+
+  // Insert a lot of documents with the term "foo"
+  for (auto s : state) {
+    for (int64_t i = 0; i <= kMaxDocumentId; ++i) {
+      DocumentProto document =
+          DocumentBuilder(base_document).SetUri(std::to_string(i)).Build();
+      EXPECT_THAT(icing->Put(document).status(), ProtoIsOk());
+    }
+  }
+
+  DocumentProto document =
+      DocumentBuilder(base_document).SetUri("out_of_space_uri").Build();
+  PutResultProto put_result_proto = icing->Put(document);
+  EXPECT_THAT(put_result_proto.status(),
+              ProtoStatusIs(StatusProto::OUT_OF_SPACE));
+  EXPECT_THAT(put_result_proto.status().message(),
+              HasSubstr("Exceeded maximum number of documents"));
+}
+BENCHMARK(BM_PutMaxAllowedDocuments);
 
 }  // namespace
 
