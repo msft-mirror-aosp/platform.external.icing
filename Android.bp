@@ -55,6 +55,7 @@ cc_defaults {
         "-funsigned-char",
         "-fvisibility=hidden",
     ],
+    apex_available: ["com.android.appsearch"],
 }
 
 cc_library_shared {
@@ -88,7 +89,6 @@ cc_library_shared {
         "libprotobuf-cpp-full",
         "libz",
     ],
-
     version_script: "icing/jni.lds",
 }
 
