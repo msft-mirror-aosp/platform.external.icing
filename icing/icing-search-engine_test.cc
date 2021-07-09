@@ -1053,6 +1053,407 @@ TEST_F(IcingSearchEngineTest,
                                   expected_search_result_proto));
 }
 
+TEST_F(IcingSearchEngineTest,
+       SetSchemaChangeNestedPropertiesTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto person_proto =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto nested_schema =
+      SchemaBuilder()
+          .AddType(person_proto)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddDocumentProperty("sender",
+                               DocumentBuilder()
+                                   .SetKey("namespace1", "uri1")
+                                   .SetSchema("Person")
+                                   .AddStringProperty("name", "Bill Lundbergh")
+                                   .Build())
+          .Build();
+
+  // "sender.name" should get assigned property id 0 and subject should get
+  // property id 1.
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // document should match a query for 'Bill' in 'sender.name', but not in
+  // 'subject'
+  SearchSpecProto search_spec;
+  search_spec.set_query("sender.name:Bill");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto result;
+  result.mutable_status()->set_code(StatusProto::OK);
+  *result.mutable_results()->Add()->mutable_document() = document;
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+
+  SearchResultProto empty_result;
+  empty_result.mutable_status()->set_code(StatusProto::OK);
+  search_spec.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Now update the schema with index_nested_properties=false. This should
+  // reassign property ids, lead to an index rebuild and ensure that nothing
+  // match a query for "Bill".
+  SchemaProto no_nested_schema =
+      SchemaBuilder()
+          .AddType(person_proto)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result = icing.SetSchema(no_nested_schema);
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // document shouldn't match a query for 'Bill' in either 'sender.name' or
+  // 'subject'
+  search_spec.set_query("sender.name:Bill");
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  search_spec.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+}
+
+TEST_F(IcingSearchEngineTest,
+       ForceSetSchemaPropertyDeletionTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 'body' should have a property id of 0 and 'subject' should have a property
+  // id of 1.
+  SchemaProto email_with_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("body")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(email_with_body_schema);
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create a document with only a subject property.
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .Build();
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // We should be able to retrieve the document by searching for 'tps' in
+  // 'subject'.
+  SearchSpecProto search_spec;
+  search_spec.set_query("subject:tps");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto result;
+  result.mutable_status()->set_code(StatusProto::OK);
+  *result.mutable_results()->Add()->mutable_document() = document;
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+
+  // Now update the schema to remove the 'body' field. This is backwards
+  // incompatible, but document should be preserved because it doesn't contain a
+  // 'body' field. If the index is correctly rebuilt, then 'subject' will now
+  // have a property id of 0. If not, then the hits in the index will still have
+  // have a property id of 1 and therefore it won't be found.
+  SchemaProto email_no_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result = icing.SetSchema(
+      email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // We should be able to retrieve the document by searching for 'tps' in
+  // 'subject'.
+  search_spec.set_query("subject:tps");
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+}
+
+TEST_F(
+    IcingSearchEngineTest,
+    ForceSetSchemaPropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 'body' should have a property id of 0 and 'subject' should have a property
+  // id of 1.
+  SchemaProto email_with_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("body")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(email_with_body_schema);
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create a document with only a subject property.
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .Build();
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // We should be able to retrieve the document by searching for 'tps' in
+  // 'subject'.
+  SearchSpecProto search_spec;
+  search_spec.set_query("subject:tps");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto result;
+  result.mutable_status()->set_code(StatusProto::OK);
+  *result.mutable_results()->Add()->mutable_document() = document;
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+
+  // Now update the schema to remove the 'body' field. This is backwards
+  // incompatible, but document should be preserved because it doesn't contain a
+  // 'body' field. If the index is correctly rebuilt, then 'subject' and 'to'
+  // will now have property ids of 0 and 1 respectively. If not, then the hits
+  // in the index will still have have a property id of 1 and therefore it won't
+  // be found.
+  SchemaProto email_no_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("to")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result = icing.SetSchema(
+      email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // We should be able to retrieve the document by searching for 'tps' in
+  // 'subject'.
+  search_spec.set_query("subject:tps");
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+}
+
+TEST_F(IcingSearchEngineTest, ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto email_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("sender")
+                  .SetDataTypeDocument("Person",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto nested_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("name")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("company")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(email_schema_type)
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create two documents - a person document and an email document - both docs
+  // should be deleted when we remove the 'company' field from the person type.
+  DocumentProto person_document =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("name", "Bill Lundbergh")
+          .AddStringProperty("company", "Initech Corp.")
+          .Build();
+  EXPECT_THAT(icing.Put(person_document).status(), ProtoIsOk());
+
+  DocumentProto email_document =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddDocumentProperty("sender", person_document)
+          .Build();
+  EXPECT_THAT(icing.Put(email_document).status(), ProtoIsOk());
+
+  // We should be able to retrieve both documents.
+  GetResultProto get_result =
+      icing.Get("namespace1", "uri1", GetResultSpecProto::default_instance());
+  EXPECT_THAT(get_result.status(), ProtoIsOk());
+  EXPECT_THAT(get_result.document(), EqualsProto(person_document));
+
+  get_result =
+      icing.Get("namespace1", "uri2", GetResultSpecProto::default_instance());
+  EXPECT_THAT(get_result.status(), ProtoIsOk());
+  EXPECT_THAT(get_result.document(), EqualsProto(email_document));
+
+  // Now update the schema to remove the 'company' field. This is backwards
+  // incompatible, *both* documents should be deleted because both fail
+  // validation (they each contain a 'Person' that has a non-existent property).
+  nested_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(email_schema_type)
+          .Build();
+
+  set_schema_result = icing.SetSchema(
+      nested_schema, /*ignore_errors_and_delete_documents=*/true);
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Both documents should be deleted now.
+  get_result =
+      icing.Get("namespace1", "uri1", GetResultSpecProto::default_instance());
+  EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
+
+  get_result =
+      icing.Get("namespace1", "uri2", GetResultSpecProto::default_instance());
+  EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
+}
+
 TEST_F(IcingSearchEngineTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
