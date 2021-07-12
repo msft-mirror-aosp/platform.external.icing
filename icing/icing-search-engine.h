@@ -178,6 +178,7 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   OUT_OF_SPACE if exceeds maximum number of allowed documents
   //   FAILED_PRECONDITION if a schema has not been set yet, IcingSearchEngine
   //     has not been initialized yet.
   //   NOT_FOUND if there is no SchemaTypeConfig in the SchemaProto that matches
