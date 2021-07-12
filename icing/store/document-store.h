@@ -156,6 +156,7 @@ class DocumentStore {
   //
   // Returns:
   //   A newly generated document id on success
+  //   RESOURCE_EXHAUSED if exceeds maximum number of allowed documents
   //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if the schema_type or a property config of the document doesn't
   //     exist in schema
