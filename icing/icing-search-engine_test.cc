@@ -5532,11 +5532,11 @@ TEST_F(IcingSearchEngineTest, ResetOk) {
   EXPECT_THAT(icing.SetSchema(empty_schema).status(), ProtoIsOk());
 }
 
-TEST_F(IcingSearchEngineTest, ResetDeleteFailureCausesAbortedError) {
+TEST_F(IcingSearchEngineTest, ResetDeleteFailureCausesInternalError) {
   auto mock_filesystem = std::make_unique<MockFilesystem>();
 
-  // This fails IcingSearchEngine::Reset(). But since we didn't actually delete
-  // anything, we'll be able to consider this just an ABORTED call.
+  // This fails IcingSearchEngine::Reset() with status code INTERNAL and leaves
+  // the IcingSearchEngine instance in an uninitialized state.
   ON_CALL(*mock_filesystem,
           DeleteDirectoryRecursively(StrEq(GetTestBaseDir().c_str())))
       .WillByDefault(Return(false));
@@ -5550,51 +5550,17 @@ TEST_F(IcingSearchEngineTest, ResetDeleteFailureCausesAbortedError) {
 
   DocumentProto document = CreateMessageDocument("namespace", "uri");
   ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Reset().status(), ProtoStatusIs(StatusProto::ABORTED));
-
-  // Everything is still intact.
-  // Can get old data.
-  GetResultProto expected_get_result_proto;
-  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_get_result_proto.mutable_document() = document;
-  EXPECT_THAT(icing.Get(document.namespace_(), document.uri(),
-                        GetResultSpecProto::default_instance()),
-              EqualsProto(expected_get_result_proto));
-
-  // Can add new data.
-  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-              ProtoIsOk());
-}
-
-TEST_F(IcingSearchEngineTest, ResetCreateFailureCausesInternalError) {
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-
-  // Let all other delete directory calls succeed.
-  EXPECT_CALL(*mock_filesystem,
-              DeleteDirectoryRecursively(Matcher<const char*>(_)))
-      .WillRepeatedly(Return(true));
-
-  // This prevents IcingSearchEngine from deleting our base dir when resetting
-  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(Matcher<const char*>(
-                                    StrEq(GetTestBaseDir().c_str()))))
-      .WillOnce(Return(false));
-
-  // The first call will show our base directory had 100 bytes, but after we
-  // falied to delete, we lost those 100 bytes. So this will be reported as an
-  // INTERNAL error since data was lost.
-  EXPECT_CALL(
-      *mock_filesystem,
-      GetDiskUsage(Matcher<const char*>(StrEq(GetTestBaseDir().c_str()))))
-      .WillOnce(Return(100))
-      .WillOnce(Return(0));
-
-  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
-                              std::move(mock_filesystem),
-                              std::make_unique<IcingFilesystem>(),
-                              std::make_unique<FakeClock>(), GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
   EXPECT_THAT(icing.Reset().status(), ProtoStatusIs(StatusProto::INTERNAL));
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(
+      StatusProto::FAILED_PRECONDITION);
+  *expected_get_result_proto.mutable_document() = document;
+  EXPECT_THAT(icing
+                  .Get(document.namespace_(), document.uri(),
+                       GetResultSpecProto::default_instance())
+                  .status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
 }
 
 TEST_F(IcingSearchEngineTest, SnippetNormalization) {
