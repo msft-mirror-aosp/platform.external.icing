@@ -73,7 +73,9 @@ constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
 constexpr char kUsageStoreDirectoryName[] = "usage_store";
 constexpr char kCorpusIdMapperFilename[] = "corpus_mapper";
 
-constexpr int32_t kUriMapperMaxSize = 12 * 1024 * 1024;  // 12 MiB
+// Determined through manual testing to allow for 1 million uris. 1 million
+// because we allow up to 1 million DocumentIds.
+constexpr int32_t kUriMapperMaxSize = 36 * 1024 * 1024;  // 36 MiB
 
 // 384 KiB for a KeyMapper would allow each internal array to have a max of
 // 128 KiB for storage.
@@ -805,6 +807,12 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
 
   // Creates a new document id, updates key mapper and document_id mapper
   DocumentId new_document_id = document_id_mapper_->num_elements();
+  if (!IsDocumentIdValid(new_document_id)) {
+    return absl_ports::ResourceExhaustedError(
+        "Exceeded maximum number of documents. Try calling Optimize to reclaim "
+        "some space.");
+  }
+
   ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
       MakeFingerprint(name_space, uri), new_document_id));
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
