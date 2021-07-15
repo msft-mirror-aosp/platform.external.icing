@@ -406,7 +406,6 @@ class FileBackedProtoLog {
   //   INTERNAL_ERROR if the metadata is invalid or any IO errors happen
   static libtextclassifier3::StatusOr<int> ReadProtoMetadata(
       MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size);
-  std::unique_ptr<Header> header_;
 
   // Magic number added in front of every proto. Used when reading out protos
   // as a first check for corruption in each entry in the file. Even if there is
@@ -435,6 +434,7 @@ class FileBackedProtoLog {
   ScopedFd fd_;
   const Filesystem* const filesystem_;
   const std::string file_path_;
+  std::unique_ptr<Header> header_;
 };
 
 template <typename ProtoT>
