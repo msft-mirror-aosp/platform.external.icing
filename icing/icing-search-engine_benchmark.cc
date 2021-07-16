@@ -70,6 +70,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::HasSubstr;
 
 // Icing GMSCore has, on average, 17 corpora on a device and 30 corpora at the
 // 95th pct. Most clients use a single type. This is a function of Icing's
@@ -576,6 +577,173 @@ void BM_RepeatedPut(benchmark::State& state) {
 // For other reasons, we hit a limit when inserting the ~350,000th document. So
 // cap the limit to 1 << 18.
 BENCHMARK(BM_RepeatedPut)->Range(/*start=*/100, /*limit=*/1 << 18);
+
+// This is different from BM_RepeatedPut since we're just trying to benchmark
+// one Put call, not thousands of them at once.
+void BM_Put(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document
+  DocumentProto document = DocumentBuilder()
+                               .SetSchema("Message")
+                               .SetNamespace("namespace")
+                               .SetUri("uri")
+                               .Build();
+
+  for (auto s : state) {
+    benchmark::DoNotOptimize(icing->Put(document));
+  }
+}
+BENCHMARK(BM_Put);
+
+void BM_Get(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document
+  DocumentProto document = DocumentBuilder()
+                               .SetSchema("Message")
+                               .SetNamespace("namespace")
+                               .SetUri("uri")
+                               .Build();
+
+  ASSERT_THAT(icing->Put(document).status(), ProtoIsOk());
+  for (auto s : state) {
+    benchmark::DoNotOptimize(
+        icing->Get("namespace", "uri", GetResultSpecProto::default_instance()));
+  }
+}
+BENCHMARK(BM_Get);
+
+void BM_Delete(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document
+  DocumentProto document = DocumentBuilder()
+                               .SetSchema("Message")
+                               .SetNamespace("namespace")
+                               .SetUri("uri")
+                               .Build();
+
+  ASSERT_THAT(icing->Put(document).status(), ProtoIsOk());
+  for (auto s : state) {
+    state.PauseTiming();
+    icing->Put(document);
+    state.ResumeTiming();
+
+    benchmark::DoNotOptimize(icing->Delete("namespace", "uri"));
+  }
+}
+BENCHMARK(BM_Delete);
+
+void BM_PutMaxAllowedDocuments(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TermMatchType::PREFIX,
+                                     StringIndexingConfig::TokenizerType::PLAIN)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  // Create a document that has the term "foo"
+  DocumentProto base_document = DocumentBuilder()
+                                    .SetSchema("Message")
+                                    .SetNamespace("namespace")
+                                    .AddStringProperty("body", "foo")
+                                    .Build();
+
+  // Insert a lot of documents with the term "foo"
+  for (auto s : state) {
+    for (int64_t i = 0; i <= kMaxDocumentId; ++i) {
+      DocumentProto document =
+          DocumentBuilder(base_document).SetUri(std::to_string(i)).Build();
+      EXPECT_THAT(icing->Put(document).status(), ProtoIsOk());
+    }
+  }
+
+  DocumentProto document =
+      DocumentBuilder(base_document).SetUri("out_of_space_uri").Build();
+  PutResultProto put_result_proto = icing->Put(document);
+  EXPECT_THAT(put_result_proto.status(),
+              ProtoStatusIs(StatusProto::OUT_OF_SPACE));
+  EXPECT_THAT(put_result_proto.status().message(),
+              HasSubstr("Exceeded maximum number of documents"));
+}
+BENCHMARK(BM_PutMaxAllowedDocuments);
 
 }  // namespace
 

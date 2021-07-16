@@ -80,23 +80,6 @@
 namespace icing {
 namespace lib {
 
-namespace {
-
-bool IsEmptyBuffer(const char* buffer, int size) {
-  return std::all_of(buffer, buffer + size,
-                     [](const char byte) { return byte == 0; });
-}
-
-// Helper function to get stored proto size from the metadata.
-// Metadata format: 8 bits magic + 24 bits size
-int GetProtoSize(int metadata) { return metadata & 0x00FFFFFF; }
-
-// Helper function to get stored proto magic from the metadata.
-// Metadata format: 8 bits magic + 24 bits size
-uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
-
-}  // namespace
-
 template <typename ProtoT>
 class FileBackedProtoLog {
  public:
@@ -402,6 +385,28 @@ class FileBackedProtoLog {
       const Filesystem* filesystem, const std::string& file_path,
       Crc32 initial_crc, int64_t start, int64_t end);
 
+  static bool IsEmptyBuffer(const char* buffer, int size) {
+    return std::all_of(buffer, buffer + size,
+                       [](const char byte) { return byte == 0; });
+  }
+
+  // Helper function to get stored proto size from the metadata.
+  // Metadata format: 8 bits magic + 24 bits size
+  static int GetProtoSize(int metadata) { return metadata & 0x00FFFFFF; }
+
+  // Helper function to get stored proto magic from the metadata.
+  // Metadata format: 8 bits magic + 24 bits size
+  static uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
+
+  // Reads out the metadata of a proto located at file_offset from the file.
+  //
+  // Returns:
+  //   Proto's metadata on success
+  //   OUT_OF_RANGE_ERROR if file_offset exceeds file_size
+  //   INTERNAL_ERROR if the metadata is invalid or any IO errors happen
+  static libtextclassifier3::StatusOr<int> ReadProtoMetadata(
+      MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size);
+
   // Magic number added in front of every proto. Used when reading out protos
   // as a first check for corruption in each entry in the file. Even if there is
   // a corruption, the best we can do is roll back to our last recovery point
@@ -429,15 +434,6 @@ class FileBackedProtoLog {
   ScopedFd fd_;
   const Filesystem* const filesystem_;
   const std::string file_path_;
-
-  // Reads out the metadata of a proto located at file_offset from the file.
-  //
-  // Returns:
-  //   Proto's metadata on success
-  //   OUT_OF_RANGE_ERROR if file_offset exceeds file_size
-  //   INTERNAL_ERROR if the metadata is invalid or any IO errors happen
-  static libtextclassifier3::StatusOr<int> ReadProtoMetadata(
-      MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size);
   std::unique_ptr<Header> header_;
 };
 
@@ -573,6 +569,7 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
   ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
                          ComputeChecksum(filesystem, file_path, Crc32(),
                                          sizeof(Header), file_size));
+
   // Double check that the log checksum is the same as the one that was
   // persisted last time. If not, we start recovery logic.
   if (header->log_checksum != calculated_log_checksum.Get()) {
