@@ -56,6 +56,7 @@
 #ifndef ICING_FILE_FILE_BACKED_VECTOR_H_
 #define ICING_FILE_FILE_BACKED_VECTOR_H_
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <sys/mman.h>
 
@@ -438,8 +439,8 @@ FileBackedVector<T>::InitializeExistingFile(
   int64_t min_file_size = header->num_elements * sizeof(T) + sizeof(Header);
   if (min_file_size > file_size) {
     return absl_ports::InternalError(IcingStringUtil::StringPrintf(
-        "Inconsistent file size, expected %zd, actual %d", min_file_size,
-        file_size));
+        "Inconsistent file size, expected %" PRId64 ", actual %" PRId64,
+        min_file_size, file_size));
   }
 
   // Mmap the content of the vector, excluding the header so its easier to
