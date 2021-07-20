@@ -101,7 +101,10 @@ constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
 constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_NONE =
     StringIndexingConfig_TokenizerType_Code_NONE;
 
+#ifndef ICING_JNI_TEST
 constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+#endif  // !ICING_JNI_TEST
+
 constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
 constexpr TermMatchType_Code MATCH_NONE = TermMatchType_Code_UNKNOWN;
 
