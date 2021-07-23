@@ -1577,6 +1577,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   int size = document_id_mapper_->num_elements();
   int num_deleted = 0;
   int num_expired = 0;
+  UsageStore::UsageScores default_usage;
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
@@ -1625,10 +1626,14 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
                            usage_store_->GetUsageScores(document_id));
-
-    DocumentId new_document_id = new_document_id_or.ValueOrDie();
-    ICING_RETURN_IF_ERROR(
-        new_doc_store->SetUsageScores(new_document_id, usage_scores));
+    if (!(usage_scores == default_usage)) {
+      // If the usage scores for this document are the default (no usage), then
+      // don't bother setting it. No need to possibly allocate storage if
+      // there's nothing interesting to store.
+      DocumentId new_document_id = new_document_id_or.ValueOrDie();
+      ICING_RETURN_IF_ERROR(
+          new_doc_store->SetUsageScores(new_document_id, usage_scores));
+    }
   }
   if (stats != nullptr) {
     stats->set_num_original_documents(size);
