@@ -17,6 +17,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/platform.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -35,10 +36,12 @@ using ::testing::Eq;
 class LanguageSegmenterIteratorTest : public testing::Test {
  protected:
   void SetUp() override {
-    ICING_ASSERT_OK(
-        // File generated via icu_data_file rule in //icing/BUILD.
-        icu_data_file_helper::SetUpICUDataFile(
-            GetTestFilePath("icing/icu.dat")));
+    if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
+      ICING_ASSERT_OK(
+          // File generated via icu_data_file rule in //icing/BUILD.
+          icu_data_file_helper::SetUpICUDataFile(
+              GetTestFilePath("icing/icu.dat")));
+    }
   }
 };
 

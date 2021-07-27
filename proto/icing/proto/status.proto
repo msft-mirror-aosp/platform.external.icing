@@ -36,6 +36,9 @@ message StatusProto {
     // The IcingSearchEngine instance is still usable. But the schema and/or
     // documents may need to be re-added to prevent future API calls from
     // failing or returning correct information.
+    //
+    // TODO(b/171750324): split into WARNING_PARTIAL_LOSS and
+    // WARNING_COMPLETE_LOSS.
     WARNING_DATA_LOSS = 2;
 
     // Parameters to API call are invalid and cannot be processed.

@@ -27,6 +27,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -63,9 +64,10 @@ SchemaProto CreateMessageSchema() {
   body->set_property_name("body");
   body->set_data_type(PropertyConfigProto::DataType::STRING);
   body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  body->mutable_indexing_config()->set_term_match_type(TermMatchType::PREFIX);
-  body->mutable_indexing_config()->set_tokenizer_type(
-      IndexingConfig::TokenizerType::PLAIN);
+  body->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::PREFIX);
+  body->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
 
   return schema;
 }
@@ -113,7 +115,8 @@ TEST(IcingSearchEngineWithIcuFileTest, ShouldIndexAndSearch) {
   // The token is a random number so we don't verify it.
   expected_search_result_proto.set_next_page_token(
       search_result_proto.next_page_token());
-  EXPECT_THAT(search_result_proto, EqualsProto(expected_search_result_proto));
+  EXPECT_THAT(search_result_proto,
+              EqualsSearchResultIgnoreStats(expected_search_result_proto));
 }
 
 }  // namespace

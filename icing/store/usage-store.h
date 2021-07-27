@@ -104,7 +104,6 @@ class UsageStore {
   // Returns:
   //   UsageScores on success
   //   INVALID_ARGUMENT if document_id is invalid
-  //   NOT_FOUND if no scores are found for the document
   //   INTERNAL_ERROR on I/O errors
   //
   // TODO(b/169433395): return a pointer instead of an object.
@@ -121,7 +120,19 @@ class UsageStore {
   //   INVALID_ARGUMENT if document_id is invalid
   //   INTERNAL_ERROR on I/O errors
   libtextclassifier3::Status SetUsageScores(DocumentId document_id,
-                                            UsageScores usage_scores);
+                                            const UsageScores& usage_scores);
+
+  // Clones the usage scores from one document to another.
+  //
+  // Returns:
+  //   OK on success
+  //   INVALID_ARGUMENT if any of the document ids is invalid
+  //   INTERNAL_ERROR on I/O errors
+  //
+  // TODO(b/169433395): We can remove this method once GetUsageScores() returns
+  // a pointer.
+  libtextclassifier3::Status CloneUsageScores(DocumentId from_document_id,
+                                              DocumentId to_document_id);
 
   // Syncs data to disk.
   //
@@ -129,6 +140,30 @@ class UsageStore {
   //   OK on success
   //   INTERNAL on I/O error
   libtextclassifier3::Status PersistToDisk();
+
+  // Updates checksum of the usage scores and returns it.
+  //
+  // Returns:
+  //   A Crc32 on success
+  //   INTERNAL_ERROR if the internal state is inconsistent
+  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+
+  // Returns the file size of the all the elements held in the UsageStore. File
+  // size is in bytes. This excludes the size of any internal metadata, e.g. any
+  // internal headers.
+  //
+  // Returns:
+  //   File size on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
+
+  // Resizes the storage so that only the usage scores of and before
+  // last_document_id are stored.
+  //
+  // Returns:
+  //   OK on success
+  //   OUT_OF_RANGE_ERROR if num_documents is negative
+  libtextclassifier3::Status TruncateTo(DocumentId num_documents);
 
   // Deletes all usage data and re-initialize the storage.
   //
