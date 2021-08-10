@@ -55,11 +55,12 @@ constexpr int kMaxQueryLength = 23000;
 constexpr int kDefaultNumToScore = 30000;
 
 // New Android devices nowadays all allow more than 16 MB memory per app. Using
-// that as a guideline, we set 16 MB as the safe memory threshold.
+// that as a guideline and being more conservative, we set 4 MB as the safe
+// memory threshold.
 // TODO(b/150029642): Android apps / framework have better understanding of how
 // much memory is allowed, so it would be better to let clients pass in this
 // value.
-constexpr int kSafeMemoryUsage = 16 * 1024 * 1024;  // 16MB
+constexpr int kSafeMemoryUsage = 4 * 1024 * 1024;  // 4MB
 
 // The maximum number of hits that can fit below the kSafeMemoryUsage threshold.
 constexpr int kMaxNumTotalHits = kSafeMemoryUsage / sizeof(ScoredDocumentHit);
