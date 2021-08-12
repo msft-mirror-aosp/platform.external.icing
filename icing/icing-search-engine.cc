@@ -508,12 +508,6 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     return result_proto;
   }
 
-  libtextclassifier3::Status status = SchemaUtil::Validate(new_schema);
-  if (!status.ok()) {
-    TransformStatus(status, result_status);
-    return result_proto;
-  }
-
   auto lost_previous_schema_or = LostPreviousSchema();
   if (!lost_previous_schema_or.ok()) {
     TransformStatus(lost_previous_schema_or.status(), result_status);
@@ -549,6 +543,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     result_proto.add_incompatible_schema_types(incompatible_type);
   }
 
+  libtextclassifier3::Status status;
   if (set_schema_result.success) {
     if (lost_previous_schema) {
       // No previous schema to calculate a diff against. We have to go through
@@ -910,6 +905,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
   DeleteStatsProto* delete_stats = result_proto.mutable_delete_stats();
   delete_stats->set_delete_type(DeleteStatsProto::DeleteType::QUERY);
+
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   libtextclassifier3::Status status =
@@ -1666,24 +1662,22 @@ ResetResultProto IcingSearchEngine::Reset() {
   ResetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
-  int64_t before_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
+  absl_ports::unique_lock l(&mutex_);
+
+  initialized_ = false;
+
+  // Resets members variables
+  schema_store_.reset();
+  document_store_.reset();
+  language_segmenter_.reset();
+  normalizer_.reset();
+  index_.reset();
 
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
-    int64_t after_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
-    if (after_size != before_size) {
-      // Our filesystem doesn't atomically delete. If we have a discrepancy in
-      // size, then that means we may have deleted some files, but not others.
-      // So our data is in an invalid state now.
-      result_status->set_code(StatusProto::INTERNAL);
-      return result_proto;
-    }
-
-    result_status->set_code(StatusProto::ABORTED);
+    result_status->set_code(StatusProto::INTERNAL);
     return result_proto;
   }
 
-  absl_ports::unique_lock l(&mutex_);
-  initialized_ = false;
   if (InternalInitialize().status().code() != StatusProto::OK) {
     // We shouldn't hit the following Initialize errors:
     //   NOT_FOUND: all data was cleared, we aren't expecting anything
