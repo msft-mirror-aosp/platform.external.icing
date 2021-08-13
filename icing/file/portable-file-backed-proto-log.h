@@ -141,42 +141,50 @@ class PortableFileBackedProtoLog {
       return crc.Get();
     }
 
-    int32_t GetMagic() const { return gntohl(magic_nbytes_); }
+    int32_t GetMagic() const { return GNetworkToHostL(magic_nbytes_); }
 
-    void SetMagic(int32_t magic_in) { magic_nbytes_ = ghtonl(magic_in); }
+    void SetMagic(int32_t magic_in) {
+      magic_nbytes_ = GHostToNetworkL(magic_in);
+    }
 
     int32_t GetFileFormatVersion() const {
-      return gntohl(file_format_version_nbytes_);
+      return GNetworkToHostL(file_format_version_nbytes_);
     }
 
     void SetFileFormatVersion(int32_t file_format_version_in) {
-      file_format_version_nbytes_ = ghtonl(file_format_version_in);
+      file_format_version_nbytes_ = GHostToNetworkL(file_format_version_in);
     }
 
-    int32_t GetMaxProtoSize() const { return gntohl(max_proto_size_nbytes_); }
+    int32_t GetMaxProtoSize() const {
+      return GNetworkToHostL(max_proto_size_nbytes_);
+    }
 
     void SetMaxProtoSize(int32_t max_proto_size_in) {
-      max_proto_size_nbytes_ = ghtonl(max_proto_size_in);
+      max_proto_size_nbytes_ = GHostToNetworkL(max_proto_size_in);
     }
 
-    int32_t GetLogChecksum() const { return gntohl(log_checksum_nbytes_); }
+    int32_t GetLogChecksum() const {
+      return GNetworkToHostL(log_checksum_nbytes_);
+    }
 
     void SetLogChecksum(int32_t log_checksum_in) {
-      log_checksum_nbytes_ = ghtonl(log_checksum_in);
+      log_checksum_nbytes_ = GHostToNetworkL(log_checksum_in);
     }
 
-    int64_t GetRewindOffset() const { return gntohll(rewind_offset_nbytes_); }
+    int64_t GetRewindOffset() const {
+      return GNetworkToHostLL(rewind_offset_nbytes_);
+    }
 
     void SetRewindOffset(int64_t rewind_offset_in) {
-      rewind_offset_nbytes_ = ghtonll(rewind_offset_in);
+      rewind_offset_nbytes_ = GHostToNetworkLL(rewind_offset_in);
     }
 
     int32_t GetHeaderChecksum() const {
-      return gntohl(header_checksum_nbytes_);
+      return GNetworkToHostL(header_checksum_nbytes_);
     }
 
     void SetHeaderChecksum(int32_t header_checksum_in) {
-      header_checksum_nbytes_ = ghtonl(header_checksum_in);
+      header_checksum_nbytes_ = GHostToNetworkL(header_checksum_in);
     }
 
     bool GetCompressFlag() const { return GetFlag(kCompressBit); }
@@ -209,7 +217,7 @@ class PortableFileBackedProtoLog {
     // Holds the magic as a quick sanity check against file corruption.
     //
     // Field is in network-byte order.
-    int32_t magic_nbytes_ = ghtonl(kMagic);
+    int32_t magic_nbytes_ = GHostToNetworkL(kMagic);
 
     // Must be at the beginning after kMagic. Contains the crc checksum of
     // the following fields.
@@ -223,7 +231,7 @@ class PortableFileBackedProtoLog {
     // valid instead of throwing away the entire log.
     //
     // Field is in network-byte order.
-    int64_t rewind_offset_nbytes_ = ghtonll(kHeaderReservedBytes);
+    int64_t rewind_offset_nbytes_ = GHostToNetworkLL(kHeaderReservedBytes);
 
     // Version number tracking how we serialize the file to disk. If we change
     // how/what we write to disk, this version should be updated and this class
@@ -1148,7 +1156,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
   memcpy(&portable_metadata, mmapped_file->region(), metadata_size);
 
   // Need to switch it back to host order endianness after reading from disk.
-  int32_t host_order_metadata = gntohl(portable_metadata);
+  int32_t host_order_metadata = GNetworkToHostL(portable_metadata);
 
   // Checks magic number
   uint8_t stored_k_proto_magic = GetProtoMagic(host_order_metadata);
@@ -1166,7 +1174,7 @@ libtextclassifier3::Status
 PortableFileBackedProtoLog<ProtoT>::WriteProtoMetadata(
     const Filesystem* filesystem, int fd, int32_t host_order_metadata) {
   // Convert it into portable endian format before writing to disk
-  int32_t portable_metadata = ghtonl(host_order_metadata);
+  int32_t portable_metadata = GHostToNetworkL(host_order_metadata);
   int portable_metadata_size = sizeof(portable_metadata);
 
   // Write metadata

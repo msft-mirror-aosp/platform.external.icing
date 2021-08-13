@@ -20,6 +20,7 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
@@ -39,6 +40,21 @@ class Normalizer {
   // Normalizes the input term based on rules. See implementation classes for
   // specific transformation rules.
   virtual std::string NormalizeTerm(std::string_view term) const = 0;
+
+  // Returns a CharacterIterator pointing to one past the end of the segment of
+  // term that (once normalized) matches with normalized_term.
+  //
+  // Ex. CalculateNormalizedMatchLength("YELLOW", "yell") will return
+  // CharacterIterator(u8:4, u16:4, u32:4).
+  //
+  // Ex. CalculateNormalizedMatchLength("YELLOW", "red") will return
+  // CharacterIterator(u8:0, u16:0, u32:0).
+  virtual CharacterIterator CalculateNormalizedMatchLength(
+      std::string_view term, std::string_view normalized_term) const {
+    // TODO(b/195720764) Remove this default impl and implement in all
+    // subclasses.
+    return CharacterIterator(term, 0, 0, 0);
+  }
 };
 
 }  // namespace lib

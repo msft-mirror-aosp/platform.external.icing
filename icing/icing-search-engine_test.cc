@@ -29,6 +29,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
+#include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -505,6 +506,217 @@ TEST_F(IcingSearchEngineTest, FailToCreateDocStore) {
               ProtoStatusIs(StatusProto::INTERNAL));
   EXPECT_THAT(initialize_result_proto.status().message(),
               HasSubstr("Could not create directory"));
+}
+
+TEST_F(IcingSearchEngineTest, InitMarkerFilePreviousFailuresAtThreshold) {
+  Filesystem filesystem;
+  DocumentProto email1 =
+      CreateEmailDocument("namespace", "uri1", 100, "subject1", "body1");
+  email1.set_creation_timestamp_ms(10000);
+  DocumentProto email2 =
+      CreateEmailDocument("namespace", "uri2", 50, "subject2", "body2");
+  email2.set_creation_timestamp_ms(10000);
+
+  {
+    // Create an index with a few documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoIsOk());
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(0));
+    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  }
+
+  // Write an init marker file with 5 previously failed attempts.
+  std::string marker_filepath = GetTestBaseDir() + "/init_marker";
+
+  {
+    ScopedFd marker_file_fd(filesystem.OpenForWrite(marker_filepath.c_str()));
+    int network_init_attempts = GHostToNetworkL(5);
+    // Write the updated number of attempts before we get started.
+    ASSERT_TRUE(filesystem.PWrite(marker_file_fd.get(), 0,
+                                  &network_init_attempts,
+                                  sizeof(network_init_attempts)));
+    ASSERT_TRUE(filesystem.DataSync(marker_file_fd.get()));
+  }
+
+  {
+    // Create the index again and verify that initialization succeeds and no
+    // data is thrown out.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoIsOk());
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(5));
+    EXPECT_THAT(
+        icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+            .document(),
+        EqualsProto(email1));
+    EXPECT_THAT(
+        icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+            .document(),
+        EqualsProto(email2));
+  }
+
+  // The successful init should have thrown out the marker file.
+  ASSERT_FALSE(filesystem.FileExists(marker_filepath.c_str()));
+}
+
+TEST_F(IcingSearchEngineTest, InitMarkerFilePreviousFailuresBeyondThreshold) {
+  Filesystem filesystem;
+  DocumentProto email1 =
+      CreateEmailDocument("namespace", "uri1", 100, "subject1", "body1");
+  DocumentProto email2 =
+      CreateEmailDocument("namespace", "uri2", 50, "subject2", "body2");
+
+  {
+    // Create an index with a few documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoIsOk());
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(0));
+    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  }
+
+  // Write an init marker file with 6 previously failed attempts.
+  std::string marker_filepath = GetTestBaseDir() + "/init_marker";
+
+  {
+    ScopedFd marker_file_fd(filesystem.OpenForWrite(marker_filepath.c_str()));
+    int network_init_attempts = GHostToNetworkL(6);
+    // Write the updated number of attempts before we get started.
+    ASSERT_TRUE(filesystem.PWrite(marker_file_fd.get(), 0,
+                                  &network_init_attempts,
+                                  sizeof(network_init_attempts)));
+    ASSERT_TRUE(filesystem.DataSync(marker_file_fd.get()));
+  }
+
+  {
+    // Create the index again and verify that initialization succeeds and all
+    // data is thrown out.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(),
+                ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(6));
+    EXPECT_THAT(
+        icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoStatusIs(StatusProto::NOT_FOUND));
+    EXPECT_THAT(
+        icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoStatusIs(StatusProto::NOT_FOUND));
+  }
+
+  // The successful init should have thrown out the marker file.
+  ASSERT_FALSE(filesystem.FileExists(marker_filepath.c_str()));
+}
+
+TEST_F(IcingSearchEngineTest, SuccessiveInitFailuresIncrementsInitMarker) {
+  Filesystem filesystem;
+  DocumentProto email1 =
+      CreateEmailDocument("namespace", "uri1", 100, "subject1", "body1");
+  DocumentProto email2 =
+      CreateEmailDocument("namespace", "uri2", 50, "subject2", "body2");
+
+  {
+    // 1. Create an index with a few documents.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoIsOk());
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(0));
+    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  }
+
+  {
+    // 2. Create an index that will encounter an IO failure when trying to
+    // create the document log.
+    IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    std::string document_log_filepath =
+        icing_options.base_dir() + "/document_dir/document_log_v1";
+    auto get_filesize_lambda = [this,
+                                &document_log_filepath](const char* filename) {
+      if (strncmp(document_log_filepath.c_str(), filename,
+                  document_log_filepath.length()) == 0) {
+        return Filesystem::kBadFileSize;
+      }
+      return this->filesystem()->GetFileSize(filename);
+    };
+    ON_CALL(*mock_filesystem, GetFileSize(A<const char*>()))
+        .WillByDefault(get_filesize_lambda);
+
+    TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    // Fail to initialize six times in a row.
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(0));
+
+    init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(1));
+
+    init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(2));
+
+    init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(3));
+
+    init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(4));
+
+    init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(5));
+  }
+
+  {
+    // 3. Create the index again and verify that initialization succeeds and all
+    // data is thrown out.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    ASSERT_THAT(init_result.status(),
+                ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
+                Eq(6));
+
+    EXPECT_THAT(
+        icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoStatusIs(StatusProto::NOT_FOUND));
+    EXPECT_THAT(
+        icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoStatusIs(StatusProto::NOT_FOUND));
+  }
+
+  // The successful init should have thrown out the marker file.
+  std::string marker_filepath = GetTestBaseDir() + "/init_marker";
+  ASSERT_FALSE(filesystem.FileExists(marker_filepath.c_str()));
 }
 
 TEST_F(IcingSearchEngineTest,
