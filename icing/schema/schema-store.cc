@@ -322,12 +322,18 @@ SchemaStore::SetSchema(const SchemaProto& new_schema,
 libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
                        bool ignore_errors_and_delete_documents) {
+  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependencyMap new_dependency_map,
+                         SchemaUtil::Validate(new_schema));
+
   SetSchemaResult result;
 
   auto schema_proto_or = GetSchema();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     // We don't have a pre-existing schema, so anything is valid.
     result.success = true;
+    for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
+      result.schema_types_new_by_name.insert(type_config.schema_type());
+    }
   } else if (!schema_proto_or.ok()) {
     // Real error
     return schema_proto_or.status();
@@ -345,10 +351,14 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
     // Different schema, track the differences and see if we can still write it
     SchemaUtil::SchemaDelta schema_delta =
-        SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema);
+        SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                              new_dependency_map);
 
-    // An incompatible index is fine, we can just reindex
-    result.index_incompatible = schema_delta.index_incompatible;
+    result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
+    result.schema_types_changed_fully_compatible_by_name =
+        std::move(schema_delta.schema_types_changed_fully_compatible);
+    result.schema_types_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_index_incompatible);
 
     for (const auto& schema_type : schema_delta.schema_types_deleted) {
       // We currently don't support deletions, so mark this as not possible.

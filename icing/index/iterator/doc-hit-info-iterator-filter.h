@@ -27,7 +27,6 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
-#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -57,7 +56,7 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   explicit DocHitInfoIteratorFilter(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Clock* clock, const Options& options);
+      const Options& options);
 
   libtextclassifier3::Status Advance() override;
 
@@ -81,7 +80,6 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   const Options options_;
   std::unordered_set<NamespaceId> target_namespace_ids_;
   std::unordered_set<SchemaTypeId> target_schema_type_ids_;
-  const int64_t current_time_milliseconds_;
 };
 
 }  // namespace lib

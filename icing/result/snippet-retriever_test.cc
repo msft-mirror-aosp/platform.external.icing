@@ -24,6 +24,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
@@ -36,7 +37,7 @@
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/platform.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -88,7 +89,9 @@ class SnippetRetrieverTest : public testing::Test {
               GetTestFilePath("icing/icu.dat")));
     }
 
-    language_segmenter_factory::SegmenterOptions options(ULOC_US);
+    jni_cache_ = GetTestJniCache();
+    language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                         jni_cache_.get());
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
         language_segmenter_factory::Create(std::move(options)));
@@ -140,6 +143,7 @@ class SnippetRetrieverTest : public testing::Test {
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SnippetRetriever> snippet_retriever_;
   std::unique_ptr<Normalizer> normalizer_;
+  std::unique_ptr<const JniCache> jni_cache_;
   ResultSpecProto::SnippetSpecProto snippet_spec_;
   std::string test_dir_;
 };
@@ -184,6 +188,58 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeSmallerThanMatch) {
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre(""));
 }
 
+TEST_F(SnippetRetrieverTest,
+       SnippetingWindowMaxWindowSizeEqualToMatch_OddLengthMatch) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four.... five")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"three"}}};
+
+  // Window starts at the beginning of "three" and at the exact end of
+  // "three". len=5, orig_window= "three"
+  snippet_spec_.set_max_window_bytes(5);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("three"));
+}
+
+TEST_F(SnippetRetrieverTest,
+       SnippetingWindowMaxWindowSizeEqualToMatch_EvenLengthMatch) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four.... five")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"four"}}};
+
+  // Window starts at the beginning of "four" and at the exact end of
+  // "four". len=4, orig_window= "four"
+  snippet_spec_.set_max_window_bytes(4);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("four"));
+}
+
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsInWhitespace) {
   DocumentProto document =
       DocumentBuilder()
@@ -196,9 +252,15 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsInWhitespace) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"three"}}};
 
-  // Window starts at the space between "one" and "two". Window ends in the
-  // middle of "four".
-  // len=14, orig_window=" two three fou"
+  // String:      "one two three four.... five"
+  //               ^   ^   ^     ^        ^   ^
+  // UTF-8 idx:    0   4   8     14       23  27
+  // UTF-32 idx:   0   4   8     14       23  27
+  //
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (2,17).
+  //   2. trimmed, no-shifting window [4,13) "two three"
+  //   3. trimmed, shifted window [4,18) "two three four"
   snippet_spec_.set_max_window_bytes(14);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
       query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
@@ -208,7 +270,7 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsInWhitespace) {
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
-              ElementsAre("two three"));
+              ElementsAre("two three four"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsMidToken) {
@@ -223,8 +285,15 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsMidToken) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"three"}}};
 
-  // Window starts in the middle of "one" and ends at the end of "four".
-  // len=16, orig_window="e two three four"
+  // String:      "one two three four.... five"
+  //               ^   ^   ^     ^        ^   ^
+  // UTF-8 idx:    0   4   8     14       23  27
+  // UTF-32 idx:   0   4   8     14       23  27
+  //
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (1,18).
+  //   2. trimmed, no-shifting window [4,18) "two three four"
+  //   3. trimmed, shifted window [4,20) "two three four.."
   snippet_spec_.set_max_window_bytes(16);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
       query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
@@ -234,7 +303,7 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsMidToken) {
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
-              ElementsAre("two three four"));
+              ElementsAre("two three four.."));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInPunctuation) {
@@ -264,7 +333,7 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInPunctuation) {
 }
 
 TEST_F(SnippetRetrieverTest,
-       SnippetingWindowMaxWindowEndsInMiddleOfMultiBytePunctuation) {
+       SnippetingWindowMaxWindowEndsMultiBytePunctuation) {
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -278,7 +347,7 @@ TEST_F(SnippetRetrieverTest,
   SectionRestrictQueryTermsMap query_terms{{"", {"in"}}};
 
   // Window ends in the middle of all the punctuation and window starts at 0.
-  // len=26, orig_window="pside down in Australia\xC2"
+  // len=26, orig_window="pside down in Australia¿"
   snippet_spec_.set_max_window_bytes(24);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
       query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
@@ -288,11 +357,11 @@ TEST_F(SnippetRetrieverTest,
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
-              ElementsAre("down in Australia"));
+              ElementsAre("down in Australia¿"));
 }
 
 TEST_F(SnippetRetrieverTest,
-       SnippetingWindowMaxWindowEndsInMultiBytePunctuation) {
+       SnippetingWindowMaxWindowBeyondMultiBytePunctuation) {
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "email/1")
@@ -306,7 +375,7 @@ TEST_F(SnippetRetrieverTest,
   SectionRestrictQueryTermsMap query_terms{{"", {"in"}}};
 
   // Window ends in the middle of all the punctuation and window starts at 0.
-  // len=26, orig_window="upside down in Australia\xC2\xBF"
+  // len=26, orig_window="upside down in Australia¿ "
   snippet_spec_.set_max_window_bytes(26);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
       query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
@@ -331,8 +400,15 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsBeforeValueStart) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"three"}}};
 
-  // Window starts before 0.
-  // len=22, orig_window="one two three four..."
+  // String:      "one two three four.... five"
+  //               ^   ^   ^     ^        ^   ^
+  // UTF-8 idx:    0   4   8     14       23  27
+  // UTF-32 idx:   0   4   8     14       23  27
+  //
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (-2,21).
+  //   2. trimmed, no-shifting window [0,21) "one two three four..."
+  //   3. trimmed, shifted window [0,22) "one two three four...."
   snippet_spec_.set_max_window_bytes(22);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
       query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
@@ -342,7 +418,7 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowStartsBeforeValueStart) {
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
-              ElementsAre("one two three four..."));
+              ElementsAre("one two three four...."));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsInWhitespace) {
@@ -383,8 +459,15 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsMidToken) {
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"three"}}};
 
-  // Window ends in the middle of "five"
-  // len=32, orig_window="one two three four.... fiv"
+  // String:      "one two three four.... five"
+  //               ^   ^   ^     ^        ^   ^
+  // UTF-8 idx:    0   4   8     14       23  27
+  // UTF-32 idx:   0   4   8     14       23  27
+  //
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be ((-7,26).
+  //   2. trimmed, no-shifting window [0,26) "one two three four...."
+  //   3. trimmed, shifted window [0,27) "one two three four.... five"
   snippet_spec_.set_max_window_bytes(32);
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
       query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
@@ -394,7 +477,7 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowEndsMidToken) {
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
-              ElementsAre("one two three four...."));
+              ElementsAre("one two three four.... five"));
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeEqualToValueSize) {
@@ -447,6 +530,142 @@ TEST_F(SnippetRetrieverTest, SnippetingWindowMaxWindowSizeLargerThanValueSize) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
               ElementsAre("one two three four.... five"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingWindowMatchAtTextStart) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four.... five six")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"two"}}};
+
+  // String:      "one two three four.... five six"
+  //               ^   ^   ^     ^        ^    ^  ^
+  // UTF-8 idx:    0   4   8     14       23  28  31
+  // UTF-32 idx:   0   4   8     14       23  28  31
+  //
+  // Window size will go past the start of the window.
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (-10,19).
+  //   2. trimmed, no-shifting window [0,19) "one two three four."
+  //   3. trimmed, shifted window [0,27) "one two three four.... five"
+  snippet_spec_.set_max_window_bytes(28);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four.... five"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingWindowMatchAtTextEnd) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four.... five six")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"five"}}};
+
+  // String:      "one two three four.... five six"
+  //               ^   ^   ^     ^        ^    ^  ^
+  // UTF-8 idx:    0   4   8     14       23  28  31
+  // UTF-32 idx:   0   4   8     14       23  28  31
+  //
+  // Window size will go past the end of the window.
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (10,39).
+  //   2. trimmed, no-shifting window [14,31) "four.... five six"
+  //   3. trimmed, shifted window [4,31) "two three four.... five six"
+  snippet_spec_.set_max_window_bytes(28);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("two three four.... five six"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingWindowMatchAtTextStartShortText) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four....")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"two"}}};
+
+  // String:      "one two three four...."
+  //               ^   ^   ^     ^       ^
+  // UTF-8 idx:    0   4   8     14      22
+  // UTF-32 idx:   0   4   8     14      22
+  //
+  // Window size will go past the start of the window.
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (-10,19).
+  //   2. trimmed, no-shifting window [0, 19) "one two three four."
+  //   3. trimmed, shifted window [0, 22) "one two three four...."
+  snippet_spec_.set_max_window_bytes(28);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four...."));
+}
+
+TEST_F(SnippetRetrieverTest, SnippetingWindowMatchAtTextEndShortText) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", "counting")
+          .AddStringProperty("body", "one two three four....")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"four"}}};
+
+  // String:      "one two three four...."
+  //               ^   ^   ^     ^       ^
+  // UTF-8 idx:    0   4   8     14      22
+  // UTF-32 idx:   0   4   8     14      22
+  //
+  // Window size will go past the start of the window.
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (1,30).
+  //   2. trimmed, no-shifting window [4, 22) "two three four...."
+  //   3. trimmed, shifted window [0, 22) "one two three four...."
+  snippet_spec_.set_max_window_bytes(28);
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_EXACT, snippet_spec_, document, section_mask);
+
+  EXPECT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("one two three four...."));
 }
 
 TEST_F(SnippetRetrieverTest, PrefixSnippeting) {
@@ -526,6 +745,15 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatches) {
                              "Concerning the subject of foo, we need to begin "
                              "considering our options regarding body bar.")
           .Build();
+  // String:      "Concerning the subject of foo, we need to begin considering "
+  //               ^          ^   ^       ^  ^    ^  ^    ^  ^     ^
+  // UTF-8 idx:    0          11  15     23  26  31  34  39  42    48
+  // UTF-32 idx:   0          11  15     23  26  31  34  39  42    48
+  //
+  // String ctd:  "our options regarding body bar."
+  //               ^   ^       ^         ^    ^   ^
+  // UTF-8 idx:    60  64      72        82   87  91
+  // UTF-32 idx:   60  64      72        82   87  91
   SectionIdMask section_mask = 0b00000011;
   SectionRestrictQueryTermsMap query_terms{{"", {"foo", "bar"}}};
   SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
@@ -536,10 +764,19 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatches) {
   EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
+  // The first window will be:
+  //   1. untrimmed, no-shifting window will be (-6,59).
+  //   2. trimmed, no-shifting window [0, 59) "Concerning... considering".
+  //   3. trimmed, shifted window [0, 63) "Concerning... our"
+  // The second window will be:
+  //   1. untrimmed, no-shifting window will be (54,91).
+  //   2. trimmed, no-shifting window [60, 91) "our... bar.".
+  //   3. trimmed, shifted window [31, 91) "we... bar."
   EXPECT_THAT(
       GetWindows(content, snippet.entries(0)),
-      ElementsAre("Concerning the subject of foo, we need to begin considering",
-                  "our options regarding body bar."));
+      ElementsAre(
+          "Concerning the subject of foo, we need to begin considering our",
+          "we need to begin considering our options regarding body bar."));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)),
               ElementsAre("foo", "bar"));
 
@@ -560,6 +797,16 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrict) {
                              "Concerning the subject of foo, we need to begin "
                              "considering our options regarding body bar.")
           .Build();
+  // String:      "Concerning the subject of foo, we need to begin considering "
+  //               ^          ^   ^       ^  ^    ^  ^    ^  ^     ^
+  // UTF-8 idx:    0          11  15     23  26  31  34  39  42    48
+  // UTF-32 idx:   0          11  15     23  26  31  34  39  42    48
+  //
+  // String ctd:  "our options regarding body bar."
+  //               ^   ^       ^         ^    ^   ^
+  // UTF-8 idx:    60  64      72        82   87  91
+  // UTF-32 idx:   60  64      72        82   87  91
+  //
   // Section 1 "subject" is not in the section_mask, so no snippet information
   // from that section should be returned by the SnippetRetriever.
   SectionIdMask section_mask = 0b00000001;
@@ -572,10 +819,19 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrict) {
   EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
+  // The first window will be:
+  //   1. untrimmed, no-shifting window will be (-6,59).
+  //   2. trimmed, no-shifting window [0, 59) "Concerning... considering".
+  //   3. trimmed, shifted window [0, 63) "Concerning... our"
+  // The second window will be:
+  //   1. untrimmed, no-shifting window will be (54,91).
+  //   2. trimmed, no-shifting window [60, 91) "our... bar.".
+  //   3. trimmed, shifted window [31, 91) "we... bar."
   EXPECT_THAT(
       GetWindows(content, snippet.entries(0)),
-      ElementsAre("Concerning the subject of foo, we need to begin considering",
-                  "our options regarding body bar."));
+      ElementsAre(
+          "Concerning the subject of foo, we need to begin considering our",
+          "we need to begin considering our options regarding body bar."));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)),
               ElementsAre("foo", "bar"));
 }
@@ -590,6 +846,15 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrictedTerm) {
                              "Concerning the subject of foo, we need to begin "
                              "considering our options regarding body bar.")
           .Build();
+  // String:      "Concerning the subject of foo, we need to begin considering "
+  //               ^          ^   ^       ^  ^    ^  ^    ^  ^     ^
+  // UTF-8 idx:    0          11  15     23  26  31  34  39  42    48
+  // UTF-32 idx:   0          11  15     23  26  31  34  39  42    48
+  //
+  // String ctd:  "our options regarding body bar."
+  //               ^   ^       ^         ^    ^   ^
+  // UTF-8 idx:    60  64      72        82   87  91
+  // UTF-32 idx:   60  64      72        82   87  91
   SectionIdMask section_mask = 0b00000011;
   // "subject" should match in both sections, but "foo" is restricted to "body"
   // so it should only match in the 'body' section and not the 'subject'
@@ -604,11 +869,19 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrictedTerm) {
   EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
+  // The first window will be:
+  //   1. untrimmed, no-shifting window will be (-15,50).
+  //   2. trimmed, no-shifting window [0, 47) "Concerning... begin".
+  //   3. trimmed, shifted window [0, 63) "Concerning... our"
+  // The second window will be:
+  //   1. untrimmed, no-shifting window will be (-6,59).
+  //   2. trimmed, no-shifting window [0, 59) "Concerning... considering".
+  //   3. trimmed, shifted window [0, 63) "Concerning... our"
   EXPECT_THAT(
       GetWindows(content, snippet.entries(0)),
       ElementsAre(
-          "Concerning the subject of foo, we need to begin",
-          "Concerning the subject of foo, we need to begin considering"));
+          "Concerning the subject of foo, we need to begin considering our",
+          "Concerning the subject of foo, we need to begin considering our"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)),
               ElementsAre("subject", "foo"));
 
@@ -630,6 +903,15 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
                              "considering our options regarding body bar.")
           .Build();
 
+  // String:      "Concerning the subject of foo, we need to begin considering "
+  //               ^          ^   ^       ^  ^    ^  ^    ^  ^     ^
+  // UTF-8 idx:    0          11  15     23  26  31  34  39  42    48
+  // UTF-32 idx:   0          11  15     23  26  31  34  39  42    48
+  //
+  // String ctd:  "our options regarding body bar."
+  //               ^   ^       ^         ^    ^   ^
+  // UTF-8 idx:    60  64      72        82   87  91
+  // UTF-32 idx:   60  64      72        82   87  91
   snippet_spec_.set_num_matches_per_property(1);
 
   SectionIdMask section_mask = 0b00000011;
@@ -642,10 +924,14 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
   EXPECT_THAT(snippet.entries(0).property_name(), Eq("body"));
   std::string_view content =
       GetString(&document, snippet.entries(0).property_name());
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (-6,59).
+  //   2. trimmed, no-shifting window [0, 59) "Concerning... considering".
+  //   3. trimmed, shifted window [0, 63) "Concerning... our"
   EXPECT_THAT(
       GetWindows(content, snippet.entries(0)),
       ElementsAre(
-          "Concerning the subject of foo, we need to begin considering"));
+          "Concerning the subject of foo, we need to begin considering our"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
@@ -1080,6 +1366,204 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelSingleValue) {
       GetPropertyPaths(snippet),
       ElementsAre("A[0].X", "A[1].X", "A[0].Z", "A[1].Z", "B[0].X", "B[1].X",
                   "B[0].Z", "B[1].Z", "C[0].X", "C[1].X", "C[0].Z", "C[1].Z"));
+}
+
+TEST_F(SnippetRetrieverTest, CJKSnippetMatchTest) {
+  // String:     "我每天走路去上班。"
+  //              ^ ^  ^   ^^
+  // UTF8 idx:    0 3  9  15 18
+  // UTF16 idx:   0 1  3   5 6
+  // Breaks into segments: "我", "每天", "走路", "去", "上班"
+  constexpr std::string_view kChinese = "我每天走路去上班。";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kChinese)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"走"}}};
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("走路"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(3));
+  EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
+}
+
+TEST_F(SnippetRetrieverTest, CJKSnippetWindowTest) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_SIMPLIFIED_CHINESE,
+                                                       jni_cache_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      language_segmenter_,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  // String:     "我每天走路去上班。"
+  //              ^ ^  ^   ^^
+  // UTF8 idx:    0 3  9  15 18
+  // UTF16 idx:   0 1  3   5 6
+  // UTF32 idx:   0 1  3   5 6
+  // Breaks into segments: "我", "每天", "走路", "去", "上班"
+  constexpr std::string_view kChinese = "我每天走路去上班。";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kChinese)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"走"}}};
+
+  // The window will be:
+  //   1. untrimmed, no-shifting window will be (0,7).
+  //   2. trimmed, no-shifting window [1, 6) "每天走路去".
+  //   3. trimmed, shifted window [0, 6) "我每天走路去"
+  snippet_spec_.set_max_window_bytes(6);
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetWindows(content, *entry), ElementsAre("我每天走路去"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.window_utf16_position(), Eq(0));
+  EXPECT_THAT(match_proto.window_utf16_length(), Eq(6));
+}
+
+TEST_F(SnippetRetrieverTest, Utf16MultiCodeUnitSnippetMatchTest) {
+  // The following string has four-byte UTF-8 characters. Most importantly, it
+  // is also two code units in UTF-16.
+  // String:     "𐀀𐀁 𐀂𐀃 𐀄"
+  //              ^  ^  ^
+  // UTF8 idx:    0  9  18
+  // UTF16 idx:   0  5  10
+  // Breaks into segments: "𐀀𐀁", "𐀂𐀃", "𐀄"
+  constexpr std::string_view kText = "𐀀𐀁 𐀂𐀃 𐀄";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kText)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"𐀂"}}};
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetMatches(content, *entry), ElementsAre("𐀂𐀃"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(5));
+  EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(4));
+}
+
+TEST_F(SnippetRetrieverTest, Utf16MultiCodeUnitWindowTest) {
+  // The following string has four-byte UTF-8 characters. Most importantly, it
+  // is also two code units in UTF-16.
+  // String:     "𐀀𐀁 𐀂𐀃 𐀄"
+  //              ^  ^  ^
+  // UTF8 idx:    0  9  18
+  // UTF16 idx:   0  5  10
+  // UTF32 idx:   0  3  6
+  // Breaks into segments: "𐀀𐀁", "𐀂𐀃", "𐀄"
+  constexpr std::string_view kText = "𐀀𐀁 𐀂𐀃 𐀄";
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "email/1")
+          .SetSchema("email")
+          .AddStringProperty("subject", kText)
+          .AddStringProperty("body",
+                             "Concerning the subject of foo, we need to begin "
+                             "considering our options regarding body bar.")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000011;
+  SectionRestrictQueryTermsMap query_terms{{"", {"𐀂"}}};
+
+  // Set a six character window. This will produce a window like this:
+  // String:     "𐀀𐀁 𐀂𐀃 𐀄"
+  //                 ^   ^
+  // UTF8 idx:       9   22
+  // UTF16 idx:      5   12
+  // UTF32 idx:      3   7
+  snippet_spec_.set_max_window_bytes(6);
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &snippet.entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("subject"));
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  // Ensure that the match is correct.
+  EXPECT_THAT(GetWindows(content, *entry), ElementsAre("𐀂𐀃 𐀄"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.window_utf16_position(), Eq(5));
+  EXPECT_THAT(match_proto.window_utf16_length(), Eq(7));
 }
 
 }  // namespace

@@ -53,16 +53,6 @@ namespace lib {
 // TODO(cassiewang) Top-level comments and links to design-doc.
 class IcingSearchEngine {
  public:
-  struct Header {
-    static constexpr int32_t kMagic = 0x6e650d0a;
-
-    // Holds the magic as a quick sanity check against file corruption.
-    int32_t magic;
-
-    // Checksum of the IcingSearchEngine's sub-component's checksums.
-    uint32_t checksum;
-  };
-
   // Note: It is only required to provide a pointer to a valid instance of
   // JniCache if this instance needs to perform reverse-jni calls. Users on
   // Linux and iOS should always provide a nullptr.
@@ -188,6 +178,7 @@ class IcingSearchEngine {
   //
   // Returns:
   //   OK on success
+  //   OUT_OF_SPACE if exceeds maximum number of allowed documents
   //   FAILED_PRECONDITION if a schema has not been set yet, IcingSearchEngine
   //     has not been initialized yet.
   //   NOT_FOUND if there is no SchemaTypeConfig in the SchemaProto that matches
@@ -336,6 +327,19 @@ class IcingSearchEngine {
   // to disk. If the app crashes after a call to PersistToDisk(), Icing
   // would be able to fully recover all data written up to this point.
   //
+  // If persist_type is PersistType::LITE, then only the ground truth will be
+  // synced. This should be relatively lightweight to do (order of microseconds)
+  // and ensures that there will be no data loss. At worst, Icing may need to
+  // recover internal data structures by replaying the document log upon the
+  // next startup. Clients should call PersistToDisk(LITE) after each batch of
+  // mutations.
+  //
+  // If persist_type is PersistType::FULL, then all internal data structures in
+  // Icing will be synced. This is a heavier operation (order of milliseconds).
+  // It ensures that Icing will not need to recover internal data structures
+  // upon the next startup. Clients should call PersistToDisk(FULL) before their
+  // process dies.
+  //
   // NOTE: It is not necessary to call PersistToDisk() to read back data
   // that was recently written. All read APIs will include the most recent
   // updates/deletes regardless of the data being flushed to disk.
@@ -344,7 +348,8 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL on I/O error
-  PersistToDiskResultProto PersistToDisk() ICING_LOCKS_EXCLUDED(mutex_);
+  PersistToDiskResultProto PersistToDisk(PersistType::Code persist_type)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Allows Icing to run tasks that are too expensive and/or unnecessary to be
   // executed in real-time, but are useful to keep it fast and be
@@ -424,7 +429,8 @@ class IcingSearchEngine {
   // acquired first in order to adhere to the global lock ordering:
   //   1. mutex_
   //   2. result_state_manager_.lock_
-  ResultStateManager result_state_manager_ ICING_GUARDED_BY(mutex_);
+  std::unique_ptr<ResultStateManager> result_state_manager_
+      ICING_GUARDED_BY(mutex_);
 
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
@@ -450,8 +456,8 @@ class IcingSearchEngine {
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
   // issues.
-  libtextclassifier3::Status InternalPersistToDisk()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::Status InternalPersistToDisk(
+      PersistType::Code persist_type) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public
@@ -493,11 +499,15 @@ class IcingSearchEngine {
   // Do any initialization/recovery necessary to create a DocumentStore
   // instance.
   //
+  // See comments on DocumentStore::Create for explanation of
+  // force_recovery_and_revalidate_documents.
+  //
   // Returns:
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
   libtextclassifier3::Status InitializeDocumentStore(
+      bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -562,29 +572,19 @@ class IcingSearchEngine {
   // call Index::Reset first.
   //
   // Returns:
-  //   OK on success
+  //   On success, OK and a bool indicating whether or not restoration was
+  //     needed.
+  //   DATA_LOSS, if an error during index merging caused us to lose indexed
+  //     data in the main index. Despite the data loss, this is still considered
+  //     a successful run and needed_restoration will be set to true.
   //   RESOURCE_EXHAUSTED if the index fills up before finishing indexing
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL_ERROR on any IO errors
-  libtextclassifier3::Status RestoreIndexIfNeeded()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Computes the combined checksum of the IcingSearchEngine - includes all its
-  // subcomponents
-  //
-  // Returns:
-  //   Combined checksum on success
-  //   INTERNAL_ERROR on compute error
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Checks if the header exists already. This does not create the header file
-  // if it doesn't exist.
-  bool HeaderExists() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Update, replace and persist the header file. Creates the header file if it
-  // doesn't exist.
-  libtextclassifier3::Status UpdateHeader(const Crc32& checksum)
+  struct IndexRestorationResult {
+    libtextclassifier3::Status status;
+    bool needed_restoration;
+  };
+  IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // If we lost the schema during a previous failure, it may "look" the same as

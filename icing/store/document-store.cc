@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -32,18 +33,22 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-log-creator.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
@@ -59,7 +64,6 @@ namespace {
 
 // Used in DocumentId mapper to mark a document as deleted
 constexpr int64_t kDocDeletedFlag = -1;
-constexpr char kDocumentLogFilename[] = "document_log";
 constexpr char kDocumentIdMapperFilename[] = "document_id_mapper";
 constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
@@ -69,7 +73,9 @@ constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
 constexpr char kUsageStoreDirectoryName[] = "usage_store";
 constexpr char kCorpusIdMapperFilename[] = "corpus_mapper";
 
-constexpr int32_t kUriMapperMaxSize = 12 * 1024 * 1024;  // 12 MiB
+// Determined through manual testing to allow for 1 million uris. 1 million
+// because we allow up to 1 million DocumentIds.
+constexpr int32_t kUriMapperMaxSize = 36 * 1024 * 1024;  // 36 MiB
 
 // 384 KiB for a KeyMapper would allow each internal array to have a max of
 // 128 KiB for storage.
@@ -82,43 +88,12 @@ DocumentWrapper CreateDocumentWrapper(DocumentProto&& document) {
   return document_wrapper;
 }
 
-DocumentWrapper CreateDocumentTombstone(std::string_view document_namespace,
-                                        std::string_view document_uri) {
-  DocumentWrapper document_wrapper;
-  document_wrapper.set_deleted(true);
-  DocumentProto* document = document_wrapper.mutable_document();
-  document->set_namespace_(std::string(document_namespace));
-  document->set_uri(std::string(document_uri));
-  return document_wrapper;
-}
-
-DocumentWrapper CreateNamespaceTombstone(std::string_view document_namespace) {
-  DocumentWrapper document_wrapper;
-  document_wrapper.set_deleted(true);
-  DocumentProto* document = document_wrapper.mutable_document();
-  document->set_namespace_(std::string(document_namespace));
-  return document_wrapper;
-}
-
-DocumentWrapper CreateSchemaTypeTombstone(
-    std::string_view document_schema_type) {
-  DocumentWrapper document_wrapper;
-  document_wrapper.set_deleted(true);
-  DocumentProto* document = document_wrapper.mutable_document();
-  document->set_schema(std::string(document_schema_type));
-  return document_wrapper;
-}
-
 std::string MakeHeaderFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentStoreHeaderFilename);
 }
 
 std::string MakeDocumentIdMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentIdMapperFilename);
-}
-
-std::string MakeDocumentLogFilename(const std::string& base_dir) {
-  return absl_ports::StrCat(base_dir, "/", kDocumentLogFilename);
 }
 
 std::string MakeScoreCacheFilename(const std::string& base_dir) {
@@ -189,17 +164,6 @@ int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
   return expiration_timestamp_ms;
 }
 
-void IncrementDeletedOrExpired(FileBackedVector<int64_t>* document_id_mapper,
-                               DocumentId document_id, int* num_deleted_out,
-                               int* num_expired_out) {
-  auto location_or = document_id_mapper->Get(document_id);
-  if (location_or.ok() && *location_or.ValueOrDie() == kDocDeletedFlag) {
-    ++(*num_deleted_out);
-  } else {
-    ++(*num_expired_out);
-  }
-}
-
 }  // namespace
 
 DocumentStore::DocumentStore(const Filesystem* filesystem,
@@ -227,7 +191,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
 
 DocumentStore::~DocumentStore() {
   if (initialized_) {
-    if (!PersistToDisk().ok()) {
+    if (!PersistToDisk(PersistType::FULL).ok()) {
       ICING_LOG(ERROR)
           << "Error persisting to disk in DocumentStore destructor";
     }
@@ -237,6 +201,7 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
+    bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
@@ -244,8 +209,10 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 
   auto document_store = std::unique_ptr<DocumentStore>(
       new DocumentStore(filesystem, base_dir, clock, schema_store));
-  ICING_ASSIGN_OR_RETURN(DataLoss data_loss,
-                         document_store->Initialize(initialize_stats));
+  ICING_ASSIGN_OR_RETURN(
+      DataLoss data_loss,
+      document_store->Initialize(force_recovery_and_revalidate_documents,
+                                 initialize_stats));
 
   CreateResult create_result;
   create_result.document_store = std::move(document_store);
@@ -254,30 +221,38 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 }
 
 libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
+    bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
-  auto create_result_or = FileBackedProtoLog<DocumentWrapper>::Create(
-      filesystem_, MakeDocumentLogFilename(base_dir_),
-      FileBackedProtoLog<DocumentWrapper>::Options(
-          /*compress_in=*/true));
+  auto create_result_or = DocumentLogCreator::Create(filesystem_, base_dir_);
+
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   if (!create_result_or.ok()) {
     ICING_LOG(ERROR) << create_result_or.status().error_message()
-                     << "\nFailed to initialize DocumentLog";
+                     << "\nFailed to initialize DocumentLog.";
     return create_result_or.status();
   }
-  FileBackedProtoLog<DocumentWrapper>::CreateResult create_result =
+  DocumentLogCreator::CreateResult create_result =
       std::move(create_result_or).ValueOrDie();
-  document_log_ = std::move(create_result.proto_log);
 
-  if (create_result.has_data_loss()) {
-    ICING_LOG(WARNING)
-        << "Data loss in document log, regenerating derived files.";
-    if (initialize_stats != nullptr) {
+  document_log_ = std::move(create_result.log_create_result.proto_log);
+
+  if (create_result.regen_derived_files ||
+      force_recovery_and_revalidate_documents ||
+      create_result.log_create_result.has_data_loss()) {
+    // We can't rely on any existing derived files. Recreate them from scratch.
+    // Currently happens if:
+    //   1) This is a new log and we don't have derived files yet
+    //   2) Client wanted us to force a regeneration.
+    //   3) Log has some data loss, can't rely on existing derived data.
+    if (create_result.log_create_result.has_data_loss() &&
+        initialize_stats != nullptr) {
+      ICING_LOG(WARNING)
+          << "Data loss in document log, regenerating derived files.";
       initialize_stats->set_document_store_recovery_cause(
           InitializeStatsProto::DATA_LOSS);
 
-      if (create_result.data_loss == DataLoss::PARTIAL) {
+      if (create_result.log_create_result.data_loss == DataLoss::PARTIAL) {
         // Ground truth is partially lost.
         initialize_stats->set_document_store_data_status(
             InitializeStatsProto::PARTIAL_LOSS);
@@ -287,9 +262,16 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
             InitializeStatsProto::COMPLETE_LOSS);
       }
     }
+
     std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
-    libtextclassifier3::Status status = RegenerateDerivedFiles();
-    if (initialize_stats != nullptr) {
+    libtextclassifier3::Status status =
+        RegenerateDerivedFiles(force_recovery_and_revalidate_documents);
+    if (initialize_stats != nullptr &&
+        (force_recovery_and_revalidate_documents ||
+         create_result.log_create_result.has_data_loss())) {
+      // Only consider it a recovery if the client forced a recovery or there
+      // was data loss. Otherwise, this could just be the first time we're
+      // initializing and generating derived files.
       initialize_stats->set_document_store_recovery_latency_ms(
           document_recovery_timer->GetElapsedMilliseconds());
     }
@@ -299,17 +281,16 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
       return status;
     }
   } else {
-    if (!InitializeDerivedFiles().ok()) {
+    if (!InitializeExistingDerivedFiles().ok()) {
       ICING_VLOG(1)
           << "Couldn't find derived files or failed to initialize them, "
              "regenerating derived files for DocumentStore.";
-      if (initialize_stats != nullptr) {
+      std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
+      libtextclassifier3::Status status = RegenerateDerivedFiles(
+          /*force_recovery_and_revalidate_documents*/ false);
+      if (initialize_stats != nullptr && num_documents() > 0) {
         initialize_stats->set_document_store_recovery_cause(
             InitializeStatsProto::IO_ERROR);
-      }
-      std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
-      libtextclassifier3::Status status = RegenerateDerivedFiles();
-      if (initialize_stats != nullptr) {
         initialize_stats->set_document_store_recovery_latency_ms(
             document_recovery_timer->GetElapsedMilliseconds());
       }
@@ -326,10 +307,10 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     initialize_stats->set_num_documents(document_id_mapper_->num_elements());
   }
 
-  return create_result.data_loss;
+  return create_result.log_create_result.data_loss;
 }
 
-libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
+libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   if (!HeaderExists()) {
     // Without a header, we don't know if things are consistent between each
     // other so the caller should just regenerate everything from ground
@@ -415,7 +396,8 @@ libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
+libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
+    bool revalidate_documents) {
   ICING_RETURN_IF_ERROR(ResetDocumentKeyMapper());
   ICING_RETURN_IF_ERROR(ResetDocumentIdMapper());
   ICING_RETURN_IF_ERROR(ResetDocumentAssociatedScoreCache());
@@ -449,148 +431,80 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles() {
 
     DocumentWrapper document_wrapper =
         std::move(document_wrapper_or).ValueOrDie();
-    if (document_wrapper.deleted()) {
-      if (!document_wrapper.document().uri().empty()) {
-        // Individual document deletion.
-        auto document_id_or =
-            GetDocumentId(document_wrapper.document().namespace_(),
-                          document_wrapper.document().uri());
-        // Updates document_id mapper with deletion
-        if (document_id_or.ok()) {
-          ICING_RETURN_IF_ERROR(document_id_mapper_->Set(
-              document_id_or.ValueOrDie(), kDocDeletedFlag));
-        } else if (!absl_ports::IsNotFound(document_id_or.status())) {
-          // Real error
-          return absl_ports::Annotate(
-              document_id_or.status(),
-              absl_ports::StrCat("Failed to find document id. namespace: ",
-                                 document_wrapper.document().namespace_(),
-                                 ", uri: ", document_wrapper.document().uri()));
-        }
-      } else if (!document_wrapper.document().namespace_().empty()) {
-        // Namespace deletion.
-        ICING_ASSIGN_OR_RETURN(
-            NamespaceId namespace_id,
-            namespace_mapper_->Get(document_wrapper.document().namespace_()));
-        // Tombstone indicates it's a soft delete.
-        ICING_RETURN_IF_ERROR(BatchDelete(namespace_id, kInvalidSchemaTypeId,
-                                          /*soft_delete=*/true));
-      } else if (!document_wrapper.document().schema().empty()) {
-        // SchemaType deletion.
-        auto schema_type_id_or = schema_store_->GetSchemaTypeId(
-            document_wrapper.document().schema());
-
-        if (schema_type_id_or.ok()) {
-          // Tombstone indicates it's a soft delete.
-          ICING_RETURN_IF_ERROR(BatchDelete(kInvalidNamespaceId,
-                                            schema_type_id_or.ValueOrDie(),
-                                            /*soft_delete=*/true));
-        } else {
-          // The deleted schema type doesn't have a SchemaTypeId we can refer
-          // to in the FilterCache.
-          //
-          // TODO(cassiewang): We could avoid reading out all the documents.
-          // When we see a schema type doesn't have a SchemaTypeId, assign the
-          // unknown schema type a unique, temporary SchemaTypeId and store
-          // that in the FilterCache. Then, when we see the schema type
-          // tombstone here, we can look up its temporary SchemaTypeId and
-          // just iterate through the FilterCache to mark those documents as
-          // deleted.
-          int size = document_id_mapper_->num_elements();
-          for (DocumentId document_id = 0; document_id < size; document_id++) {
-            auto document_or = Get(document_id);
-            if (absl_ports::IsNotFound(document_or.status())) {
-              // Skip nonexistent documents
-              continue;
-            } else if (!document_or.ok()) {
-              // Real error, pass up
-              return absl_ports::Annotate(
-                  document_or.status(),
-                  IcingStringUtil::StringPrintf(
-                      "Failed to retrieve Document for DocumentId %d",
-                      document_id));
-            }
-
-            // Guaranteed to have a document now.
-            DocumentProto document = document_or.ValueOrDie();
-
-            if (document.schema() == document_wrapper.document().schema()) {
-              ICING_RETURN_IF_ERROR(
-                  document_id_mapper_->Set(document_id, kDocDeletedFlag));
-            }
-          }
-        }
-      } else {
-        return absl_ports::InternalError(
-            "Encountered an invalid tombstone during recovery!");
+    // Revalidate that this document is still compatible if requested.
+    if (revalidate_documents) {
+      if (!document_validator_.Validate(document_wrapper.document()).ok()) {
+        // Document is no longer valid with the current schema. Mark as
+        // deleted
+        DocumentId new_document_id = document_id_mapper_->num_elements();
+        ICING_RETURN_IF_ERROR(document_log_->EraseProto(iterator.GetOffset()));
+        ICING_RETURN_IF_ERROR(ClearDerivedData(new_document_id));
+        continue;
       }
-    } else {
-      // Updates key mapper and document_id mapper with the new document
-      DocumentId new_document_id = document_id_mapper_->num_elements();
-      ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-          MakeFingerprint(document_wrapper.document().namespace_(),
-                          document_wrapper.document().uri()),
-          new_document_id));
-      ICING_RETURN_IF_ERROR(
-          document_id_mapper_->Set(new_document_id, iterator.GetOffset()));
-
-      SchemaTypeId schema_type_id;
-      auto schema_type_id_or =
-          schema_store_->GetSchemaTypeId(document_wrapper.document().schema());
-      if (absl_ports::IsNotFound(schema_type_id_or.status())) {
-        // Didn't find a SchemaTypeId. This means that the DocumentStore and
-        // the SchemaStore are out of sync. But DocumentStore can't do
-        // anything about it so just ignore this for now. This should be
-        // detected/handled by the owner of DocumentStore. Set it to some
-        // arbitrary invalid value for now, it'll get updated to the correct
-        // ID later.
-        schema_type_id = -1;
-      } else if (!schema_type_id_or.ok()) {
-        // Real error. Pass it up
-        return schema_type_id_or.status();
-      } else {
-        // We're guaranteed that SchemaTypeId is valid now
-        schema_type_id = schema_type_id_or.ValueOrDie();
-      }
-
-      ICING_ASSIGN_OR_RETURN(
-          NamespaceId namespace_id,
-          namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
-                                      namespace_mapper_->num_keys()));
-
-      // Update corpus maps
-      std::string corpus =
-          MakeFingerprint(document_wrapper.document().namespace_(),
-                          document_wrapper.document().schema());
-      ICING_ASSIGN_OR_RETURN(
-          CorpusId corpusId,
-          corpus_mapper_->GetOrPut(corpus, corpus_mapper_->num_keys()));
-
-      ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
-                             GetCorpusAssociatedScoreDataToUpdate(corpusId));
-      scoring_data.AddDocument(
-          document_wrapper.document().internal_fields().length_in_tokens());
-
-      ICING_RETURN_IF_ERROR(
-          UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
-
-      ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
-          new_document_id,
-          DocumentAssociatedScoreData(
-              corpusId, document_wrapper.document().score(),
-              document_wrapper.document().creation_timestamp_ms(),
-              document_wrapper.document()
-                  .internal_fields()
-                  .length_in_tokens())));
-
-      int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
-          document_wrapper.document().creation_timestamp_ms(),
-          document_wrapper.document().ttl_ms());
-
-      ICING_RETURN_IF_ERROR(UpdateFilterCache(
-          new_document_id, DocumentFilterData(namespace_id, schema_type_id,
-                                              expiration_timestamp_ms)));
     }
+    // Updates key mapper and document_id mapper with the new document
+    DocumentId new_document_id = document_id_mapper_->num_elements();
+    ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
+        MakeFingerprint(document_wrapper.document().namespace_(),
+                        document_wrapper.document().uri()),
+        new_document_id));
+    ICING_RETURN_IF_ERROR(
+        document_id_mapper_->Set(new_document_id, iterator.GetOffset()));
+
+    SchemaTypeId schema_type_id;
+    auto schema_type_id_or =
+        schema_store_->GetSchemaTypeId(document_wrapper.document().schema());
+    if (absl_ports::IsNotFound(schema_type_id_or.status())) {
+      // Didn't find a SchemaTypeId. This means that the DocumentStore and
+      // the SchemaStore are out of sync. But DocumentStore can't do
+      // anything about it so just ignore this for now. This should be
+      // detected/handled by the owner of DocumentStore. Set it to some
+      // arbitrary invalid value for now, it'll get updated to the correct
+      // ID later.
+      schema_type_id = -1;
+    } else if (!schema_type_id_or.ok()) {
+      // Real error. Pass it up
+      return schema_type_id_or.status();
+    } else {
+      // We're guaranteed that SchemaTypeId is valid now
+      schema_type_id = schema_type_id_or.ValueOrDie();
+    }
+
+    ICING_ASSIGN_OR_RETURN(
+        NamespaceId namespace_id,
+        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
+                                    namespace_mapper_->num_keys()));
+
+    // Update corpus maps
+    std::string corpus =
+        MakeFingerprint(document_wrapper.document().namespace_(),
+                        document_wrapper.document().schema());
+    ICING_ASSIGN_OR_RETURN(
+        CorpusId corpusId,
+        corpus_mapper_->GetOrPut(corpus, corpus_mapper_->num_keys()));
+
+    ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
+                           GetCorpusAssociatedScoreDataToUpdate(corpusId));
+    scoring_data.AddDocument(
+        document_wrapper.document().internal_fields().length_in_tokens());
+
+    ICING_RETURN_IF_ERROR(
+        UpdateCorpusAssociatedScoreCache(corpusId, scoring_data));
+
+    ICING_RETURN_IF_ERROR(UpdateDocumentAssociatedScoreCache(
+        new_document_id,
+        DocumentAssociatedScoreData(
+            corpusId, document_wrapper.document().score(),
+            document_wrapper.document().creation_timestamp_ms(),
+            document_wrapper.document().internal_fields().length_in_tokens())));
+
+    int64_t expiration_timestamp_ms = CalculateExpirationTimestampMs(
+        document_wrapper.document().creation_timestamp_ms(),
+        document_wrapper.document().ttl_ms());
+
+    ICING_RETURN_IF_ERROR(UpdateFilterCache(
+        new_document_id, DocumentFilterData(namespace_id, schema_type_id,
+                                            expiration_timestamp_ms)));
     iterator_status = iterator.Advance();
   }
 
@@ -893,6 +807,12 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
 
   // Creates a new document id, updates key mapper and document_id mapper
   DocumentId new_document_id = document_id_mapper_->num_elements();
+  if (!IsDocumentIdValid(new_document_id)) {
+    return absl_ports::ResourceExhaustedError(
+        "Exceeded maximum number of documents. Try calling Optimize to reclaim "
+        "some space.");
+  }
+
   ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
       MakeFingerprint(name_space, uri), new_document_id));
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
@@ -928,18 +848,20 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
                                           expiration_timestamp_ms)));
 
   if (old_document_id_or.ok()) {
+    // The old document exists, copy over the usage scores and delete the old
+    // document.
     DocumentId old_document_id = old_document_id_or.ValueOrDie();
-    auto offset_or = DoesDocumentExistAndGetFileOffset(old_document_id);
 
-    if (offset_or.ok()) {
-      // The old document exists, copy over the usage scores.
-      ICING_RETURN_IF_ERROR(
-          usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
-                                         /*to_document_id=*/new_document_id));
+    ICING_RETURN_IF_ERROR(
+        usage_store_->CloneUsageScores(/*from_document_id=*/old_document_id,
+                                       /*to_document_id=*/new_document_id));
 
-      // Hard delete the old document.
-      ICING_RETURN_IF_ERROR(
-          HardDelete(old_document_id, offset_or.ValueOrDie()));
+    // Delete the old document. It's fine if it's not found since it might have
+    // been deleted previously.
+    auto delete_status = Delete(old_document_id);
+    if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+      // Real error, pass it up.
+      return delete_status;
     }
   }
 
@@ -958,7 +880,7 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
   // existing Status.
   auto document_id_or = GetDocumentId(name_space, uri);
   if (absl_ports::IsNotFound(document_id_or.status())) {
-    ICING_LOG(ERROR) << document_id_or.status().error_message();
+    ICING_VLOG(1) << document_id_or.status().error_message();
     return libtextclassifier3::Status(
         document_id_or.status().CanonicalCode(),
         IcingStringUtil::StringPrintf("Document (%s, %s) not found.",
@@ -981,8 +903,16 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     DocumentId document_id, bool clear_internal_fields) const {
-  ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
-                         DoesDocumentExistAndGetFileOffset(document_id));
+  ICING_RETURN_IF_ERROR(DoesDocumentExistWithStatus(document_id));
+
+  auto document_log_offset_or = document_id_mapper_->Get(document_id);
+  if (!document_log_offset_or.ok()) {
+    // Since we've just checked that our document_id is valid a few lines
+    // above, there's no reason this should fail and an error should never
+    // happen.
+    return absl_ports::InternalError("Failed to find document offset.");
+  }
+  int64_t document_log_offset = *document_log_offset_or.ValueOrDie();
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -1033,7 +963,7 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
     }
     const DocumentFilterData* data = status_or_data.ValueOrDie();
 
-    if (DoesDocumentExist(document_id)) {
+    if (InternalDoesDocumentExist(document_id)) {
       existing_namespace_ids.insert(data->namespace_id());
     }
   }
@@ -1046,45 +976,78 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
   return existing_namespaces;
 }
 
-libtextclassifier3::StatusOr<int64_t>
-DocumentStore::DoesDocumentExistAndGetFileOffset(DocumentId document_id) const {
+bool DocumentStore::DoesDocumentExist(DocumentId document_id) const {
   if (!IsDocumentIdValid(document_id)) {
-    return absl_ports::InvalidArgumentError(
-        IcingStringUtil::StringPrintf("DocumentId %d is invalid", document_id));
+    return false;
   }
 
-  auto file_offset_or = document_id_mapper_->Get(document_id);
-
-  bool deleted =
-      file_offset_or.ok() && *file_offset_or.ValueOrDie() == kDocDeletedFlag;
-  if (deleted || absl_ports::IsOutOfRange(file_offset_or.status())) {
-    // Document has been deleted or doesn't exist
-    return absl_ports::NotFoundError(
-        IcingStringUtil::StringPrintf("Document %d not found", document_id));
+  if (document_id >= document_id_mapper_->num_elements()) {
+    // Somehow got an validly constructed document_id that the document store
+    // doesn't know about
+    return false;
   }
 
-  ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
-                         filter_cache_->Get(document_id));
-  if (clock_.GetSystemTimeMilliseconds() >=
-      filter_data->expiration_timestamp_ms()) {
-    // Past the expiration time, so also return NOT FOUND since it *shouldn't*
-    // exist anymore.
-    return absl_ports::NotFoundError(
-        IcingStringUtil::StringPrintf("Document %d not found", document_id));
-  }
-
-  ICING_RETURN_IF_ERROR(file_offset_or.status());
-  return *file_offset_or.ValueOrDie();
+  return InternalDoesDocumentExist(document_id);
 }
 
-bool DocumentStore::DoesDocumentExist(DocumentId document_id) const {
-  // If we can successfully get the document log offset, the document exists.
-  return DoesDocumentExistAndGetFileOffset(document_id).ok();
+libtextclassifier3::Status DocumentStore::DoesDocumentExistWithStatus(
+    DocumentId document_id) const {
+  if (!IsDocumentIdValid(document_id)) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Document id '%d' invalid.", document_id));
+  }
+
+  if (document_id >= document_id_mapper_->num_elements()) {
+    // Somehow got a validly constructed document_id that the document store
+    // doesn't know about.
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Unknown document id '%d'.", document_id));
+  }
+
+  if (!InternalDoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Document id '%d' doesn't exist", document_id));
+  };
+  return libtextclassifier3::Status::OK;
+}
+
+bool DocumentStore::InternalDoesDocumentExist(DocumentId document_id) const {
+  return !IsDeleted(document_id) && !IsExpired(document_id);
+}
+
+bool DocumentStore::IsDeleted(DocumentId document_id) const {
+  auto file_offset_or = document_id_mapper_->Get(document_id);
+  if (!file_offset_or.ok()) {
+    // This would only happen if document_id is out of range of the
+    // document_id_mapper, meaning we got some invalid document_id. Callers
+    // should already have checked that their document_id is valid or used
+    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // document doesn't exist.
+    return true;
+  }
+  int64_t file_offset = *file_offset_or.ValueOrDie();
+  return file_offset == kDocDeletedFlag;
+}
+
+bool DocumentStore::IsExpired(DocumentId document_id) const {
+  auto filter_data_or = filter_cache_->Get(document_id);
+  if (!filter_data_or.ok()) {
+    // This would only happen if document_id is out of range of the
+    // filter_cache, meaning we got some invalid document_id. Callers should
+    // already have checked that their document_id is valid or used
+    // DoesDocumentExist(WithStatus). Regardless, return true since the
+    // document doesn't exist.
+    return true;
+  }
+  const DocumentFilterData* filter_data = filter_data_or.ValueOrDie();
+
+  // Check if it's past the expiration time
+  return clock_.GetSystemTimeMilliseconds() >=
+         filter_data->expiration_timestamp_ms();
 }
 
 libtextclassifier3::Status DocumentStore::Delete(
-    const std::string_view name_space, const std::string_view uri,
-    bool soft_delete) {
+    const std::string_view name_space, const std::string_view uri) {
   // Try to get the DocumentId first
   auto document_id_or = GetDocumentId(name_space, uri);
   if (!document_id_or.ok()) {
@@ -1093,69 +1056,18 @@ libtextclassifier3::Status DocumentStore::Delete(
         absl_ports::StrCat("Failed to delete Document. namespace: ", name_space,
                            ", uri: ", uri));
   }
-
-  // Check if the DocumentId's Document still exists.
-  DocumentId document_id = document_id_or.ValueOrDie();
-  auto file_offset_or = DoesDocumentExistAndGetFileOffset(document_id);
-  if (!file_offset_or.ok()) {
-    return absl_ports::Annotate(
-        file_offset_or.status(),
-        absl_ports::StrCat("Failed to delete Document. namespace: ", name_space,
-                           ", uri: ", uri));
-  }
-
-  if (soft_delete) {
-    return SoftDelete(name_space, uri, document_id);
-  } else {
-    return HardDelete(document_id, file_offset_or.ValueOrDie());
-  }
+  return Delete(document_id_or.ValueOrDie());
 }
 
-libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
-                                                 bool soft_delete) {
-  // Copy out the document to get namespace and uri.
-  ICING_ASSIGN_OR_RETURN(int64_t document_log_offset,
-                         DoesDocumentExistAndGetFileOffset(document_id));
+libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id) {
+  ICING_RETURN_IF_ERROR(DoesDocumentExistWithStatus(document_id));
 
-  if (soft_delete) {
-    auto document_wrapper_or = document_log_->ReadProto(document_log_offset);
-    if (!document_wrapper_or.ok()) {
-      ICING_LOG(ERROR) << document_wrapper_or.status().error_message()
-                       << "Failed to read from document log";
-      return document_wrapper_or.status();
-    }
-    DocumentWrapper document_wrapper =
-        std::move(document_wrapper_or).ValueOrDie();
-
-    return SoftDelete(document_wrapper.document().namespace_(),
-                      document_wrapper.document().uri(), document_id);
-  } else {
-    return HardDelete(document_id, document_log_offset);
+  auto document_log_offset_or = document_id_mapper_->Get(document_id);
+  if (!document_log_offset_or.ok()) {
+    return absl_ports::InternalError("Failed to find document offset.");
   }
-}
+  int64_t document_log_offset = *document_log_offset_or.ValueOrDie();
 
-// TODO(b/169969469): Consider removing SoftDelete().
-libtextclassifier3::Status DocumentStore::SoftDelete(
-    std::string_view name_space, std::string_view uri, DocumentId document_id) {
-  // Update ground truth first.
-  // Mark the document as deleted by appending a tombstone of it and actually
-  // remove it from file later in Optimize()
-  // TODO(b/144458732): Implement a more robust version of
-  // ICING_RETURN_IF_ERROR that can support error logging.
-  libtextclassifier3::Status status =
-      document_log_->WriteProto(CreateDocumentTombstone(name_space, uri))
-          .status();
-  if (!status.ok()) {
-    return absl_ports::Annotate(
-        status, absl_ports::StrCat("Failed to delete Document. namespace:",
-                                   name_space, ", uri: ", uri));
-  }
-
-  return document_id_mapper_->Set(document_id, kDocDeletedFlag);
-}
-
-libtextclassifier3::Status DocumentStore::HardDelete(
-    DocumentId document_id, int64_t document_log_offset) {
   // Erases document proto.
   ICING_RETURN_IF_ERROR(document_log_->EraseProto(document_log_offset));
   return ClearDerivedData(document_id);
@@ -1173,7 +1085,12 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
-  auto score_data_or = score_cache_->Get(document_id);
+  if (!DoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+  }
+
+  auto score_data_or = score_cache_->GetCopy(document_id);
   if (!score_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
                      << " from score_cache_";
@@ -1181,7 +1098,7 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
   }
 
   DocumentAssociatedScoreData document_associated_score_data =
-      *std::move(score_data_or).ValueOrDie();
+      std::move(score_data_or).ValueOrDie();
   if (document_associated_score_data.document_score() < 0) {
     // An negative / invalid score means that the score data has been deleted.
     return absl_ports::NotFoundError("Document score data not found.");
@@ -1191,13 +1108,13 @@ DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
 
 libtextclassifier3::StatusOr<CorpusAssociatedScoreData>
 DocumentStore::GetCorpusAssociatedScoreData(CorpusId corpus_id) const {
-  auto score_data_or = corpus_score_cache_->Get(corpus_id);
+  auto score_data_or = corpus_score_cache_->GetCopy(corpus_id);
   if (!score_data_or.ok()) {
     return score_data_or.status();
   }
 
   CorpusAssociatedScoreData corpus_associated_score_data =
-      *std::move(score_data_or).ValueOrDie();
+      std::move(score_data_or).ValueOrDie();
   return corpus_associated_score_data;
 }
 
@@ -1219,23 +1136,28 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
 
 libtextclassifier3::StatusOr<DocumentFilterData>
 DocumentStore::GetDocumentFilterData(DocumentId document_id) const {
-  auto filter_data_or = filter_cache_->Get(document_id);
+  if (!DoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Can't get filter data, document id '%d' doesn't exist", document_id));
+  }
+
+  auto filter_data_or = filter_cache_->GetCopy(document_id);
   if (!filter_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
                      << " from filter_cache_";
     return filter_data_or.status();
   }
   DocumentFilterData document_filter_data =
-      *std::move(filter_data_or).ValueOrDie();
-  if (document_filter_data.namespace_id() == kInvalidNamespaceId) {
-    // An invalid namespace id means that the filter data has been deleted.
-    return absl_ports::NotFoundError("Document filter data not found.");
-  }
+      std::move(filter_data_or).ValueOrDie();
   return document_filter_data;
 }
 
 libtextclassifier3::StatusOr<UsageStore::UsageScores>
 DocumentStore::GetUsageScores(DocumentId document_id) const {
+  if (!DoesDocumentExist(document_id)) {
+    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+  }
   return usage_store_->GetUsageScores(document_id);
 }
 
@@ -1244,11 +1166,22 @@ libtextclassifier3::Status DocumentStore::ReportUsage(
   ICING_ASSIGN_OR_RETURN(DocumentId document_id,
                          GetDocumentId(usage_report.document_namespace(),
                                        usage_report.document_uri()));
+  // We can use the internal version here because we got our document_id from
+  // our internal data structures. We would have thrown some error if the
+  // namespace and/or uri were incorrect.
+  if (!InternalDoesDocumentExist(document_id)) {
+    // Document was probably deleted or expired.
+    return absl_ports::NotFoundError(absl_ports::StrCat(
+        "Couldn't report usage on a nonexistent document: (namespace: '",
+        usage_report.document_namespace(), "', uri: '",
+        usage_report.document_uri(), "')"));
+  }
+
   return usage_store_->AddUsageReport(usage_report, document_id);
 }
 
 DocumentStore::DeleteByGroupResult DocumentStore::DeleteByNamespace(
-    std::string_view name_space, bool soft_delete) {
+    std::string_view name_space) {
   DeleteByGroupResult result;
   auto namespace_id_or = namespace_mapper_->Get(name_space);
   if (!namespace_id_or.ok()) {
@@ -1258,26 +1191,7 @@ DocumentStore::DeleteByGroupResult DocumentStore::DeleteByNamespace(
     return result;
   }
   NamespaceId namespace_id = namespace_id_or.ValueOrDie();
-
-  if (soft_delete) {
-    // To delete an entire namespace, we append a tombstone that only contains
-    // the deleted bit and the name of the deleted namespace.
-    // TODO(b/144458732): Implement a more robust version of
-    // ICING_RETURN_IF_ERROR that can support error logging.
-    libtextclassifier3::Status status =
-        document_log_->WriteProto(CreateNamespaceTombstone(name_space))
-            .status();
-    if (!status.ok()) {
-      ICING_LOG(ERROR) << status.error_message()
-                       << "Failed to delete namespace. namespace = "
-                       << name_space;
-      result.status = std::move(status);
-      return result;
-    }
-  }
-
-  auto num_deleted_or =
-      BatchDelete(namespace_id, kInvalidSchemaTypeId, soft_delete);
+  auto num_deleted_or = BatchDelete(namespace_id, kInvalidSchemaTypeId);
   if (!num_deleted_or.ok()) {
     result.status = std::move(num_deleted_or).status();
     return result;
@@ -1296,7 +1210,7 @@ DocumentStore::DeleteByGroupResult DocumentStore::DeleteByNamespace(
 }
 
 DocumentStore::DeleteByGroupResult DocumentStore::DeleteBySchemaType(
-    std::string_view schema_type, bool soft_delete) {
+    std::string_view schema_type) {
   DeleteByGroupResult result;
   auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema_type);
   if (!schema_type_id_or.ok()) {
@@ -1307,26 +1221,7 @@ DocumentStore::DeleteByGroupResult DocumentStore::DeleteBySchemaType(
     return result;
   }
   SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
-
-  if (soft_delete) {
-    // To soft-delete an entire schema type, we append a tombstone that only
-    // contains the deleted bit and the name of the deleted schema type.
-    // TODO(b/144458732): Implement a more robust version of
-    // ICING_RETURN_IF_ERROR that can support error logging.
-    libtextclassifier3::Status status =
-        document_log_->WriteProto(CreateSchemaTypeTombstone(schema_type))
-            .status();
-    if (!status.ok()) {
-      ICING_LOG(ERROR) << status.error_message()
-                       << "Failed to delete schema_type. schema_type = "
-                       << schema_type;
-      result.status = std::move(status);
-      return result;
-    }
-  }
-
-  auto num_deleted_or =
-      BatchDelete(kInvalidNamespaceId, schema_type_id, soft_delete);
+  auto num_deleted_or = BatchDelete(kInvalidNamespaceId, schema_type_id);
   if (!num_deleted_or.ok()) {
     result.status = std::move(num_deleted_or).status();
     return result;
@@ -1343,7 +1238,7 @@ DocumentStore::DeleteByGroupResult DocumentStore::DeleteBySchemaType(
 }
 
 libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
-    NamespaceId namespace_id, SchemaTypeId schema_type_id, bool soft_delete) {
+    NamespaceId namespace_id, SchemaTypeId schema_type_id) {
   // Tracks if there were any existing documents with this namespace that we
   // will mark as deleted.
   int num_updated_documents = 0;
@@ -1375,37 +1270,27 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
       continue;
     }
 
-    // The document has the desired namespace and schema type, it either exists
-    // or has been soft-deleted / expired.
-    if (soft_delete) {
-      if (DoesDocumentExist(document_id)) {
-        ++num_updated_documents;
-      }
-
-      // docid_mapper_->Set can only fail if document_id is < 0
-      // or >= docid_mapper_->num_elements. So the only possible way to get an
-      // error here would be if filter_cache_->num_elements >
-      // docid_mapper_->num_elements, which SHOULD NEVER HAPPEN.
-      ICING_RETURN_IF_ERROR(
-          document_id_mapper_->Set(document_id, kDocDeletedFlag));
-    } else {
-      // Hard delete.
-      libtextclassifier3::Status delete_status =
-          Delete(document_id, /*soft_delete=*/false);
-      if (absl_ports::IsNotFound(delete_status)) {
-        continue;
-      } else if (!delete_status.ok()) {
-        // Real error, pass up.
-        return delete_status;
-      }
-      ++num_updated_documents;
+    // The document has the desired namespace and schema type, it either
+    // exists or has expired.
+    libtextclassifier3::Status delete_status = Delete(document_id);
+    if (absl_ports::IsNotFound(delete_status)) {
+      continue;
+    } else if (!delete_status.ok()) {
+      // Real error, pass up.
+      return delete_status;
     }
+    ++num_updated_documents;
   }
 
   return num_updated_documents;
 }
 
-libtextclassifier3::Status DocumentStore::PersistToDisk() {
+libtextclassifier3::Status DocumentStore::PersistToDisk(
+    PersistType::Code persist_type) {
+  if (persist_type == PersistType::LITE) {
+    // only persist the document log.
+    return document_log_->PersistToDisk();
+  }
   ICING_RETURN_IF_ERROR(document_log_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
@@ -1451,21 +1336,98 @@ DocumentStorageInfoProto DocumentStore::GetMemberStorageInfo() const {
 
 DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
     DocumentStorageInfoProto storage_info) const {
-  int num_alive = 0;
-  int num_expired = 0;
-  int num_deleted = 0;
+  int total_num_alive = 0;
+  int total_num_expired = 0;
+  int total_num_deleted = 0;
+  std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
+      namespace_mapper_->GetValuesToKeys();
+  std::unordered_map<std::string, NamespaceStorageInfoProto>
+      namespace_to_storage_info;
+
   for (DocumentId document_id = 0;
        document_id < document_id_mapper_->num_elements(); ++document_id) {
-    if (DoesDocumentExist(document_id)) {
-      ++num_alive;
+    // Check if it's deleted first.
+    if (IsDeleted(document_id)) {
+      // We don't have the namespace id of hard deleted documents anymore, so
+      // we can't add to our namespace storage info.
+      ++total_num_deleted;
+      continue;
+    }
+
+    // At this point, the document is either alive or expired, we can get
+    // namespace info for it.
+    auto filter_data_or = filter_cache_->Get(document_id);
+    if (!filter_data_or.ok()) {
+      ICING_VLOG(1) << "Error trying to get filter data for document store "
+                       "storage info counts.";
+      continue;
+    }
+    const DocumentFilterData* filter_data = filter_data_or.ValueOrDie();
+    auto itr = namespace_id_to_namespace.find(filter_data->namespace_id());
+    if (itr == namespace_id_to_namespace.end()) {
+      ICING_VLOG(1) << "Error trying to find namespace for document store "
+                       "storage info counts.";
+      continue;
+    }
+    const std::string& name_space = itr->second;
+
+    // Always set the namespace, if the NamespaceStorageInfoProto didn't exist
+    // before, we'll get back a default instance of it.
+    NamespaceStorageInfoProto& namespace_storage_info =
+        namespace_to_storage_info[name_space];
+    namespace_storage_info.set_namespace_(name_space);
+
+    // Get usage scores
+    auto usage_scores_or = usage_store_->GetUsageScores(document_id);
+    if (!usage_scores_or.ok()) {
+      ICING_VLOG(1) << "Error trying to get usage scores for document store "
+                       "storage info counts.";
+      continue;
+    }
+    UsageStore::UsageScores usage_scores = usage_scores_or.ValueOrDie();
+
+    // Update our stats
+    if (IsExpired(document_id)) {
+      ++total_num_expired;
+      namespace_storage_info.set_num_expired_documents(
+          namespace_storage_info.num_expired_documents() + 1);
+      if (usage_scores.usage_type1_count > 0) {
+        namespace_storage_info.set_num_expired_documents_usage_type1(
+            namespace_storage_info.num_expired_documents_usage_type1() + 1);
+      }
+      if (usage_scores.usage_type2_count > 0) {
+        namespace_storage_info.set_num_expired_documents_usage_type2(
+            namespace_storage_info.num_expired_documents_usage_type2() + 1);
+      }
+      if (usage_scores.usage_type3_count > 0) {
+        namespace_storage_info.set_num_expired_documents_usage_type3(
+            namespace_storage_info.num_expired_documents_usage_type3() + 1);
+      }
     } else {
-      IncrementDeletedOrExpired(document_id_mapper_.get(), document_id,
-                                &num_deleted, &num_expired);
+      ++total_num_alive;
+      namespace_storage_info.set_num_alive_documents(
+          namespace_storage_info.num_alive_documents() + 1);
+      if (usage_scores.usage_type1_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type1(
+            namespace_storage_info.num_alive_documents_usage_type1() + 1);
+      }
+      if (usage_scores.usage_type2_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type2(
+            namespace_storage_info.num_alive_documents_usage_type2() + 1);
+      }
+      if (usage_scores.usage_type3_count > 0) {
+        namespace_storage_info.set_num_alive_documents_usage_type3(
+            namespace_storage_info.num_alive_documents_usage_type3() + 1);
+      }
     }
   }
-  storage_info.set_num_alive_documents(num_alive);
-  storage_info.set_num_deleted_documents(num_deleted);
-  storage_info.set_num_expired_documents(num_expired);
+
+  for (auto& itr : namespace_to_storage_info) {
+    storage_info.mutable_namespace_storage_info()->Add(std::move(itr.second));
+  }
+  storage_info.set_num_alive_documents(total_num_alive);
+  storage_info.set_num_deleted_documents(total_num_deleted);
+  storage_info.set_num_expired_documents(total_num_expired);
   return storage_info;
 }
 
@@ -1537,50 +1499,19 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
   schema_store_ = schema_store;
   document_validator_.UpdateSchemaStore(schema_store);
 
-  // Append a tombstone for each deleted schema type. This way, we don't have
-  // to read out each document, check if the schema type has been deleted, and
-  // append a tombstone per-document.
-  for (const auto& schema_type :
-       set_schema_result.schema_types_deleted_by_name) {
-    // TODO(b/144458732): Implement a more robust version of
-    // ICING_RETURN_IF_ERROR that can support error logging.
-    libtextclassifier3::Status status =
-        document_log_->WriteProto(CreateSchemaTypeTombstone(schema_type))
-            .status();
-    if (!status.ok()) {
-      ICING_LOG(ERROR) << status.error_message()
-                       << "Failed to delete schema_type. schema_type = "
-                       << schema_type;
-      return status;
-    }
-  }
-
   int size = document_id_mapper_->num_elements();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
-    auto exists_or = DoesDocumentExistAndGetFileOffset(document_id);
-    if (absl_ports::IsNotFound(exists_or.status())) {
+    if (!InternalDoesDocumentExist(document_id)) {
       // Skip nonexistent documents
       continue;
-    } else if (!exists_or.ok()) {
-      // Real error, pass up
-      return absl_ports::Annotate(
-          exists_or.status(),
-          IcingStringUtil::StringPrintf("Failed to retrieve DocumentId %d",
-                                        document_id));
     }
 
     // Guaranteed that the document exists now.
     ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
                            filter_cache_->Get(document_id));
 
-    if (set_schema_result.schema_types_deleted_by_id.count(
-            filter_data->schema_type_id()) != 0) {
-      // We already created a tombstone for this deleted type. Just update the
-      // derived files now.
-      ICING_RETURN_IF_ERROR(
-          document_id_mapper_->Set(document_id, kDocDeletedFlag));
-      continue;
-    }
+    bool delete_document = set_schema_result.schema_types_deleted_by_id.count(
+                               filter_data->schema_type_id()) != 0;
 
     // Check if we need to update the FilterCache entry for this document. It
     // may have been assigned a different SchemaTypeId in the new SchemaStore.
@@ -1604,17 +1535,17 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
         filter_cache_->mutable_array()[document_id].set_schema_type_id(
             schema_type_id);
       }
-
       if (revalidate_document) {
-        if (!document_validator_.Validate(document).ok()) {
-          // Document is no longer valid with the new SchemaStore. Mark as
-          // deleted
-          auto delete_status = Delete(document.namespace_(), document.uri());
-          if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
-            // Real error, pass up
-            return delete_status;
-          }
-        }
+        delete_document = !document_validator_.Validate(document).ok();
+      }
+    }
+
+    if (delete_document) {
+      // Document is no longer valid with the new SchemaStore. Mark as deleted
+      auto delete_status = Delete(document_id);
+      if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
+        // Real error, pass up
+        return delete_status;
       }
     }
   }
@@ -1646,12 +1577,15 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   int size = document_id_mapper_->num_elements();
   int num_deleted = 0;
   int num_expired = 0;
+  UsageStore::UsageScores default_usage;
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
-      // Skip nonexistent documents
-      IncrementDeletedOrExpired(document_id_mapper_.get(), document_id,
-                                &num_deleted, &num_expired);
+      if (IsDeleted(document_id)) {
+        ++num_deleted;
+      } else if (IsExpired(document_id)) {
+        ++num_expired;
+      }
       continue;
     } else if (!document_or.ok()) {
       // Real error, pass up
@@ -1692,16 +1626,21 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
                            usage_store_->GetUsageScores(document_id));
-    DocumentId new_document_id = new_document_id_or.ValueOrDie();
-    ICING_RETURN_IF_ERROR(
-        new_doc_store->SetUsageScores(new_document_id, usage_scores));
+    if (!(usage_scores == default_usage)) {
+      // If the usage scores for this document are the default (no usage), then
+      // don't bother setting it. No need to possibly allocate storage if
+      // there's nothing interesting to store.
+      DocumentId new_document_id = new_document_id_or.ValueOrDie();
+      ICING_RETURN_IF_ERROR(
+          new_doc_store->SetUsageScores(new_document_id, usage_scores));
+    }
   }
   if (stats != nullptr) {
     stats->set_num_original_documents(size);
     stats->set_num_deleted_documents(num_deleted);
     stats->set_num_expired_documents(num_expired);
   }
-  ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk());
+  ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk(PersistType::FULL));
   return libtextclassifier3::Status::OK;
 }
 
@@ -1713,7 +1652,7 @@ DocumentStore::GetOptimizeInfo() const {
   int32_t num_documents = document_id_mapper_->num_elements();
   for (DocumentId document_id = kMinDocumentId; document_id < num_documents;
        ++document_id) {
-    if (!DoesDocumentExist(document_id)) {
+    if (!InternalDoesDocumentExist(document_id)) {
       ++optimize_info.optimizable_docs;
     }
 
@@ -1751,10 +1690,10 @@ DocumentStore::GetOptimizeInfo() const {
   ICING_ASSIGN_OR_RETURN(const int64_t document_key_mapper_size,
                          document_key_mapper_->GetElementsSize());
 
-  // We don't include the namespace_mapper or the corpus_mapper because it's not
-  // clear if we could recover any space even if Optimize were called. Deleting
-  // 100s of documents could still leave a few documents of a namespace, and
-  // then there would be no change.
+  // We don't include the namespace_mapper or the corpus_mapper because it's
+  // not clear if we could recover any space even if Optimize were called.
+  // Deleting 100s of documents could still leave a few documents of a
+  // namespace, and then there would be no change.
 
   int64_t total_size = document_log_file_size + document_key_mapper_size +
                        document_id_mapper_file_size + score_cache_file_size +
@@ -1784,8 +1723,8 @@ libtextclassifier3::Status DocumentStore::UpdateFilterCache(
 libtextclassifier3::Status DocumentStore::ClearDerivedData(
     DocumentId document_id) {
   // We intentionally leave the data in key_mapper_ because locating that data
-  // requires fetching namespace and uri. Leaving data in key_mapper_ should be
-  // fine because the data is hashed.
+  // requires fetching namespace and uri. Leaving data in key_mapper_ should
+  // be fine because the data is hashed.
 
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(document_id, kDocDeletedFlag));
 

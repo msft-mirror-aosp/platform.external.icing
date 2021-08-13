@@ -29,6 +29,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -47,6 +48,14 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+
 class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
  protected:
   DocHitInfoIteratorSectionRestrictTest()
@@ -57,18 +66,18 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     document_ =
         DocumentBuilder().SetKey("namespace", "uri").SetSchema("email").Build();
 
-    auto type_config = schema_.add_types();
-    type_config->set_schema_type("email");
-
-    // Add an indexed property so we generate section metadata on it
-    auto property = type_config->add_properties();
-    property->set_property_name(indexed_property_);
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
+    schema_ = SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("email")
+                               // Add an indexed property so we generate section
+                               // metadata on it
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName(indexed_property_)
+                                       .SetDataTypeString(MATCH_EXACT,
+                                                          TOKENIZER_PLAIN)
+                                       .SetCardinality(CARDINALITY_OPTIONAL)))
+                  .Build();
 
     // First and only indexed property, so it gets the first id of 0
     indexed_section_id_ = 0;

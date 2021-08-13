@@ -31,6 +31,7 @@ import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
+import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PutResultProto;
 import com.google.android.icing.proto.ReportUsageResultProto;
 import com.google.android.icing.proto.ResetResultProto;
@@ -52,9 +53,11 @@ import java.io.Closeable;
  *
  * <p>If this instance has been closed, the instance is no longer usable.
  *
+ * <p>Keep this class to be non-Final so that it can be mocked in AppSearch.
+ *
  * <p>NOTE: This class is NOT thread-safe.
  */
-public final class IcingSearchEngine implements Closeable {
+public class IcingSearchEngine implements Closeable {
 
   private static final String TAG = "IcingSearchEngine";
   private static final ExtensionRegistryLite EXTENSION_REGISTRY_LITE =
@@ -435,10 +438,10 @@ public final class IcingSearchEngine implements Closeable {
   }
 
   @NonNull
-  public PersistToDiskResultProto persistToDisk() {
+  public PersistToDiskResultProto persistToDisk(@NonNull PersistType.Code persistTypeCode) {
     throwIfClosed();
 
-    byte[] persistToDiskResultBytes = nativePersistToDisk(this);
+    byte[] persistToDiskResultBytes = nativePersistToDisk(this, persistTypeCode.getNumber());
     if (persistToDiskResultBytes == null) {
       Log.e(TAG, "Received null PersistToDiskResultProto from native.");
       return PersistToDiskResultProto.newBuilder()
@@ -592,7 +595,7 @@ public final class IcingSearchEngine implements Closeable {
   private static native byte[] nativeDeleteByQuery(
       IcingSearchEngine instance, byte[] searchSpecBytes);
 
-  private static native byte[] nativePersistToDisk(IcingSearchEngine instance);
+  private static native byte[] nativePersistToDisk(IcingSearchEngine instance, int persistType);
 
   private static native byte[] nativeOptimize(IcingSearchEngine instance);
 
