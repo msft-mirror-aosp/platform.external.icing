@@ -43,6 +43,7 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/map/map-normalizer.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
 #include "unicode/uloc.h"
@@ -690,6 +691,10 @@ TEST_F(SnippetRetrieverTest, PrefixSnippeting) {
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
               ElementsAre("subject foo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
+
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)), ElementsAre("f"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, ExactSnippeting) {
@@ -733,6 +738,9 @@ TEST_F(SnippetRetrieverTest, SimpleSnippetingNoWindowing) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre(""));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)), ElementsAre("foo"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatches) {
@@ -779,12 +787,19 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatches) {
           "we need to begin considering our options regarding body bar."));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)),
               ElementsAre("foo", "bar"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("foo", "bar"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)),
               ElementsAre("subject foo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("foo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)), ElementsAre("foo"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrict) {
@@ -834,6 +849,10 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrict) {
           "we need to begin considering our options regarding body bar."));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)),
               ElementsAre("foo", "bar"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("foo", "bar"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrictedTerm) {
@@ -884,12 +903,20 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesSectionRestrictedTerm) {
           "Concerning the subject of foo, we need to begin considering our"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)),
               ElementsAre("subject", "foo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("subject", "foo"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)),
               ElementsAre("subject foo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("subject"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)),
+                ElementsAre("subject"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
@@ -933,12 +960,18 @@ TEST_F(SnippetRetrieverTest, SnippetingMultipleMatchesOneMatchPerProperty) {
       ElementsAre(
           "Concerning the subject of foo, we need to begin considering our"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("foo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)), ElementsAre("foo"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("subject"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)),
               ElementsAre("subject foo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("foo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)), ElementsAre("foo"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, PrefixSnippetingNormalization) {
@@ -960,6 +993,9 @@ TEST_F(SnippetRetrieverTest, PrefixSnippetingNormalization) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("MDI team"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("MDI"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)), ElementsAre("MD"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, ExactSnippetingNormalization) {
@@ -983,6 +1019,11 @@ TEST_F(SnippetRetrieverTest, ExactSnippetingNormalization) {
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
               ElementsAre("Some members are in Zürich."));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("Zürich"));
+
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("Zürich"));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, SnippetingTestOneLevel) {
@@ -1043,11 +1084,20 @@ TEST_F(SnippetRetrieverTest, SnippetingTestOneLevel) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("X[3]"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(GetPropertyPaths(snippet),
               ElementsAre("X[1]", "X[3]", "Y[1]", "Y[3]", "Z[1]", "Z[3]"));
@@ -1144,11 +1194,19 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevel) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("A.X[3]"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(
       GetPropertyPaths(snippet),
@@ -1251,11 +1309,19 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelRepeated) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("A[0].X[3]"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(GetPropertyPaths(snippet),
               ElementsAre("A[0].X[1]", "A[0].X[3]", "A[1].X[1]", "A[1].X[3]",
@@ -1356,11 +1422,19 @@ TEST_F(SnippetRetrieverTest, SnippetingTestMultiLevelSingleValue) {
       GetString(&document, snippet.entries(0).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(0)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("A[1].X"));
   content = GetString(&document, snippet.entries(1).property_name());
   EXPECT_THAT(GetWindows(content, snippet.entries(1)), ElementsAre("polo"));
   EXPECT_THAT(GetMatches(content, snippet.entries(1)), ElementsAre("polo"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, snippet.entries(1)),
+                ElementsAre("polo"));
+  }
 
   EXPECT_THAT(
       GetPropertyPaths(snippet),
@@ -1404,10 +1478,16 @@ TEST_F(SnippetRetrieverTest, CJKSnippetMatchTest) {
 
   // Ensure that the match is correct.
   EXPECT_THAT(GetMatches(content, *entry), ElementsAre("走路"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, *entry), ElementsAre("走"));
+  }
 
   // Ensure that the utf-16 values are also as expected
   EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(3));
   EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(match_proto.submatch_utf16_length(), Eq(1));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, CJKSnippetWindowTest) {
@@ -1507,10 +1587,16 @@ TEST_F(SnippetRetrieverTest, Utf16MultiCodeUnitSnippetMatchTest) {
 
   // Ensure that the match is correct.
   EXPECT_THAT(GetMatches(content, *entry), ElementsAre("𐀂𐀃"));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(GetSubMatches(content, *entry), ElementsAre("𐀂"));
+  }
 
   // Ensure that the utf-16 values are also as expected
   EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(5));
   EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(4));
+  if (normalizer_factory::GetNormalizerName() == MapNormalizer::kName) {
+    EXPECT_THAT(match_proto.submatch_utf16_length(), Eq(2));
+  }
 }
 
 TEST_F(SnippetRetrieverTest, Utf16MultiCodeUnitWindowTest) {

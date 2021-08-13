@@ -136,27 +136,57 @@ message ResultSpecProto {
 }
 
 // The representation of a single match within a DocumentProto property.
-// Next tag: 10
+//
+// Example : A document whose content is "Necesito comprar comida mañana." and a
+// query for "mana" with window=15
+// Next tag: 12
 message SnippetMatchProto {
   // The index of the byte in the string at which the match begins and the
   // length in bytes of the match.
+  //
+  // For the example above, the values of these fields would be
+  // exact_match_byte_position=24, exact_match_byte_length=7 "mañana"
   optional int32 exact_match_byte_position = 2;
   optional int32 exact_match_byte_length = 3;
+
+  // The length in bytes of the subterm that matches the query. The beginning of
+  // the submatch is the same as exact_match_byte_position.
+  //
+  // For the example above, the value of this field would be 5. With
+  // exact_match_byte_position=24 above, it would produce the substring "maña"
+  optional int32 submatch_byte_length = 10;
 
   // The index of the UTF-16 code unit in the string at which the match begins
   // and the length in UTF-16 code units of the match. This is for use with
   // UTF-16 encoded strings like Java.lang.String.
+  //
+  // For the example above, the values of these fields would be
+  // exact_match_utf16_position=24, exact_match_utf16_length=6 "mañana"
   optional int32 exact_match_utf16_position = 6;
   optional int32 exact_match_utf16_length = 7;
 
+  // The length in UTF-16 code units of the subterm that matches the query. The
+  // beginning of the submatch is the same as exact_match_utf16_position. This
+  // is for use with UTF-16 encoded strings like Java.lang.String.
+  //
+  // For the example above, the value of this field would be 4. With
+  // exact_match_utf16_position=24 above, it would produce the substring "maña"
+  optional int32 submatch_utf16_length = 11;
+
   // The index of the byte in the string at which the suggested snippet window
   // begins and the length in bytes of the window.
+  //
+  // For the example above, the values of these fields would be
+  // window_byte_position=17, window_byte_length=15 "comida mañana."
   optional int32 window_byte_position = 4;
   optional int32 window_byte_length = 5;
 
   // The index of the UTF-16 code unit in the string at which the suggested
   // snippet window begins and the length in UTF-16 code units of the window.
   // This is for use with UTF-16 encoded strings like Java.lang.String.
+  //
+  // For the example above, the values of these fields would be
+  // window_utf16_position=17, window_utf16_length=14 "comida mañana."
   optional int32 window_utf16_position = 8;
   optional int32 window_utf16_length = 9;
 

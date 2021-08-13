@@ -452,6 +452,21 @@ class IcingSearchEngine {
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
+  // Resets all members that are created during Initialize.
+  void ResetMembers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Checks for the existence of the init marker file. If the failed init count
+  // exceeds kMaxUnsuccessfulInitAttempts, all data is deleted and the index is
+  // initialized from scratch. The updated count (original failed init count + 1
+  // ) is written to the marker file.
+  //
+  // RETURNS
+  //   OK on success
+  //   INTERNAL if an IO error occurs while trying to update the marker file.
+  libtextclassifier3::Status CheckInitMarkerFile(
+      InitializeStatsProto* initialize_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Helper method to do the actual work to persist data to disk. We need this
   // separate method so that other public methods don't need to call
   // PersistToDisk(). Public methods calling each other may cause deadlock
@@ -475,15 +490,6 @@ class IcingSearchEngine {
   //   INTERNAL on any I/O errors
   libtextclassifier3::Status InitializeMembers(
       InitializeStatsProto* initialize_stats)
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-
-  // Do any validation/setup required for the given IcingSearchEngineOptions
-  //
-  // Returns:
-  //   OK on success
-  //   INVALID_ARGUMENT if options has invalid values
-  //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeOptions()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create a SchemaStore instance.
