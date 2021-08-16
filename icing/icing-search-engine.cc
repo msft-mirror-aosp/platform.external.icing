@@ -35,6 +35,7 @@
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/endian.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/internal/optimize.pb.h"
@@ -77,7 +78,13 @@ constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kIndexSubfolderName = "index_dir";
 constexpr std::string_view kSchemaSubfolderName = "schema_dir";
 constexpr std::string_view kSetSchemaMarkerFilename = "set_schema_marker";
+constexpr std::string_view kInitMarkerFilename = "init_marker";
 constexpr std::string_view kOptimizeStatusFilename = "optimize_status";
+
+// The maximum number of unsuccessful initialization attempts from the current
+// state that we will tolerate before deleting all data and starting from a
+// fresh state.
+constexpr int kMaxUnsuccessfulInitAttempts = 5;
 
 libtextclassifier3::Status ValidateOptions(
     const IcingSearchEngineOptions& options) {
@@ -164,8 +171,13 @@ std::string MakeIndexDirectoryPath(const std::string& base_dir) {
 std::string MakeSchemaDirectoryPath(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kSchemaSubfolderName);
 }
+
 std::string MakeSetSchemaMarkerFilePath(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kSetSchemaMarkerFilename);
+}
+
+std::string MakeInitMarkerFilePath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kInitMarkerFilename);
 }
 
 void TransformStatus(const libtextclassifier3::Status& internal_status,
@@ -276,6 +288,66 @@ InitializeResultProto IcingSearchEngine::Initialize() {
   return InternalInitialize();
 }
 
+void IcingSearchEngine::ResetMembers() {
+  schema_store_.reset();
+  document_store_.reset();
+  language_segmenter_.reset();
+  normalizer_.reset();
+  index_.reset();
+}
+
+libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
+    InitializeStatsProto* initialize_stats) {
+  // Check to see if the marker file exists and if we've already passed our max
+  // number of init attempts.
+  std::string marker_filepath = MakeInitMarkerFilePath(options_.base_dir());
+  bool file_exists = filesystem_->FileExists(marker_filepath.c_str());
+  int network_init_attempts = 0;
+  int host_init_attempts = 0;
+
+  // Read the number of previous failed init attempts from the file. If it
+  // fails, then just assume the value is zero (the most likely reason for
+  // failure would be non-existence because the last init was successful
+  // anyways).
+  ScopedFd marker_file_fd(filesystem_->OpenForWrite(marker_filepath.c_str()));
+  libtextclassifier3::Status status;
+  if (file_exists &&
+      filesystem_->PRead(marker_file_fd.get(), &network_init_attempts,
+                         sizeof(network_init_attempts), /*offset=*/0)) {
+    host_init_attempts = GNetworkToHostL(network_init_attempts);
+    if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
+      // We're tried and failed to init too many times. We need to throw
+      // everything out and start from scratch.
+      ResetMembers();
+      if (!filesystem_->DeleteDirectoryRecursively(
+              options_.base_dir().c_str())) {
+        return absl_ports::InternalError("Failed to delete icing base dir!");
+      }
+      status = absl_ports::DataLossError(
+          "Encountered failed initialization limit. Cleared all data.");
+      host_init_attempts = 0;
+    }
+  }
+
+  // Use network_init_attempts here because we might have set host_init_attempts
+  // to 0 if it exceeded the max threshold.
+  initialize_stats->set_num_previous_init_failures(
+      GNetworkToHostL(network_init_attempts));
+
+  ++host_init_attempts;
+  network_init_attempts = GHostToNetworkL(host_init_attempts);
+  // Write the updated number of attempts before we get started.
+  if (!filesystem_->PWrite(marker_file_fd.get(), /*offset=*/0,
+                           &network_init_attempts,
+                           sizeof(network_init_attempts)) ||
+      !filesystem_->DataSync(marker_file_fd.get())) {
+    return absl_ports::InternalError(
+        "Failed to write and sync init marker file");
+  }
+
+  return status;
+}
+
 InitializeResultProto IcingSearchEngine::InternalInitialize() {
   ICING_VLOG(1) << "Initializing IcingSearchEngine in dir: "
                 << options_.base_dir();
@@ -296,9 +368,17 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
     return result_proto;
   }
 
+  // Now go ahead and try to initialize.
   libtextclassifier3::Status status = InitializeMembers(initialize_stats);
   if (status.ok() || absl_ports::IsDataLoss(status)) {
-    initialized_ = true;
+    // We successfully initialized. We should delete the init marker file to
+    // indicate a successful init.
+    std::string marker_filepath = MakeInitMarkerFilePath(options_.base_dir());
+    if (!filesystem_->DeleteFile(marker_filepath.c_str())) {
+      status = absl_ports::InternalError("Failed to delete init marker file!");
+    } else {
+      initialized_ = true;
+    }
   }
   TransformStatus(status, result_status);
   initialize_stats->set_latency_ms(initialize_timer->GetElapsedMilliseconds());
@@ -308,7 +388,21 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
 libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
-  ICING_RETURN_IF_ERROR(InitializeOptions());
+  ICING_RETURN_IF_ERROR(ValidateOptions(options_));
+
+  // Make sure the base directory exists
+  if (!filesystem_->CreateDirectoryRecursively(options_.base_dir().c_str())) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Could not create directory: ", options_.base_dir()));
+  }
+
+  // Check to see if the marker file exists and if we've already passed our max
+  // number of init attempts.
+  libtextclassifier3::Status status = CheckInitMarkerFile(initialize_stats);
+  if (!status.ok() && !absl_ports::IsDataLoss(status)) {
+    return status;
+  }
+
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
   // TODO(b/156383798) : Resolve how to specify the locale.
@@ -322,7 +416,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   std::string marker_filepath =
       MakeSetSchemaMarkerFilePath(options_.base_dir());
-  libtextclassifier3::Status status;
+  libtextclassifier3::Status index_init_status;
   if (absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
     // The schema was either lost or never set before. Wipe out the doc store
     // and index directories and initialize them from scratch.
@@ -336,7 +430,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     }
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
-    status = InitializeIndex(initialize_stats);
+    index_init_status = InitializeIndex(initialize_stats);
+    if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
+      return index_init_status;
+    }
   } else if (filesystem_->FileExists(marker_filepath.c_str())) {
     // If the marker file is still around then something wonky happened when we
     // last tried to set the schema.
@@ -360,12 +457,12 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
     std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     IndexRestorationResult restore_result = RestoreIndexIfNeeded();
-    status = std::move(restore_result.status);
+    index_init_status = std::move(restore_result.status);
     // DATA_LOSS means that we have successfully initialized and re-added
     // content to the index. Some indexed content was lost, but otherwise the
     // index is in a valid state and can be queried.
-    if (!status.ok() && !absl_ports::IsDataLoss(status)) {
-      return status;
+    if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
+      return index_init_status;
     }
 
     // Delete the marker file to indicate that everything is now in sync with
@@ -379,28 +476,20 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   } else {
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
-    status = InitializeIndex(initialize_stats);
-    if (!status.ok() && !absl_ports::IsDataLoss(status)) {
-      return status;
+    index_init_status = InitializeIndex(initialize_stats);
+    if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
+      return index_init_status;
     }
+  }
+
+  if (status.ok()) {
+    status = index_init_status;
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
       performance_configuration_.max_num_total_hits, *document_store_);
 
   return status;
-}
-
-libtextclassifier3::Status IcingSearchEngine::InitializeOptions() {
-  ICING_RETURN_IF_ERROR(ValidateOptions(options_));
-
-  // Make sure the base directory exists
-  if (!filesystem_->CreateDirectoryRecursively(options_.base_dir().c_str())) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Could not create directory: ", options_.base_dir()));
-  }
-
-  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeSchemaStore(
@@ -1706,16 +1795,8 @@ ResetResultProto IcingSearchEngine::Reset() {
   StatusProto* result_status = result_proto.mutable_status();
 
   absl_ports::unique_lock l(&mutex_);
-
   initialized_ = false;
-
-  // Resets members variables
-  schema_store_.reset();
-  document_store_.reset();
-  language_segmenter_.reset();
-  normalizer_.reset();
-  index_.reset();
-
+  ResetMembers();
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
     result_status->set_code(StatusProto::INTERNAL);
     return result_proto;

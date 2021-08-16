@@ -23,7 +23,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 11
+// Next tag: 12
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -92,6 +92,10 @@ message InitializeStatsProto {
 
   // Number of schema types currently in schema store.
   optional int32 num_schema_types = 10;
+
+  // Number of consecutive initialization failures that immediately preceded
+  // this initialization.
+  optional int32 num_previous_init_failures = 11;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
