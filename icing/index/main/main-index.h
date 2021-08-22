@@ -27,6 +27,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/status-macros.h"
 
@@ -171,6 +172,14 @@ class MainIndex {
   //  - elements size of lexicon and index, on success
   //  - INTERNAL on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
+
+  // Takes the provided storage_info, populates the fields related to the main
+  // index and returns that storage_info.
+  //
+  // If an IO error occurs while trying to calculate the value for a field, then
+  // that field will be set to -1.
+  IndexStorageInfoProto GetStorageInfo(
+      IndexStorageInfoProto storage_info) const;
 
   // Returns debug information for the main index in out.
   // verbosity <= 0, simplest debug information - just the lexicon

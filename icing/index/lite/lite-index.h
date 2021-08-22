@@ -37,6 +37,7 @@
 #include "icing/legacy/index/icing-lite-index-header.h"
 #include "icing/legacy/index/icing-lite-index-options.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -224,6 +225,9 @@ class LiteIndex {
   DocumentId last_added_document_id() const {
     return header_->last_added_docid();
   }
+  void set_last_added_document_id(DocumentId document_id) const {
+    header_->set_last_added_docid(document_id);
+  }
 
   const IcingDynamicTrie& lexicon() const { return lexicon_; }
 
@@ -239,6 +243,14 @@ class LiteIndex {
   //   Byte size on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
+
+  // Takes the provided storage_info, populates the fields related to the lite
+  // index and returns that storage_info.
+  //
+  // If an IO error occurs while trying to calculate the value for a field, then
+  // that field will be set to -1.
+  IndexStorageInfoProto GetStorageInfo(
+      IndexStorageInfoProto storage_info) const;
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();

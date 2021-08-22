@@ -42,6 +42,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
   return std::make_unique<MapNormalizer>(max_term_byte_size);
 }
 
+std::string_view GetNormalizerName() { return MapNormalizer::kName; }
+
 }  // namespace normalizer_factory
 
 }  // namespace lib
