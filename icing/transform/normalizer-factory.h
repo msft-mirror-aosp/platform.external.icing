@@ -36,6 +36,9 @@ namespace normalizer_factory {
 libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
     int max_term_byte_size);
 
+// Returns the name of the normalizer being used.
+std::string_view GetNormalizerName();
+
 }  // namespace normalizer_factory
 
 }  // namespace lib
