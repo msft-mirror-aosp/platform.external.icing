@@ -32,6 +32,7 @@
 #include "icing/util/logging.h"
 
 using ::testing::Eq;
+using ::testing::IsTrue;
 using ::testing::Pointee;
 
 namespace icing {
@@ -132,7 +133,7 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   ASSERT_THAT(FileBackedVector<char>::Create(
                   filesystem_, file_path_,
                   MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   // Get it back into an ok state
   filesystem_.PWrite(file_path_.data(),
@@ -158,8 +159,8 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   // Truncate the content
   ICING_EXPECT_OK(vector->TruncateTo(0));
 
-  // We don't automatically update the crc when we truncate.
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(good_crc));
+  // Crc is cleared after truncation and reset to 0.
+  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
   EXPECT_EQ(0u, vector->num_elements());
 }
 
@@ -278,7 +279,6 @@ TEST_F(FileBackedVectorTest, Grow) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
-
   EXPECT_THAT(vector->Set(kMaxNumElts + 11, 'a'),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   EXPECT_THAT(vector->Set(-1, 'a'),
@@ -318,25 +318,32 @@ TEST_F(FileBackedVectorTest, GrowsInChunks) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
-  // Our initial file size should just be the size of the header
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(sizeof(FileBackedVector<char>::Header)));
+  // Our initial file size should just be the size of the header. Disk usage
+  // will indicate that one block has been allocated, which contains the header.
+  int header_size = sizeof(FileBackedVector<char>::Header);
+  int page_size = getpagesize();
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(header_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(page_size));
 
-  // Once we add something though, we'll grow to kGrowElements big
+  // Once we add something though, we'll grow to be kGrowElements big. From this
+  // point on, file size and disk usage should be the same because Growing will
+  // explicitly allocate the number of blocks needed to accomodate the file.
   Insert(vector.get(), 0, "a");
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(kGrowElements * sizeof(int)));
+  int file_size = kGrowElements * sizeof(int);
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(file_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(file_size));
 
   // Should still be the same size, don't need to grow underlying file
   Insert(vector.get(), 1, "b");
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(kGrowElements * sizeof(int)));
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(file_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(file_size));
 
   // Now we grow by a kGrowElements chunk, so the underlying file is 2
   // kGrowElements big
+  file_size *= 2;
   Insert(vector.get(), 2, std::string(kGrowElements, 'c'));
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(kGrowElements * 2 * sizeof(int)));
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(file_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(file_size));
 
   // Destroy/persist the contents.
   vector.reset();
@@ -409,10 +416,10 @@ TEST_F(FileBackedVectorTest, TruncateTo) {
   EXPECT_EQ(1, vector->num_elements());
   EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(31158534)));
 
-  // Truncating doesn't cause the checksum to be updated.
+  // Truncating clears the checksum and resets it to 0
   ICING_EXPECT_OK(vector->TruncateTo(0));
   EXPECT_EQ(0, vector->num_elements());
-  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(31158534)));
+  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
 
   // Can't truncate past end.
   EXPECT_THAT(vector->TruncateTo(100),
@@ -421,6 +428,214 @@ TEST_F(FileBackedVectorTest, TruncateTo) {
   // Must be greater than or equal to 0
   EXPECT_THAT(vector->TruncateTo(-1),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(FileBackedVectorTest, TruncateAndReReadFile) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<float>> vector,
+        FileBackedVector<float>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    ICING_ASSERT_OK(vector->Set(0, 1.0));
+    ICING_ASSERT_OK(vector->Set(1, 2.0));
+    ICING_ASSERT_OK(vector->Set(2, 2.0));
+    ICING_ASSERT_OK(vector->Set(3, 2.0));
+    ICING_ASSERT_OK(vector->Set(4, 2.0));
+  }  // Destroying the vector should trigger a checksum of the 5 elements
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<float>> vector,
+        FileBackedVector<float>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    EXPECT_EQ(5, vector->num_elements());
+    ICING_EXPECT_OK(vector->TruncateTo(4));
+    EXPECT_EQ(4, vector->num_elements());
+  }  // Destroying the vector should update the checksum to 4 elements
+
+  // Creating again should double check that our checksum of 4 elements matches
+  // what was previously saved.
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<float>> vector,
+        FileBackedVector<float>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    EXPECT_EQ(vector->num_elements(), 4);
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitFileTooSmallForHeaderFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Shrink the file to be smaller than the header.
+  filesystem_.Truncate(fd_, sizeof(FileBackedVector<char>::Header) - 1);
+
+  {
+    // 3. Attempt to create the file and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitWrongDataSizeFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  {
+    // 2. Attempt to create the file with a different element size and confirm
+    // that it fails.
+    EXPECT_THAT(FileBackedVector<int>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitCorruptHeaderFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Modify the header, but don't update the checksum. This would be similar
+  // to corruption of the header.
+  FileBackedVector<char>::Header header;
+  ASSERT_THAT(filesystem_.PRead(fd_, &header, sizeof(header), /*offset=*/0),
+              IsTrue());
+  header.num_elements = 1;
+  ASSERT_THAT(filesystem_.PWrite(fd_, /*offset=*/0, &header, sizeof(header)),
+              IsTrue());
+
+  {
+    // 3. Attempt to create the file with a header that doesn't match its
+    // checksum and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitHeaderElementSizeTooBigFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Modify the header so that the number of elements exceeds the actual size
+  // of the underlying file.
+  FileBackedVector<char>::Header header;
+  ASSERT_THAT(filesystem_.PRead(fd_, &header, sizeof(header), /*offset=*/0),
+              IsTrue());
+  int64_t file_size = filesystem_.GetFileSize(fd_);
+  int64_t allocated_elements_size = file_size - sizeof(header);
+  header.num_elements = (allocated_elements_size / sizeof(char)) + 1;
+  header.header_checksum = header.CalculateHeaderChecksum();
+  ASSERT_THAT(filesystem_.PWrite(fd_, /*offset=*/0, &header, sizeof(header)),
+              IsTrue());
+
+  {
+    // 3. Attempt to create the file with num_elements that is larger than the
+    // underlying file and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitCorruptElementsFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Overwrite the values of the first two elements.
+  std::string corrupted_content = "BY";
+  ASSERT_THAT(
+      filesystem_.PWrite(fd_, /*offset=*/sizeof(FileBackedVector<char>::Header),
+                         corrupted_content.c_str(), corrupted_content.length()),
+      IsTrue());
+
+  {
+    // 3. Attempt to create the file with elements that don't match their
+    // checksum and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitNormalSucceeds) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  {
+    // 2. Attempt to create the file with a completely valid header and elements
+    // region. This should succeed.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                IsOk());
+  }
 }
 
 }  // namespace

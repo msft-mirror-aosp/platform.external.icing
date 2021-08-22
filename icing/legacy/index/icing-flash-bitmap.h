@@ -11,9 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2012 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
 //
 // A disk-backed bitmap.
 //

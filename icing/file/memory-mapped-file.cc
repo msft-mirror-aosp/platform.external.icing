@@ -37,6 +37,23 @@ MemoryMappedFile::MemoryMappedFile(const Filesystem& filesystem,
       file_path_(file_path),
       strategy_(mmap_strategy) {}
 
+MemoryMappedFile::MemoryMappedFile(MemoryMappedFile&& other)
+    // Make sure that mmap_result_ is a nullptr before we call Swap. We don't
+    // care what values the remaining members hold before we swap into other,
+    // but if mmap_result_ holds a non-NULL value before we initialized anything
+    // then other will try to free memory at that address when it's destroyed!
+    : mmap_result_(nullptr) {
+  Swap(&other);
+}
+
+MemoryMappedFile& MemoryMappedFile::operator=(MemoryMappedFile&& other) {
+  // Swap all of our elements with other. This will ensure that both this now
+  // holds other's previous resources and that this's previous resources will be
+  // properly freed when other is destructed at the end of this function.
+  Swap(&other);
+  return *this;
+}
+
 MemoryMappedFile::~MemoryMappedFile() { Unmap(); }
 
 void MemoryMappedFile::MemoryMappedFile::Unmap() {
@@ -165,6 +182,17 @@ libtextclassifier3::Status MemoryMappedFile::OptimizeFor(
         "Unable to madvise file ", file_path_, "; Error: ", strerror(errno)));
   }
   return libtextclassifier3::Status::OK;
+}
+
+void MemoryMappedFile::Swap(MemoryMappedFile* other) {
+  std::swap(filesystem_, other->filesystem_);
+  std::swap(file_path_, other->file_path_);
+  std::swap(strategy_, other->strategy_);
+  std::swap(file_offset_, other->file_offset_);
+  std::swap(region_, other->region_);
+  std::swap(region_size_, other->region_size_);
+  std::swap(adjusted_mmap_size_, other->adjusted_mmap_size_);
+  std::swap(mmap_result_, other->mmap_result_);
 }
 
 }  // namespace lib

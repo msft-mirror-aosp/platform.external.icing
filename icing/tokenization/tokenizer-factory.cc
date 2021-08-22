@@ -14,10 +14,15 @@
 
 #include "icing/tokenization/tokenizer-factory.h"
 
+#include <memory>
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/plain-tokenizer.h"
 #include "icing/tokenization/raw-query-tokenizer.h"
+#include "icing/tokenization/tokenizer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -26,15 +31,15 @@ namespace lib {
 namespace tokenizer_factory {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>>
-CreateIndexingTokenizer(IndexingConfig::TokenizerType::Code type,
+CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
                         const LanguageSegmenter* lang_segmenter) {
   ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
 
   switch (type) {
-    case IndexingConfig::TokenizerType::PLAIN:
+    case StringIndexingConfig::TokenizerType::PLAIN:
       return std::make_unique<PlainTokenizer>(lang_segmenter);
-    case IndexingConfig::TokenizerType::NONE:
-      U_FALLTHROUGH;
+    case StringIndexingConfig::TokenizerType::NONE:
+      [[fallthrough]];
     default:
       // This should never happen.
       return absl_ports::InvalidArgumentError(

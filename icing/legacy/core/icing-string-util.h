@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2011 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
-//         sbanacho@google.com (Scott Banachowski)
-
 #ifndef ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 #define ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 

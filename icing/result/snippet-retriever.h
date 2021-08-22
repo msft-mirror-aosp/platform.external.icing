@@ -15,6 +15,9 @@
 #ifndef ICING_SNIPPET_RETRIEVER_H_
 #define ICING_SNIPPET_RETRIEVER_H_
 
+#include <memory>
+
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
