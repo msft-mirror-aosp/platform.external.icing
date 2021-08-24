@@ -15,7 +15,6 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 
-#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -40,8 +39,9 @@ namespace lib {
 class DocHitInfoIteratorDummy : public DocHitInfoIterator {
  public:
   DocHitInfoIteratorDummy() = default;
-  explicit DocHitInfoIteratorDummy(std::vector<DocHitInfo> doc_hit_infos)
-      : doc_hit_infos_(std::move(doc_hit_infos)) {}
+  explicit DocHitInfoIteratorDummy(std::vector<DocHitInfo> doc_hit_infos,
+                                   std::string term = "")
+      : doc_hit_infos_(std::move(doc_hit_infos)), term_(std::move(term)) {}
 
   libtextclassifier3::Status Advance() override {
     if (index_ < doc_hit_infos_.size()) {
@@ -52,6 +52,38 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
 
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
+  }
+
+  // Imitates behavior of DocHitInfoIteratorTermMain/DocHitInfoIteratorTermLite
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    SectionIdMask section_mask =
+        doc_hit_info_.hit_section_ids_mask() & filtering_section_mask;
+    SectionIdMask section_mask_copy = section_mask;
+    std::array<Hit::TermFrequency, kMaxSectionId> section_term_frequencies = {
+        Hit::kNoTermFrequency};
+    while (section_mask_copy) {
+      SectionId section_id = __builtin_ctz(section_mask_copy);
+      section_term_frequencies.at(section_id) =
+          doc_hit_info_.hit_term_frequency(section_id);
+      section_mask_copy &= ~(1u << section_id);
+    }
+    TermMatchInfo term_stats(term_, section_mask,
+                             std::move(section_term_frequencies));
+
+    for (auto& cur_term_stats : *matched_terms_stats) {
+      if (cur_term_stats.term == term_stats.term) {
+        // Same docId and same term, we don't need to add the term and the term
+        // frequency should always be the same
+        return;
+      }
+    }
+    matched_terms_stats->push_back(term_stats);
   }
 
   void set_hit_intersect_section_ids_mask(
@@ -91,6 +123,7 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
   int32_t num_blocks_inspected_ = 0;
   int32_t num_leaf_advance_calls_ = 0;
   std::vector<DocHitInfo> doc_hit_infos_;
+  std::string term_;
 };
 
 inline std::vector<DocumentId> GetDocumentIds(DocHitInfoIterator* iterator) {

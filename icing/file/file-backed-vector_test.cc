@@ -32,6 +32,7 @@
 #include "icing/util/logging.h"
 
 using ::testing::Eq;
+using ::testing::IsTrue;
 using ::testing::Pointee;
 
 namespace icing {
@@ -132,7 +133,7 @@ TEST_F(FileBackedVectorTest, SimpleShared) {
   ASSERT_THAT(FileBackedVector<char>::Create(
                   filesystem_, file_path_,
                   MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   // Get it back into an ok state
   filesystem_.PWrite(file_path_.data(),
@@ -278,7 +279,6 @@ TEST_F(FileBackedVectorTest, Grow) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
-
   EXPECT_THAT(vector->Set(kMaxNumElts + 11, 'a'),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   EXPECT_THAT(vector->Set(-1, 'a'),
@@ -318,25 +318,32 @@ TEST_F(FileBackedVectorTest, GrowsInChunks) {
           filesystem_, file_path_,
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
-  // Our initial file size should just be the size of the header
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(sizeof(FileBackedVector<char>::Header)));
+  // Our initial file size should just be the size of the header. Disk usage
+  // will indicate that one block has been allocated, which contains the header.
+  int header_size = sizeof(FileBackedVector<char>::Header);
+  int page_size = getpagesize();
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(header_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(page_size));
 
-  // Once we add something though, we'll grow to kGrowElements big
+  // Once we add something though, we'll grow to be kGrowElements big. From this
+  // point on, file size and disk usage should be the same because Growing will
+  // explicitly allocate the number of blocks needed to accomodate the file.
   Insert(vector.get(), 0, "a");
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(kGrowElements * sizeof(int)));
+  int file_size = kGrowElements * sizeof(int);
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(file_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(file_size));
 
   // Should still be the same size, don't need to grow underlying file
   Insert(vector.get(), 1, "b");
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(kGrowElements * sizeof(int)));
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(file_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(file_size));
 
   // Now we grow by a kGrowElements chunk, so the underlying file is 2
   // kGrowElements big
+  file_size *= 2;
   Insert(vector.get(), 2, std::string(kGrowElements, 'c'));
-  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()),
-              Eq(kGrowElements * 2 * sizeof(int)));
+  EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(file_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(file_size));
 
   // Destroy/persist the contents.
   vector.reset();
@@ -460,6 +467,174 @@ TEST_F(FileBackedVectorTest, TruncateAndReReadFile) {
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
     EXPECT_EQ(vector->num_elements(), 4);
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitFileTooSmallForHeaderFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Shrink the file to be smaller than the header.
+  filesystem_.Truncate(fd_, sizeof(FileBackedVector<char>::Header) - 1);
+
+  {
+    // 3. Attempt to create the file and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitWrongDataSizeFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  {
+    // 2. Attempt to create the file with a different element size and confirm
+    // that it fails.
+    EXPECT_THAT(FileBackedVector<int>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitCorruptHeaderFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Modify the header, but don't update the checksum. This would be similar
+  // to corruption of the header.
+  FileBackedVector<char>::Header header;
+  ASSERT_THAT(filesystem_.PRead(fd_, &header, sizeof(header), /*offset=*/0),
+              IsTrue());
+  header.num_elements = 1;
+  ASSERT_THAT(filesystem_.PWrite(fd_, /*offset=*/0, &header, sizeof(header)),
+              IsTrue());
+
+  {
+    // 3. Attempt to create the file with a header that doesn't match its
+    // checksum and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitHeaderElementSizeTooBigFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Modify the header so that the number of elements exceeds the actual size
+  // of the underlying file.
+  FileBackedVector<char>::Header header;
+  ASSERT_THAT(filesystem_.PRead(fd_, &header, sizeof(header), /*offset=*/0),
+              IsTrue());
+  int64_t file_size = filesystem_.GetFileSize(fd_);
+  int64_t allocated_elements_size = file_size - sizeof(header);
+  header.num_elements = (allocated_elements_size / sizeof(char)) + 1;
+  header.header_checksum = header.CalculateHeaderChecksum();
+  ASSERT_THAT(filesystem_.PWrite(fd_, /*offset=*/0, &header, sizeof(header)),
+              IsTrue());
+
+  {
+    // 3. Attempt to create the file with num_elements that is larger than the
+    // underlying file and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitCorruptElementsFails) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  // 2. Overwrite the values of the first two elements.
+  std::string corrupted_content = "BY";
+  ASSERT_THAT(
+      filesystem_.PWrite(fd_, /*offset=*/sizeof(FileBackedVector<char>::Header),
+                         corrupted_content.c_str(), corrupted_content.length()),
+      IsTrue());
+
+  {
+    // 3. Attempt to create the file with elements that don't match their
+    // checksum and confirm that it fails.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  }
+}
+
+TEST_F(FileBackedVectorTest, InitNormalSucceeds) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    Insert(vector.get(), 0, "A");
+    Insert(vector.get(), 1, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
+  }
+
+  {
+    // 2. Attempt to create the file with a completely valid header and elements
+    // region. This should succeed.
+    EXPECT_THAT(FileBackedVector<char>::Create(
+                    filesystem_, file_path_,
+                    MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC),
+                IsOk());
   }
 }
 

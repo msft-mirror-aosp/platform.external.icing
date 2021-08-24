@@ -16,11 +16,11 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/logging.proto";
 import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
 // Next tag: 5
@@ -73,7 +73,7 @@ message IcingSearchEngineOptions {
 }
 
 // Result of a call to IcingSearchEngine.Initialize
-// Next tag: 2
+// Next tag: 3
 message InitializeResultProto {
   // Status code can be one of:
   //   OK
@@ -87,6 +87,12 @@ message InitializeResultProto {
   // TODO(b/147699081): Fix error codes: +ABORTED, -NOT_FOUND.
   // go/icing-library-apis.
   optional StatusProto status = 1;
+
+  // Stats of the function call. Inside InitializeStatsProto, the function call
+  // latency 'latency_ms' will always be populated. The other fields will be
+  // accurate only when the status above is OK or WARNING_DATA_LOSS. See
+  // logging.proto for details.
+  optional InitializeStatsProto initialize_stats = 2;
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.

@@ -65,8 +65,8 @@ size_t header_size() { return sizeof(IcingLiteIndex_HeaderImpl::HeaderData); }
 
 }  // namespace
 
-const LiteIndex::Element::Value LiteIndex::Element::kInvalidValue =
-    LiteIndex::Element(0, Hit()).value();
+const TermIdHitPair::Value TermIdHitPair::kInvalidValue =
+    TermIdHitPair(0, Hit()).value();
 
 libtextclassifier3::StatusOr<std::unique_ptr<LiteIndex>> LiteIndex::Create(
     const LiteIndex::Options& options, const IcingFilesystem* filesystem) {
@@ -163,7 +163,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     header_->Reset();
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
-                          sizeof(Element::Value), header_->cur_size(),
+                          sizeof(TermIdHitPair::Value), header_->cur_size(),
                           options_.hit_buffer_size, &hit_buffer_crc_, true)) {
       status = absl_ports::InternalError("Failed to initialize new hit buffer");
       goto error;
@@ -177,7 +177,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
             header_mmap_.address()));
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
-                          sizeof(Element::Value), header_->cur_size(),
+                          sizeof(TermIdHitPair::Value), header_->cur_size(),
                           options_.hit_buffer_size, &hit_buffer_crc_, true)) {
       status = absl_ports::InternalError(
           "Failed to re-initialize existing hit buffer");
@@ -310,22 +310,21 @@ libtextclassifier3::Status LiteIndex::AddHit(uint32_t term_id, const Hit& hit) {
     return absl_ports::ResourceExhaustedError("Hit buffer is full!");
   }
 
-  header_->set_last_added_docid(hit.document_id());
-
-  Element elt(term_id, hit);
+  TermIdHitPair term_id_hit_pair(term_id, hit);
   uint32_t cur_size = header_->cur_size();
-  Element::Value* valp = hit_buffer_.GetMutableMem<Element::Value>(cur_size, 1);
+  TermIdHitPair::Value* valp =
+      hit_buffer_.GetMutableMem<TermIdHitPair::Value>(cur_size, 1);
   if (valp == nullptr) {
     return absl_ports::ResourceExhaustedError(
         "Allocating more space in hit buffer failed!");
   }
-  *valp = elt.value();
+  *valp = term_id_hit_pair.value();
   header_->set_cur_size(cur_size + 1);
 
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<uint32_t> LiteIndex::FindTerm(
+libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
     const std::string& term) const {
   char dummy;
   uint32_t tvi;
@@ -336,16 +335,17 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::FindTerm(
   return tvi;
 }
 
-uint32_t LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
-                               bool only_from_prefix_sections,
-                               std::vector<DocHitInfo>* hits_out) {
-  uint32_t count = 0;
+int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
+                          bool only_from_prefix_sections,
+                          std::vector<DocHitInfo>* hits_out) {
+  int count = 0;
   DocumentId last_document_id = kInvalidDocumentId;
   for (uint32_t idx = Seek(term_id); idx < header_->cur_size(); idx++) {
-    Element elt(hit_buffer_.array_cast<Element>()[idx]);
-    if (elt.term_id() != term_id) break;
+    TermIdHitPair term_id_hit_pair(
+        hit_buffer_.array_cast<TermIdHitPair>()[idx]);
+    if (term_id_hit_pair.term_id() != term_id) break;
 
-    const Hit& hit = elt.hit();
+    const Hit& hit = term_id_hit_pair.hit();
     // Check sections.
     if (((1u << hit.section_id()) & section_id_mask) == 0) {
       continue;
@@ -356,20 +356,20 @@ uint32_t LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
     }
     DocumentId document_id = hit.document_id();
     if (document_id != last_document_id) {
-      count++;
+      ++count;
       if (hits_out != nullptr) {
         hits_out->push_back(DocHitInfo(document_id));
       }
       last_document_id = document_id;
     }
     if (hits_out != nullptr) {
-      hits_out->back().UpdateSection(hit.section_id(), hit.score());
+      hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
     }
   }
   return count;
 }
 
-uint32_t LiteIndex::CountHits(uint32_t term_id) {
+int LiteIndex::CountHits(uint32_t term_id) {
   return AppendHits(term_id, kSectionIdMaskAll,
                     /*only_from_prefix_sections=*/false,
                     /*hits_out=*/nullptr);
@@ -392,26 +392,36 @@ void LiteIndex::GetDebugInfo(int verbosity, std::string* out) const {
 }
 
 libtextclassifier3::StatusOr<int64_t> LiteIndex::GetElementsSize() const {
-  int64_t header_and_hit_buffer_file_size =
-      filesystem_->GetFileSize(hit_buffer_fd_.get());
-
-  if (header_and_hit_buffer_file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get element size of the LiteIndex's header and hit buffer");
+  IndexStorageInfoProto storage_info = GetStorageInfo(IndexStorageInfoProto());
+  if (storage_info.lite_index_hit_buffer_size() == -1 ||
+      storage_info.lite_index_lexicon_size() == -1) {
+    return absl_ports::AbortedError(
+        "Failed to get size of LiteIndex's members.");
   }
-
-  int64_t lexicon_disk_usage = lexicon_.GetElementsSize();
-  if (lexicon_disk_usage == IcingFilesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get element size of LiteIndex's lexicon");
-  }
-
   // On initialization, we grow the file to a padded size first. So this size
   // won't count towards the size taken up by elements
   size_t header_padded_size = IcingMMapper::page_aligned_size(header_size());
+  return storage_info.lite_index_hit_buffer_size() - header_padded_size +
+         storage_info.lite_index_lexicon_size();
+}
 
-  return header_and_hit_buffer_file_size - header_padded_size +
-         lexicon_disk_usage;
+IndexStorageInfoProto LiteIndex::GetStorageInfo(
+    IndexStorageInfoProto storage_info) const {
+  int64_t header_and_hit_buffer_file_size =
+      filesystem_->GetFileSize(hit_buffer_fd_.get());
+  if (header_and_hit_buffer_file_size != Filesystem::kBadFileSize) {
+    storage_info.set_lite_index_hit_buffer_size(
+        header_and_hit_buffer_file_size);
+  } else {
+    storage_info.set_lite_index_hit_buffer_size(-1);
+  }
+  int64_t lexicon_disk_usage = lexicon_.GetElementsSize();
+  if (lexicon_disk_usage != Filesystem::kBadFileSize) {
+    storage_info.set_lite_index_lexicon_size(lexicon_disk_usage);
+  } else {
+    storage_info.set_lite_index_lexicon_size(-1);
+  }
+  return storage_info;
 }
 
 uint32_t LiteIndex::Seek(uint32_t term_id) {
@@ -421,8 +431,8 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
     IcingTimer timer;
 
     auto* array_start =
-        hit_buffer_.GetMutableMem<Element::Value>(0, header_->cur_size());
-    Element::Value* sort_start = array_start + header_->searchable_end();
+        hit_buffer_.GetMutableMem<TermIdHitPair::Value>(0, header_->cur_size());
+    TermIdHitPair::Value* sort_start = array_start + header_->searchable_end();
     std::sort(sort_start, array_start + header_->cur_size());
 
     // Now merge with previous region. Since the previous region is already
@@ -445,11 +455,13 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
 
   // Binary search for our term_id.  Make sure we get the first
   // element.  Using kBeginSortValue ensures this for the hit value.
-  Element elt(term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kMaxHitScore));
+  TermIdHitPair term_id_hit_pair(
+      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultTermFrequency));
 
-  const Element::Value* array = hit_buffer_.array_cast<Element::Value>();
-  const Element::Value* ptr =
-      std::lower_bound(array, array + header_->cur_size(), elt.value());
+  const TermIdHitPair::Value* array =
+      hit_buffer_.array_cast<TermIdHitPair::Value>();
+  const TermIdHitPair::Value* ptr = std::lower_bound(
+      array, array + header_->cur_size(), term_id_hit_pair.value());
   return ptr - array;
 }
 

@@ -56,6 +56,7 @@
 #ifndef ICING_FILE_FILE_BACKED_VECTOR_H_
 #define ICING_FILE_FILE_BACKED_VECTOR_H_
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <sys/mman.h>
 
@@ -149,6 +150,12 @@ class FileBackedVector {
   //             within a directory that already exists.
   // mmap_strategy : Strategy/optimizations to access the content in the vector,
   //                 see MemoryMappedFile::Strategy for more details
+  //
+  // Return:
+  //   FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
+  //                             checksum.
+  //   INTERNAL_ERROR on I/O errors.
+  //   UNIMPLEMENTED_ERROR if created with strategy READ_WRITE_MANUAL_SYNC.
   static libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
   Create(const Filesystem& filesystem, const std::string& file_path,
          MemoryMappedFile::Strategy mmap_strategy);
@@ -169,13 +176,37 @@ class FileBackedVector {
   // synced by the system and the checksum will be updated.
   ~FileBackedVector();
 
-  // Accesses the element at idx.
+  // Gets a copy of the element at idx.
+  //
+  // This is useful if you think the FileBackedVector may grow before you need
+  // to access this return value. When the FileBackedVector grows, the
+  // underlying mmap will be unmapped and remapped, which will invalidate any
+  // pointers to the previously mapped region. Getting a copy will avoid
+  // referencing the now-invalidated region.
+  //
+  // Returns:
+  //   OUT_OF_RANGE_ERROR if idx < 0 or > num_elements()
+  libtextclassifier3::StatusOr<T> GetCopy(int32_t idx) const;
+
+  // Gets a pointer to the element at idx.
+  //
+  // WARNING: Subsequent calls to Set may invalidate the pointer returned by
+  // Get.
+  //
+  // This is useful if you do not think the FileBackedVector will grow before
+  // you need to reference this value, and you want to avoid a copy. When the
+  // FileBackedVector grows, the underlying mmap will be unmapped and remapped,
+  // which will invalidate this pointer to the previously mapped region.
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if idx < 0 or > num_elements()
   libtextclassifier3::StatusOr<const T*> Get(int32_t idx) const;
 
   // Writes the value at idx.
+  //
+  // May grow the underlying file and mmapped region as needed to fit the new
+  // value. If it does grow, then any pointers to previous values returned
+  // from Get() may be invalidated.
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if idx < 0 or file cannot be grown idx size
@@ -187,7 +218,7 @@ class FileBackedVector {
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if len < 0 or >= num_elements()
-  libtextclassifier3::Status TruncateTo(int32_t len);
+  libtextclassifier3::Status TruncateTo(int32_t new_num_elements);
 
   // Flushes content to underlying file.
   //
@@ -393,16 +424,9 @@ FileBackedVector<T>::InitializeExistingFile(
         absl_ports::StrCat("Invalid header kMagic for ", file_path));
   }
 
-  // Mmap the content of the vector, excluding the header so its easier to
-  // access elements from the mmapped region
-  auto mmapped_file =
-      std::make_unique<MemoryMappedFile>(filesystem, file_path, mmap_strategy);
-  ICING_RETURN_IF_ERROR(
-      mmapped_file->Remap(sizeof(Header), file_size - sizeof(Header)));
-
   // Check header
   if (header->header_checksum != header->CalculateHeaderChecksum()) {
-    return absl_ports::InternalError(
+    return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid header crc for ", file_path));
   }
 
@@ -412,6 +436,20 @@ FileBackedVector<T>::InitializeExistingFile(
         header->element_size));
   }
 
+  int64_t min_file_size = header->num_elements * sizeof(T) + sizeof(Header);
+  if (min_file_size > file_size) {
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Inconsistent file size, expected %" PRId64 ", actual %" PRId64,
+        min_file_size, file_size));
+  }
+
+  // Mmap the content of the vector, excluding the header so its easier to
+  // access elements from the mmapped region
+  auto mmapped_file =
+      std::make_unique<MemoryMappedFile>(filesystem, file_path, mmap_strategy);
+  ICING_RETURN_IF_ERROR(
+      mmapped_file->Remap(sizeof(Header), file_size - sizeof(Header)));
+
   // Check vector contents
   Crc32 vector_checksum;
   std::string_view vector_contents(
@@ -420,7 +458,7 @@ FileBackedVector<T>::InitializeExistingFile(
   vector_checksum.Append(vector_contents);
 
   if (vector_checksum.Get() != header->vector_checksum) {
-    return absl_ports::InternalError(
+    return absl_ports::FailedPreconditionError(
         absl_ports::StrCat("Invalid vector contents for ", file_path));
   }
 
@@ -462,6 +500,13 @@ FileBackedVector<T>::~FileBackedVector() {
 }
 
 template <typename T>
+libtextclassifier3::StatusOr<T> FileBackedVector<T>::GetCopy(
+    int32_t idx) const {
+  ICING_ASSIGN_OR_RETURN(const T* value, Get(idx));
+  return *value;
+}
+
+template <typename T>
 libtextclassifier3::StatusOr<const T*> FileBackedVector<T>::Get(
     int32_t idx) const {
   if (idx < 0) {
@@ -485,8 +530,6 @@ libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx,
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Index, %d, was less than 0", idx));
   }
-
-  int32_t start_byte = idx * sizeof(T);
 
   ICING_RETURN_IF_ERROR(GrowIfNecessary(idx + 1));
 
@@ -512,6 +555,8 @@ libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx,
       changes_end_ = 0;
       header_->vector_checksum = 0;
     } else {
+      int32_t start_byte = idx * sizeof(T);
+
       changes_.push_back(idx);
       saved_original_buffer_.append(
           reinterpret_cast<char*>(const_cast<T*>(array())) + start_byte,
@@ -554,9 +599,24 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
   least_file_size_needed = math_util::RoundUpTo(
       least_file_size_needed,
       int64_t{FileBackedVector<T>::kGrowElements * sizeof(T)});
-  if (!filesystem_->Grow(file_path_.c_str(), least_file_size_needed)) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Couldn't grow file ", file_path_));
+
+  // We use PWrite here rather than Grow because Grow doesn't actually allocate
+  // an underlying disk block. This can lead to problems with mmap because mmap
+  // has no effective way to signal that it was impossible to allocate the disk
+  // block and ends up crashing instead. PWrite will force the allocation of
+  // these blocks, which will ensure that any failure to grow will surface here.
+  int64_t page_size = getpagesize();
+  auto buf = std::make_unique<uint8_t[]>(page_size);
+  int64_t size_to_write = page_size - (current_file_size % page_size);
+  ScopedFd sfd(filesystem_->OpenForWrite(file_path_.c_str()));
+  while (current_file_size < least_file_size_needed) {
+    if (!filesystem_->PWrite(sfd.get(), current_file_size, buf.get(),
+                             size_to_write)) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Couldn't grow file ", file_path_));
+    }
+    current_file_size += size_to_write;
+    size_to_write = page_size - (current_file_size % page_size);
   }
 
   ICING_RETURN_IF_ERROR(mmapped_file_->Remap(

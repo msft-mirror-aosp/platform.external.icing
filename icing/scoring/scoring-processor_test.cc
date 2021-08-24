@@ -24,6 +24,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
@@ -35,9 +36,14 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
-using ::testing::Test;
 
-class ScoringProcessorTest : public Test {
+constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
+    PropertyConfigProto_DataType_Code_STRING;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+
+class ScoringProcessorTest : public testing::Test {
  protected:
   ScoringProcessorTest()
       : test_dir_(GetTestTempDir() + "/icing"),
@@ -50,23 +56,25 @@ class ScoringProcessorTest : public Test {
     filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
-    SchemaProto test_email_schema;
-    auto type_config = test_email_schema.add_types();
-    type_config->set_schema_type("email");
-    auto subject = type_config->add_properties();
-    subject->set_property_name("subject");
-    subject->set_data_type(PropertyConfigProto::DataType::STRING);
-    subject->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-
+    SchemaProto test_email_schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("subject")
+                    .SetDataType(TYPE_STRING)
+                    .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
   }
 
@@ -118,6 +126,17 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
                                       scores.at(i));
   }
   return std::pair(doc_hit_infos, scored_document_hits);
+}
+
+UsageReport CreateUsageReport(std::string name_space, std::string uri,
+                              int64 timestamp_ms,
+                              UsageReport::UsageType usage_type) {
+  UsageReport usage_report;
+  usage_report.set_document_namespace(name_space);
+  usage_report.set_document_uri(uri);
+  usage_report.set_usage_timestamp_ms(timestamp_ms);
+  usage_report.set_usage_type(usage_type);
+  return usage_report;
 }
 
 TEST_F(ScoringProcessorTest, CreationWithNullPointerShouldFail) {
@@ -241,6 +260,216 @@ TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
                           EqualsScoredDocumentHit(scored_document_hits.at(2))));
 }
 
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_DocumentsWithDifferentLength) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/100));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store()->Put(document3, /*num_tokens=*/50));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info2(document_id2);
+  doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info3(document_id3);
+  doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+  // Since the three documents all contain the query term "foo" exactly once,
+  // the document's length determines the final score. Document shorter than the
+  // average corpus length are slightly boosted.
+  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask,
+                                             /*score=*/0.255482);
+  ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask,
+                                             /*score=*/0.115927);
+  ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask,
+                                             /*score=*/0.166435);
+  EXPECT_THAT(
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/3, &query_term_iterators),
+      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit2),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_DocumentsWithSameLength) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store()->Put(document3, /*num_tokens=*/10));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info2(document_id2);
+  doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info3(document_id3);
+  doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+
+  SectionId section_id = 0;
+  SectionIdMask section_id_mask = 1U << section_id;
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+  // Since the three documents all contain the query term "foo" exactly once
+  // and they have the same length, they will have the same BM25F scoret.
+  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask,
+                                             /*score=*/0.16173716);
+  ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask,
+                                             /*score=*/0.16173716);
+  ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask,
+                                             /*score=*/0.16173716);
+  EXPECT_THAT(
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/3, &query_term_iterators),
+      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit2),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_DocumentsWithDifferentQueryFrequency) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/10));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store()->Put(document3, /*num_tokens=*/10));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  // Document 1 contains the query term "foo" 5 times
+  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/5);
+  DocHitInfo doc_hit_info2(document_id2);
+  // Document 1 contains the query term "foo" 1 time
+  doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  DocHitInfo doc_hit_info3(document_id3);
+  // Document 1 contains the query term "foo" 3 times
+  doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
+  doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/2);
+
+  SectionIdMask section_id_mask1 = 0b00000001;
+  SectionIdMask section_id_mask2 = 0b00000001;
+  SectionIdMask section_id_mask3 = 0b00000011;
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+
+  // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+  // Since the three documents all have the same length, the score is decided by
+  // the frequency of the query term "foo".
+  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask1,
+                                             /*score=*/0.309497);
+  ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask2,
+                                             /*score=*/0.16173716);
+  ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask3,
+                                             /*score=*/0.268599);
+  EXPECT_THAT(
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/3, &query_term_iterators),
+      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit2),
+                  EqualsScoredDocumentHit(expected_scored_doc_hit3)));
+}
+
 TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -287,6 +516,126 @@ TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit2),
                           EqualsScoredDocumentHit(scored_document_hit3),
                           EqualsScoredDocumentHit(scored_document_hit1)));
+}
+
+TEST_F(ScoringProcessorTest, ShouldScoreByUsageCount) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             document_store()->Put(document3));
+
+  // Report usage for doc1 once and doc2 twice.
+  UsageReport usage_report_doc1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  UsageReport usage_report_doc2 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/2", /*timestamp_ms=*/0,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc1));
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc2));
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc2));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfo doc_hit_info3(document_id3);
+  ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
+                                         /*score=*/1);
+  ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
+                                         /*score=*/2);
+  ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
+                                         /*score=*/0);
+
+  // Creates a dummy DocHitInfoIterator with 3 results
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT);
+
+  // Creates a ScoringProcessor which ranks in descending order
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit1),
+                          EqualsScoredDocumentHit(scored_document_hit2),
+                          EqualsScoredDocumentHit(scored_document_hit3)));
+}
+
+TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document3 =
+      CreateDocument("icing", "email/3", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store()->Put(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store()->Put(document2));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             document_store()->Put(document3));
+
+  // Report usage for doc1 and doc2.
+  UsageReport usage_report_doc1 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/1", /*timestamp_ms=*/1000,
+      UsageReport::USAGE_TYPE1);
+  UsageReport usage_report_doc2 = CreateUsageReport(
+      /*name_space=*/"icing", /*uri=*/"email/2", /*timestamp_ms=*/5000,
+      UsageReport::USAGE_TYPE1);
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc1));
+  ICING_ASSERT_OK(document_store()->ReportUsage(usage_report_doc2));
+
+  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfo doc_hit_info3(document_id3);
+  ScoredDocumentHit scored_document_hit1(document_id1, kSectionIdMaskNone,
+                                         /*score=*/1000);
+  ScoredDocumentHit scored_document_hit2(document_id2, kSectionIdMaskNone,
+                                         /*score=*/5000);
+  ScoredDocumentHit scored_document_hit3(document_id3, kSectionIdMaskNone,
+                                         /*score=*/0);
+
+  // Creates a dummy DocHitInfoIterator with 3 results
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
+                                           doc_hit_info3};
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(
+      ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP);
+
+  // Creates a ScoringProcessor which ranks in descending order
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store()));
+
+  EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
+                                       /*num_to_score=*/3),
+              ElementsAre(EqualsScoredDocumentHit(scored_document_hit1),
+                          EqualsScoredDocumentHit(scored_document_hit2),
+                          EqualsScoredDocumentHit(scored_document_hit3)));
 }
 
 TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {

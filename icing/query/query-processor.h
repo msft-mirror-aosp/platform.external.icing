@@ -19,6 +19,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/index.h"
+#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/query-terms.h"
@@ -26,7 +27,6 @@
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -46,13 +46,18 @@ class QueryProcessor {
   static libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>> Create(
       Index* index, const LanguageSegmenter* language_segmenter,
       const Normalizer* normalizer, const DocumentStore* document_store,
-      const SchemaStore* schema_store, const Clock* clock);
+      const SchemaStore* schema_store);
 
   struct QueryResults {
     std::unique_ptr<DocHitInfoIterator> root_iterator;
     // A map from section names to sets of terms restricted to those sections.
     // Query terms that are not restricted are found at the entry with key "".
     SectionRestrictQueryTermsMap query_terms;
+    // Hit iterators for the text terms in the query. These query_term_iterators
+    // are completely separate from the iterators that make the iterator tree
+    // beginning with root_iterator.
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+        query_term_iterators;
   };
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
@@ -71,7 +76,7 @@ class QueryProcessor {
                           const LanguageSegmenter* language_segmenter,
                           const Normalizer* normalizer,
                           const DocumentStore* document_store,
-                          const SchemaStore* schema_store, const Clock* clock);
+                          const SchemaStore* schema_store);
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.
@@ -85,6 +90,11 @@ class QueryProcessor {
   libtextclassifier3::StatusOr<QueryResults> ParseRawQuery(
       const SearchSpecProto& search_spec);
 
+  // Return the options for the DocHitInfoIteratorFilter based on the
+  // search_spec.
+  DocHitInfoIteratorFilter::Options getFilterOptions(
+      const SearchSpecProto& search_spec);
+
   // Not const because we could modify/sort the hit buffer in the lite index at
   // query time.
   Index& index_;
@@ -92,7 +102,6 @@ class QueryProcessor {
   const Normalizer& normalizer_;
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
-  const Clock& clock_;
 };
 
 }  // namespace lib

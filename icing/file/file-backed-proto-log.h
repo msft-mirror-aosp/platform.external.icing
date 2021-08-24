@@ -70,8 +70,10 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/portable/zlib.h"
 #include "icing/util/crc32.h"
+#include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -151,11 +153,15 @@ class FileBackedProtoLog {
     // A successfully initialized log.
     std::unique_ptr<FileBackedProtoLog<ProtoT>> proto_log;
 
-    // Whether there was some data loss while initializing from a previous
-    // state. This can happen if the file is corrupted or some previously added
-    // data was unpersisted. This may be used to signal that any derived data
-    // off of the proto log may need to be regenerated.
-    bool data_loss;
+    // The data status after initializing from a previous state. Data loss can
+    // happen if the file is corrupted or some previously added data was
+    // unpersisted. This may be used to signal that any derived data off of the
+    // proto log may need to be regenerated.
+    DataLoss data_loss;
+
+    bool has_data_loss() {
+      return data_loss == DataLoss::PARTIAL || data_loss == DataLoss::COMPLETE;
+    }
   };
 
   // Factory method to create, initialize, and return a FileBackedProtoLog. Will
@@ -166,9 +172,10 @@ class FileBackedProtoLog {
   // log saves these checkpointed "good" states when PersistToDisk() is called
   // or the log is safely destructed. If the log rewinds successfully to the
   // last-good state, then the returned CreateResult.data_loss indicates
-  // there was some data loss so that any derived data may know that it
-  // needs to be updated. If the log re-initializes successfully without any
-  // data loss, the boolean will be false.
+  // whether it has a data loss and what kind of data loss it is (partial or
+  // complete) so that any derived data may know that it needs to be updated. If
+  // the log re-initializes successfully without any data loss,
+  // CreateResult.data_loss will be NONE.
   //
   // Params:
   //   filesystem: Handles system level calls
@@ -206,9 +213,18 @@ class FileBackedProtoLog {
   //
   // Returns:
   //   A proto on success
+  //   NOT_FOUND if the proto at the given offset has been erased
   //   OUT_OF_RANGE_ERROR if file_offset exceeds file size
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<ProtoT> ReadProto(int64_t file_offset) const;
+
+  // Erases the data of a proto located at file_offset from the file.
+  //
+  // Returns:
+  //   OK on success
+  //   OUT_OF_RANGE_ERROR if file_offset exceeds file size
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status EraseProto(int64_t file_offset);
 
   // Calculates and returns the disk usage in bytes. Rounds up to the nearest
   // block size.
@@ -239,7 +255,7 @@ class FileBackedProtoLog {
     Iterator(const Filesystem& filesystem, const std::string& file_path,
              int64_t initial_offset);
 
-    // Advances to the position of next proto.
+    // Advances to the position of next proto whether it has been erased or not.
     //
     // Returns:
     //   OK on success
@@ -339,7 +355,7 @@ class FileBackedProtoLog {
   // Initializes a new proto log.
   //
   // Returns:
-  //   std::unique_ptr<FileBackedProtoLog> that can be used immediately
+  //   std::unique_ptr<CreateResult> on success
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<CreateResult> InitializeNewFile(
       const Filesystem* filesystem, const std::string& file_path,
@@ -350,7 +366,7 @@ class FileBackedProtoLog {
   // content will be lost.
   //
   // Returns:
-  //   std::unique_ptr<FileBackedProtoLog> that can be used immediately
+  //   std::unique_ptr<CreateResult> on success
   //   INTERNAL_ERROR on IO error or internal inconsistencies in the file
   //   INVALID_ARGUMENT_ERROR if options aren't consistent with previous
   //     instances
@@ -368,6 +384,28 @@ class FileBackedProtoLog {
   static libtextclassifier3::StatusOr<Crc32> ComputeChecksum(
       const Filesystem* filesystem, const std::string& file_path,
       Crc32 initial_crc, int64_t start, int64_t end);
+
+  static bool IsEmptyBuffer(const char* buffer, int size) {
+    return std::all_of(buffer, buffer + size,
+                       [](const char byte) { return byte == 0; });
+  }
+
+  // Helper function to get stored proto size from the metadata.
+  // Metadata format: 8 bits magic + 24 bits size
+  static int GetProtoSize(int metadata) { return metadata & 0x00FFFFFF; }
+
+  // Helper function to get stored proto magic from the metadata.
+  // Metadata format: 8 bits magic + 24 bits size
+  static uint8_t GetProtoMagic(int metadata) { return metadata >> 24; }
+
+  // Reads out the metadata of a proto located at file_offset from the file.
+  //
+  // Returns:
+  //   Proto's metadata on success
+  //   OUT_OF_RANGE_ERROR if file_offset exceeds file_size
+  //   INTERNAL_ERROR if the metadata is invalid or any IO errors happen
+  static libtextclassifier3::StatusOr<int> ReadProtoMetadata(
+      MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size);
 
   // Magic number added in front of every proto. Used when reading out protos
   // as a first check for corruption in each entry in the file. Even if there is
@@ -390,20 +428,12 @@ class FileBackedProtoLog {
   static constexpr int kDeflateCompressionLevel = 3;
 
   // Chunks of the file to mmap at a time, so we don't mmap the entire file.
-  static constexpr int kMmapChunkSize = 4 * 1024;
+  // Only used on 32-bit devices
+  static constexpr int kMmapChunkSize = 4 * 1024 * 1024;  // 4MiB
 
   ScopedFd fd_;
   const Filesystem* const filesystem_;
   const std::string file_path_;
-
-  // Reads out the metadata of a proto located at file_offset from the file.
-  //
-  // Returns:
-  //   Proto's metadata on success
-  //   OUT_OF_RANGE_ERROR if file_offset exceeds file_size
-  //   INTERNAL_ERROR if the metadata is invalid or any IO errors happen
-  static libtextclassifier3::StatusOr<int> ReadProtoMetadata(
-      MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size);
   std::unique_ptr<Header> header_;
 };
 
@@ -485,7 +515,7 @@ FileBackedProtoLog<ProtoT>::InitializeNewFile(const Filesystem* filesystem,
       std::unique_ptr<FileBackedProtoLog<ProtoT>>(
           new FileBackedProtoLog<ProtoT>(filesystem, file_path,
                                          std::move(header))),
-      /*data_loss=*/false};
+      /*data_loss=*/DataLoss::NONE};
 
   return create_result;
 }
@@ -535,15 +565,15 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
   }
   header->max_proto_size = options.max_proto_size;
 
-  bool data_loss = false;
+  DataLoss data_loss = DataLoss::NONE;
   ICING_ASSIGN_OR_RETURN(Crc32 calculated_log_checksum,
                          ComputeChecksum(filesystem, file_path, Crc32(),
                                          sizeof(Header), file_size));
+
   // Double check that the log checksum is the same as the one that was
   // persisted last time. If not, we start recovery logic.
   if (header->log_checksum != calculated_log_checksum.Get()) {
-    // Need to rewind the proto log since the checksums don't match
-    data_loss = true;
+    // Need to rewind the proto log since the checksums don't match.
     // Worst case, we have to rewind the entire log back to just the header
     int64_t last_known_good = sizeof(Header);
 
@@ -559,10 +589,12 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
       // Check if it matches our last rewind state. If so, this becomes our last
       // good state and we can safely truncate and recover from here.
       last_known_good = header->rewind_offset;
+      data_loss = DataLoss::PARTIAL;
     } else {
       // Otherwise, we're going to truncate the entire log and this resets the
       // checksum to an empty log state.
       header->log_checksum = 0;
+      data_loss = DataLoss::COMPLETE;
     }
 
     if (!filesystem->Truncate(file_path.c_str(), last_known_good)) {
@@ -598,6 +630,14 @@ libtextclassifier3::StatusOr<Crc32> FileBackedProtoLog<ProtoT>::ComputeChecksum(
         file_path.c_str(), static_cast<long long>(start)));
   }
 
+  if (end < start) {
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "Ending checksum offset of file '%s' must be greater than start "
+        "'%lld', was '%lld'",
+        file_path.c_str(), static_cast<long long>(start),
+        static_cast<long long>(end)));
+  }
+
   int64_t file_size = filesystem->GetFileSize(file_path.c_str());
   if (end > file_size) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
@@ -607,17 +647,41 @@ libtextclassifier3::StatusOr<Crc32> FileBackedProtoLog<ProtoT>::ComputeChecksum(
         static_cast<long long>(end)));
   }
 
-  for (int i = start; i < end; i += kMmapChunkSize) {
-    // Don't read past the file size.
-    int next_chunk_size = kMmapChunkSize;
-    if ((i + kMmapChunkSize) >= end) {
-      next_chunk_size = end - i;
+  Architecture architecture = GetArchitecture();
+  switch (architecture) {
+    case Architecture::BIT_64: {
+      // Don't mmap in chunks here since mmapping can be harmful on 64-bit
+      // devices where mmap/munmap calls need the mmap write semaphore, which
+      // blocks mmap/munmap/mprotect and all page faults from executing while
+      // they run. On 64-bit devices, this doesn't actually load into memory, it
+      // just makes the file faultable. So the whole file should be ok.
+      // b/185822878.
+      ICING_RETURN_IF_ERROR(mmapped_file.Remap(start, end - start));
+      auto mmap_str = std::string_view(mmapped_file.region(), end - start);
+      new_crc.Append(mmap_str);
+      break;
     }
+    case Architecture::BIT_32:
+      [[fallthrough]];
+    case Architecture::UNKNOWN: {
+      // 32-bit devices only have 4GB of RAM. Mmap in chunks to not use up too
+      // much memory at once. If we're unknown, then also chunk it because we're
+      // not sure what the device can handle.
+      for (int i = start; i < end; i += kMmapChunkSize) {
+        // Don't read past the file size.
+        int next_chunk_size = kMmapChunkSize;
+        if ((i + kMmapChunkSize) >= end) {
+          next_chunk_size = end - i;
+        }
 
-    ICING_RETURN_IF_ERROR(mmapped_file.Remap(i, next_chunk_size));
+        ICING_RETURN_IF_ERROR(mmapped_file.Remap(i, next_chunk_size));
 
-    auto mmap_str = std::string_view(mmapped_file.region(), next_chunk_size);
-    new_crc.Append(mmap_str);
+        auto mmap_str =
+            std::string_view(mmapped_file.region(), next_chunk_size);
+        new_crc.Append(mmap_str);
+      }
+      break;
+    }
   }
 
   return new_crc;
@@ -637,7 +701,8 @@ libtextclassifier3::StatusOr<int64_t> FileBackedProtoLog<ProtoT>::WriteProto(
         static_cast<long long>(proto_size), header_->max_proto_size));
   }
 
-  // At this point, we've guaranteed that proto_size is under kMaxProtoSize (see
+  // At this point, we've guaranteed that proto_size is under kMaxProtoSize
+  // (see
   // ::Create), so we can safely store it in an int.
   int final_size = 0;
 
@@ -702,8 +767,8 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   MemoryMappedFile mmapped_file(*filesystem_, file_path_,
                                 MemoryMappedFile::Strategy::READ_ONLY);
   if (file_offset >= file_size) {
-    // file_size points to the next byte to write at, so subtract one to get the
-    // inclusive, actual size of file.
+    // file_size points to the next byte to write at, so subtract one to get
+    // the inclusive, actual size of file.
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Trying to read from a location, %lld, "
                                       "out of range of the file size, %lld",
@@ -716,10 +781,15 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
       int metadata, ReadProtoMetadata(&mmapped_file, file_offset, file_size));
 
   // Copy out however many bytes it says the proto is
-  int stored_size = metadata & 0x00FFFFFF;
+  int stored_size = GetProtoSize(metadata);
 
   ICING_RETURN_IF_ERROR(
       mmapped_file.Remap(file_offset + sizeof(metadata), stored_size));
+
+  if (IsEmptyBuffer(mmapped_file.region(), mmapped_file.region_size())) {
+    return absl_ports::NotFoundError("The proto data has been erased.");
+  }
+
   google::protobuf::io::ArrayInputStream proto_stream(
       mmapped_file.mutable_region(), stored_size);
 
@@ -733,6 +803,62 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   }
 
   return proto;
+}
+
+template <typename ProtoT>
+libtextclassifier3::Status FileBackedProtoLog<ProtoT>::EraseProto(
+    int64_t file_offset) {
+  int64_t file_size = filesystem_->GetFileSize(fd_.get());
+  if (file_offset >= file_size) {
+    // file_size points to the next byte to write at, so subtract one to get
+    // the inclusive, actual size of file.
+    return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
+        "Trying to erase data at a location, %lld, "
+        "out of range of the file size, %lld",
+        static_cast<long long>(file_offset),
+        static_cast<long long>(file_size - 1)));
+  }
+
+  MemoryMappedFile mmapped_file(
+      *filesystem_, file_path_,
+      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
+
+  // Read out the metadata
+  ICING_ASSIGN_OR_RETURN(
+      int metadata, ReadProtoMetadata(&mmapped_file, file_offset, file_size));
+
+  ICING_RETURN_IF_ERROR(mmapped_file.Remap(file_offset + sizeof(metadata),
+                                           GetProtoSize(metadata)));
+
+  // We need to update the crc checksum if the erased area is before the
+  // rewind position.
+  if (file_offset + sizeof(metadata) < header_->rewind_offset) {
+    // We need to calculate [original string xor 0s].
+    // The xored string is the same as the original string because 0 xor 0 =
+    // 0, 1 xor 0 = 1.
+    const std::string_view xored_str(mmapped_file.region(),
+                                     mmapped_file.region_size());
+
+    Crc32 crc(header_->log_checksum);
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t new_crc,
+        crc.UpdateWithXor(
+            xored_str,
+            /*full_data_size=*/header_->rewind_offset - sizeof(Header),
+            /*position=*/file_offset + sizeof(metadata) - sizeof(Header)));
+
+    header_->log_checksum = new_crc;
+    header_->header_checksum = header_->CalculateHeaderChecksum();
+
+    if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
+                             sizeof(Header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Failed to update header to: ", file_path_));
+    }
+  }
+
+  memset(mmapped_file.mutable_region(), '\0', mmapped_file.region_size());
+  return libtextclassifier3::Status::OK;
 }
 
 template <typename ProtoT>
@@ -781,8 +907,7 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::Iterator::Advance() {
     ICING_ASSIGN_OR_RETURN(
         int metadata,
         ReadProtoMetadata(&mmapped_file_, current_offset_, file_size_));
-    int proto_size = metadata & 0x00FFFFFF;
-    current_offset_ += sizeof(metadata) + proto_size;
+    current_offset_ += sizeof(metadata) + GetProtoSize(metadata);
   }
 
   if (current_offset_ < file_size_) {
@@ -803,7 +928,8 @@ int64_t FileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
 template <typename ProtoT>
 typename FileBackedProtoLog<ProtoT>::Iterator
 FileBackedProtoLog<ProtoT>::GetIterator() {
-  return Iterator(*filesystem_, file_path_, /*initial_offset=*/sizeof(Header));
+  return Iterator(*filesystem_, file_path_,
+                  /*initial_offset=*/sizeof(Header));
 }
 
 template <typename ProtoT>
@@ -829,7 +955,7 @@ libtextclassifier3::StatusOr<int> FileBackedProtoLog<ProtoT>::ReadProtoMetadata(
   ICING_RETURN_IF_ERROR(mmapped_file->Remap(file_offset, metadata_size));
   memcpy(&metadata, mmapped_file->region(), metadata_size);
   // Checks magic number
-  uint8_t stored_k_proto_magic = metadata >> 24;
+  uint8_t stored_k_proto_magic = GetProtoMagic(metadata);
   if (stored_k_proto_magic != kProtoMagic) {
     return absl_ports::InternalError(IcingStringUtil::StringPrintf(
         "Failed to read kProtoMagic, expected %d, actual %d", kProtoMagic,
@@ -842,7 +968,7 @@ template <typename ProtoT>
 libtextclassifier3::Status FileBackedProtoLog<ProtoT>::PersistToDisk() {
   int64_t file_size = filesystem_->GetFileSize(file_path_.c_str());
   if (file_size == header_->rewind_offset) {
-    // No changes made, don't need to update the checksum.
+    // No new protos appended, don't need to update the checksum.
     return libtextclassifier3::Status::OK;
   }
 
@@ -866,7 +992,8 @@ libtextclassifier3::Status FileBackedProtoLog<ProtoT>::PersistToDisk() {
   header_->header_checksum = header_->CalculateHeaderChecksum();
 
   if (!filesystem_->PWrite(fd_.get(), /*offset=*/0, header_.get(),
-                           sizeof(Header))) {
+                           sizeof(Header)) ||
+      !filesystem_->DataSync(fd_.get())) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to update header to: ", file_path_));
   }

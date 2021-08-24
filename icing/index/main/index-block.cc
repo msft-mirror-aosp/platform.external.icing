@@ -51,7 +51,7 @@ libtextclassifier3::Status ValidatePostingListBytes(uint32_t posting_list_bytes,
 
 uint32_t IndexBlock::ApproximateFullPostingListHitsForBlock(
     uint32_t block_size, int posting_list_index_bits) {
-  // Assume 50% compressed and most don't have scores.
+  // Assume 50% compressed and most don't have term frequencies.
   uint32_t bytes_per_hit = sizeof(Hit::Value) / 2;
   return (block_size - sizeof(BlockHeader)) /
          ((1u << posting_list_index_bits) * bytes_per_hit);
@@ -105,11 +105,12 @@ IndexBlock::IndexBlock(MemoryMappedFile mmapped_block)
       posting_lists_start_ptr_(mmapped_block.mutable_region() +
                                sizeof(BlockHeader)),
       block_size_in_bytes_(mmapped_block.region_size()),
-      mmapped_block_(std::move(mmapped_block)) {}
+      mmapped_block_(
+          std::make_unique<MemoryMappedFile>(std::move(mmapped_block))) {}
 
 libtextclassifier3::Status IndexBlock::Reset(int posting_list_bytes) {
-  ICING_RETURN_IF_ERROR(ValidatePostingListBytes(posting_list_bytes,
-                                                 mmapped_block_.region_size()));
+  ICING_RETURN_IF_ERROR(ValidatePostingListBytes(
+      posting_list_bytes, mmapped_block_->region_size()));
   header_->free_list_posting_list_index = kInvalidPostingListIndex;
   header_->next_block_index = kInvalidBlockIndex;
   header_->posting_list_bytes = posting_list_bytes;
