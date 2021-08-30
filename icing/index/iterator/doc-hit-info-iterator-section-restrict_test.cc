@@ -29,6 +29,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -43,8 +44,17 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
 
 class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
  protected:
@@ -56,18 +66,18 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     document_ =
         DocumentBuilder().SetKey("namespace", "uri").SetSchema("email").Build();
 
-    auto type_config = schema_.add_types();
-    type_config->set_schema_type("email");
-
-    // Add an indexed property so we generate section metadata on it
-    auto property = type_config->add_properties();
-    property->set_property_name(indexed_property_);
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    property->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
+    schema_ = SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("email")
+                               // Add an indexed property so we generate section
+                               // metadata on it
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName(indexed_property_)
+                                       .SetDataTypeString(MATCH_EXACT,
+                                                          TOKENIZER_PLAIN)
+                                       .SetCardinality(CARDINALITY_OPTIONAL)))
+                  .Build();
 
     // First and only indexed property, so it gets the first id of 0
     indexed_section_id_ = 0;
@@ -101,6 +111,57 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
   FakeClock fake_clock_;
 };
 
+TEST_F(DocHitInfoIteratorSectionRestrictTest,
+       PopulateMatchedTermsStats_IncludesHitWithMatchingSection) {
+  // Populate the DocumentStore's FilterCache with this document's data
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(document_));
+
+  // Arbitrary section ids for the documents in the DocHitInfoIterators.
+  // Created to test correct section_id_mask behavior.
+  SectionIdMask original_section_id_mask = 0b00000101;  // hits in sections 0, 2
+
+  DocHitInfo doc_hit_info1 = DocHitInfo(document_id);
+  doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
+  doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
+
+  // Create a hit that was found in the indexed section
+  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+
+  auto original_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "hi");
+  original_iterator->set_hit_intersect_section_ids_mask(
+      original_section_id_mask);
+
+  // Filtering for the indexed section name (which has a section id of 0) should
+  // get a result.
+  DocHitInfoIteratorSectionRestrict section_restrict_iterator(
+      std::move(original_iterator), document_store_.get(), schema_store_.get(),
+      /*target_section=*/indexed_property_);
+
+  std::vector<TermMatchInfo> matched_terms_stats;
+  section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
+
+  ICING_EXPECT_OK(section_restrict_iterator.Advance());
+  EXPECT_THAT(section_restrict_iterator.doc_hit_info().document_id(),
+              Eq(document_id));
+  SectionIdMask expected_section_id_mask = 0b00000001;  // hits in sections 0
+  EXPECT_EQ(section_restrict_iterator.hit_intersect_section_ids_mask(),
+            expected_section_id_mask);
+
+  section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_EQ(matched_terms_stats.at(0).term, "hi");
+  std::array<Hit::TermFrequency, kMaxSectionId> expected_term_frequencies{
+      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
+              ElementsAreArray(expected_term_frequencies));
+  EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask,
+            expected_section_id_mask);
+
+  EXPECT_FALSE(section_restrict_iterator.Advance().ok());
+}
+
 TEST_F(DocHitInfoIteratorSectionRestrictTest, EmptyOriginalIterator) {
   std::unique_ptr<DocHitInfoIterator> original_iterator_empty =
       std::make_unique<DocHitInfoIteratorDummy>();
@@ -110,6 +171,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, EmptyOriginalIterator) {
       schema_store_.get(), /*target_section=*/"");
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
+  std::vector<TermMatchInfo> matched_terms_stats;
+  filtered_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
 }
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest, IncludesHitWithMatchingSection) {
@@ -148,6 +212,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, NoMatchingDocumentFilterData) {
       /*target_section=*/"");
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
+  std::vector<TermMatchInfo> matched_terms_stats;
+  section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
 }
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
@@ -171,6 +238,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
       "some_section_name");
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
+  std::vector<TermMatchInfo> matched_terms_stats;
+  section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
 }
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
@@ -192,6 +262,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
       indexed_property_);
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
+  std::vector<TermMatchInfo> matched_terms_stats;
+  section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
 }
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest,
@@ -216,6 +289,9 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
       indexed_property_);
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
+  std::vector<TermMatchInfo> matched_terms_stats;
+  section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, IsEmpty());
 }
 
 TEST_F(DocHitInfoIteratorSectionRestrictTest, GetNumBlocksInspected) {

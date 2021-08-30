@@ -81,7 +81,7 @@ class IndexProcessor {
   //   INTERNAL_ERROR if any other errors occur
   libtextclassifier3::Status IndexDocument(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      NativePutDocumentStats* put_document_stats = nullptr);
+      PutDocumentStatsProto* put_document_stats = nullptr);
 
  private:
   IndexProcessor(const Normalizer* normalizer, Index* index,
