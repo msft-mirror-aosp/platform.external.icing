@@ -168,6 +168,93 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
 }
 BENCHMARK(BM_DoesDocumentExistBenchmark);
 
+void BM_Put(benchmark::State& state) {
+  Filesystem filesystem;
+  Clock clock;
+
+  std::string directory = GetTestTempDir() + "/icing";
+  DestructibleDirectory ddir(filesystem, directory);
+
+  std::string document_store_dir = directory + "/store";
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, directory, &clock);
+
+  filesystem.CreateDirectoryRecursively(document_store_dir.data());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem, document_store_dir, &clock,
+                            schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = CreateDocument("namespace", "uri");
+
+  for (auto s : state) {
+    // It's ok that this is the same document over and over. We'll create a new
+    // document_id for it and still insert the proto into the underlying log.
+    benchmark::DoNotOptimize(document_store->Put(document));
+  }
+}
+BENCHMARK(BM_Put);
+
+void BM_GetSameDocument(benchmark::State& state) {
+  Filesystem filesystem;
+  Clock clock;
+
+  std::string directory = GetTestTempDir() + "/icing";
+  DestructibleDirectory ddir(filesystem, directory);
+
+  std::string document_store_dir = directory + "/store";
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, directory, &clock);
+
+  filesystem.CreateDirectoryRecursively(document_store_dir.data());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem, document_store_dir, &clock,
+                            schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK(document_store->Put(CreateDocument("namespace", "uri")));
+
+  for (auto s : state) {
+    benchmark::DoNotOptimize(document_store->Get("namespace", "uri"));
+  }
+}
+BENCHMARK(BM_GetSameDocument);
+
+void BM_Delete(benchmark::State& state) {
+  Filesystem filesystem;
+  Clock clock;
+
+  std::string directory = GetTestTempDir() + "/icing";
+  DestructibleDirectory ddir(filesystem, directory);
+
+  std::string document_store_dir = directory + "/store";
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, directory, &clock);
+
+  filesystem.CreateDirectoryRecursively(document_store_dir.data());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem, document_store_dir, &clock,
+                            schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = CreateDocument("namespace", "uri");
+
+  for (auto s : state) {
+    state.PauseTiming();
+    ICING_ASSERT_OK(document_store->Put(document));
+    state.ResumeTiming();
+
+    benchmark::DoNotOptimize(document_store->Delete("namespace", "uri"));
+  }
+}
+BENCHMARK(BM_Delete);
+
 }  // namespace
 
 }  // namespace lib
