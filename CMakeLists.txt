@@ -15,6 +15,9 @@
 cmake_minimum_required(VERSION 3.10.2)
 
 add_definitions("-DICING_REVERSE_JNI_SEGMENTATION=1")
+set(VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/icing/jni.lds")
+set(CMAKE_SHARED_LINKER_FLAGS
+    "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -Wl,--version-script=${VERSION_SCRIPT}")
 
 set(
     Protobuf_PREBUILTS_DIR
@@ -45,7 +48,7 @@ add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
 # Compile libandroidicu
 set(ICU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../icu/libandroidicu")
 set(ICU_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/icu-target")
-add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
+add_subdirectory("${ICU_SOURCE_DIR}/static_shim" ${ICU_TARGET_BINARY_DIR})
 
 # Glob Icing proto sources. Results look like this: icing/proto/document.proto
 file(
