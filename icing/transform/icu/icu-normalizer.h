@@ -39,6 +39,8 @@ namespace lib {
 // details.
 class IcuNormalizer : public Normalizer {
  public:
+  static constexpr std::string_view kName = "IcuNormalizer";
+
   // Creates a normalizer with the subcomponents it needs. max_term_byte_size
   // enforces the max size of text after normalization, text will be truncated
   // if exceeds the max size.

@@ -310,8 +310,6 @@ libtextclassifier3::Status LiteIndex::AddHit(uint32_t term_id, const Hit& hit) {
     return absl_ports::ResourceExhaustedError("Hit buffer is full!");
   }
 
-  header_->set_last_added_docid(hit.document_id());
-
   TermIdHitPair term_id_hit_pair(term_id, hit);
   uint32_t cur_size = header_->cur_size();
   TermIdHitPair::Value* valp =
@@ -365,7 +363,7 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
       last_document_id = document_id;
     }
     if (hits_out != nullptr) {
-      hits_out->back().UpdateSection(hit.section_id(), hit.score());
+      hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
     }
   }
   return count;
@@ -394,26 +392,36 @@ void LiteIndex::GetDebugInfo(int verbosity, std::string* out) const {
 }
 
 libtextclassifier3::StatusOr<int64_t> LiteIndex::GetElementsSize() const {
-  int64_t header_and_hit_buffer_file_size =
-      filesystem_->GetFileSize(hit_buffer_fd_.get());
-
-  if (header_and_hit_buffer_file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get element size of the LiteIndex's header and hit buffer");
+  IndexStorageInfoProto storage_info = GetStorageInfo(IndexStorageInfoProto());
+  if (storage_info.lite_index_hit_buffer_size() == -1 ||
+      storage_info.lite_index_lexicon_size() == -1) {
+    return absl_ports::AbortedError(
+        "Failed to get size of LiteIndex's members.");
   }
-
-  int64_t lexicon_disk_usage = lexicon_.GetElementsSize();
-  if (lexicon_disk_usage == IcingFilesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get element size of LiteIndex's lexicon");
-  }
-
   // On initialization, we grow the file to a padded size first. So this size
   // won't count towards the size taken up by elements
   size_t header_padded_size = IcingMMapper::page_aligned_size(header_size());
+  return storage_info.lite_index_hit_buffer_size() - header_padded_size +
+         storage_info.lite_index_lexicon_size();
+}
 
-  return header_and_hit_buffer_file_size - header_padded_size +
-         lexicon_disk_usage;
+IndexStorageInfoProto LiteIndex::GetStorageInfo(
+    IndexStorageInfoProto storage_info) const {
+  int64_t header_and_hit_buffer_file_size =
+      filesystem_->GetFileSize(hit_buffer_fd_.get());
+  if (header_and_hit_buffer_file_size != Filesystem::kBadFileSize) {
+    storage_info.set_lite_index_hit_buffer_size(
+        header_and_hit_buffer_file_size);
+  } else {
+    storage_info.set_lite_index_hit_buffer_size(-1);
+  }
+  int64_t lexicon_disk_usage = lexicon_.GetElementsSize();
+  if (lexicon_disk_usage != Filesystem::kBadFileSize) {
+    storage_info.set_lite_index_lexicon_size(lexicon_disk_usage);
+  } else {
+    storage_info.set_lite_index_lexicon_size(-1);
+  }
+  return storage_info;
 }
 
 uint32_t LiteIndex::Seek(uint32_t term_id) {
@@ -448,7 +456,7 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
   // Binary search for our term_id.  Make sure we get the first
   // element.  Using kBeginSortValue ensures this for the hit value.
   TermIdHitPair term_id_hit_pair(
-      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kMaxHitScore));
+      term_id, Hit(Hit::kMaxDocumentIdSortValue, Hit::kDefaultTermFrequency));
 
   const TermIdHitPair::Value* array =
       hit_buffer_.array_cast<TermIdHitPair::Value>();

@@ -14,15 +14,21 @@
 
 #include "icing/result/result-retriever.h"
 
+#include <string_view>
+#include <utility>
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/result/page-result-state.h"
+#include "icing/result/projection-tree.h"
+#include "icing/result/projector.h"
 #include "icing/result/snippet-context.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
 libtextclassifier3::StatusOr<std::unique_ptr<ResultRetriever>>
 ResultRetriever::Create(const DocumentStore* doc_store,
                         const SchemaStore* schema_store,
@@ -56,6 +62,9 @@ ResultRetriever::RetrieveResults(
     remaining_num_to_snippet = 0;
   }
 
+  auto wildcard_projection_tree_itr =
+      page_result_state.projection_tree_map.find(
+          std::string(ProjectionTree::kSchemaTypeWildcard));
   for (const auto& scored_document_hit :
        page_result_state.scored_document_hits) {
     libtextclassifier3::StatusOr<DocumentProto> document_or =
@@ -74,19 +83,31 @@ ResultRetriever::RetrieveResults(
       }
     }
 
+    DocumentProto document = std::move(document_or).ValueOrDie();
+    // Apply projection
+    auto itr = page_result_state.projection_tree_map.find(document.schema());
+    if (itr != page_result_state.projection_tree_map.end()) {
+      projector::Project(itr->second.root().children, &document);
+    } else if (wildcard_projection_tree_itr !=
+               page_result_state.projection_tree_map.end()) {
+      projector::Project(wildcard_projection_tree_itr->second.root().children,
+                         &document);
+    }
+
     SearchResultProto::ResultProto result;
     // Add the snippet if requested.
     if (snippet_context.snippet_spec.num_matches_per_property() > 0 &&
         remaining_num_to_snippet > search_results.size()) {
       SnippetProto snippet_proto = snippet_retriever_->RetrieveSnippet(
           snippet_context.query_terms, snippet_context.match_type,
-          snippet_context.snippet_spec, document_or.ValueOrDie(),
+          snippet_context.snippet_spec, document,
           scored_document_hit.hit_section_id_mask());
       *result.mutable_snippet() = std::move(snippet_proto);
     }
 
     // Add the document, itself.
-    *result.mutable_document() = std::move(document_or).ValueOrDie();
+    *result.mutable_document() = std::move(document);
+    result.set_score(scored_document_hit.score());
     search_results.push_back(std::move(result));
   }
   return search_results;

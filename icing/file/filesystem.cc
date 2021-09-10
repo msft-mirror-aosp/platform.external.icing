@@ -464,6 +464,69 @@ bool Filesystem::Write(const char* filename, const void* data,
   return success;
 }
 
+bool Filesystem::CopyFile(const char* src, const char* dst) const {
+  ScopedFd src_fd(OpenForRead(src));
+
+  std::string dir = GetDirname(dst);
+  if (!CreateDirectoryRecursively(dir.c_str())) {
+    return false;
+  }
+  ScopedFd dst_fd(OpenForWrite(dst));
+
+  if (!src_fd.is_valid() || !dst_fd.is_valid()) {
+    return false;
+  }
+  uint64_t size = GetFileSize(*src_fd);
+  std::unique_ptr<uint8_t[]> buf = std::make_unique<uint8_t[]>(size);
+  if (!Read(*src_fd, buf.get(), size)) {
+    return false;
+  }
+  return Write(*dst_fd, buf.get(), size);
+}
+
+bool Filesystem::CopyDirectory(const char* src_dir, const char* dst_dir,
+                               bool recursive) const {
+  DIR* dir = opendir(src_dir);
+  if (!dir) {
+    LogOpenError("Unable to open directory ", src_dir, ": ", errno);
+    return false;
+  }
+
+  dirent* p;
+  // readdir's implementation seems to be thread safe.
+  while ((p = readdir(dir)) != nullptr) {
+    std::string file_name(p->d_name);
+    if (file_name == "." || file_name == "..") {
+      continue;
+    }
+
+    std::string full_src_path = absl_ports::StrCat(src_dir, "/", p->d_name);
+    std::string full_dst_path = absl_ports::StrCat(dst_dir, "/", p->d_name);
+
+    // Directories are copied when writing a non-directory file, so no
+    // explicit copying of a directory is required.
+    if (p->d_type != DT_DIR) {
+      if (!CopyFile(full_src_path.c_str(), full_dst_path.c_str())) {
+        return false;
+      }
+    }
+
+    // Recurse down directories, if requested.
+    if (recursive && (p->d_type == DT_DIR)) {
+      std::string src_sub_dir = absl_ports::StrCat(src_dir, "/", p->d_name);
+      std::string dst_sub_dir = absl_ports::StrCat(dst_dir, "/", p->d_name);
+      if (!CopyDirectory(src_sub_dir.c_str(), dst_sub_dir.c_str(), recursive)) {
+        return false;
+      }
+    }
+  }
+  if (closedir(dir) != 0) {
+    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Error closing %s: %s",
+                                                      src_dir, strerror(errno));
+  }
+  return true;
+}
+
 bool Filesystem::PWrite(int fd, off_t offset, const void* data,
                         size_t data_size) const {
   size_t write_len = data_size;
