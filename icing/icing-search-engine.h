@@ -455,6 +455,10 @@ class IcingSearchEngine {
   // Resets all members that are created during Initialize.
   void ResetMembers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Resets all members that are created during Initialize, deletes all
+  // underlying files and initializes a fresh index.
+  ResetResultProto ResetInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Checks for the existence of the init marker file. If the failed init count
   // exceeds kMaxUnsuccessfulInitAttempts, all data is deleted and the index is
   // initialized from scratch. The updated count (original failed init count + 1
