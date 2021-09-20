@@ -74,7 +74,7 @@ foreach(FILE ${Icing_PROTO_FILES})
           "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.h"
         COMMAND ${Protobuf_PROTOC_PATH}
           --proto_path "${CMAKE_CURRENT_SOURCE_DIR}/proto"
-          --cpp_out ${Icing_PROTO_GEN_DIR}
+          --cpp_out "lite:${Icing_PROTO_GEN_DIR}"
           ${FILE}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/proto/${FILE}
@@ -127,4 +127,4 @@ target_include_directories(icing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(icing PRIVATE ${Icing_PROTO_GEN_DIR})
 target_include_directories(icing PRIVATE "${Protobuf_SOURCE_DIR}/src")
 target_include_directories(icing PRIVATE "${ICU_SOURCE_DIR}/include")
-target_link_libraries(icing protobuf::libprotobuf libandroidicu log)
+target_link_libraries(icing protobuf::libprotobuf-lite libandroidicu log z)
