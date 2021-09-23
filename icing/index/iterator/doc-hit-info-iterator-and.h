@@ -47,13 +47,16 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
   std::string ToString() const override;
 
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo> *matched_terms_stats) const override {
+      std::vector<TermMatchInfo> *matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
     if (doc_hit_info_.document_id() == kInvalidDocumentId) {
       // Current hit isn't valid, return.
       return;
     }
-    short_->PopulateMatchedTermsStats(matched_terms_stats);
-    long_->PopulateMatchedTermsStats(matched_terms_stats);
+    short_->PopulateMatchedTermsStats(matched_terms_stats,
+                                      filtering_section_mask);
+    long_->PopulateMatchedTermsStats(matched_terms_stats,
+                                     filtering_section_mask);
   }
 
  private:
@@ -78,13 +81,15 @@ class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
   std::string ToString() const override;
 
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo> *matched_terms_stats) const override {
+      std::vector<TermMatchInfo> *matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
     if (doc_hit_info_.document_id() == kInvalidDocumentId) {
       // Current hit isn't valid, return.
       return;
     }
     for (size_t i = 0; i < iterators_.size(); ++i) {
-      iterators_.at(i)->PopulateMatchedTermsStats(matched_terms_stats);
+      iterators_.at(i)->PopulateMatchedTermsStats(matched_terms_stats,
+                                                  filtering_section_mask);
     }
   }
 
