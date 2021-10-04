@@ -36,6 +36,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/ranker.h"
 #include "icing/store/document-id.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -71,7 +72,7 @@ IcingDynamicTrie::Options GetMainLexiconOptions() {
 }
 
 // Helper function to check if a term is in the given namespaces.
-// TODO(samzheng): Implement a method PropertyReadersAll.HasAnyProperty().
+// TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
 bool IsTermInNamespaces(
     const IcingDynamicTrie::PropertyReadersAll& property_reader,
     uint32_t value_index, const std::vector<NamespaceId>& namespace_ids) {
@@ -89,20 +90,24 @@ bool IsTermInNamespaces(
 }
 
 enum class MergeAction { kTakeLiteTerm, kTakeMainTerm, kMergeTerms };
-std::vector<TermMetadata> MergeTermMetadatas(
+
+// Merge the TermMetadata from lite index and main index. If the term exists in
+// both index, sum up its hit count and push it to the term heap.
+// The heap is a min-heap. So that we can avoid some push operation but the time
+// complexity is O(NlgK) which N is total number of term and K is num_to_return.
+std::vector<TermMetadata> MergeAndRankTermMetadatas(
     std::vector<TermMetadata> lite_term_metadata_list,
     std::vector<TermMetadata> main_term_metadata_list, int num_to_return) {
-  std::vector<TermMetadata> merged_term_metadata_list;
-  merged_term_metadata_list.reserve(
+  std::vector<TermMetadata> merged_term_metadata_heap;
+  merged_term_metadata_heap.reserve(
       std::min(lite_term_metadata_list.size() + main_term_metadata_list.size(),
                static_cast<size_t>(num_to_return)));
 
   auto lite_term_itr = lite_term_metadata_list.begin();
   auto main_term_itr = main_term_metadata_list.begin();
   MergeAction merge_action;
-  while (merged_term_metadata_list.size() < num_to_return &&
-         (lite_term_itr != lite_term_metadata_list.end() ||
-          main_term_itr != main_term_metadata_list.end())) {
+  while (lite_term_itr != lite_term_metadata_list.end() ||
+         main_term_itr != main_term_metadata_list.end()) {
     // Get pointers to the next metadatas in each group, if available
     // Determine how to merge.
     if (main_term_itr == main_term_metadata_list.end()) {
@@ -119,23 +124,32 @@ std::vector<TermMetadata> MergeTermMetadatas(
     }
     switch (merge_action) {
       case MergeAction::kTakeLiteTerm:
-        merged_term_metadata_list.push_back(std::move(*lite_term_itr));
+        PushToTermHeap(std::move(*lite_term_itr), num_to_return,
+                       merged_term_metadata_heap);
         ++lite_term_itr;
         break;
       case MergeAction::kTakeMainTerm:
-        merged_term_metadata_list.push_back(std::move(*main_term_itr));
+        PushToTermHeap(std::move(*main_term_itr), num_to_return,
+                       merged_term_metadata_heap);
         ++main_term_itr;
         break;
       case MergeAction::kMergeTerms:
         int total_est_hit_count =
             lite_term_itr->hit_count + main_term_itr->hit_count;
-        merged_term_metadata_list.emplace_back(
-            std::move(lite_term_itr->content), total_est_hit_count);
+        PushToTermHeap(TermMetadata(std::move(lite_term_itr->content),
+                         total_est_hit_count),
+                       num_to_return, merged_term_metadata_heap);
         ++lite_term_itr;
         ++main_term_itr;
         break;
     }
   }
+  // Reverse the list since we pop them from a min heap and we need to return in
+  // decreasing order.
+  std::vector<TermMetadata> merged_term_metadata_list =
+      PopAllTermsFromHeap(merged_term_metadata_heap);
+  std::reverse(merged_term_metadata_list.begin(),
+               merged_term_metadata_list.end());
   return merged_term_metadata_list;
 }
 
@@ -164,7 +178,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
                         icing_filesystem));
   return std::unique_ptr<Index>(new Index(options, std::move(term_id_codec),
                                           std::move(lite_index),
-                                          std::move(main_index)));
+                                          std::move(main_index), filesystem));
 }
 
 libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
@@ -214,8 +228,7 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 Index::FindLiteTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids,
-                             int num_to_return) {
+                             const std::vector<NamespaceId>& namespace_ids) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
                                            prefix.c_str());
@@ -224,7 +237,7 @@ Index::FindLiteTermsByPrefix(const std::string& prefix,
   IcingDynamicTrie::PropertyReadersAll property_reader(lite_index_->lexicon());
 
   std::vector<TermMetadata> term_metadata_list;
-  while (term_iterator.IsValid() && term_metadata_list.size() < num_to_return) {
+  while (term_iterator.IsValid()) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
     // Skips the terms that don't exist in the given namespaces. We won't skip
@@ -244,13 +257,6 @@ Index::FindLiteTermsByPrefix(const std::string& prefix,
 
     term_iterator.Advance();
   }
-  if (term_iterator.IsValid()) {
-    // We exited the loop above because we hit the num_to_return limit.
-    ICING_LOG(WARNING) << "Ran into limit of " << num_to_return
-                       << " retrieving suggestions for " << prefix
-                       << ". Some suggestions may not be returned and others "
-                          "may be misranked.";
-  }
   return term_metadata_list;
 }
 
@@ -264,21 +270,30 @@ Index::FindTermsByPrefix(const std::string& prefix,
   }
 
   // Get results from the LiteIndex.
-  ICING_ASSIGN_OR_RETURN(
-      std::vector<TermMetadata> lite_term_metadata_list,
-      FindLiteTermsByPrefix(prefix, namespace_ids, num_to_return));
-
+  ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> lite_term_metadata_list,
+                         FindLiteTermsByPrefix(prefix, namespace_ids));
   // Append results from the MainIndex.
-  ICING_ASSIGN_OR_RETURN(
-      std::vector<TermMetadata> main_term_metadata_list,
-      main_index_->FindTermsByPrefix(prefix, namespace_ids, num_to_return));
+  ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> main_term_metadata_list,
+                         main_index_->FindTermsByPrefix(prefix, namespace_ids));
 
-  return MergeTermMetadatas(std::move(lite_term_metadata_list),
-                            std::move(main_term_metadata_list), num_to_return);
+  return MergeAndRankTermMetadatas(std::move(lite_term_metadata_list),
+                                   std::move(main_term_metadata_list),
+                                   num_to_return);
 }
 
-libtextclassifier3::Status Index::Editor::AddHit(const char* term,
-                                                 Hit::Score score) {
+IndexStorageInfoProto Index::GetStorageInfo() const {
+  IndexStorageInfoProto storage_info;
+  int64_t directory_size = filesystem_->GetDiskUsage(options_.base_dir.c_str());
+  if (directory_size != Filesystem::kBadFileSize) {
+    storage_info.set_index_size(directory_size);
+  } else {
+    storage_info.set_index_size(-1);
+  }
+  storage_info = lite_index_->GetStorageInfo(std::move(storage_info));
+  return main_index_->GetStorageInfo(std::move(storage_info));
+}
+
+libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
   // Step 1: See if this term is already in the lexicon
   uint32_t tvi;
   auto tvi_or = lite_index_->GetTermId(term);
@@ -287,8 +302,10 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
   if (tvi_or.ok()) {
     tvi = tvi_or.ValueOrDie();
     if (seen_tokens_.find(tvi) != seen_tokens_.end()) {
-      ICING_VLOG(1) << "A hit for term " << term
-                    << " has already been added. Skipping.";
+      ICING_VLOG(1) << "Updating term frequency for term " << term;
+      if (seen_tokens_[tvi] != Hit::kMaxTermFrequency) {
+        ++seen_tokens_[tvi];
+      }
       return libtextclassifier3::Status::OK;
     }
     ICING_VLOG(1) << "Term " << term
@@ -302,14 +319,20 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
     ICING_ASSIGN_OR_RETURN(
         tvi, lite_index_->InsertTerm(term, term_match_type_, namespace_id_));
   }
-  seen_tokens_.insert(tvi);
+  // Token seen for the first time in the current document.
+  seen_tokens_[tvi] = 1;
+  return libtextclassifier3::Status::OK;
+}
 
-  // Step 3: Add the hit itself
-  Hit hit(section_id_, document_id_, score,
-          term_match_type_ == TermMatchType::PREFIX);
-  ICING_ASSIGN_OR_RETURN(uint32_t term_id,
-                         term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  return lite_index_->AddHit(term_id, hit);
+libtextclassifier3::Status Index::Editor::IndexAllBufferedTerms() {
+  for (auto itr = seen_tokens_.begin(); itr != seen_tokens_.end(); itr++) {
+    Hit hit(section_id_, document_id_, /*term_frequency=*/itr->second,
+            term_match_type_ == TermMatchType::PREFIX);
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t term_id, term_id_codec_->EncodeTvi(itr->first, TviType::LITE));
+    ICING_RETURN_IF_ERROR(lite_index_->AddHit(term_id, hit));
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

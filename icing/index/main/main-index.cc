@@ -121,14 +121,34 @@ libtextclassifier3::Status MainIndex::Init(
 }
 
 libtextclassifier3::StatusOr<int64_t> MainIndex::GetElementsSize() const {
-  int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
-  int64_t index_elt_size = flash_index_storage_->GetElementsSize();
-  if (lexicon_elt_size == IcingFilesystem::kBadFileSize ||
-      index_elt_size == IcingFilesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get element size of LiteIndex's lexicon");
+  IndexStorageInfoProto storage_info = GetStorageInfo(IndexStorageInfoProto());
+  if (storage_info.main_index_storage_size() == -1 ||
+      storage_info.main_index_lexicon_size() == -1) {
+    return absl_ports::AbortedError(
+        "Failed to get size of MainIndex's members.");
   }
-  return lexicon_elt_size + index_elt_size;
+  return storage_info.main_index_storage_size() +
+         storage_info.main_index_lexicon_size();
+}
+
+IndexStorageInfoProto MainIndex::GetStorageInfo(
+    IndexStorageInfoProto storage_info) const {
+  int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
+  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
+    storage_info.set_main_index_lexicon_size(lexicon_elt_size);
+  } else {
+    storage_info.set_main_index_lexicon_size(-1);
+  }
+  int64_t index_elt_size = flash_index_storage_->GetElementsSize();
+  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
+    storage_info.set_main_index_storage_size(index_elt_size);
+  } else {
+    storage_info.set_main_index_storage_size(-1);
+  }
+  storage_info.set_main_index_block_size(flash_index_storage_->block_size());
+  storage_info.set_num_blocks(flash_index_storage_->num_blocks());
+  storage_info.set_min_free_fraction(flash_index_storage_->min_free_fraction());
+  return storage_info;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListAccessor>>
@@ -173,11 +193,12 @@ MainIndex::GetAccessorForPrefixTerm(const std::string& prefix) {
   ICING_ASSIGN_OR_RETURN(PostingListAccessor pl_accessor,
                          PostingListAccessor::CreateFromExisting(
                              flash_index_storage_.get(), posting_list_id));
-  GetPrefixAccessorResult result = {std::make_unique<PostingListAccessor>(std::move(pl_accessor)), exact};
+  GetPrefixAccessorResult result = {
+      std::make_unique<PostingListAccessor>(std::move(pl_accessor)), exact};
   return result;
 }
 
-// TODO(samzheng): Implement a method PropertyReadersAll.HasAnyProperty().
+// TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
 bool IsTermInNamespaces(
     const IcingDynamicTrie::PropertyReadersAll& property_reader,
     uint32_t value_index, const std::vector<NamespaceId>& namespace_ids) {
@@ -196,8 +217,7 @@ bool IsTermInNamespaces(
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids,
-                             int num_to_return) {
+                             const std::vector<NamespaceId>& namespace_ids) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
@@ -205,7 +225,7 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
   IcingDynamicTrie::PropertyReadersAll property_reader(*main_lexicon_);
 
   std::vector<TermMetadata> term_metadata_list;
-  while (term_iterator.IsValid() && term_metadata_list.size() < num_to_return) {
+  while (term_iterator.IsValid()) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
     // Skips the terms that don't exist in the given namespaces. We won't skip
@@ -228,13 +248,6 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
     term_metadata_list.emplace_back(term_iterator.GetKey(), approx_hit_count);
 
     term_iterator.Advance();
-  }
-  if (term_iterator.IsValid()) {
-    // We exited the loop above because we hit the num_to_return limit.
-    ICING_LOG(WARNING) << "Ran into limit of " << num_to_return
-                       << " retrieving suggestions for " << prefix
-                       << ". Some suggestions may not be returned and others "
-                          "may be misranked.";
   }
   return term_metadata_list;
 }
@@ -578,7 +591,8 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     }
 
     // A backfill hit is a prefix hit in a prefix section.
-    const Hit backfill_hit(hit.section_id(), hit.document_id(), hit.score(),
+    const Hit backfill_hit(hit.section_id(), hit.document_id(),
+                           hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
                            /*is_prefix_hit=*/true);
     if (backfill_hit == last_added_hit) {

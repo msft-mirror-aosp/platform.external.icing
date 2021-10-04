@@ -27,9 +27,16 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/util/status-macros.h"
 
 namespace {
+
+// JNI string constants
+// Matches field name of IcingSearchEngine#nativePointer.
+const char kNativePointerField[] = "nativePointer";
+
 bool ParseProtoFromJniByteArray(JNIEnv* env, jbyteArray bytes,
                                 google::protobuf::MessageLite* protobuf) {
   int bytes_size = env->GetArrayLength(bytes);
@@ -57,8 +64,11 @@ jbyteArray SerializeProtoToJniByteArray(
   return ret;
 }
 
-icing::lib::IcingSearchEngine* GetIcingSearchEnginePointer(
-    jlong native_pointer) {
+icing::lib::IcingSearchEngine* GetIcingSearchEnginePointer(JNIEnv* env,
+                                                           jobject object) {
+  jclass cls = env->GetObjectClass(object);
+  jfieldID field_id = env->GetFieldID(cls, kNativePointerField, "J");
+  jlong native_pointer = env->GetLongField(object, field_id);
   return reinterpret_cast<icing::lib::IcingSearchEngine*>(native_pointer);
 }
 
@@ -96,11 +106,19 @@ Java_com_google_android_icing_IcingSearchEngine_nativeCreate(
   return reinterpret_cast<jlong>(icing);
 }
 
+JNIEXPORT void JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeDestroy(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+  delete icing;
+}
+
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeInitialize(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+    JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::InitializeResultProto initialize_result_proto =
       icing->Initialize();
@@ -110,10 +128,10 @@ Java_com_google_android_icing_IcingSearchEngine_nativeInitialize(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeSetSchema(
-    JNIEnv* env, jclass clazz, jlong native_pointer, jbyteArray schema_bytes,
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray schema_bytes,
     jboolean ignore_errors_and_delete_documents) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::SchemaProto schema_proto;
   if (!ParseProtoFromJniByteArray(env, schema_bytes, &schema_proto)) {
@@ -129,9 +147,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSetSchema(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetSchema(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+    JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::GetSchemaResultProto get_schema_result_proto = icing->GetSchema();
 
@@ -140,9 +158,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetSchema(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetSchemaType(
-    JNIEnv* env, jclass clazz, jlong native_pointer, jstring schema_type) {
+    JNIEnv* env, jclass clazz, jobject object, jstring schema_type) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   const char* native_schema_type =
       env->GetStringUTFChars(schema_type, /*isCopy=*/nullptr);
@@ -154,10 +172,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetSchemaType(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativePut(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jbyteArray document_bytes) {
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray document_bytes) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::DocumentProto document_proto;
   if (!ParseProtoFromJniByteArray(env, document_bytes, &document_proto)) {
@@ -173,25 +190,48 @@ Java_com_google_android_icing_IcingSearchEngine_nativePut(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGet(
-    JNIEnv* env, jclass clazz, jlong native_pointer, jstring name_space,
-    jstring uri) {
+    JNIEnv* env, jclass clazz, jobject object, jstring name_space, jstring uri,
+    jbyteArray result_spec_bytes) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   const char* native_name_space =
       env->GetStringUTFChars(name_space, /*isCopy=*/nullptr);
   const char* native_uri = env->GetStringUTFChars(uri, /*isCopy=*/nullptr);
+  icing::lib::GetResultSpecProto get_result_spec;
+  if (!ParseProtoFromJniByteArray(env, result_spec_bytes, &get_result_spec)) {
+    ICING_LOG(ERROR) << "Failed to parse GetResultSpecProto in nativeGet";
+    return nullptr;
+  }
   icing::lib::GetResultProto get_result_proto =
-      icing->Get(native_name_space, native_uri);
+      icing->Get(native_name_space, native_uri, get_result_spec);
 
   return SerializeProtoToJniByteArray(env, get_result_proto);
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+Java_com_google_android_icing_IcingSearchEngine_nativeReportUsage(
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray usage_report_bytes) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::UsageReport usage_report;
+  if (!ParseProtoFromJniByteArray(env, usage_report_bytes, &usage_report)) {
+    ICING_LOG(ERROR) << "Failed to parse UsageReport in nativeReportUsage";
+    return nullptr;
+  }
+
+  icing::lib::ReportUsageResultProto report_usage_result_proto =
+      icing->ReportUsage(usage_report);
+
+  return SerializeProtoToJniByteArray(env, report_usage_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::GetAllNamespacesResultProto get_all_namespaces_result_proto =
       icing->GetAllNamespaces();
@@ -201,10 +241,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jlong next_page_token) {
+    JNIEnv* env, jclass clazz, jobject object, jlong next_page_token) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::SearchResultProto next_page_result_proto =
       icing->GetNextPage(next_page_token);
@@ -214,10 +253,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
 
 JNIEXPORT void JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeInvalidateNextPageToken(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jlong next_page_token) {
+    JNIEnv* env, jclass clazz, jobject object, jlong next_page_token) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing->InvalidateNextPageToken(next_page_token);
 
@@ -226,11 +264,10 @@ Java_com_google_android_icing_IcingSearchEngine_nativeInvalidateNextPageToken(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jbyteArray search_spec_bytes, jbyteArray scoring_spec_bytes,
-    jbyteArray result_spec_bytes) {
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray search_spec_bytes,
+    jbyteArray scoring_spec_bytes, jbyteArray result_spec_bytes) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::SearchSpecProto search_spec_proto;
   if (!ParseProtoFromJniByteArray(env, search_spec_bytes, &search_spec_proto)) {
@@ -259,10 +296,10 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeDelete(
-    JNIEnv* env, jclass clazz, jlong native_pointer, jstring name_space,
+    JNIEnv* env, jclass clazz, jobject object, jstring name_space,
     jstring uri) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   const char* native_name_space =
       env->GetStringUTFChars(name_space, /*isCopy=*/nullptr);
@@ -275,9 +312,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDelete(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByNamespace(
-    JNIEnv* env, jclass clazz, jlong native_pointer, jstring name_space) {
+    JNIEnv* env, jclass clazz, jobject object, jstring name_space) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   const char* native_name_space =
       env->GetStringUTFChars(name_space, /*isCopy=*/nullptr);
@@ -289,9 +326,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByNamespace(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeDeleteBySchemaType(
-    JNIEnv* env, jclass clazz, jlong native_pointer, jstring schema_type) {
+    JNIEnv* env, jclass clazz, jobject object, jstring schema_type) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   const char* native_schema_type =
       env->GetStringUTFChars(schema_type, /*isCopy=*/nullptr);
@@ -303,17 +340,16 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteBySchemaType(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
-    JNIEnv* env, jclass clazz, jlong native_pointer,
-    jbyteArray search_spec_bytes) {
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray search_spec_bytes) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::SearchSpecProto search_spec_proto;
   if (!ParseProtoFromJniByteArray(env, search_spec_bytes, &search_spec_proto)) {
     ICING_LOG(ERROR) << "Failed to parse SearchSpecProto in nativeSearch";
     return nullptr;
   }
-  icing::lib::DeleteResultProto delete_result_proto =
+  icing::lib::DeleteByQueryResultProto delete_result_proto =
       icing->DeleteByQuery(search_spec_proto);
 
   return SerializeProtoToJniByteArray(env, delete_result_proto);
@@ -321,21 +357,28 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativePersistToDisk(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+    JNIEnv* env, jclass clazz, jobject object, jint persist_type_code) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
+  if (!icing::lib::PersistType::Code_IsValid(persist_type_code)) {
+    ICING_LOG(ERROR) << persist_type_code
+                     << " is an invalid value for PersistType::Code";
+    return nullptr;
+  }
+  icing::lib::PersistType::Code persist_type_code_enum =
+      static_cast<icing::lib::PersistType::Code>(persist_type_code);
   icing::lib::PersistToDiskResultProto persist_to_disk_result_proto =
-      icing->PersistToDisk();
+      icing->PersistToDisk(persist_type_code_enum);
 
   return SerializeProtoToJniByteArray(env, persist_to_disk_result_proto);
 }
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeOptimize(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+    JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::OptimizeResultProto optimize_result_proto = icing->Optimize();
 
@@ -344,9 +387,9 @@ Java_com_google_android_icing_IcingSearchEngine_nativeOptimize(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetOptimizeInfo(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+    JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::GetOptimizeInfoResultProto get_optimize_info_result_proto =
       icing->GetOptimizeInfo();
@@ -355,10 +398,22 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetOptimizeInfo(
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_google_android_icing_IcingSearchEngine_nativeReset(
-    JNIEnv* env, jclass clazz, jlong native_pointer) {
+Java_com_google_android_icing_IcingSearchEngine_nativeGetStorageInfo(
+    JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
-      GetIcingSearchEnginePointer(native_pointer);
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::StorageInfoResultProto storage_info_result_proto =
+      icing->GetStorageInfo();
+
+  return SerializeProtoToJniByteArray(env, storage_info_result_proto);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeReset(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
 
   icing::lib::ResetResultProto reset_result_proto = icing->Reset();
 

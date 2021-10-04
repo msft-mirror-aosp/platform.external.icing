@@ -30,8 +30,8 @@ namespace lib {
 
 namespace {
 
-uint32_t GetScoreByteSize(const Hit &hit) {
-  return hit.has_score() ? sizeof(Hit::Score) : 0;
+uint32_t GetTermFrequencyByteSize(const Hit &hit) {
+  return hit.has_term_frequency() ? sizeof(Hit::TermFrequency) : 0;
 }
 
 }  // namespace
@@ -153,21 +153,21 @@ libtextclassifier3::Status PostingListUsed::PrependHitToAlmostFull(
   uint64_t delta = cur.value() - hit.value();
   uint8_t delta_buf[VarInt::kMaxEncodedLen64];
   size_t delta_len = VarInt::Encode(delta, delta_buf);
-  uint32_t cur_score_bytes = GetScoreByteSize(cur);
+  uint32_t cur_term_frequency_bytes = GetTermFrequencyByteSize(cur);
 
   uint32_t pad_end = GetPadEnd(posting_list_utils::kSpecialHitsSize);
 
-  if (pad_end >=
-      posting_list_utils::kSpecialHitsSize + delta_len + cur_score_bytes) {
-    // Pad area has enough space for delta and score of existing hit
-    // (cur). Write delta at pad_end - delta_len - cur_score_bytes.
+  if (pad_end >= posting_list_utils::kSpecialHitsSize + delta_len +
+                     cur_term_frequency_bytes) {
+    // Pad area has enough space for delta and term_frequency of existing hit
+    // (cur). Write delta at pad_end - delta_len - cur_term_frequency_bytes.
     uint8_t *delta_offset =
-        posting_list_buffer_ + pad_end - delta_len - cur_score_bytes;
+        posting_list_buffer_ + pad_end - delta_len - cur_term_frequency_bytes;
     memcpy(delta_offset, delta_buf, delta_len);
-    // Now copy score.
-    Hit::Score score = cur.score();
-    uint8_t *score_offset = delta_offset + delta_len;
-    memcpy(score_offset, &score, cur_score_bytes);
+    // Now copy term_frequency.
+    Hit::TermFrequency term_frequency = cur.term_frequency();
+    uint8_t *term_frequency_offset = delta_offset + delta_len;
+    memcpy(term_frequency_offset, &term_frequency, cur_term_frequency_bytes);
 
     // Now first hit is the new hit, at special position 1. Safe to ignore the
     // return value because 1 < kNumSpecialHits.
@@ -224,12 +224,12 @@ libtextclassifier3::Status PostingListUsed::PrependHitToNotFull(
   uint64_t delta = cur_value - hit.value();
   uint8_t delta_buf[VarInt::kMaxEncodedLen64];
   size_t delta_len = VarInt::Encode(delta, delta_buf);
-  uint32_t hit_score_bytes = GetScoreByteSize(hit);
+  uint32_t hit_term_frequency_bytes = GetTermFrequencyByteSize(hit);
 
   // offset now points to one past the end of the first hit.
   offset += sizeof(Hit::Value);
   if (posting_list_utils::kSpecialHitsSize + sizeof(Hit::Value) + delta_len +
-          hit_score_bytes <=
+          hit_term_frequency_bytes <=
       offset) {
     // Enough space for delta in compressed area.
 
@@ -237,15 +237,15 @@ libtextclassifier3::Status PostingListUsed::PrependHitToNotFull(
     offset -= delta_len;
     memcpy(posting_list_buffer_ + offset, delta_buf, delta_len);
 
-    // Prepend new hit with (possibly) its score. We know that there is room
-    // for 'hit' because of the if statement above, so calling ValueOrDie is
-    // safe.
+    // Prepend new hit with (possibly) its term_frequency. We know that there is
+    // room for 'hit' because of the if statement above, so calling ValueOrDie
+    // is safe.
     offset = PrependHitUncompressed(hit, offset).ValueOrDie();
     // offset is guaranteed to be valid here. So it's safe to ignore the return
     // value. The if above will guarantee that offset >= kSpecialHitSize and <
     // size_in_bytes_ because the if ensures that there is enough room between
     // offset and kSpecialHitSize to fit the delta of the previous hit, any
-    // score and the uncompressed hit.
+    // term_frequency and the uncompressed hit.
     set_start_byte_offset(offset);
   } else if (posting_list_utils::kSpecialHitsSize + delta_len <= offset) {
     // Only have space for delta. The new hit must be put in special
@@ -273,14 +273,11 @@ libtextclassifier3::Status PostingListUsed::PrependHitToNotFull(
     // move first hit to special position 1 and put new hit in
     // special position 0.
     Hit cur(cur_value);
-    if (cur.has_score()) {
-      // offset is < kSpecialHitsSize + delta_len. delta_len is at most 5 bytes.
-      // Therefore, offset must be less than kSpecialHitSize + 5. Since posting
-      // list size must be divisible by sizeof(Hit) (5), it is guaranteed that
-      // offset < size_in_bytes, so it is safe to call ValueOrDie here.
-      cur = Hit(cur_value, ReadScore(offset).ValueOrDie());
-      offset += sizeof(Hit::Score);
-    }
+    // offset is < kSpecialHitsSize + delta_len. delta_len is at most 5 bytes.
+    // Therefore, offset must be less than kSpecialHitSize + 5. Since posting
+    // list size must be divisible by sizeof(Hit) (5), it is guaranteed that
+    // offset < size_in_bytes, so it is safe to ignore the return value here.
+    ConsumeTermFrequencyIfPresent(&cur, &offset);
     // Safe to ignore the return value of PadToEnd because offset must be less
     // than size_in_bytes_. Otherwise, this function already would have returned
     // FAILED_PRECONDITION.
@@ -437,18 +434,17 @@ libtextclassifier3::Status PostingListUsed::GetHitsInternal(
       val += delta;
     }
     Hit hit(val);
-    if (hit.has_score()) {
-      auto score_or = ReadScore(offset);
-      if (!score_or.ok()) {
-        // This posting list has been corrupted somehow. The first hit of the
-        // posting list claims to have a score, but there's no more room in the
-        // posting list for that score to exist. Return an empty vector and zero
-        // to indicate no hits retrieved.
+    libtextclassifier3::Status status =
+        ConsumeTermFrequencyIfPresent(&hit, &offset);
+    if (!status.ok()) {
+      // This posting list has been corrupted somehow. The first hit of the
+      // posting list claims to have a term frequency, but there's no more room
+      // in the posting list for that term frequency to exist. Return an empty
+      // vector and zero to indicate no hits retrieved.
+      if (out != nullptr) {
         out->clear();
-        return absl_ports::InternalError("Posting list has been corrupted!");
       }
-      hit = Hit(val, score_or.ValueOrDie());
-      offset += sizeof(Hit::Score);
+      return absl_ports::InternalError("Posting list has been corrupted!");
     }
     if (out != nullptr) {
       out->push_back(hit);
@@ -475,21 +471,21 @@ libtextclassifier3::Status PostingListUsed::GetHitsInternal(
         offset -= sizeof(Hit::Value);
         memcpy(posting_list_buffer_ + offset, &val, sizeof(Hit::Value));
       } else {
-        // val won't fit in compressed area. Also see if there is a score.
+        // val won't fit in compressed area. Also see if there is a
+        // term_frequency.
         Hit hit(val);
-        if (hit.has_score()) {
-          auto score_or = ReadScore(offset);
-          if (!score_or.ok()) {
-            // This posting list has been corrupted somehow. The first hit of
-            // the posting list claims to have a score, but there's no more room
-            // in the posting list for that score to exist. Return an empty
-            // vector and zero to indicate no hits retrieved. Do not pop
-            // anything.
+        libtextclassifier3::Status status =
+            ConsumeTermFrequencyIfPresent(&hit, &offset);
+        if (!status.ok()) {
+          // This posting list has been corrupted somehow. The first hit of
+          // the posting list claims to have a term frequency, but there's no
+          // more room in the posting list for that term frequency to exist.
+          // Return an empty vector and zero to indicate no hits retrieved. Do
+          // not pop anything.
+          if (out != nullptr) {
             out->clear();
-            return absl_ports::InternalError(
-                "Posting list has been corrupted!");
           }
-          hit = Hit(val, score_or.ValueOrDie());
+          return absl_ports::InternalError("Posting list has been corrupted!");
         }
         // Okay to ignore the return value here because 1 < kNumSpecialHits.
         mutable_this->set_special_hit(1, hit);
@@ -640,7 +636,7 @@ bool PostingListUsed::set_start_byte_offset(uint32_t offset) {
 
 libtextclassifier3::StatusOr<uint32_t> PostingListUsed::PrependHitUncompressed(
     const Hit &hit, uint32_t offset) {
-  if (hit.has_score()) {
+  if (hit.has_term_frequency()) {
     if (offset < posting_list_utils::kSpecialHitsSize + sizeof(Hit)) {
       return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
           "Not enough room to prepend Hit at offset %d.", offset));
@@ -659,16 +655,23 @@ libtextclassifier3::StatusOr<uint32_t> PostingListUsed::PrependHitUncompressed(
   return offset;
 }
 
-libtextclassifier3::StatusOr<Hit::Score> PostingListUsed::ReadScore(
-    uint32_t offset) const {
-  if (offset + sizeof(Hit::Score) > size_in_bytes_) {
+libtextclassifier3::Status PostingListUsed::ConsumeTermFrequencyIfPresent(
+    Hit *hit, uint32_t *offset) const {
+  if (!hit->has_term_frequency()) {
+    // No term frequency to consume. Everything is fine.
+    return libtextclassifier3::Status::OK;
+  }
+  if (*offset + sizeof(Hit::TermFrequency) > size_in_bytes_) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "offset %d must not point past the end of the posting list of size %d.",
-        offset, size_in_bytes_));
+        *offset, size_in_bytes_));
   }
-  Hit::Score score;
-  memcpy(&score, posting_list_buffer_ + offset, sizeof(Hit::Score));
-  return score;
+  Hit::TermFrequency term_frequency;
+  memcpy(&term_frequency, posting_list_buffer_ + *offset,
+         sizeof(Hit::TermFrequency));
+  *hit = Hit(hit->value(), term_frequency);
+  *offset += sizeof(Hit::TermFrequency);
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

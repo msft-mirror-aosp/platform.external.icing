@@ -32,6 +32,7 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -126,6 +127,16 @@ class Index {
     return main_index_->last_added_document_id();
   }
 
+  // Sets last_added_document_id to document_id so long as document_id >
+  // last_added_document_id()
+  void set_last_added_document_id(DocumentId document_id) {
+    DocumentId lite_document_id = lite_index_->last_added_document_id();
+    if (lite_document_id == kInvalidDocumentId ||
+        document_id >= lite_document_id) {
+      lite_index_->set_last_added_document_id(document_id);
+    }
+  }
+
   // Returns debug information for the index in out.
   // verbosity <= 0, simplest debug information - just the lexicons and lite
   //                 index.
@@ -150,6 +161,12 @@ class Index {
                            main_index_->GetElementsSize());
     return lite_index_size + main_index_size;
   }
+
+  // Calculates the StorageInfo for the Index.
+  //
+  // If an IO error occurs while trying to calculate the value for a field, then
+  // that field will be set to -1.
+  IndexStorageInfoProto GetStorageInfo() const;
 
   // Create an iterator to iterate through all doc hit infos in the index that
   // match the term. section_id_mask can be set to ignore hits from sections not
@@ -197,14 +214,16 @@ class Index {
           namespace_id_(namespace_id),
           section_id_(section_id) {}
 
-    libtextclassifier3::Status AddHit(const char* term,
-                                      Hit::Score score = Hit::kMaxHitScore);
+    // Buffer the term in seen_tokens_.
+    libtextclassifier3::Status BufferTerm(const char* term);
+    // Index all the terms stored in seen_tokens_.
+    libtextclassifier3::Status IndexAllBufferedTerms();
 
    private:
     // The Editor is able to store previously seen terms as TermIds. This is
     // is more efficient than a client doing this externally because TermIds are
     // not exposed to clients.
-    std::unordered_set<uint32_t> seen_tokens_;
+    std::unordered_map<uint32_t, Hit::TermFrequency> seen_tokens_;
     const TermIdCodec* term_id_codec_;
     LiteIndex* lite_index_;
     DocumentId document_id_;
@@ -240,20 +259,21 @@ class Index {
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
         std::unique_ptr<LiteIndex> lite_index,
-        std::unique_ptr<MainIndex> main_index)
+        std::unique_ptr<MainIndex> main_index, const Filesystem* filesystem)
       : lite_index_(std::move(lite_index)),
         main_index_(std::move(main_index)),
         options_(options),
-        term_id_codec_(std::move(term_id_codec)) {}
+        term_id_codec_(std::move(term_id_codec)),
+        filesystem_(filesystem) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
-      int num_to_return);
+      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
 
   std::unique_ptr<LiteIndex> lite_index_;
   std::unique_ptr<MainIndex> main_index_;
   const Options options_;
   std::unique_ptr<TermIdCodec> term_id_codec_;
+  const Filesystem* filesystem_;
 };
 
 }  // namespace lib

@@ -34,7 +34,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 5
+// Next tag: 6
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that uniquely identifies the structured, logical
   // schema being defined.
@@ -51,12 +51,21 @@ message SchemaTypeConfigProto {
   // easier.
   repeated PropertyConfigProto properties = 4;
 
+  // Version is an arbitrary number that the client may use to keep track of
+  // different incarnations of the schema. Icing library imposes no requirements
+  // on this field and will not validate it in anyway. If a client calls
+  // SetSchema with a schema that contains one or more new version numbers, then
+  // those version numbers will be updated so long as the SetSchema call
+  // succeeds. Clients are free to leave the version number unset, in which case
+  // it will default to value == 0.
+  optional int32 version = 5;
+
   reserved 2, 3;
 }
 
-// Describes how a single property should be indexed.
+// Describes how a string property should be indexed.
 // Next tag: 3
-message IndexingConfig {
+message StringIndexingConfig {
   // Indicates how the content of this property should be matched in the index.
   //
   // TermMatchType.Code=UNKNOWN
@@ -87,10 +96,22 @@ message IndexingConfig {
   optional TokenizerType.Code tokenizer_type = 2;
 }
 
+// Describes how a document property should be indexed.
+// Next tag: 2
+message DocumentIndexingConfig {
+  // OPTIONAL: Whether nested properties within the document property should be
+  // indexed. If true, then the nested properties will be indexed according to
+  // the property's own indexing configurations. If false, nested documents'
+  // properties will not be indexed even if they have an indexing configuration.
+  //
+  // The default value is false.
+  optional bool index_nested_properties = 1;
+}
+
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 6
+// Next tag: 7
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -161,11 +182,12 @@ message PropertyConfigProto {
   }
   optional Cardinality.Code cardinality = 4;
 
-  // OPTIONAL: Properties that do not set the indexing config will not be
-  // indexed.  DOCUMENT data types shouldn't set an indexing config; Icing lib
-  // will recurse and check the nested schema type's properties' indexing
-  // configs themselves.
-  optional IndexingConfig indexing_config = 5;
+  // OPTIONAL: Describes how string properties should be indexed. String
+  // properties that do not set the indexing config will not be indexed.
+  optional StringIndexingConfig string_indexing_config = 5;
+
+  // OPTIONAL: Describes how document properties should be indexed.
+  optional DocumentIndexingConfig document_indexing_config = 6;
 }
 
 // List of all supported types constitutes the schema used by Icing.
@@ -175,7 +197,7 @@ message SchemaProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 4
+// Next tag: 8
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -199,6 +221,21 @@ message SetSchemaResultProto {
   // documents that fail validation against the new schema types would also be
   // deleted.
   repeated string incompatible_schema_types = 3;
+
+  // Schema types that did not exist in the previous schema and were added with
+  // the new schema type.
+  repeated string new_schema_types = 4;
+
+  // Schema types that were changed in a way that was backwards compatible and
+  // didn't invalidate the index.
+  repeated string fully_compatible_changed_schema_types = 5;
+
+  // Schema types that were changed in a way that was backwards compatible, but
+  // invalidated the index.
+  repeated string index_incompatible_changed_schema_types = 6;
+
+  // Overall time used for the function call.
+  optional int32 latency_ms = 7;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

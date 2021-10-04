@@ -15,6 +15,8 @@
 #ifndef ICING_TESTING_COMMON_MATCHERS_H_
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
+#include <cmath>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -23,6 +25,7 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
@@ -32,10 +35,11 @@ namespace lib {
 
 // Used to match Token(Token::Type type, std::string_view text)
 MATCHER_P2(EqualsToken, type, text, "") {
+  std::string arg_string(arg.text.data(), arg.text.length());
   if (arg.type != type || arg.text != text) {
     *result_listener << IcingStringUtil::StringPrintf(
         "(Expected: type=%d, text=\"%s\". Actual: type=%d, text=\"%s\")", type,
-        &text[0], arg.type, arg.text.data());
+        text, arg.type, arg_string.c_str());
     return false;
   }
   return true;
@@ -57,12 +61,50 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
          actual.hit_section_ids_mask() == section_mask;
 }
 
+// Used to match a DocHitInfo
+MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
+           section_ids_to_term_frequencies_map, "") {
+  const DocHitInfo& actual = arg;
+  SectionIdMask section_mask = kSectionIdMaskNone;
+
+  bool term_frequency_as_expected = true;
+  std::vector<Hit::TermFrequency> expected_tfs;
+  std::vector<Hit::TermFrequency> actual_tfs;
+  for (auto itr = section_ids_to_term_frequencies_map.begin();
+       itr != section_ids_to_term_frequencies_map.end(); itr++) {
+    SectionId section_id = itr->first;
+    section_mask |= 1U << section_id;
+    expected_tfs.push_back(itr->second);
+    actual_tfs.push_back(actual.hit_term_frequency(section_id));
+    if (actual.hit_term_frequency(section_id) != itr->second) {
+      term_frequency_as_expected = false;
+    }
+  }
+  std::string actual_term_frequencies = absl_ports::StrCat(
+      "[", absl_ports::StrJoin(actual_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  std::string expected_term_frequencies = absl_ports::StrCat(
+      "[",
+      absl_ports::StrJoin(expected_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  *result_listener << IcingStringUtil::StringPrintf(
+      "(actual is {document_id=%d, section_mask=%d, term_frequencies=%s}, but "
+      "expected was "
+      "{document_id=%d, section_mask=%d, term_frequencies=%s}.)",
+      actual.document_id(), actual.hit_section_ids_mask(),
+      actual_term_frequencies.c_str(), document_id, section_mask,
+      expected_term_frequencies.c_str());
+  return actual.document_id() == document_id &&
+         actual.hit_section_ids_mask() == section_mask &&
+         term_frequency_as_expected;
+}
+
 // Used to match a ScoredDocumentHit
 MATCHER_P(EqualsScoredDocumentHit, expected_scored_document_hit, "") {
   if (arg.document_id() != expected_scored_document_hit.document_id() ||
       arg.hit_section_id_mask() !=
           expected_scored_document_hit.hit_section_id_mask() ||
-      arg.score() != expected_scored_document_hit.score()) {
+      std::fabs(arg.score() - expected_scored_document_hit.score()) > 1e-6) {
     *result_listener << IcingStringUtil::StringPrintf(
         "Expected: document_id=%d, hit_section_id_mask=%d, score=%.2f. Actual: "
         "document_id=%d, hit_section_id_mask=%d, score=%.2f",
@@ -79,7 +121,6 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
   const SchemaStore::SetSchemaResult& actual = arg;
 
   if (actual.success == expected.success &&
-      actual.index_incompatible == expected.index_incompatible &&
       actual.old_schema_type_ids_changed ==
           expected.old_schema_type_ids_changed &&
       actual.schema_types_deleted_by_name ==
@@ -89,7 +130,12 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_incompatible_by_name ==
           expected.schema_types_incompatible_by_name &&
       actual.schema_types_incompatible_by_id ==
-          expected.schema_types_incompatible_by_id) {
+          expected.schema_types_incompatible_by_id &&
+      actual.schema_types_new_by_name == expected.schema_types_new_by_name &&
+      actual.schema_types_changed_fully_compatible_by_name ==
+          expected.schema_types_changed_fully_compatible_by_name &&
+      actual.schema_types_index_incompatible_by_name ==
+          expected.schema_types_index_incompatible_by_name) {
     return true;
   }
 
@@ -149,37 +195,82 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
                           absl_ports::NumberFormatter()),
       "]");
 
+  // Format schema_types_new_by_name
+  std::string actual_schema_types_new_by_name = absl_ports::StrCat(
+      "[", absl_ports::StrJoin(actual.schema_types_new_by_name, ","), "]");
+
+  std::string expected_schema_types_new_by_name = absl_ports::StrCat(
+      "[", absl_ports::StrJoin(expected.schema_types_new_by_name, ","), "]");
+
+  // Format schema_types_changed_fully_compatible_by_name
+  std::string actual_schema_types_changed_fully_compatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(
+              actual.schema_types_changed_fully_compatible_by_name, ","),
+          "]");
+
+  std::string expected_schema_types_changed_fully_compatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(
+              expected.schema_types_changed_fully_compatible_by_name, ","),
+          "]");
+
+  // Format schema_types_deleted_by_id
+  std::string actual_schema_types_index_incompatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(actual.schema_types_index_incompatible_by_name,
+                              ","),
+          "]");
+
+  std::string expected_schema_types_index_incompatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(expected.schema_types_index_incompatible_by_name,
+                              ","),
+          "]");
+
   *result_listener << IcingStringUtil::StringPrintf(
       "\nExpected {\n"
       "\tsuccess=%d,\n"
-      "\tindex_incompatible=%d,\n"
       "\told_schema_type_ids_changed=%s,\n"
       "\tschema_types_deleted_by_name=%s,\n"
       "\tschema_types_deleted_by_id=%s,\n"
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
+      "\tschema_types_new_by_name=%s,\n"
+      "\tschema_types_index_incompatible_by_name=%s,\n"
+      "\tschema_types_changed_fully_compatible_by_name=%s\n"
       "}\n"
       "Actual {\n"
       "\tsuccess=%d,\n"
-      "\tindex_incompatible=%d,\n"
       "\told_schema_type_ids_changed=%s,\n"
       "\tschema_types_deleted_by_name=%s,\n"
       "\tschema_types_deleted_by_id=%s,\n"
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
+      "\tschema_types_new_by_name=%s,\n"
+      "\tschema_types_index_incompatible_by_name=%s,\n"
+      "\tschema_types_changed_fully_compatible_by_name=%s\n"
       "}\n",
-      expected.success, expected.index_incompatible,
-      expected_old_schema_type_ids_changed.c_str(),
+      expected.success, expected_old_schema_type_ids_changed.c_str(),
       expected_schema_types_deleted_by_name.c_str(),
       expected_schema_types_deleted_by_id.c_str(),
       expected_schema_types_incompatible_by_name.c_str(),
-      expected_schema_types_incompatible_by_id.c_str(), actual.success,
-      actual.index_incompatible, actual_old_schema_type_ids_changed.c_str(),
+      expected_schema_types_incompatible_by_id.c_str(),
+      expected_schema_types_new_by_name.c_str(),
+      expected_schema_types_changed_fully_compatible_by_name.c_str(),
+      expected_schema_types_index_incompatible_by_name.c_str(), actual.success,
+      actual_old_schema_type_ids_changed.c_str(),
       actual_schema_types_deleted_by_name.c_str(),
       actual_schema_types_deleted_by_id.c_str(),
       actual_schema_types_incompatible_by_name.c_str(),
-      actual_schema_types_incompatible_by_id.c_str());
-
+      actual_schema_types_incompatible_by_id.c_str(),
+      actual_schema_types_new_by_name.c_str(),
+      actual_schema_types_changed_fully_compatible_by_name.c_str(),
+      actual_schema_types_index_incompatible_by_name.c_str());
   return false;
 }
 
@@ -224,7 +315,7 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   }
 }
 
-string ProtoStatusCodeToString(StatusProto::Code code) {
+std::string ProtoStatusCodeToString(StatusProto::Code code) {
   switch (code) {
     case StatusProto::OK:
       return "OK";
@@ -331,6 +422,26 @@ MATCHER_P2(ProtoStatusIs, status_code, error_matcher, "") {
     return false;
   }
   return ExplainMatchResult(error_matcher, arg.message(), result_listener);
+}
+
+MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
+  SearchResultProto actual_copy = arg;
+  actual_copy.clear_query_stats();
+  actual_copy.clear_debug_info();
+  for (SearchResultProto::ResultProto& result :
+       *actual_copy.mutable_results()) {
+    result.clear_score();
+  }
+
+  SearchResultProto expected_copy = expected;
+  expected_copy.clear_query_stats();
+  expected_copy.clear_debug_info();
+  for (SearchResultProto::ResultProto& result :
+       *expected_copy.mutable_results()) {
+    result.clear_score();
+  }
+  return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
+                            result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status

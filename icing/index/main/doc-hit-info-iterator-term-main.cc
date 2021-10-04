@@ -54,8 +54,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
     // next posting list in the chain.
     libtextclassifier3::Status status = RetrieveMoreHits();
     if (!status.ok()) {
-      ICING_LOG(ERROR) << "Failed to retrieve more hits "
-                       << status.error_message();
+      if (!absl_ports::IsNotFound(status)) {
+        // NOT_FOUND is expected to happen (not every term will be in the main
+        // index!). Other errors are worth logging.
+        ICING_LOG(ERROR)
+            << "Encountered unexpected failure while retrieving  hits "
+            << status.error_message();
+      }
       return absl_ports::ResourceExhaustedError(
           "No more DocHitInfos in iterator");
     }
@@ -110,7 +115,8 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
         hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
       cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
     }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(), hit.score());
+    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(),
+                                               hit.term_frequency());
   }
   return libtextclassifier3::Status::OK;
 }
@@ -158,7 +164,8 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
         hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
       cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
     }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(), hit.score());
+    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(),
+                                               hit.term_frequency());
   }
   return libtextclassifier3::Status::OK;
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Google LLC
+// Copyright (C) 2020 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,32 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_UTIL_TIMER_H_
-#define ICING_UTIL_TIMER_H_
+#ifndef ICING_STORE_CORPUS_ID_H_
+#define ICING_STORE_CORPUS_ID_H_
 
 #include <cstdint>
-
-#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
 
-// A util class to calculate the elapsed time.
-class Timer {
- public:
-  // Timer starts.
-  Timer() : start_timestamp_milliseconds_(GetSteadyTimeMilliseconds()) {}
+// Identifier for corpus, i.e. a <namespace, schema_type> pair>, in
+// DocumentProto. Generated in DocumentStore.
+using CorpusId = int32_t;
 
-  // Returns the elapsed time from when timer started.
-  int64_t GetElapsedMilliseconds() {
-    return GetSteadyTimeMilliseconds() - start_timestamp_milliseconds_;
-  }
-
- private:
-  int64_t start_timestamp_milliseconds_;
-};
+inline constexpr CorpusId kInvalidCorpusId = -1;
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_UTIL_TIMER_H_
+#endif  // ICING_STORE_CORPUS_ID_H_
