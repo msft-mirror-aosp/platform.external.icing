@@ -34,26 +34,28 @@ bool DocHitInfo::operator<(const DocHitInfo& other) const {
   }
   // Doesn't matter which way we compare this array, as long as
   // DocHitInfo is unequal when it is unequal.
-  return memcmp(max_hit_score_, other.max_hit_score_, sizeof(max_hit_score_)) <
-         0;
+  return memcmp(hit_term_frequency_, other.hit_term_frequency_,
+                sizeof(hit_term_frequency_)) < 0;
 }
 
-void DocHitInfo::UpdateSection(SectionId section_id, Hit::Score hit_score) {
+void DocHitInfo::UpdateSection(SectionId section_id,
+                               Hit::TermFrequency hit_term_frequency) {
   SectionIdMask section_id_mask = (1u << section_id);
-  if (hit_section_ids_mask() & section_id_mask) {
-    max_hit_score_[section_id] =
-        std::max(max_hit_score_[section_id], hit_score);
-  } else {
-    max_hit_score_[section_id] = hit_score;
-    hit_section_ids_mask_ |= section_id_mask;
+  if ((hit_section_ids_mask() & section_id_mask)) {
+    // If the sectionId is already embedded in the hit_section_ids_mask,
+    // then the term frequencies should always match. So there is no
+    // need to update anything.
+    return;
   }
+  hit_term_frequency_[section_id] = hit_term_frequency;
+  hit_section_ids_mask_ |= section_id_mask;
 }
 
 void DocHitInfo::MergeSectionsFrom(const DocHitInfo& other) {
   SectionIdMask other_mask = other.hit_section_ids_mask();
   while (other_mask) {
     SectionId section_id = __builtin_ctz(other_mask);
-    UpdateSection(section_id, other.max_hit_score(section_id));
+    UpdateSection(section_id, other.hit_term_frequency(section_id));
     other_mask &= ~(1u << section_id);
   }
 }

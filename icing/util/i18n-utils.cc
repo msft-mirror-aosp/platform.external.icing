@@ -116,6 +116,8 @@ bool IsAscii(char c) { return U8_IS_SINGLE((uint8_t)c); }
 
 bool IsAscii(UChar32 c) { return U8_LENGTH(c) == 1; }
 
+bool IsAlphaNumeric(UChar32 c) { return u_isalnum(c); }
+
 int GetUtf8Length(UChar32 c) { return U8_LENGTH(c); }
 
 int GetUtf16Length(UChar32 c) { return U16_LENGTH(c); }
@@ -156,7 +158,7 @@ void AppendUchar32ToUtf8(std::string* utf8_string, UChar32 uchar) {
   uint8_t utf8_buffer[4];  // U8_APPEND writes 0 to 4 bytes
 
   int utf8_index = 0;
-  UBool has_error = FALSE;
+  UBool has_error = false;
 
   // utf8_index is advanced to the end of the contents if successful
   U8_APPEND(utf8_buffer, utf8_index, sizeof(utf8_buffer), uchar, has_error);
