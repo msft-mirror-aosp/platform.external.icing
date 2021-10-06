@@ -48,7 +48,10 @@ class FileBackedProtoLogTest : public ::testing::Test {
   // https://stackoverflow.com/a/47368753
   FileBackedProtoLogTest() {}
 
-  void SetUp() override { file_path_ = GetTestTempDir() + "/proto_log"; }
+  void SetUp() override {
+    file_path_ = GetTestTempDir() + "/proto_log";
+    filesystem_.DeleteFile(file_path_.c_str());
+  }
 
   void TearDown() override { filesystem_.DeleteFile(file_path_.c_str()); }
 
@@ -74,7 +77,7 @@ TEST_F(FileBackedProtoLogTest, Initialize) {
           FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                      max_proto_size_)));
   EXPECT_THAT(create_result.proto_log, NotNull());
-  EXPECT_FALSE(create_result.data_loss);
+  EXPECT_FALSE(create_result.has_data_loss());
 
   // Can't recreate the same file with different options.
   ASSERT_THAT(FileBackedProtoLog<DocumentProto>::Create(
@@ -93,7 +96,7 @@ TEST_F(FileBackedProtoLogTest, WriteProtoTooLarge) {
           FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                      max_proto_size)));
   auto proto_log = std::move(create_result.proto_log);
-  EXPECT_FALSE(create_result.data_loss);
+  ASSERT_FALSE(create_result.has_data_loss());
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -110,7 +113,7 @@ TEST_F(FileBackedProtoLogTest, ReadProtoWrongKProtoMagic) {
           FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                      max_proto_size_)));
   auto proto_log = std::move(create_result.proto_log);
-  EXPECT_FALSE(create_result.data_loss);
+  ASSERT_FALSE(create_result.has_data_loss());
 
   // Write a proto
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
@@ -144,7 +147,7 @@ TEST_F(FileBackedProtoLogTest, ReadWriteUncompressedProto) {
             FileBackedProtoLog<DocumentProto>::Options(
                 /*compress_in=*/false, max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     // Write the first proto
     DocumentProto document1 =
@@ -191,7 +194,7 @@ TEST_F(FileBackedProtoLogTest, ReadWriteUncompressedProto) {
             FileBackedProtoLog<DocumentProto>::Options(
                 /*compress_in=*/false, max_proto_size_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     // Write a third proto
     DocumentProto document3 =
@@ -213,7 +216,7 @@ TEST_F(FileBackedProtoLogTest, ReadWriteCompressedProto) {
             FileBackedProtoLog<DocumentProto>::Options(
                 /*compress_in=*/true, max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     // Write the first proto
     DocumentProto document1 =
@@ -260,7 +263,7 @@ TEST_F(FileBackedProtoLogTest, ReadWriteCompressedProto) {
             FileBackedProtoLog<DocumentProto>::Options(
                 /*compress_in=*/true, max_proto_size_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     // Write a third proto
     DocumentProto document3 =
@@ -280,7 +283,7 @@ TEST_F(FileBackedProtoLogTest, CorruptHeader) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto recreated_proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    EXPECT_FALSE(create_result.has_data_loss());
 
     int corrupt_offset =
         offsetof(FileBackedProtoLog<DocumentProto>::Header, rewind_offset);
@@ -309,7 +312,7 @@ TEST_F(FileBackedProtoLogTest, CorruptContent) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    EXPECT_FALSE(create_result.has_data_loss());
 
     DocumentProto document =
         DocumentBuilder().SetKey("namespace1", "uri1").Build();
@@ -335,7 +338,8 @@ TEST_F(FileBackedProtoLogTest, CorruptContent) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    ASSERT_TRUE(create_result.data_loss);
+    ASSERT_TRUE(create_result.has_data_loss());
+    ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
 
     // Lost everything in the log since the rewind position doesn't help if
     // there's been data corruption within the persisted region
@@ -360,7 +364,7 @@ TEST_F(FileBackedProtoLogTest, PersistToDisk) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     // Write and persist the first proto
     ICING_ASSERT_OK_AND_ASSIGN(document1_offset,
@@ -404,7 +408,8 @@ TEST_F(FileBackedProtoLogTest, PersistToDisk) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    ASSERT_TRUE(create_result.data_loss);
+    ASSERT_TRUE(create_result.has_data_loss());
+    ASSERT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
 
     // Check that everything was persisted across instances
     ASSERT_THAT(proto_log->ReadProto(document1_offset),
@@ -430,7 +435,7 @@ TEST_F(FileBackedProtoLogTest, Iterator) {
           FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                      max_proto_size_)));
   auto proto_log = std::move(create_result.proto_log);
-  EXPECT_FALSE(create_result.data_loss);
+  ASSERT_FALSE(create_result.has_data_loss());
 
   {
     // Empty iterator
@@ -481,7 +486,7 @@ TEST_F(FileBackedProtoLogTest, ComputeChecksum) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     ICING_EXPECT_OK(proto_log->WriteProto(document));
 
@@ -499,7 +504,7 @@ TEST_F(FileBackedProtoLogTest, ComputeChecksum) {
             FileBackedProtoLog<DocumentProto>::Options(compress_,
                                                        max_proto_size_)));
     auto proto_log = std::move(create_result.proto_log);
-    EXPECT_FALSE(create_result.data_loss);
+    ASSERT_FALSE(create_result.has_data_loss());
 
     // Checksum should be consistent across instances
     EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Eq(checksum)));
@@ -511,6 +516,166 @@ TEST_F(FileBackedProtoLogTest, ComputeChecksum) {
     // Check that modifying the log leads to a different checksum
     ICING_EXPECT_OK(proto_log->WriteProto(document));
     EXPECT_THAT(proto_log->ComputeChecksum(), IsOkAndHolds(Not(Eq(checksum))));
+  }
+}
+
+TEST_F(FileBackedProtoLogTest, EraseProtoShouldSetZero) {
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      FileBackedProtoLog<DocumentProto>::CreateResult create_result,
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          FileBackedProtoLog<DocumentProto>::Options(compress_,
+                                                     max_proto_size_)));
+  auto proto_log = std::move(create_result.proto_log);
+  ASSERT_FALSE(create_result.has_data_loss());
+
+  // Writes and erases proto
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t document1_offset,
+                             proto_log->WriteProto(document1));
+  ICING_ASSERT_OK(proto_log->EraseProto(document1_offset));
+
+  // Checks if the erased area is set to 0.
+  int64_t file_size = filesystem_.GetFileSize(file_path_.c_str());
+  MemoryMappedFile mmapped_file(filesystem_, file_path_,
+                                MemoryMappedFile::Strategy::READ_ONLY);
+
+  // document1_offset + sizeof(int) is the start byte of the proto where
+  // sizeof(int) is the size of the proto metadata.
+  mmapped_file.Remap(document1_offset + sizeof(int), file_size - 1);
+  for (size_t i = 0; i < mmapped_file.region_size(); ++i) {
+    ASSERT_THAT(mmapped_file.region()[i], Eq(0));
+  }
+}
+
+TEST_F(FileBackedProtoLogTest, EraseProtoShouldReturnNotFound) {
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      FileBackedProtoLog<DocumentProto>::CreateResult create_result,
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem_, file_path_,
+          FileBackedProtoLog<DocumentProto>::Options(compress_,
+                                                     max_proto_size_)));
+  auto proto_log = std::move(create_result.proto_log);
+  ASSERT_FALSE(create_result.has_data_loss());
+
+  // Writes 2 protos
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t document1_offset,
+                             proto_log->WriteProto(document1));
+  ICING_ASSERT_OK_AND_ASSIGN(int64_t document2_offset,
+                             proto_log->WriteProto(document2));
+
+  // Erases the first proto
+  ICING_ASSERT_OK(proto_log->EraseProto(document1_offset));
+
+  // The first proto has been erased.
+  ASSERT_THAT(proto_log->ReadProto(document1_offset),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  // The second proto should be returned.
+  ASSERT_THAT(proto_log->ReadProto(document2_offset),
+              IsOkAndHolds(EqualsProto(document2)));
+}
+
+TEST_F(FileBackedProtoLogTest, ChecksumShouldBeCorrectWithErasedProto) {
+  DocumentProto document1 =
+      DocumentBuilder().SetKey("namespace", "uri1").Build();
+  DocumentProto document2 =
+      DocumentBuilder().SetKey("namespace", "uri2").Build();
+  DocumentProto document3 =
+      DocumentBuilder().SetKey("namespace", "uri3").Build();
+  DocumentProto document4 =
+      DocumentBuilder().SetKey("namespace", "uri4").Build();
+
+  int64_t document2_offset;
+  int64_t document3_offset;
+
+  {
+    // Erase data after the rewind position. This won't update the checksum
+    // immediately.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        FileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            FileBackedProtoLog<DocumentProto>::Options(compress_,
+                                                       max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Writes 3 protos
+    ICING_ASSERT_OK_AND_ASSIGN(int64_t document1_offset,
+                               proto_log->WriteProto(document1));
+    ICING_ASSERT_OK_AND_ASSIGN(document2_offset,
+                               proto_log->WriteProto(document2));
+    ICING_ASSERT_OK_AND_ASSIGN(document3_offset,
+                               proto_log->WriteProto(document3));
+
+    // Erases the 1st proto, checksum won't be updated immediately because the
+    // rewind position is 0.
+    ICING_ASSERT_OK(proto_log->EraseProto(document1_offset));
+
+    EXPECT_THAT(proto_log->ComputeChecksum(),
+                IsOkAndHolds(Eq(Crc32(2293202502))));
+  }  // New checksum is updated in destructor.
+
+  {
+    // Erase data before the rewind position. This will update the checksum
+    // immediately.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        FileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            FileBackedProtoLog<DocumentProto>::Options(compress_,
+                                                       max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Erases the 2nd proto that is now before the rewind position. Checksum is
+    // updated.
+    ICING_ASSERT_OK(proto_log->EraseProto(document2_offset));
+
+    EXPECT_THAT(proto_log->ComputeChecksum(),
+                IsOkAndHolds(Eq(Crc32(639634028))));
+  }
+
+  {
+    // Append data and erase data before the rewind position. This will update
+    // the checksum twice: in EraseProto() and destructor.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        FileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            FileBackedProtoLog<DocumentProto>::Options(compress_,
+                                                       max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    ASSERT_FALSE(create_result.has_data_loss());
+
+    // Append a new document which is after the rewind position.
+    ICING_ASSERT_OK(proto_log->WriteProto(document4));
+
+    // Erases the 3rd proto that is now before the rewind position. Checksum is
+    // updated.
+    ICING_ASSERT_OK(proto_log->EraseProto(document3_offset));
+
+    EXPECT_THAT(proto_log->ComputeChecksum(),
+                IsOkAndHolds(Eq(Crc32(1990198693))));
+  }  // Checksum is updated with the newly appended document.
+
+  {
+    // A successful creation means that the checksum matches.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FileBackedProtoLog<DocumentProto>::CreateResult create_result,
+        FileBackedProtoLog<DocumentProto>::Create(
+            &filesystem_, file_path_,
+            FileBackedProtoLog<DocumentProto>::Options(compress_,
+                                                       max_proto_size_)));
+    auto proto_log = std::move(create_result.proto_log);
+    EXPECT_FALSE(create_result.has_data_loss());
   }
 }
 

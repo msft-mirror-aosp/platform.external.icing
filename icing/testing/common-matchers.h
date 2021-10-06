@@ -15,6 +15,8 @@
 #ifndef ICING_TESTING_COMMON_MATCHERS_H_
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
+#include <cmath>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -23,6 +25,7 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
@@ -32,10 +35,11 @@ namespace lib {
 
 // Used to match Token(Token::Type type, std::string_view text)
 MATCHER_P2(EqualsToken, type, text, "") {
+  std::string arg_string(arg.text.data(), arg.text.length());
   if (arg.type != type || arg.text != text) {
     *result_listener << IcingStringUtil::StringPrintf(
         "(Expected: type=%d, text=\"%s\". Actual: type=%d, text=\"%s\")", type,
-        &text[0], arg.type, arg.text.data());
+        text, arg.type, arg_string.c_str());
     return false;
   }
   return true;
@@ -57,12 +61,50 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
          actual.hit_section_ids_mask() == section_mask;
 }
 
+// Used to match a DocHitInfo
+MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
+           section_ids_to_term_frequencies_map, "") {
+  const DocHitInfo& actual = arg;
+  SectionIdMask section_mask = kSectionIdMaskNone;
+
+  bool term_frequency_as_expected = true;
+  std::vector<Hit::TermFrequency> expected_tfs;
+  std::vector<Hit::TermFrequency> actual_tfs;
+  for (auto itr = section_ids_to_term_frequencies_map.begin();
+       itr != section_ids_to_term_frequencies_map.end(); itr++) {
+    SectionId section_id = itr->first;
+    section_mask |= 1U << section_id;
+    expected_tfs.push_back(itr->second);
+    actual_tfs.push_back(actual.hit_term_frequency(section_id));
+    if (actual.hit_term_frequency(section_id) != itr->second) {
+      term_frequency_as_expected = false;
+    }
+  }
+  std::string actual_term_frequencies = absl_ports::StrCat(
+      "[", absl_ports::StrJoin(actual_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  std::string expected_term_frequencies = absl_ports::StrCat(
+      "[",
+      absl_ports::StrJoin(expected_tfs, ",", absl_ports::NumberFormatter()),
+      "]");
+  *result_listener << IcingStringUtil::StringPrintf(
+      "(actual is {document_id=%d, section_mask=%d, term_frequencies=%s}, but "
+      "expected was "
+      "{document_id=%d, section_mask=%d, term_frequencies=%s}.)",
+      actual.document_id(), actual.hit_section_ids_mask(),
+      actual_term_frequencies.c_str(), document_id, section_mask,
+      expected_term_frequencies.c_str());
+  return actual.document_id() == document_id &&
+         actual.hit_section_ids_mask() == section_mask &&
+         term_frequency_as_expected;
+}
+
 // Used to match a ScoredDocumentHit
 MATCHER_P(EqualsScoredDocumentHit, expected_scored_document_hit, "") {
   if (arg.document_id() != expected_scored_document_hit.document_id() ||
       arg.hit_section_id_mask() !=
           expected_scored_document_hit.hit_section_id_mask() ||
-      arg.score() != expected_scored_document_hit.score()) {
+      std::fabs(arg.score() - expected_scored_document_hit.score()) > 1e-6) {
     *result_listener << IcingStringUtil::StringPrintf(
         "Expected: document_id=%d, hit_section_id_mask=%d, score=%.2f. Actual: "
         "document_id=%d, hit_section_id_mask=%d, score=%.2f",
@@ -224,6 +266,33 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   }
 }
 
+std::string ProtoStatusCodeToString(StatusProto::Code code) {
+  switch (code) {
+    case StatusProto::OK:
+      return "OK";
+    case StatusProto::UNKNOWN:
+      return "UNKNOWN";
+    case StatusProto::INVALID_ARGUMENT:
+      return "INVALID_ARGUMENT";
+    case StatusProto::NOT_FOUND:
+      return "NOT_FOUND";
+    case StatusProto::ALREADY_EXISTS:
+      return "ALREADY_EXISTS";
+    case StatusProto::OUT_OF_SPACE:
+      return "OUT_OF_SPACE";
+    case StatusProto::FAILED_PRECONDITION:
+      return "FAILED_PRECONDITION";
+    case StatusProto::ABORTED:
+      return "ABORTED";
+    case StatusProto::INTERNAL:
+      return "INTERNAL";
+    case StatusProto::WARNING_DATA_LOSS:
+      return "WARNING_DATA_LOSS";
+    default:
+      return "";
+  }
+}
+
 MATCHER(IsOk, "") {
   libtextclassifier3::StatusAdapter adapter(arg);
   if (adapter.status().ok()) {
@@ -271,6 +340,58 @@ MATCHER_P2(StatusIs, status_code, error_matcher, "") {
     return false;
   }
   return ExplainMatchResult(error_matcher, adapter.status().error_message(),
+                            result_listener);
+}
+
+MATCHER(ProtoIsOk, "") {
+  if (arg.code() == StatusProto::OK) {
+    return true;
+  }
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected OK, actual was (%s:%s)",
+      ProtoStatusCodeToString(arg.code()).c_str(), arg.message().c_str());
+  return false;
+}
+
+MATCHER_P(ProtoStatusIs, status_code, "") {
+  if (arg.code() == status_code) {
+    return true;
+  }
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected (%s:), actual was (%s:%s)",
+      ProtoStatusCodeToString(status_code).c_str(),
+      ProtoStatusCodeToString(arg.code()).c_str(), arg.message().c_str());
+  return false;
+}
+
+MATCHER_P2(ProtoStatusIs, status_code, error_matcher, "") {
+  if (arg.code() != status_code) {
+    *result_listener << IcingStringUtil::StringPrintf(
+        "Expected (%s:), actual was (%s:%s)",
+        ProtoStatusCodeToString(status_code).c_str(),
+        ProtoStatusCodeToString(arg.code()).c_str(), arg.message().c_str());
+    return false;
+  }
+  return ExplainMatchResult(error_matcher, arg.message(), result_listener);
+}
+
+MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
+  SearchResultProto actual_copy = arg;
+  actual_copy.clear_query_stats();
+  actual_copy.clear_debug_info();
+  for (SearchResultProto::ResultProto& result :
+       *actual_copy.mutable_results()) {
+    result.clear_score();
+  }
+
+  SearchResultProto expected_copy = expected;
+  expected_copy.clear_query_stats();
+  expected_copy.clear_debug_info();
+  for (SearchResultProto::ResultProto& result :
+       *expected_copy.mutable_results()) {
+    result.clear_score();
+  }
+  return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
                             result_listener);
 }
 

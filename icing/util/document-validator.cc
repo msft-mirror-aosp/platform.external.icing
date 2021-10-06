@@ -32,12 +32,13 @@ DocumentValidator::DocumentValidator(const SchemaStore* schema_store)
     : schema_store_(schema_store) {}
 
 libtextclassifier3::Status DocumentValidator::Validate(
-    const DocumentProto& document) {
+    const DocumentProto& document, int depth) {
   if (document.namespace_().empty()) {
     return absl_ports::InvalidArgumentError("Field 'namespace' is empty.");
   }
 
-  if (document.uri().empty()) {
+  // Only require a non-empty uri on top-level documents.
+  if (depth == 0 && document.uri().empty()) {
     return absl_ports::InvalidArgumentError("Field 'uri' is empty.");
   }
 
@@ -72,11 +73,9 @@ libtextclassifier3::Status DocumentValidator::Validate(
   const SchemaTypeConfigProto* type_config =
       std::move(type_config_or).ValueOrDie();
 
-  int32_t num_required_properties_expected = 0;
   int32_t num_required_properties_actual = 0;
-  PropertyConfigMap property_config_map;
-  SchemaUtil::BuildPropertyConfigMap(*type_config, &property_config_map,
-                                     &num_required_properties_expected);
+  SchemaUtil::ParsedPropertyConfigs parsed_property_configs =
+      SchemaUtil::ParsePropertyConfigs(*type_config);
   std::unordered_set<std::string_view> unique_properties;
 
   for (const PropertyProto& property : document.properties()) {
@@ -93,16 +92,17 @@ libtextclassifier3::Status DocumentValidator::Validate(
           document.namespace_(), ", ", document.uri(), ")."));
     }
 
-    const auto& property_iter = property_config_map.find(property.name());
-    if (property_iter == property_config_map.end()) {
+    const auto& property_iter =
+        parsed_property_configs.property_config_map.find(property.name());
+    if (property_iter == parsed_property_configs.property_config_map.end()) {
       return absl_ports::NotFoundError(absl_ports::StrCat(
           "Property config '", property.name(), "' not found for key: (",
-          document.namespace_(), ", ", document.uri(), ")."));
+          document.namespace_(), ", ", document.uri(),
+          ") of type: ", document.schema(), "."));
     }
     const PropertyConfigProto& property_config = *property_iter->second;
 
     // Get the property value size according to data type.
-    // TODO (samzheng): make sure values of other data types are empty.
     int value_size = 0;
     if (property_config.data_type() == PropertyConfigProto::DataType::STRING) {
       value_size = property.string_values_size();
@@ -161,11 +161,12 @@ libtextclassifier3::Status DocumentValidator::Validate(
               nested_document.schema(), "' for key: (", document.namespace_(),
               ", ", document.uri(), ")."));
         }
-        ICING_RETURN_IF_ERROR(Validate(nested_document));
+        ICING_RETURN_IF_ERROR(Validate(nested_document, depth + 1));
       }
     }
   }
-  if (num_required_properties_actual < num_required_properties_expected) {
+  if (num_required_properties_actual <
+      parsed_property_configs.num_required_properties) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("One or more required fields missing for key: (",
                            document.namespace_(), ", ", document.uri(), ")."));
