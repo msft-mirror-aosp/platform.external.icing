@@ -24,17 +24,18 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/platform.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -53,6 +54,15 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Return;
 using ::testing::SizeIs;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
 
 class ResultRetrieverTest : public testing::Test {
  protected:
@@ -78,63 +88,45 @@ class ResultRetrieverTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
 
-    ASSERT_THAT(schema_store_->SetSchema(CreatePersonAndEmailSchema()), IsOk());
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder()
+                         .SetType("Email")
+                         .AddProperty(PropertyConfigBuilder()
+                                          .SetName("name")
+                                          .SetDataTypeString(MATCH_PREFIX,
+                                                             TOKENIZER_PLAIN)
+                                          .SetCardinality(CARDINALITY_OPTIONAL))
+                         .AddProperty(PropertyConfigBuilder()
+                                          .SetName("body")
+                                          .SetDataTypeString(MATCH_EXACT,
+                                                             TOKENIZER_PLAIN)
+                                          .SetCardinality(CARDINALITY_OPTIONAL))
+                         .AddProperty(
+                             PropertyConfigBuilder()
+                                 .SetName("sender")
+                                 .SetDataTypeDocument(
+                                     "Person", /*index_nested_properties=*/true)
+                                 .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Person")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("name")
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("emailAddress")
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
+    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
   }
 
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
-  }
-
-  SchemaProto CreatePersonAndEmailSchema() {
-    SchemaProto schema;
-
-    auto* type = schema.add_types();
-    type->set_schema_type("Email");
-
-    auto* subj = type->add_properties();
-    subj->set_property_name("name");
-    subj->set_data_type(PropertyConfigProto::DataType::STRING);
-    subj->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    subj->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    subj->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-    auto* body = type->add_properties();
-    body->set_property_name("body");
-    body->set_data_type(PropertyConfigProto::DataType::STRING);
-    body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    body->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    body->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-    auto* sender = type->add_properties();
-    sender->set_property_name("sender");
-    sender->set_schema_type("Person");
-    sender->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-    sender->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    sender->mutable_document_indexing_config()->set_index_nested_properties(
-        true);
-
-    auto* person_type = schema.add_types();
-    person_type->set_schema_type("Person");
-    auto* name = person_type->add_properties();
-    name->set_property_name("name");
-    name->set_data_type(PropertyConfigProto::DataType::STRING);
-    name->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    name->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    name->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-    auto* address = person_type->add_properties();
-    address->set_property_name("emailAddress");
-    address->set_data_type(PropertyConfigProto::DataType::STRING);
-    address->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    address->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    address->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
-    return schema;
   }
 
   SectionId GetSectionId(const std::string& type, const std::string& property) {
@@ -236,9 +228,9 @@ TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      {document_id1, hit_section_id_mask, /*score=*/19},
+      {document_id2, hit_section_id_mask, /*score=*/5},
+      {document_id3, hit_section_id_mask, /*score=*/1}};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
       ResultRetriever::Create(doc_store.get(), schema_store_.get(),
@@ -246,10 +238,13 @@ TEST_F(ResultRetrieverTest, ShouldRetrieveSimpleResults) {
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(19);
   SearchResultProto::ResultProto result2;
   *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(5);
   SearchResultProto::ResultProto result3;
   *result3.mutable_document() = CreateDocument(/*id=*/3);
+  result3.set_score(1);
 
   SnippetContext snippet_context(
       /*query_terms_in=*/{},
@@ -285,8 +280,8 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
+      {document_id1, hit_section_id_mask, /*score=*/12},
+      {document_id2, hit_section_id_mask, /*score=*/4},
       {invalid_document_id, hit_section_id_mask, /*score=*/0}};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetriever> result_retriever,
@@ -296,8 +291,10 @@ TEST_F(ResultRetrieverTest, IgnoreErrors) {
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(12);
   SearchResultProto::ResultProto result2;
   *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(4);
 
   SnippetContext snippet_context(
       /*query_terms_in=*/{},
@@ -495,35 +492,63 @@ TEST_F(ResultRetrieverTest, SimpleSnippeted) {
       std::vector<SearchResultProto::ResultProto> result,
       result_retriever->RetrieveResults(page_result_state));
   EXPECT_THAT(result, SizeIs(3));
-  EXPECT_THAT(result[0].document(), EqualsProto(CreateDocument(/*id=*/1)));
-  EXPECT_THAT(GetWindow(result[0].document(), result[0].snippet(), "name", 0),
-              Eq("subject foo 1"));
-  EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "name", 0),
-              Eq("foo"));
-  EXPECT_THAT(GetWindow(result[0].document(), result[0].snippet(), "body", 0),
-              Eq("body bar 1"));
-  EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "body", 0),
-              Eq("bar"));
 
-  EXPECT_THAT(result[1].document(), EqualsProto(CreateDocument(/*id=*/2)));
-  EXPECT_THAT(GetWindow(result[1].document(), result[1].snippet(), "name", 0),
-              Eq("subject foo 2"));
-  EXPECT_THAT(GetMatch(result[1].document(), result[1].snippet(), "name", 0),
-              Eq("foo"));
-  EXPECT_THAT(GetWindow(result[1].document(), result[1].snippet(), "body", 0),
-              Eq("body bar 2"));
-  EXPECT_THAT(GetMatch(result[1].document(), result[1].snippet(), "body", 0),
-              Eq("bar"));
+  const DocumentProto& result_document_one = result.at(0).document();
+  const SnippetProto& result_snippet_one = result.at(0).snippet();
+  EXPECT_THAT(result_document_one, EqualsProto(CreateDocument(/*id=*/1)));
+  EXPECT_THAT(result_snippet_one.entries(), SizeIs(2));
+  EXPECT_THAT(result_snippet_one.entries(0).property_name(), Eq("body"));
+  std::string_view content = GetString(
+      &result_document_one, result_snippet_one.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_one.entries(0)),
+              ElementsAre("body bar 1"));
+  EXPECT_THAT(GetMatches(content, result_snippet_one.entries(0)),
+              ElementsAre("bar"));
+  EXPECT_THAT(result_snippet_one.entries(1).property_name(), Eq("name"));
+  content = GetString(&result_document_one,
+                      result_snippet_one.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_one.entries(1)),
+              ElementsAre("subject foo 1"));
+  EXPECT_THAT(GetMatches(content, result_snippet_one.entries(1)),
+              ElementsAre("foo"));
 
-  EXPECT_THAT(result[2].document(), EqualsProto(CreateDocument(/*id=*/3)));
-  EXPECT_THAT(GetWindow(result[2].document(), result[2].snippet(), "name", 0),
-              Eq("subject foo 3"));
-  EXPECT_THAT(GetMatch(result[2].document(), result[2].snippet(), "name", 0),
-              Eq("foo"));
-  EXPECT_THAT(GetWindow(result[2].document(), result[2].snippet(), "body", 0),
-              Eq("body bar 3"));
-  EXPECT_THAT(GetMatch(result[2].document(), result[2].snippet(), "body", 0),
-              Eq("bar"));
+  const DocumentProto& result_document_two = result.at(1).document();
+  const SnippetProto& result_snippet_two = result.at(1).snippet();
+  EXPECT_THAT(result_document_two, EqualsProto(CreateDocument(/*id=*/2)));
+  EXPECT_THAT(result_snippet_two.entries(), SizeIs(2));
+  EXPECT_THAT(result_snippet_two.entries(0).property_name(), Eq("body"));
+  content = GetString(&result_document_two,
+                      result_snippet_two.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_two.entries(0)),
+              ElementsAre("body bar 2"));
+  EXPECT_THAT(GetMatches(content, result_snippet_two.entries(0)),
+              ElementsAre("bar"));
+  EXPECT_THAT(result_snippet_two.entries(1).property_name(), Eq("name"));
+  content = GetString(&result_document_two,
+                      result_snippet_two.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_two.entries(1)),
+              ElementsAre("subject foo 2"));
+  EXPECT_THAT(GetMatches(content, result_snippet_two.entries(1)),
+              ElementsAre("foo"));
+
+  const DocumentProto& result_document_three = result.at(2).document();
+  const SnippetProto& result_snippet_three = result.at(2).snippet();
+  EXPECT_THAT(result_document_three, EqualsProto(CreateDocument(/*id=*/3)));
+  EXPECT_THAT(result_snippet_three.entries(), SizeIs(2));
+  EXPECT_THAT(result_snippet_three.entries(0).property_name(), Eq("body"));
+  content = GetString(&result_document_three,
+                      result_snippet_three.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_three.entries(0)),
+              ElementsAre("body bar 3"));
+  EXPECT_THAT(GetMatches(content, result_snippet_three.entries(0)),
+              ElementsAre("bar"));
+  EXPECT_THAT(result_snippet_three.entries(1).property_name(), Eq("name"));
+  content = GetString(&result_document_three,
+                      result_snippet_three.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_three.entries(1)),
+              ElementsAre("subject foo 3"));
+  EXPECT_THAT(GetMatches(content, result_snippet_three.entries(1)),
+              ElementsAre("foo"));
 }
 
 TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
@@ -568,15 +593,25 @@ TEST_F(ResultRetrieverTest, OnlyOneDocumentSnippeted) {
       std::vector<SearchResultProto::ResultProto> result,
       result_retriever->RetrieveResults(page_result_state));
   EXPECT_THAT(result, SizeIs(3));
-  EXPECT_THAT(result[0].document(), EqualsProto(CreateDocument(/*id=*/1)));
-  EXPECT_THAT(GetWindow(result[0].document(), result[0].snippet(), "name", 0),
-              Eq("subject foo 1"));
-  EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "name", 0),
-              Eq("foo"));
-  EXPECT_THAT(GetWindow(result[0].document(), result[0].snippet(), "body", 0),
-              Eq("body bar 1"));
-  EXPECT_THAT(GetMatch(result[0].document(), result[0].snippet(), "body", 0),
-              Eq("bar"));
+
+  const DocumentProto& result_document = result.at(0).document();
+  const SnippetProto& result_snippet = result.at(0).snippet();
+  EXPECT_THAT(result_document, EqualsProto(CreateDocument(/*id=*/1)));
+  EXPECT_THAT(result_snippet.entries(), SizeIs(2));
+  EXPECT_THAT(result_snippet.entries(0).property_name(), Eq("body"));
+  std::string_view content =
+      GetString(&result_document, result_snippet.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet.entries(0)),
+              ElementsAre("body bar 1"));
+  EXPECT_THAT(GetMatches(content, result_snippet.entries(0)),
+              ElementsAre("bar"));
+  EXPECT_THAT(result_snippet.entries(1).property_name(), Eq("name"));
+  content =
+      GetString(&result_document, result_snippet.entries(1).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet.entries(1)),
+              ElementsAre("subject foo 1"));
+  EXPECT_THAT(GetMatches(content, result_snippet.entries(1)),
+              ElementsAre("foo"));
 
   EXPECT_THAT(result[1].document(), EqualsProto(CreateDocument(/*id=*/2)));
   EXPECT_THAT(result[1].snippet(),

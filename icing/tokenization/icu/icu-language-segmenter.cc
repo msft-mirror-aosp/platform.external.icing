@@ -25,6 +25,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
 #include "unicode/ubrk.h"
@@ -101,59 +102,149 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
     return text_.substr(term_start_index_, term_length);
   }
 
-  libtextclassifier3::StatusOr<int32_t> ResetToTermStartingAfter(
+  libtextclassifier3::StatusOr<CharacterIterator> CalculateTermStart()
+      override {
+    if (!offset_iterator_.MoveToUtf8(term_start_index_)) {
+      return absl_ports::AbortedError(
+          "Could not retrieve valid utf8 character!");
+    }
+    return offset_iterator_;
+  }
+
+  libtextclassifier3::StatusOr<CharacterIterator> CalculateTermEndExclusive()
+      override {
+    if (!offset_iterator_.MoveToUtf8(term_end_index_exclusive_)) {
+      return absl_ports::AbortedError(
+          "Could not retrieve valid utf8 character!");
+    }
+    return offset_iterator_;
+  }
+
+  libtextclassifier3::StatusOr<int32_t> ResetToTermStartingAfterUtf32(
       int32_t offset) override {
-    if (offset < 0 || offset >= text_.length()) {
-      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-          "Illegal offset provided! Offset %d is not within bounds of string "
-          "of length %zu",
-          offset, text_.length()));
+    if (offset < 0) {
+      // Very simple. The first term start after a negative offset is the first
+      // term. So just reset to start and Advance.
+      return ResetToStartUtf32();
     }
-    term_start_index_ = ubrk_following(break_iterator_, offset);
-    if (term_start_index_ == UBRK_DONE) {
-      MarkAsDone();
-      return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-          "No segments begin after provided offset %d.", offset));
-    }
-    term_end_index_exclusive_ = ubrk_next(break_iterator_);
-    if (term_end_index_exclusive_ == UBRK_DONE) {
-      MarkAsDone();
-      return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-          "No segments begin after provided offset %d.", offset));
-    }
-    if (!IsValidSegment()) {
-      if (!Advance()) {
-        return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-            "No segments begin after provided offset %d.", offset));
+
+    // 1. Find the unicode character that contains the byte at offset.
+    if (!offset_iterator_.MoveToUtf32(offset)) {
+      // An error occurred. Mark as DONE
+      if (offset_iterator_.utf8_index() != text_.length()) {
+        // We returned false for some reason other than hitting the end. This is
+        // a real error. Just return.
+        MarkAsDone();
+        return absl_ports::AbortedError(
+            "Could not retrieve valid utf8 character!");
       }
     }
-    return term_start_index_;
+    if (offset_iterator_.utf8_index() == text_.length()) {
+      return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+          "Illegal offset provided! Offset utf-32:%d, utf-8:%d is not within "
+          "bounds of string of length %zu",
+          offset_iterator_.utf32_index(), offset_iterator_.utf8_index(),
+          text_.length()));
+    }
+
+    // 2. We've got the unicode character containing byte offset. Now, we need
+    // to point to the segment that starts after this character.
+    int following_utf8_index =
+        ubrk_following(break_iterator_, offset_iterator_.utf8_index());
+    if (following_utf8_index == UBRK_DONE) {
+      MarkAsDone();
+      return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+          "No segments begin after provided offset %d.", offset));
+    }
+    term_end_index_exclusive_ = following_utf8_index;
+
+    // 3. The term_end_exclusive_ points to the start of the term that we want
+    // to return. We need to Advance so that term_start_ will now point to this
+    // term.
+    if (!Advance()) {
+      return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+          "No segments begin after provided offset %d.", offset));
+    }
+    if (!offset_iterator_.MoveToUtf8(term_start_index_)) {
+      return absl_ports::AbortedError(
+          "Could not retrieve valid utf8 character!");
+    }
+    return offset_iterator_.utf32_index();
   }
 
-  libtextclassifier3::StatusOr<int32_t> ResetToTermEndingBefore(
+  libtextclassifier3::StatusOr<int32_t> ResetToTermEndingBeforeUtf32(
       int32_t offset) override {
-    if (offset < 0 || offset >= text_.length()) {
+    if (offset < 0) {
       return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
           "Illegal offset provided! Offset %d is not within bounds of string "
           "of length %zu",
           offset, text_.length()));
     }
-    ICING_RETURN_IF_ERROR(ResetToTermStartingBefore(offset));
-    if (term_end_index_exclusive_ > offset) {
-      // This term ends after offset. So we need to get the term just before
-      // this one.
-      ICING_RETURN_IF_ERROR(ResetToTermStartingBefore(term_start_index_));
+
+    if (!offset_iterator_.MoveToUtf32(offset)) {
+      // An error occurred. Mark as DONE
+      if (offset_iterator_.utf8_index() != text_.length()) {
+        // We returned false for some reason other than hitting the end. This is
+        // a real error. Just return.
+        MarkAsDone();
+        return absl_ports::AbortedError(
+            "Could not retrieve valid utf8 character!");
+      }
+      // If it returned false because we hit the end. Then that's fine. We'll
+      // just treat it as if the request was for the end.
     }
-    return term_start_index_;
+
+    // 2. We've got the unicode character containing byte offset. Now, we need
+    // to point to the segment that ends before this character.
+    int starting_utf8_index =
+        ubrk_preceding(break_iterator_, offset_iterator_.utf8_index());
+    if (starting_utf8_index == UBRK_DONE) {
+      // Rewind the end indices.
+      MarkAsDone();
+      return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
+          "No segments end before provided offset %d.", offset));
+    }
+    term_start_index_ = starting_utf8_index;
+
+    // 3. We've correctly set the start index and the iterator currently points
+    // to that position. Now we need to find the correct end position and
+    // advance the iterator to that position.
+    int ending_utf8_index = ubrk_next(break_iterator_);
+    if (ending_utf8_index == UBRK_DONE) {
+      // This shouldn't ever happen.
+      MarkAsDone();
+      return absl_ports::AbortedError(IcingStringUtil::StringPrintf(
+          "No segments end before provided offset %d.", offset));
+    }
+    term_end_index_exclusive_ = ending_utf8_index;
+
+    // 4. The start and end indices point to a segment, but we need to ensure
+    // that this segment is 1) valid and 2) ends before offset. Otherwise, we'll
+    // need a segment prior to this one.
+    CharacterIterator term_start_iterator = offset_iterator_;
+    if (!term_start_iterator.MoveToUtf8(term_start_index_)) {
+      return absl_ports::AbortedError(
+          "Could not retrieve valid utf8 character!");
+    }
+    if (term_end_index_exclusive_ > offset_iterator_.utf8_index() ||
+        !IsValidSegment()) {
+      return ResetToTermEndingBeforeUtf32(term_start_iterator.utf32_index());
+    }
+    return term_start_iterator.utf32_index();
   }
 
-  libtextclassifier3::StatusOr<int32_t> ResetToStart() override {
+  libtextclassifier3::StatusOr<int32_t> ResetToStartUtf32() override {
     term_start_index_ = 0;
     term_end_index_exclusive_ = 0;
     if (!Advance()) {
-      return absl_ports::NotFoundError("");
+      return absl_ports::NotFoundError(
+          "Unable to find any valid terms in text.");
     }
-    return term_start_index_;
+    if (!offset_iterator_.MoveToUtf8(term_start_index_)) {
+      return absl_ports::AbortedError(
+          "Could not retrieve valid utf8 character!");
+    }
+    return offset_iterator_.utf32_index();
   }
 
  private:
@@ -163,6 +254,7 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
         text_(text),
         locale_(locale),
         u_text_(UTEXT_INITIALIZER),
+        offset_iterator_(text),
         term_start_index_(0),
         term_end_index_exclusive_(0) {}
 
@@ -208,9 +300,10 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
     UChar32 uchar32 = i18n_utils::GetUChar32At(text_.data(), text_.length(),
                                                term_start_index_);
-    // Rule 2: for non-ASCII terms, only the alphabetic terms are returned.
-    // We know it's an alphabetic term by checking the first unicode character.
-    if (u_isUAlphabetic(uchar32)) {
+    // Rule 2: for non-ASCII terms, only the alphanumeric terms are returned.
+    // We know it's an alphanumeric term by checking the first unicode
+    // character.
+    if (i18n_utils::IsAlphaNumeric(uchar32)) {
       return true;
     }
     return false;
@@ -231,6 +324,15 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
   // A thin wrapper around the input UTF8 text, needed by break_iterator_.
   // utext_close() must be called after using.
   UText u_text_;
+
+  // Offset iterator. This iterator is not guaranteed to point to any particular
+  // character, but is guaranteed to point to a valid UTF character sequence.
+  //
+  // This iterator is used to save some amount of linear traversal when seeking
+  // to a specific UTF-32 offset. Each function that uses it could just create
+  // a CharacterIterator starting at the beginning of the text and traverse
+  // forward from there.
+  CharacterIterator offset_iterator_;
 
   // The start and end indices are used to track the positions of current
   // term.
