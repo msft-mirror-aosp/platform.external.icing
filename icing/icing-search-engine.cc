@@ -134,16 +134,6 @@ libtextclassifier3::Status ValidateSearchSpec(
   return libtextclassifier3::Status::OK;
 }
 
-IndexProcessor::Options CreateIndexProcessorOptions(
-    const IcingSearchEngineOptions& options) {
-  IndexProcessor::Options index_processor_options;
-  index_processor_options.max_tokens_per_document =
-      options.max_tokens_per_doc();
-  index_processor_options.token_limit_behavior =
-      IndexProcessor::Options::TokenLimitBehavior::kSuppressError;
-  return index_processor_options;
-}
-
 // Document store files are in a standalone subfolder for easier file
 // management. We can delete and recreate the subfolder and not touch/affect
 // anything else.
@@ -799,9 +789,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   }
   DocumentId document_id = document_id_or.ValueOrDie();
 
-  auto index_processor_or = IndexProcessor::Create(
-      normalizer_.get(), index_.get(), CreateIndexProcessorOptions(options_),
-      clock_.get());
+  auto index_processor_or =
+      IndexProcessor::Create(normalizer_.get(), index_.get(), clock_.get());
   if (!index_processor_or.ok()) {
     TransformStatus(index_processor_or.status(), result_status);
     put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
@@ -812,6 +801,17 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
 
   auto status = index_processor->IndexDocument(tokenized_document, document_id,
                                                put_document_stats);
+  if (!status.ok()) {
+    // If we encountered a failure while indexing this document, then mark it as
+    // deleted.
+    libtextclassifier3::Status delete_status =
+        document_store_->Delete(document_id);
+    if (!delete_status.ok()) {
+      // This is pretty dire (and, hopefully, unlikely). We can't roll back the
+      // document that we just added. Wipeout the whole index.
+      ResetInternal();
+    }
+  }
 
   TransformStatus(status, result_status);
   put_document_stats->set_latency_ms(put_timer->GetElapsedMilliseconds());
@@ -1709,9 +1709,8 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     return {libtextclassifier3::Status::OK, false};
   }
 
-  auto index_processor_or = IndexProcessor::Create(
-      normalizer_.get(), index_.get(), CreateIndexProcessorOptions(options_),
-      clock_.get());
+  auto index_processor_or =
+      IndexProcessor::Create(normalizer_.get(), index_.get(), clock_.get());
   if (!index_processor_or.ok()) {
     return {index_processor_or.status(), true};
   }
@@ -1789,12 +1788,16 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {
 }
 
 ResetResultProto IcingSearchEngine::Reset() {
+  absl_ports::unique_lock l(&mutex_);
+  return ResetInternal();
+}
+
+ResetResultProto IcingSearchEngine::ResetInternal() {
   ICING_VLOG(1) << "Resetting IcingSearchEngine";
 
   ResetResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
-  absl_ports::unique_lock l(&mutex_);
   initialized_ = false;
   ResetMembers();
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {

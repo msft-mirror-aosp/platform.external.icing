@@ -7439,42 +7439,11 @@ TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexingStats) {
   // No merge should happen.
   EXPECT_THAT(put_result_proto.put_document_stats().index_merge_latency_ms(),
               Eq(0));
-  // Number of tokens should not exceed.
-  EXPECT_FALSE(put_result_proto.put_document_stats()
-                   .tokenization_stats()
-                   .exceeded_max_token_num());
   // The input document has 2 tokens.
   EXPECT_THAT(put_result_proto.put_document_stats()
                   .tokenization_stats()
                   .num_tokens_indexed(),
               Eq(2));
-}
-
-TEST_F(IcingSearchEngineTest, PutDocumentShouldLogWhetherNumTokensExceeds) {
-  // Create a document with 2 tokens.
-  DocumentProto document = DocumentBuilder()
-                               .SetKey("icing", "fake_type/0")
-                               .SetSchema("Message")
-                               .AddStringProperty("body", "message body")
-                               .Build();
-
-  // Create an icing instance with max_tokens_per_doc = 1.
-  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_max_tokens_per_doc(1);
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-
-  PutResultProto put_result_proto = icing.Put(document);
-  EXPECT_THAT(put_result_proto.status(), ProtoIsOk());
-  // Number of tokens(2) exceeds the max allowed value(1).
-  EXPECT_TRUE(put_result_proto.put_document_stats()
-                  .tokenization_stats()
-                  .exceeded_max_token_num());
-  EXPECT_THAT(put_result_proto.put_document_stats()
-                  .tokenization_stats()
-                  .num_tokens_indexed(),
-              Eq(1));
 }
 
 TEST_F(IcingSearchEngineTest, PutDocumentShouldLogIndexMergeLatency) {
@@ -8042,6 +8011,42 @@ TEST_F(IcingSearchEngineTest, CJKSnippetTest) {
   // Ensure that the utf-16 values are also as expected
   EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(3));
   EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
+}
+
+TEST_F(IcingSearchEngineTest, PutDocumentIndexFailureDeletion) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Testing has shown that adding ~600,000 terms generated this way will
+  // fill up the hit buffer.
+  std::vector<std::string> terms = GenerateUniqueTerms(600000);
+  std::string content = absl_ports::StrJoin(terms, " ");
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "foo " + content)
+                               .Build();
+  // We failed to add the document to the index fully. This means that we should
+  // reject the document from Icing entirely.
+  ASSERT_THAT(icing.Put(document).status(),
+              ProtoStatusIs(StatusProto::OUT_OF_SPACE));
+
+  // Make sure that the document isn't searchable.
+  SearchSpecProto search_spec;
+  search_spec.set_query("foo");
+  search_spec.set_term_match_type(MATCH_PREFIX);
+
+  SearchResultProto search_results =
+      icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  ASSERT_THAT(search_results.status(), ProtoIsOk());
+  ASSERT_THAT(search_results.results(), IsEmpty());
+
+  // Make sure that the document isn't retrievable.
+  GetResultProto get_result =
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance());
+  ASSERT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
 #ifndef ICING_JNI_TEST
