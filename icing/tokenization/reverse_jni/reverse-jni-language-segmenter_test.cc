@@ -12,19 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/tokenization/reverse_jni/reverse-jni-language-segmenter-test.h"
+#include <jni.h>
 
 #include <memory>
 #include <string_view>
 
+#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/character-iterator.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -54,71 +57,71 @@ std::vector<std::string_view> GetAllTermsAdvance(
 }
 
 // Returns a vector containing all terms retrieved by calling ResetAfter with
-// the current position to simulate Advancing on the iterator.
-std::vector<std::string_view> GetAllTermsResetAfter(
+// the UTF-32 position of the current term start to simulate Advancing on the
+// iterator.
+std::vector<std::string_view> GetAllTermsResetAfterUtf32(
     LanguageSegmenter::Iterator* itr) {
   std::vector<std::string_view> terms;
-  if (!itr->ResetToStart().ok()) {
-    return terms;
-  }
-  terms.push_back(itr->GetTerm());
-  const char* text_begin = itr->GetTerm().data();
-  // Calling ResetToTermStartingAfter with the current position should get the
-  // very next term in the sequence.
-  for (int current_pos = 0; itr->ResetToTermStartingAfter(current_pos).ok();
-       current_pos = itr->GetTerm().data() - text_begin) {
+  // Calling ResetToTermStartingAfterUtf32 with -1 should get the first term in
+  // the sequence.
+  bool is_ok = itr->ResetToTermStartingAfterUtf32(-1).ok();
+  while (is_ok) {
     terms.push_back(itr->GetTerm());
+    // Calling ResetToTermStartingAfterUtf32 with the current position should
+    // get the very next term in the sequence.
+    CharacterIterator char_itr = itr->CalculateTermStart().ValueOrDie();
+    is_ok = itr->ResetToTermStartingAfterUtf32(char_itr.utf32_index()).ok();
   }
   return terms;
 }
 
 // Returns a vector containing all terms retrieved by alternating calls to
-// Advance and calls to ResetAfter with the current position to simulate
-// Advancing.
-std::vector<std::string_view> GetAllTermsAdvanceAndResetAfter(
+// Advance and calls to ResetAfter with the UTF-32 position of the current term
+// start to simulate Advancing.
+std::vector<std::string_view> GetAllTermsAdvanceAndResetAfterUtf32(
     LanguageSegmenter::Iterator* itr) {
-  const char* text_begin = itr->GetTerm().data();
   std::vector<std::string_view> terms;
-
-  bool is_ok = true;
-  int current_pos = 0;
+  bool is_ok = itr->Advance();
   while (is_ok) {
+    terms.push_back(itr->GetTerm());
     // Alternate between using Advance and ResetToTermAfter.
     if (terms.size() % 2 == 0) {
       is_ok = itr->Advance();
     } else {
-      // Calling ResetToTermStartingAfter with the current position should get
-      // the very next term in the sequence.
-      current_pos = itr->GetTerm().data() - text_begin;
-      is_ok = itr->ResetToTermStartingAfter(current_pos).ok();
-    }
-    if (is_ok) {
-      terms.push_back(itr->GetTerm());
+      // Calling ResetToTermStartingAfterUtf32 with the current position should
+      // get the very next term in the sequence.
+      CharacterIterator char_itr = itr->CalculateTermStart().ValueOrDie();
+      is_ok = itr->ResetToTermStartingAfterUtf32(char_itr.utf32_index()).ok();
     }
   }
   return terms;
 }
 
 // Returns a vector containing all terms retrieved by calling ResetBefore with
-// the current position, starting at the end of the text. This vector should be
-// in reverse order of GetAllTerms and missing the last term.
-std::vector<std::string_view> GetAllTermsResetBefore(
+// the UTF-32 position of the current term start, starting at the end of the
+// text. This vector should be in reverse order of GetAllTerms and missing the
+// last term.
+std::vector<std::string_view> GetAllTermsResetBeforeUtf32(
     LanguageSegmenter::Iterator* itr) {
-  const char* text_begin = itr->GetTerm().data();
-  int last_pos = 0;
-  while (itr->Advance()) {
-    last_pos = itr->GetTerm().data() - text_begin;
-  }
   std::vector<std::string_view> terms;
-  // Calling ResetToTermEndingBefore with the current position should get the
-  // previous term in the sequence.
-  for (int current_pos = last_pos;
-       itr->ResetToTermEndingBefore(current_pos).ok();
-       current_pos = itr->GetTerm().data() - text_begin) {
+  bool is_ok = itr->ResetToTermEndingBeforeUtf32(1000).ok();
+  while (is_ok) {
     terms.push_back(itr->GetTerm());
+    // Calling ResetToTermEndingBeforeUtf32 with the current position should get
+    // the previous term in the sequence.
+    CharacterIterator char_itr = itr->CalculateTermStart().ValueOrDie();
+    is_ok = itr->ResetToTermEndingBeforeUtf32(char_itr.utf32_index()).ok();
   }
   return terms;
 }
+
+class ReverseJniLanguageSegmenterTest
+    : public testing::TestWithParam<const char*> {
+ protected:
+  static std::string GetLocale() { return GetParam(); }
+
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
+};
 
 }  // namespace
 
@@ -363,6 +366,17 @@ TEST_P(ReverseJniLanguageSegmenterTest, Number) {
               IsOkAndHolds(ElementsAre("-", "123")));
 }
 
+TEST_P(ReverseJniLanguageSegmenterTest, FullWidthNumbers) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(
+          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+
+  EXPECT_THAT(language_segmenter->GetAllTerms("０１２３４５６７８９"),
+              IsOkAndHolds(ElementsAre("０", "１", "２", "３", "４", "５", "６",
+                                       "７", "８", "９")));
+}
+
 TEST_P(ReverseJniLanguageSegmenterTest, ContinuousWhitespaces) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
@@ -471,7 +485,7 @@ TEST_P(ReverseJniLanguageSegmenterTest, NotCopyStrings) {
   EXPECT_THAT(word2_address, Eq(word2_result_address));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ResetToStartWordConnector) {
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToStartUtf32WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -479,15 +493,16 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToStartWordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "com:google:android is package"
-  //          ^                 ^^ ^^
-  // Bytes:   0              18 19 21 22
-  auto position_or = itr->ResetToStart();
+  // String:      "com:google:android is package"
+  //               ^                 ^^ ^^
+  // UTF-8 idx:    0              18 19 21 22
+  // UTF-32 idx:   0              18 19 21 22
+  auto position_or = itr->ResetToStartUtf32();
   EXPECT_THAT(position_or, IsOk());
   ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, NewIteratorResetToStart) {
+TEST_P(ReverseJniLanguageSegmenterTest, NewIteratorResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -495,14 +510,15 @@ TEST_P(ReverseJniLanguageSegmenterTest, NewIteratorResetToStart) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
-  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  // String:     "How are you你好吗お元気ですか"
+  //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:   0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:  0  3 4 7 8 11 131415 17 19
+  EXPECT_THAT(itr->ResetToStartUtf32(), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, IteratorOneAdvanceResetToStart) {
+TEST_P(ReverseJniLanguageSegmenterTest, IteratorOneAdvanceResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -510,15 +526,17 @@ TEST_P(ReverseJniLanguageSegmenterTest, IteratorOneAdvanceResetToStart) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
+  // String:     "How are you你好吗お元気ですか"
+  //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:   0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:  0  3 4 7 8 11 131415 17 19
   ASSERT_TRUE(itr->Advance());  // itr points to 'How'
-  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToStartUtf32(), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, IteratorMultipleAdvancesResetToStart) {
+TEST_P(ReverseJniLanguageSegmenterTest,
+       IteratorMultipleAdvancesResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -526,18 +544,19 @@ TEST_P(ReverseJniLanguageSegmenterTest, IteratorMultipleAdvancesResetToStart) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
+  // String:     "How are you你好吗お元気ですか"
+  //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:   0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:  0  3 4 7 8 11 131415 17 19
   ASSERT_TRUE(itr->Advance());
   ASSERT_TRUE(itr->Advance());
   ASSERT_TRUE(itr->Advance());
   ASSERT_TRUE(itr->Advance());  // itr points to ' '
-  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToStartUtf32(), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, IteratorDoneResetToStart) {
+TEST_P(ReverseJniLanguageSegmenterTest, IteratorDoneResetToStartUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -545,17 +564,18 @@ TEST_P(ReverseJniLanguageSegmenterTest, IteratorDoneResetToStart) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
+  // String:     "How are you你好吗お元気ですか"
+  //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:   0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:  0  3 4 7 8 11 131415 17 19
   while (itr->Advance()) {
     // Do nothing.
   }
-  EXPECT_THAT(itr->ResetToStart(), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToStartUtf32(), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterWordConnector) {
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterUtf32WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -563,21 +583,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterWordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "package com:google:android name"
-  //          ^      ^^                 ^^
-  // Bytes:   0      7 8               26 27
-  auto position_or = itr->ResetToTermStartingAfter(8);
+  // String:     "package com:google:android name"
+  //              ^      ^^                 ^^
+  // UTF-8 idx:   0      7 8               26 27
+  // UTF-32 idx:  0      7 8               26 27
+  auto position_or = itr->ResetToTermStartingAfterUtf32(8);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(26));
   ASSERT_THAT(itr->GetTerm(), Eq(" "));
 
-  position_or = itr->ResetToTermStartingAfter(7);
+  position_or = itr->ResetToTermStartingAfterUtf32(7);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(8));
   ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterOutOfBounds) {
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterUtf32OutOfBounds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -585,19 +606,19 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterOutOfBounds) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
-  ASSERT_THAT(itr->ResetToTermStartingAfter(7), IsOkAndHolds(Eq(8)));
+  // String:     "How are you你好吗お元気ですか"
+  //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:   0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:  0  3 4 7 8 11 131415 17 19
+  ASSERT_THAT(itr->ResetToTermStartingAfterUtf32(7), IsOkAndHolds(Eq(8)));
   ASSERT_THAT(itr->GetTerm(), Eq("you"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(-1),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(itr->GetTerm(), Eq("you"));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(-1), IsOk());
+  EXPECT_THAT(itr->GetTerm(), Eq("How"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(kText.length()),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(21),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(itr->GetTerm(), Eq("you"));
+  EXPECT_THAT(itr->GetTerm(), Eq("How"));
 }
 
 // Tests that ResetToTermAfter and Advance produce the same output. With the
@@ -606,7 +627,7 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermAfterOutOfBounds) {
 // terms produced by ResetToTermAfter calls with the current position
 // provided as the argument.
 TEST_P(ReverseJniLanguageSegmenterTest,
-       MixedLanguagesResetToTermAfterEquivalentToAdvance) {
+       MixedLanguagesResetToTermAfterUtf32EquivalentToAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -621,14 +642,14 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
       segmenter->Segment(kText));
   std::vector<std::string_view> reset_terms =
-      GetAllTermsResetAfter(reset_to_term_itr.get());
+      GetAllTermsResetAfterUtf32(reset_to_term_itr.get());
 
   EXPECT_THAT(reset_terms, testing::ElementsAreArray(advance_terms));
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       ThaiResetToTermAfterEquivalentToAdvance) {
+       ThaiResetToTermAfterUtf32EquivalentToAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -643,14 +664,14 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
       segmenter->Segment(kThai));
   std::vector<std::string_view> reset_terms =
-      GetAllTermsResetAfter(reset_to_term_itr.get());
+      GetAllTermsResetAfterUtf32(reset_to_term_itr.get());
 
   EXPECT_THAT(reset_terms, testing::ElementsAreArray(advance_terms));
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       KoreanResetToTermAfterEquivalentToAdvance) {
+       KoreanResetToTermAfterUtf32EquivalentToAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -665,7 +686,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
       segmenter->Segment(kKorean));
   std::vector<std::string_view> reset_terms =
-      GetAllTermsResetAfter(reset_to_term_itr.get());
+      GetAllTermsResetAfterUtf32(reset_to_term_itr.get());
 
   EXPECT_THAT(reset_terms, testing::ElementsAreArray(advance_terms));
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
@@ -676,7 +697,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
 // should be able to mix ResetToTermAfter(current_position) calls and Advance
 // calls to mimic calling Advance.
 TEST_P(ReverseJniLanguageSegmenterTest,
-       MixedLanguagesResetToTermAfterInteroperableWithAdvance) {
+       MixedLanguagesResetToTermAfterUtf32InteroperableWithAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -691,7 +712,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       std::unique_ptr<LanguageSegmenter::Iterator> advance_and_reset_itr,
       segmenter->Segment(kText));
   std::vector<std::string_view> advance_and_reset_terms =
-      GetAllTermsAdvanceAndResetAfter(advance_and_reset_itr.get());
+      GetAllTermsAdvanceAndResetAfterUtf32(advance_and_reset_itr.get());
 
   EXPECT_THAT(advance_and_reset_terms,
               testing::ElementsAreArray(advance_terms));
@@ -699,7 +720,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       ThaiResetToTermAfterInteroperableWithAdvance) {
+       ThaiResetToTermAfterUtf32InteroperableWithAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -714,7 +735,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       std::unique_ptr<LanguageSegmenter::Iterator> advance_and_reset_itr,
       segmenter->Segment(kThai));
   std::vector<std::string_view> advance_and_reset_terms =
-      GetAllTermsAdvanceAndResetAfter(advance_and_reset_itr.get());
+      GetAllTermsAdvanceAndResetAfterUtf32(advance_and_reset_itr.get());
 
   EXPECT_THAT(advance_and_reset_terms,
               testing::ElementsAreArray(advance_terms));
@@ -722,7 +743,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       KoreanResetToTermAfterInteroperableWithAdvance) {
+       KoreanResetToTermAfterUtf32InteroperableWithAdvance) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -737,14 +758,14 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       std::unique_ptr<LanguageSegmenter::Iterator> advance_and_reset_itr,
       segmenter->Segment(kKorean));
   std::vector<std::string_view> advance_and_reset_terms =
-      GetAllTermsAdvanceAndResetAfter(advance_and_reset_itr.get());
+      GetAllTermsAdvanceAndResetAfterUtf32(advance_and_reset_itr.get());
 
   EXPECT_THAT(advance_and_reset_terms,
               testing::ElementsAreArray(advance_terms));
   EXPECT_THAT(advance_and_reset_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermAfter) {
+TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -753,33 +774,35 @@ TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermAfter) {
       std::unique_ptr<LanguageSegmenter::Iterator> itr,
       language_segmenter->Segment("How are you你好吗お元気ですか"));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
-  EXPECT_THAT(itr->ResetToTermStartingAfter(2), IsOkAndHolds(Eq(3)));
+  // String:      "How are you你好吗お元気ですか"
+  //               ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:    0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:   0  3 4 7 8 11 131415 17 19
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(2), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(10), IsOkAndHolds(Eq(11)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(10), IsOkAndHolds(Eq(11)));
   EXPECT_THAT(itr->GetTerm(), Eq("你好"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(7), IsOkAndHolds(Eq(8)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(7), IsOkAndHolds(Eq(8)));
   EXPECT_THAT(itr->GetTerm(), Eq("you"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(32), IsOkAndHolds(Eq(35)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(18), IsOkAndHolds(Eq(19)));
   EXPECT_THAT(itr->GetTerm(), Eq("か"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(14), IsOkAndHolds(Eq(17)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(12), IsOkAndHolds(Eq(13)));
   EXPECT_THAT(itr->GetTerm(), Eq("吗"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(0), IsOkAndHolds(Eq(3)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(35),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(19),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ContinuousWhitespacesResetToTermAfter) {
+TEST_P(ReverseJniLanguageSegmenterTest,
+       ContinuousWhitespacesResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -789,35 +812,36 @@ TEST_P(ReverseJniLanguageSegmenterTest, ContinuousWhitespacesResetToTermAfter) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kTextWithSpace));
 
-  // String: "Hello          World"
-  //          ^    ^         ^
-  // Bytes:   0    5         15
-  EXPECT_THAT(itr->ResetToTermStartingAfter(0), IsOkAndHolds(Eq(5)));
+  // String:      "Hello          World"
+  //               ^    ^         ^
+  // UTF-8 idx:    0    5         15
+  // UTF-32 idx:   0    5         15
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(5)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(2), IsOkAndHolds(Eq(5)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(2), IsOkAndHolds(Eq(5)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(10), IsOkAndHolds(Eq(15)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(10), IsOkAndHolds(Eq(15)));
   EXPECT_THAT(itr->GetTerm(), Eq("World"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(5), IsOkAndHolds(Eq(15)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(5), IsOkAndHolds(Eq(15)));
   EXPECT_THAT(itr->GetTerm(), Eq("World"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(15),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(17),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(17),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(19),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(19),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermAfter) {
+TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -827,21 +851,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermAfter) {
   constexpr std::string_view kChinese = "我每天走路去上班。";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kChinese));
-  // String: "我每天走路去上班。"
-  //          ^ ^  ^   ^^
-  // Bytes:   0 3  9  15 18
-  EXPECT_THAT(itr->ResetToTermStartingAfter(0), IsOkAndHolds(Eq(3)));
+  // String:       "我每天走路去上班。"
+  //                ^ ^  ^   ^^
+  // UTF-8 idx:     0 3  9  15 18
+  // UTF-832 idx:   0 1  3   5 6
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("每天"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(7), IsOkAndHolds(Eq(9)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(2), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("走路"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(19),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(7),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermAfter) {
+TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -850,21 +875,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermAfter) {
   constexpr std::string_view kJapanese = "私は毎日仕事に歩いています。";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kJapanese));
-  // String: "私は毎日仕事に歩いています。"
-  //          ^ ^ ^  ^  ^ ^ ^ ^  ^
-  // Bytes:   0 3 6  12 18212427 33
-  EXPECT_THAT(itr->ResetToTermStartingAfter(0), IsOkAndHolds(Eq(3)));
+  // String:       "私は毎日仕事に歩いています。"
+  //                ^ ^ ^  ^  ^ ^ ^ ^  ^
+  // UTF-8 idx:     0 3 6  12 18212427 33
+  // UTF-32 idx:    0 1 2  4  6 7 8 9  11
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("は"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(33),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(11),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(7), IsOkAndHolds(Eq(12)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(3), IsOkAndHolds(Eq(4)));
   EXPECT_THAT(itr->GetTerm(), Eq("仕事"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermAfter) {
+TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -872,21 +898,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermAfter) {
   constexpr std::string_view kKhmer = "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kKhmer));
-  // String: "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
-  //          ^ ^   ^   ^
-  // Bytes:   0 9   24  45
-  EXPECT_THAT(itr->ResetToTermStartingAfter(0), IsOkAndHolds(Eq(9)));
+  // String:            "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
+  //                     ^ ^   ^   ^
+  // UTF-8 idx:          0 9   24  45
+  // UTF-32 idx:         0 3   8   15
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("ដើរទៅ"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(47),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(14), IsOkAndHolds(Eq(24)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(6), IsOkAndHolds(Eq(8)));
   EXPECT_THAT(itr->GetTerm(), Eq("ធ្វើការ"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermAfter) {
+TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -895,24 +922,25 @@ TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermAfter) {
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kThai));
-  // String: "ฉันเดินไปทำงานทุกวัน"
-  //          ^ ^  ^ ^    ^ ^
-  // Bytes:   0 9 21 27  42 51
-  EXPECT_THAT(itr->ResetToTermStartingAfter(0), IsOkAndHolds(Eq(9)));
+  // String:      "ฉันเดินไปทำงานทุกวัน"
+  //               ^ ^  ^ ^    ^ ^
+  // UTF-8 idx:    0 9 21 27  42 51
+  // UTF-32 idx:   0 3  7 9   14 17
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("เดิน"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(51),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(17),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(13), IsOkAndHolds(Eq(21)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(6), IsOkAndHolds(Eq(7)));
   EXPECT_THAT(itr->GetTerm(), Eq("ไป"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfter(34), IsOkAndHolds(Eq(42)));
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(12), IsOkAndHolds(Eq(14)));
   EXPECT_THAT(itr->GetTerm(), Eq("ทุก"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeWordConnector) {
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeWordConnectorUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -920,21 +948,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeWordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "package name com:google:android!"
-  //          ^      ^^   ^^                 ^
-  // Bytes:   0      7 8 12 13               31
-  auto position_or = itr->ResetToTermEndingBefore(31);
+  // String:      "package name com:google:android!"
+  //               ^      ^^   ^^                 ^
+  // UTF-8 idx:    0      7 8 12 13               31
+  // UTF-32 idx:   0      7 8 12 13               31
+  auto position_or = itr->ResetToTermEndingBeforeUtf32(31);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(13));
   ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
 
-  position_or = itr->ResetToTermEndingBefore(21);
+  position_or = itr->ResetToTermEndingBeforeUtf32(21);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(12));
   ASSERT_THAT(itr->GetTerm(), Eq(" "));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeOutOfBounds) {
+TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeOutOfBoundsUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -942,19 +971,19 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeOutOfBounds) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
-  ASSERT_THAT(itr->ResetToTermEndingBefore(7), IsOkAndHolds(Eq(4)));
+  // String:      "How are you你好吗お元気ですか"
+  //               ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:    0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:   0  3 4 7 8 11 131415 17 19
+  ASSERT_THAT(itr->ResetToTermEndingBeforeUtf32(7), IsOkAndHolds(Eq(4)));
   ASSERT_THAT(itr->GetTerm(), Eq("are"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(-1),
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(itr->GetTerm(), Eq("are"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(kText.length()),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(itr->GetTerm(), Eq("are"));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(29), IsOk());
+  EXPECT_THAT(itr->GetTerm(), Eq("か"));
 }
 
 // Tests that ResetToTermBefore and Advance produce the same output. With the
@@ -963,7 +992,7 @@ TEST_P(ReverseJniLanguageSegmenterTest, ResetToTermBeforeOutOfBounds) {
 // terms produced by ResetToTermBefore calls with the current position
 // provided as the argument (after their order has been reversed).
 TEST_P(ReverseJniLanguageSegmenterTest,
-       MixedLanguagesResetToTermBeforeEquivalentToAdvance) {
+       MixedLanguagesResetToTermBeforeEquivalentToAdvanceUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -973,17 +1002,12 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       segmenter->Segment(kText));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
-  // Can't produce the last term via calls to ResetToTermBefore. So skip
-  // past that one.
-  auto itr = advance_terms.begin();
-  std::advance(itr, advance_terms.size() - 1);
-  advance_terms.erase(itr);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
       segmenter->Segment(kText));
   std::vector<std::string_view> reset_terms =
-      GetAllTermsResetBefore(reset_to_term_itr.get());
+      GetAllTermsResetBeforeUtf32(reset_to_term_itr.get());
   std::reverse(reset_terms.begin(), reset_terms.end());
 
   EXPECT_THAT(reset_terms, testing::ElementsAreArray(advance_terms));
@@ -992,7 +1016,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       ThaiResetToTermBeforeEquivalentToAdvance) {
+       ThaiResetToTermBeforeEquivalentToAdvanceUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -1002,17 +1026,12 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       segmenter->Segment(kThai));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
-  // Can't produce the last term via calls to ResetToTermBefore. So skip
-  // past that one.
-  auto itr = advance_terms.begin();
-  std::advance(itr, advance_terms.size() - 1);
-  advance_terms.erase(itr);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
       segmenter->Segment(kThai));
   std::vector<std::string_view> reset_terms =
-      GetAllTermsResetBefore(reset_to_term_itr.get());
+      GetAllTermsResetBeforeUtf32(reset_to_term_itr.get());
   std::reverse(reset_terms.begin(), reset_terms.end());
 
   EXPECT_THAT(reset_terms, testing::ElementsAreArray(advance_terms));
@@ -1020,7 +1039,7 @@ TEST_P(ReverseJniLanguageSegmenterTest,
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       KoreanResetToTermBeforeEquivalentToAdvance) {
+       KoreanResetToTermBeforeEquivalentToAdvanceUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
@@ -1030,24 +1049,19 @@ TEST_P(ReverseJniLanguageSegmenterTest,
       segmenter->Segment(kKorean));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
-  // Can't produce the last term via calls to ResetToTermBefore. So skip
-  // past that one.
-  auto itr = advance_terms.begin();
-  std::advance(itr, advance_terms.size() - 1);
-  advance_terms.erase(itr);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
       segmenter->Segment(kKorean));
   std::vector<std::string_view> reset_terms =
-      GetAllTermsResetBefore(reset_to_term_itr.get());
+      GetAllTermsResetBeforeUtf32(reset_to_term_itr.get());
   std::reverse(reset_terms.begin(), reset_terms.end());
 
   EXPECT_THAT(reset_terms, testing::ElementsAreArray(advance_terms));
   EXPECT_THAT(reset_to_term_itr->GetTerm(), Eq(advance_itr->GetTerm()));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermBefore) {
+TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -1056,35 +1070,36 @@ TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermBefore) {
       std::unique_ptr<LanguageSegmenter::Iterator> itr,
       language_segmenter->Segment("How are you你好吗お元気ですか"));
 
-  // String: "How are you你好吗お元気ですか"
-  //          ^  ^^  ^^  ^  ^ ^ ^  ^  ^
-  // Bytes:   0  3 4 7 8 11 172023 29 35
-  EXPECT_THAT(itr->ResetToTermEndingBefore(2),
+  // String:      "How are you你好吗お元気ですか"
+  //               ^  ^^  ^^  ^  ^ ^ ^  ^  ^
+  // UTF-8 idx:    0  3 4 7 8 11 172023 29 35
+  // UTF-32 idx:   0  3 4 7 8 11 131415 17 19
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(2),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(10), IsOkAndHolds(Eq(7)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(10), IsOkAndHolds(Eq(7)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(7), IsOkAndHolds(Eq(4)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(7), IsOkAndHolds(Eq(4)));
   EXPECT_THAT(itr->GetTerm(), Eq("are"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(32), IsOkAndHolds(Eq(23)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(18), IsOkAndHolds(Eq(15)));
   EXPECT_THAT(itr->GetTerm(), Eq("元気"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(14), IsOkAndHolds(Eq(8)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(12), IsOkAndHolds(Eq(8)));
   EXPECT_THAT(itr->GetTerm(), Eq("you"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(0),
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(35), IsOkAndHolds(Eq(29)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(19), IsOkAndHolds(Eq(17)));
   EXPECT_THAT(itr->GetTerm(), Eq("です"));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest,
-       ContinuousWhitespacesResetToTermBefore) {
+       ContinuousWhitespacesResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -1094,34 +1109,35 @@ TEST_P(ReverseJniLanguageSegmenterTest,
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kTextWithSpace));
 
-  // String: "Hello          World"
-  //          ^    ^         ^
-  // Bytes:   0    5         15
-  EXPECT_THAT(itr->ResetToTermEndingBefore(0),
+  // String:      "Hello          World"
+  //               ^    ^         ^
+  // UTF-8 idx:    0    5         15
+  // UTF-32 idx:   0    5         15
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(2),
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(2),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(10), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(10), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("Hello"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(5), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(5), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("Hello"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(15), IsOkAndHolds(Eq(5)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(15), IsOkAndHolds(Eq(5)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(17), IsOkAndHolds(Eq(5)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(17), IsOkAndHolds(Eq(5)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(19), IsOkAndHolds(Eq(5)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(19), IsOkAndHolds(Eq(5)));
   EXPECT_THAT(itr->GetTerm(), Eq(" "));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermBefore) {
+TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -1131,21 +1147,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermBefore) {
   constexpr std::string_view kChinese = "我每天走路去上班。";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kChinese));
-  // String: "我每天走路去上班。"
-  //          ^ ^  ^   ^^
-  // Bytes:   0 3  9  15 18
-  EXPECT_THAT(itr->ResetToTermEndingBefore(0),
+  // String:      "我每天走路去上班。"
+  //               ^ ^  ^   ^^
+  // UTF-8 idx:    0 3  9  15 18
+  // UTF-32 idx:   0 1  3   5 6
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(7), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(2), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("我"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(19), IsOkAndHolds(Eq(15)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(7), IsOkAndHolds(Eq(5)));
   EXPECT_THAT(itr->GetTerm(), Eq("去"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermBefore) {
+TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -1154,21 +1171,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermBefore) {
   constexpr std::string_view kJapanese = "私は毎日仕事に歩いています。";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kJapanese));
-  // String: "私は毎日仕事に歩いています。"
-  //          ^ ^ ^  ^  ^ ^ ^ ^  ^
-  // Bytes:   0 3 6  12 18212427 33
-  EXPECT_THAT(itr->ResetToTermEndingBefore(0),
+  // String:      "私は毎日仕事に歩いています。"
+  //               ^ ^ ^  ^  ^ ^ ^ ^  ^
+  // UTF-8 idx:    0 3 6  12 18212427 33
+  // UTF-32 idx:   0 1 2  4  6 7 8 9  11
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(33), IsOkAndHolds(Eq(27)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(11), IsOkAndHolds(Eq(9)));
   EXPECT_THAT(itr->GetTerm(), Eq("てい"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(7), IsOkAndHolds(Eq(3)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(3), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("は"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermBefore) {
+TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -1176,21 +1194,22 @@ TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermBefore) {
   constexpr std::string_view kKhmer = "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kKhmer));
-  // String: "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
-  //          ^ ^   ^   ^
-  // Bytes:   0 9   24  45
-  EXPECT_THAT(itr->ResetToTermEndingBefore(0),
+  // String:      "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
+  //               ^ ^   ^   ^
+  // UTF-8 idx:    0 9   24  45
+  // UTF-32 idx:   0 3   8   15
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(47), IsOkAndHolds(Eq(24)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(16), IsOkAndHolds(Eq(8)));
   EXPECT_THAT(itr->GetTerm(), Eq("ធ្វើការ"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(14), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(5), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("ញុំ"));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermBefore) {
+TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermBeforeUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(
@@ -1199,20 +1218,21 @@ TEST_P(ReverseJniLanguageSegmenterTest, ThaiResetToTermBefore) {
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kThai));
-  // String: "ฉันเดินไปทำงานทุกวัน"
-  //          ^ ^  ^ ^    ^ ^
-  // Bytes:   0 9 21 27  42 51
-  EXPECT_THAT(itr->ResetToTermEndingBefore(0),
+  // String:      "ฉันเดินไปทำงานทุกวัน"
+  //               ^ ^  ^ ^    ^ ^
+  // UTF-8 idx:    0 9 21 27  42 51
+  // UTF-32 idx:   0 3  7 9   14 17
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(51), IsOkAndHolds(Eq(42)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(17), IsOkAndHolds(Eq(14)));
   EXPECT_THAT(itr->GetTerm(), Eq("ทุก"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(13), IsOkAndHolds(Eq(0)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(4), IsOkAndHolds(Eq(0)));
   EXPECT_THAT(itr->GetTerm(), Eq("ฉัน"));
 
-  EXPECT_THAT(itr->ResetToTermEndingBefore(34), IsOkAndHolds(Eq(21)));
+  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(11), IsOkAndHolds(Eq(7)));
   EXPECT_THAT(itr->GetTerm(), Eq("ไป"));
 }
 
