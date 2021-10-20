@@ -164,7 +164,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
                         icing_filesystem));
   return std::unique_ptr<Index>(new Index(options, std::move(term_id_codec),
                                           std::move(lite_index),
-                                          std::move(main_index)));
+                                          std::move(main_index), filesystem));
 }
 
 libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
@@ -277,8 +277,19 @@ Index::FindTermsByPrefix(const std::string& prefix,
                             std::move(main_term_metadata_list), num_to_return);
 }
 
-libtextclassifier3::Status Index::Editor::AddHit(const char* term,
-                                                 Hit::Score score) {
+IndexStorageInfoProto Index::GetStorageInfo() const {
+  IndexStorageInfoProto storage_info;
+  int64_t directory_size = filesystem_->GetDiskUsage(options_.base_dir.c_str());
+  if (directory_size != Filesystem::kBadFileSize) {
+    storage_info.set_index_size(directory_size);
+  } else {
+    storage_info.set_index_size(-1);
+  }
+  storage_info = lite_index_->GetStorageInfo(std::move(storage_info));
+  return main_index_->GetStorageInfo(std::move(storage_info));
+}
+
+libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
   // Step 1: See if this term is already in the lexicon
   uint32_t tvi;
   auto tvi_or = lite_index_->GetTermId(term);
@@ -287,8 +298,10 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
   if (tvi_or.ok()) {
     tvi = tvi_or.ValueOrDie();
     if (seen_tokens_.find(tvi) != seen_tokens_.end()) {
-      ICING_VLOG(1) << "A hit for term " << term
-                    << " has already been added. Skipping.";
+      ICING_VLOG(1) << "Updating term frequency for term " << term;
+      if (seen_tokens_[tvi] != Hit::kMaxTermFrequency) {
+        ++seen_tokens_[tvi];
+      }
       return libtextclassifier3::Status::OK;
     }
     ICING_VLOG(1) << "Term " << term
@@ -302,14 +315,20 @@ libtextclassifier3::Status Index::Editor::AddHit(const char* term,
     ICING_ASSIGN_OR_RETURN(
         tvi, lite_index_->InsertTerm(term, term_match_type_, namespace_id_));
   }
-  seen_tokens_.insert(tvi);
+  // Token seen for the first time in the current document.
+  seen_tokens_[tvi] = 1;
+  return libtextclassifier3::Status::OK;
+}
 
-  // Step 3: Add the hit itself
-  Hit hit(section_id_, document_id_, score,
-          term_match_type_ == TermMatchType::PREFIX);
-  ICING_ASSIGN_OR_RETURN(uint32_t term_id,
-                         term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  return lite_index_->AddHit(term_id, hit);
+libtextclassifier3::Status Index::Editor::IndexAllBufferedTerms() {
+  for (auto itr = seen_tokens_.begin(); itr != seen_tokens_.end(); itr++) {
+    Hit hit(section_id_, document_id_, /*term_frequency=*/itr->second,
+            term_match_type_ == TermMatchType::PREFIX);
+    ICING_ASSIGN_OR_RETURN(
+        uint32_t term_id, term_id_codec_->EncodeTvi(itr->first, TviType::LITE));
+    ICING_RETURN_IF_ERROR(lite_index_->AddHit(term_id, hit));
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

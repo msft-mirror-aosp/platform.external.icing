@@ -22,6 +22,7 @@
 #include <unordered_set>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/schema.pb.h"
 
 namespace icing {
@@ -32,13 +33,14 @@ class SchemaUtil {
   using TypeConfigMap =
       std::unordered_map<std::string, const SchemaTypeConfigProto>;
 
-  struct SchemaDelta {
-    // Whether an indexing config has changed, requiring the index to be
-    // regenerated. We don't list out all the types that make the index
-    // incompatible because our index isn't optimized for that. It's much easier
-    // to reset the entire index and reindex every document.
-    bool index_incompatible = false;
+  // Maps from a child type to the parent types that depend on it.
+  // Ex. type A has a single property of type B
+  // The dependency map will be { { "B", { "A" } } }
+  using DependencyMap =
+      std::unordered_map<std::string_view,
+                         std::unordered_set<std::string_view>>;
 
+  struct SchemaDelta {
     // Which schema types were present in the old schema, but were deleted from
     // the new schema.
     std::unordered_set<std::string> schema_types_deleted;
@@ -47,10 +49,28 @@ class SchemaUtil {
     // could invalidate existing Documents of that schema type.
     std::unordered_set<std::string> schema_types_incompatible;
 
+    // Schema types that were added in the new schema. Represented by the
+    // `schema_type` field in the SchemaTypeConfigProto.
+    std::unordered_set<std::string> schema_types_new;
+
+    // Schema types that were changed in a way that was backwards compatible and
+    // didn't invalidate the index. Represented by the `schema_type` field in
+    // the SchemaTypeConfigProto.
+    std::unordered_set<std::string> schema_types_changed_fully_compatible;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but invalidated the index. Represented by the `schema_type` field in the
+    // SchemaTypeConfigProto.
+    std::unordered_set<std::string> schema_types_index_incompatible;
+
     bool operator==(const SchemaDelta& other) const {
-      return index_incompatible == other.index_incompatible &&
-             schema_types_deleted == other.schema_types_deleted &&
-             schema_types_incompatible == other.schema_types_incompatible;
+      return schema_types_deleted == other.schema_types_deleted &&
+             schema_types_incompatible == other.schema_types_incompatible &&
+             schema_types_new == other.schema_types_new &&
+             schema_types_changed_fully_compatible ==
+                 other.schema_types_changed_fully_compatible &&
+             schema_types_index_incompatible ==
+                 other.schema_types_index_incompatible;
     }
   };
 
@@ -81,12 +101,21 @@ class SchemaUtil {
   //      SchemaTypeConfigProto.schema_type
   //  10. Property names can only be alphanumeric.
   //  11. Any STRING data types have a valid string_indexing_config
+  //  12. A SchemaTypeConfigProto cannot have a property whose schema_type is
+  //      itself, thus creating an infinite loop.
+  //  13. Two SchemaTypeConfigProtos cannot have properties that reference each
+  //      other's schema_type, thus creating an infinite loop.
+  //
+  //  TODO(b/171996137): Clarify 12 and 13 are only for indexed properties, once
+  //  document properties can be opted out of indexing.
   //
   // Returns:
+  //   On success, a dependency map from each child types to all parent types
+  //   that depend on it directly or indirectly.
   //   ALREADY_EXISTS for case 1 and 2
-  //   INVALID_ARGUMENT for 3-11
-  //   OK otherwise
-  static libtextclassifier3::Status Validate(const SchemaProto& schema);
+  //   INVALID_ARGUMENT for 3-13
+  static libtextclassifier3::StatusOr<DependencyMap> Validate(
+      const SchemaProto& schema);
 
   // Creates a mapping of schema type -> schema type config proto. The
   // type_config_map is cleared, and then each schema-type_config_proto pair is
@@ -135,7 +164,8 @@ class SchemaUtil {
   //
   // Returns a SchemaDelta that captures the aforementioned differences.
   static const SchemaDelta ComputeCompatibilityDelta(
-      const SchemaProto& old_schema, const SchemaProto& new_schema);
+      const SchemaProto& old_schema, const SchemaProto& new_schema,
+      const DependencyMap& new_schema_dependency_map);
 
   // Validates the 'property_name' field.
   //   1. Can't be an empty string

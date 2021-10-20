@@ -121,14 +121,34 @@ libtextclassifier3::Status MainIndex::Init(
 }
 
 libtextclassifier3::StatusOr<int64_t> MainIndex::GetElementsSize() const {
-  int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
-  int64_t index_elt_size = flash_index_storage_->GetElementsSize();
-  if (lexicon_elt_size == IcingFilesystem::kBadFileSize ||
-      index_elt_size == IcingFilesystem::kBadFileSize) {
-    return absl_ports::InternalError(
-        "Failed to get element size of LiteIndex's lexicon");
+  IndexStorageInfoProto storage_info = GetStorageInfo(IndexStorageInfoProto());
+  if (storage_info.main_index_storage_size() == -1 ||
+      storage_info.main_index_lexicon_size() == -1) {
+    return absl_ports::AbortedError(
+        "Failed to get size of MainIndex's members.");
   }
-  return lexicon_elt_size + index_elt_size;
+  return storage_info.main_index_storage_size() +
+         storage_info.main_index_lexicon_size();
+}
+
+IndexStorageInfoProto MainIndex::GetStorageInfo(
+    IndexStorageInfoProto storage_info) const {
+  int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
+  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
+    storage_info.set_main_index_lexicon_size(lexicon_elt_size);
+  } else {
+    storage_info.set_main_index_lexicon_size(-1);
+  }
+  int64_t index_elt_size = flash_index_storage_->GetElementsSize();
+  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
+    storage_info.set_main_index_storage_size(index_elt_size);
+  } else {
+    storage_info.set_main_index_storage_size(-1);
+  }
+  storage_info.set_main_index_block_size(flash_index_storage_->block_size());
+  storage_info.set_num_blocks(flash_index_storage_->num_blocks());
+  storage_info.set_min_free_fraction(flash_index_storage_->min_free_fraction());
+  return storage_info;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListAccessor>>
@@ -579,7 +599,8 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     }
 
     // A backfill hit is a prefix hit in a prefix section.
-    const Hit backfill_hit(hit.section_id(), hit.document_id(), hit.score(),
+    const Hit backfill_hit(hit.section_id(), hit.document_id(),
+                           hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
                            /*is_prefix_hit=*/true);
     if (backfill_hit == last_added_hit) {
