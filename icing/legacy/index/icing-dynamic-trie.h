@@ -35,8 +35,7 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
