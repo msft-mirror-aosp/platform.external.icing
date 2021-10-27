@@ -49,6 +49,37 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
   }
   int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
 
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    SectionIdMask section_mask =
+        doc_hit_info_.hit_section_ids_mask() & filtering_section_mask;
+    SectionIdMask section_mask_copy = section_mask;
+    std::array<Hit::TermFrequency, kMaxSectionId> section_term_frequencies = {
+        Hit::kNoTermFrequency};
+    while (section_mask_copy) {
+      SectionId section_id = __builtin_ctz(section_mask_copy);
+      section_term_frequencies.at(section_id) =
+          doc_hit_info_.hit_term_frequency(section_id);
+      section_mask_copy &= ~(1u << section_id);
+    }
+    TermMatchInfo term_stats(term_, section_mask,
+                             std::move(section_term_frequencies));
+
+    for (const TermMatchInfo& cur_term_stats : *matched_terms_stats) {
+      if (cur_term_stats.term == term_stats.term) {
+        // Same docId and same term, we don't need to add the term and the term
+        // frequency should always be the same
+        return;
+      }
+    }
+    matched_terms_stats->push_back(std::move(term_stats));
+  }
+
  protected:
   // Add DocHitInfos corresponding to term_ to cached_doc_hit_infos_.
   virtual libtextclassifier3::Status RetrieveMoreHits() = 0;
