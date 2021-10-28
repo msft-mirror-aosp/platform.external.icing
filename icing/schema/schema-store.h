@@ -246,6 +246,12 @@ class SchemaStore {
   //   INTERNAL_ERROR on compute error
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
 
+  // Returns:
+  //   - On success, the section metadata list for the specified schema type
+  //   - NOT_FOUND if the schema type is not present in the schema
+  libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
+  GetSectionMetadata(const std::string& schema_type) const;
+
   // Calculates the StorageInfo for the Schema Store.
   //
   // If an IO error occurs while trying to calculate the value for a field, then

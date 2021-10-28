@@ -491,5 +491,10 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
   return storage_info;
 }
 
+libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
+SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
+  return section_manager_->GetMetadataList(schema_type);
+}
+
 }  // namespace lib
 }  // namespace icing
