@@ -308,3 +308,37 @@ message GetResultSpecProto {
   // type will be retrieved.
   repeated TypePropertyMask type_property_masks = 1;
 }
+
+// Next tag: 4
+message SuggestionSpecProto {
+  // REQUIRED: The "raw" prefix string that users may type. For example, "f"
+  // will search for suggested query that start with "f" like "foo", "fool".
+  optional string prefix = 1;
+
+  // OPTIONAL: Only search for suggestions that under the specified namespaces.
+  // If unset, the suggestion will search over all namespaces. Note that this
+  // applies to the entire 'prefix'. To issue different suggestions for
+  // different namespaces, separate RunSuggestion()'s will need to be made.
+  repeated string namespace_filters = 2;
+
+  // REQUIRED: The number of suggestions to be returned.
+  optional int32 num_to_return = 3;
+}
+
+// Next tag: 3
+message SuggestionResponse {
+  message Suggestion {
+    // The suggested query string for client to search for.
+    optional string query = 1;
+  }
+
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  optional StatusProto status = 1;
+
+  repeated Suggestion suggestions = 2;
+}
