@@ -14,9 +14,8 @@
 
 #include "icing/file/file-backed-vector.h"
 
-#include <errno.h>
-
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <memory>
 #include <string_view>
