@@ -56,10 +56,9 @@
 #ifndef ICING_FILE_FILE_BACKED_VECTOR_H_
 #define ICING_FILE_FILE_BACKED_VECTOR_H_
 
-#include <inttypes.h>
-#include <stdint.h>
 #include <sys/mman.h>
 
+#include <cinttypes>
 #include <cstdint>
 #include <memory>
 #include <string>
