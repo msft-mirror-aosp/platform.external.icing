@@ -300,9 +300,10 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
     UChar32 uchar32 = i18n_utils::GetUChar32At(text_.data(), text_.length(),
                                                term_start_index_);
-    // Rule 2: for non-ASCII terms, only the alphabetic terms are returned.
-    // We know it's an alphabetic term by checking the first unicode character.
-    if (u_isUAlphabetic(uchar32)) {
+    // Rule 2: for non-ASCII terms, only the alphanumeric terms are returned.
+    // We know it's an alphanumeric term by checking the first unicode
+    // character.
+    if (i18n_utils::IsAlphaNumeric(uchar32)) {
       return true;
     }
     return false;
