@@ -25,6 +25,7 @@ namespace icing {
 namespace lib {
 
 using SchemaTypeId = int16_t;
+inline constexpr SchemaTypeId kInvalidSchemaTypeId = -1;
 
 class DocumentFilterData {
  public:

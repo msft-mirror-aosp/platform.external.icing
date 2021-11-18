@@ -16,9 +16,43 @@
 #define ICING_UTIL_CLOCK_H_
 
 #include <cstdint>
+#include <memory>
 
 namespace icing {
 namespace lib {
+
+// Returns the current steady time in nanoseconds. The steady clock is different
+// from the system clock. It's monotonic and never returns a lower value than a
+// previous call, while a system clock can be occasionally adjusted.
+int64_t GetSteadyTimeNanoseconds();
+
+// Returns the current steady time in Milliseconds. The steady clock is
+// different from the system clock. It's monotonic and never returns a lower
+// value than a previous call, while a system clock can be occasionally
+// adjusted.
+int64_t GetSteadyTimeMilliseconds();
+
+// Used to calculate the elapsed time.
+class Timer {
+ public:
+  // Creates and starts the timer.
+  Timer() : start_timestamp_nanoseconds_(GetSteadyTimeNanoseconds()) {}
+
+  virtual ~Timer() = default;
+
+  // Returns the elapsed time from when timer started.
+  virtual int64_t GetElapsedMilliseconds() {
+    return GetElapsedNanoseconds() / 1000000;
+  }
+
+  // Returns the elapsed time from when timer started.
+  virtual int64_t GetElapsedNanoseconds() {
+    return GetSteadyTimeNanoseconds() - start_timestamp_nanoseconds_;
+  }
+
+ private:
+  int64_t start_timestamp_nanoseconds_;
+};
 
 // Wrapper around real-time clock functions. This is separated primarily so
 // tests can override this clock and inject it into the class under test.
@@ -29,12 +63,11 @@ class Clock {
   // Returns the current time in milliseconds, it's guaranteed that the return
   // value is non-negative.
   virtual int64_t GetSystemTimeMilliseconds() const;
-};
 
-// Returns the current steady time in nanoseconds. The steady clock is different
-// from the system clock. It's monotonic and never returns a lower value than a
-// previous call, while a system clock can be occasionally adjusted.
-uint64_t GetSteadyTimeNanoseconds();
+  // Returns a timer used to calculate the elapsed time. The timer starts when
+  // the method returns.
+  virtual std::unique_ptr<Timer> GetNewTimer() const;
+};
 
 }  // namespace lib
 }  // namespace icing
