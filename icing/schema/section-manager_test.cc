@@ -20,7 +20,6 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/proto/schema.proto.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/schema-util.h"

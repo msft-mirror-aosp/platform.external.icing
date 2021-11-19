@@ -65,7 +65,7 @@ message SearchSpecProto {
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 5
+// Next tag: 6
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -102,34 +102,95 @@ message ResultSpecProto {
   // has been specified for a schema type, then *all* properties of that schema
   // type will be retrieved.
   repeated TypePropertyMask type_property_masks = 4;
+
+  // Groupings of namespaces whose total returned results should be
+  // limited together.
+  // Next tag: 3
+  message ResultGrouping {
+    // The namespaces in this grouping.
+    repeated string namespaces = 1;
+
+    // The maximum number of results in this grouping that should be returned.
+    optional int32 max_results = 2;
+  }
+
+  // How to limit the number of results returned per set of namespaces. If
+  // results match for a namespace that is not present in any result groupings,
+  // then those results will be returned without limit.
+  //
+  // Non-existent namespaces will be ignored.
+  //
+  // Example : Suppose that there are four namespaces each with three results
+  // matching the query for "foo". Without any result groupings, Icing would
+  // return the following results:
+  // ["ns0doc0", "ns0doc1", "ns1doc0", "ns3doc0", "ns0doc2", "ns3doc1",
+  //  "ns2doc1", "ns3doc2", "ns2doc0", "ns1doc1", "ns2doc2", "ns1doc1"].
+  //
+  // and the following result groupings:
+  // [ { ["namespace0"], 2 }, { ["namespace1", "namespace2"], 2} ]
+  //
+  // The following results will be returned:
+  // ["ns0doc0", "ns0doc1", "ns1doc0", "ns3doc0", "ns3doc1", "ns2doc1",
+  //  "ns3doc2"].
+  repeated ResultGrouping result_groupings = 5;
 }
 
 // The representation of a single match within a DocumentProto property.
-// Next tag: 6
+//
+// Example : A document whose content is "Necesito comprar comida mañana." and a
+// query for "mana" with window=15
+// Next tag: 12
 message SnippetMatchProto {
-  // Properties may have multiple values. values_index indicates which of these
-  // multiple string values the match occurred in. For properties with only one
-  // value, the values_index will always be 0.
-  // Ex. "Recipients" [
-  //      { { "Name"         : "Daffy Duck" }
-  //        { "EmailAddress" : "daffduck@gmail.com" } },
-  //      { { "Name"         : "Donald Duck" }
-  //        { "EmailAddress" : "donduck@gmail.com" }  }
-  // "Daffy Duck" is the string value with a value_index of 0 for property
-  // "Recipients.Name". "Donald Duck" is the string value with a value_index of
-  // 1 for property "Recipients.Name".
-  optional int32 values_index = 1;
+  // The index of the byte in the string at which the match begins and the
+  // length in bytes of the match.
+  //
+  // For the example above, the values of these fields would be
+  // exact_match_byte_position=24, exact_match_byte_length=7 "mañana"
+  optional int32 exact_match_byte_position = 2;
+  optional int32 exact_match_byte_length = 3;
 
-  // The position and length within the matched string at which the exact
-  // match begins.
-  optional int32 exact_match_position = 2;
+  // The length in bytes of the subterm that matches the query. The beginning of
+  // the submatch is the same as exact_match_byte_position.
+  //
+  // For the example above, the value of this field would be 5. With
+  // exact_match_byte_position=24 above, it would produce the substring "maña"
+  optional int32 submatch_byte_length = 10;
 
-  optional int32 exact_match_bytes = 3;
+  // The index of the UTF-16 code unit in the string at which the match begins
+  // and the length in UTF-16 code units of the match. This is for use with
+  // UTF-16 encoded strings like Java.lang.String.
+  //
+  // For the example above, the values of these fields would be
+  // exact_match_utf16_position=24, exact_match_utf16_length=6 "mañana"
+  optional int32 exact_match_utf16_position = 6;
+  optional int32 exact_match_utf16_length = 7;
 
-  // The position and length of the suggested snippet window.
-  optional int32 window_position = 4;
+  // The length in UTF-16 code units of the subterm that matches the query. The
+  // beginning of the submatch is the same as exact_match_utf16_position. This
+  // is for use with UTF-16 encoded strings like Java.lang.String.
+  //
+  // For the example above, the value of this field would be 4. With
+  // exact_match_utf16_position=24 above, it would produce the substring "maña"
+  optional int32 submatch_utf16_length = 11;
 
-  optional int32 window_bytes = 5;
+  // The index of the byte in the string at which the suggested snippet window
+  // begins and the length in bytes of the window.
+  //
+  // For the example above, the values of these fields would be
+  // window_byte_position=17, window_byte_length=15 "comida mañana."
+  optional int32 window_byte_position = 4;
+  optional int32 window_byte_length = 5;
+
+  // The index of the UTF-16 code unit in the string at which the suggested
+  // snippet window begins and the length in UTF-16 code units of the window.
+  // This is for use with UTF-16 encoded strings like Java.lang.String.
+  //
+  // For the example above, the values of these fields would be
+  // window_utf16_position=17, window_utf16_length=14 "comida mañana."
+  optional int32 window_utf16_position = 8;
+  optional int32 window_utf16_length = 9;
+
+  reserved 1;
 }
 
 // A Proto representing all snippets for a single DocumentProto.
@@ -139,9 +200,29 @@ message SnippetProto {
   // property values in the corresponding DocumentProto.
   // Next tag: 3
   message EntryProto {
-    // A '.'-delimited sequence of property names indicating which property in
-    // the DocumentProto these snippets correspond to.
-    // Example properties: 'body', 'sender.name', 'sender.emailaddress', etc.
+    // A property path indicating which property in the DocumentProto these
+    // snippets correspond to. Property paths will contain 1) property names,
+    // 2) the property separator character '.' used to represent nested property
+    // and 3) indices surrounded by brackets to represent a specific value in
+    // that property.
+    //
+    // Example properties:
+    // - 'body'               : the first and only string value of a top-level
+    //                          property called 'body'.
+    // - 'sender.name'        : the first and only string value of a property
+    //                          called 'name' that is a subproperty of a
+    //                          property called 'sender'.
+    // - 'bcc[1].emailaddress': the first and only string value of a property
+    //                          called 'emailaddress' that is a subproperty of
+    //                          the second document value of a property called
+    //                          'bcc'.
+    // - 'attachments[0]'     : the first (of more than one) string value of a
+    //                          property called 'attachments'.
+    // NOTE: If there is only a single value for a property (like
+    // 'sender.name'), then no value index will be added to the property path.
+    // An index of [0] is implied. If there is more than one value for a
+    // property, then the value index will be added to the property path (like
+    // 'attachements[0]').
     optional string property_name = 1;
 
     repeated SnippetMatchProto snippet_matches = 2;
@@ -167,7 +248,7 @@ message SearchResultProto {
   optional StatusProto status = 1;
 
   // The Results that matched the query. Empty if there was an error.
-  // Next tag: 3
+  // Next tag: 4
   message ResultProto {
     // Document that matches the SearchSpecProto.
     optional DocumentProto document = 1;
@@ -175,6 +256,10 @@ message SearchResultProto {
     // Snippeting information for the document if requested in the
     // ResultSpecProto. A default instance, if not requested.
     optional SnippetProto snippet = 2;
+
+    // The score that the document was ranked by. The meaning of this score is
+    // determined by ScoringSpecProto.rank_by.
+    optional double score = 3;
   }
   repeated ResultProto results = 2;
 
@@ -198,7 +283,7 @@ message SearchResultProto {
   // LINT.ThenChange(//depot/google3/icing/result/result-state-manager.h:kInvalidNextPageToken)
 
   // Stats for query execution performance.
-  optional NativeQueryStats query_stats = 5;
+  optional QueryStatsProto query_stats = 5;
 }
 
 // Next tag: 3
@@ -222,4 +307,38 @@ message GetResultSpecProto {
   // has been specified for a schema type, then *all* properties of that schema
   // type will be retrieved.
   repeated TypePropertyMask type_property_masks = 1;
+}
+
+// Next tag: 4
+message SuggestionSpecProto {
+  // REQUIRED: The "raw" prefix string that users may type. For example, "f"
+  // will search for suggested query that start with "f" like "foo", "fool".
+  optional string prefix = 1;
+
+  // OPTIONAL: Only search for suggestions that under the specified namespaces.
+  // If unset, the suggestion will search over all namespaces. Note that this
+  // applies to the entire 'prefix'. To issue different suggestions for
+  // different namespaces, separate RunSuggestion()'s will need to be made.
+  repeated string namespace_filters = 2;
+
+  // REQUIRED: The number of suggestions to be returned.
+  optional int32 num_to_return = 3;
+}
+
+// Next tag: 3
+message SuggestionResponse {
+  message Suggestion {
+    // The suggested query string for client to search for.
+    optional string query = 1;
+  }
+
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  optional StatusProto status = 1;
+
+  repeated Suggestion suggestions = 2;
 }
