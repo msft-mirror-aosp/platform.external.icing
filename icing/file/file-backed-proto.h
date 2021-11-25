@@ -73,7 +73,7 @@ class FileBackedProto {
   // Returns NOT_FOUND if the file was empty or never written to.
   // Returns INTERNAL_ERROR if an IO error or a corruption was encountered.
   libtextclassifier3::StatusOr<const ProtoT*> Read() const
-      LOCKS_EXCLUDED(mutex_);
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Writes the new version of the proto provided through to disk.
   // Successful Write() invalidates any previously read version of the proto.
@@ -83,9 +83,9 @@ class FileBackedProto {
   //
   // TODO(cassiewang) The implementation today loses old data if Write() fails.
   // We should write to a tmp file first and rename the file to fix this.
-  // TODO(samzheng) Change to Write(ProtoT&& proto)
+  // TODO(cassiewang) Change to Write(ProtoT&& proto)
   libtextclassifier3::Status Write(std::unique_ptr<ProtoT> proto)
-      LOCKS_EXCLUDED(mutex_);
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Disallow copy and assign.
   FileBackedProto(const FileBackedProto&) = delete;
@@ -101,7 +101,7 @@ class FileBackedProto {
   const Filesystem* const filesystem_;
   const std::string file_path_;
 
-  mutable std::unique_ptr<ProtoT> cached_proto_ GUARDED_BY(mutex_);
+  mutable std::unique_ptr<ProtoT> cached_proto_ ICING_GUARDED_BY(mutex_);
 };
 
 template <typename ProtoT>

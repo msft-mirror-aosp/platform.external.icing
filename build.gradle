@@ -14,69 +14,63 @@
  * limitations under the License.
  */
 
+import static androidx.build.SupportConfig.*
+
 buildscript {
-    boolean unbundleBuild = (new File('unbundled-build')).exists()
-    repositories {
-        maven { url '../../prebuilts/androidx/external' }
-        if (unbundleBuild) {
-            jcenter()
-        }
-    }
     dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.8')
+        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.13')
     }
 }
 
-apply plugin: 'AndroidXPlugin'
-apply plugin: 'com.android.library'
-apply plugin: 'com.google.protobuf'
-apply plugin: 'idea'
-
-def protoGeneratedFilesBaseDir = "${project.buildDir}/generated/source/proto"
+plugins {
+    id('com.android.library')
+    id('com.google.protobuf')
+}
 
 android {
+    buildToolsVersion BUILD_TOOLS_VERSION
+    compileSdkVersion COMPILE_SDK_VERSION
     defaultConfig {
-        externalNativeBuild {
-            cmake {
-                arguments "-DPROTO_GENERATED_FILES_BASE_DIR=${protoGeneratedFilesBaseDir}"
-                cppFlags "-std=c++17"
-                arguments "-DCMAKE_VERBOSE_MAKEFILE=ON"
-                targets "icing"
-            }
-        }
+        minSdkVersion DEFAULT_MIN_SDK_VERSION
+        targetSdkVersion TARGET_SDK_VERSION
+        testInstrumentationRunner INSTRUMENTATION_RUNNER
     }
-
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
     sourceSets {
         main {
+            java.srcDir 'java/src/'
             manifest.srcFile 'AndroidManifest.xml'
-            proto {
-                srcDir '.'
-                include '**/*.proto'
-            }
+            proto.srcDir 'proto/'
         }
-    }
-
-    externalNativeBuild {
-        cmake {
-            version '3.10.2'
-            // TODO(b/149853706): Uncomment this line once the lib fully compiles under cmake
-            //path 'CMakeLists.txt'
-        }
+        // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
+        //  inside appsearch:appsearch.
+        //androidTest.java.srcDir 'java/tests/instrumentation/'
     }
 }
 
 dependencies {
-    api('com.google.protobuf:protobuf-javalite:3.10.0')
+    api('androidx.annotation:annotation:1.1.0')
+
+    implementation('com.google.protobuf:protobuf-javalite:3.10.0')
+
+    androidTestImplementation(libs.testCore)
+    androidTestImplementation(libs.testRules)
+    androidTestImplementation(libs.truth)
 }
 
 protobuf {
-    generatedFilesBaseDir = protoGeneratedFilesBaseDir
     protoc {
-        artifact = 'com.google.protobuf:protoc:3.10.0'
+        artifact = libs.protobufCompiler.get()
     }
 
     generateProtoTasks {
         all().each { task ->
+            project.tasks.named("extractReleaseAnnotations").configure {
+                it.dependsOn(task)
+            }
             task.builtins {
                 java {
                     option 'lite'
@@ -84,4 +78,28 @@ protobuf {
             }
         }
     }
+}
+
+// Create export artifact for all variants (debug/release) for JarJaring
+android.libraryVariants.all { variant ->
+    def variantName = variant.name
+    def suffix = variantName.capitalize()
+    def exportJarTask = tasks.register("exportJar${suffix}", Jar) {
+        archiveBaseName.set("icing-${variantName}")
+
+        // The proto-lite dependency includes .proto files, which are not used by icing. When apps
+        // depend on appsearch as well as proto-lite directly, these files conflict since jarjar
+        // only renames the java classes. Remove them here since they are unused.
+        // Expand the jar and remove any .proto files.
+        from(zipTree(configurations.detachedConfiguration(
+                dependencies.create(libs.protobufLite.get())).getSingleFile())) {
+            exclude("**/*.proto")
+        }
+
+        from files(variant.javaCompileProvider.get().destinationDir)
+        dependsOn variant.javaCompileProvider.get()
+    }
+
+    def exportConfiguration = configurations.register("export${suffix}")
+    artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
 }

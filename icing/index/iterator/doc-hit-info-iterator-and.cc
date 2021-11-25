@@ -14,8 +14,7 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 
-#include <stddef.h>
-
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -38,8 +37,6 @@ namespace {
 
 // When combining ANDed iterators, n-ary operator has better performance when
 // number of operands > 3 according to benchmark cl/243720660
-// TODO (samzheng): Tune this number when it's necessary, e.g. implementation
-// changes.
 inline constexpr int kBinaryAndIteratorPerformanceThreshold = 3;
 
 // The minimum number of iterators needed to construct a And iterator. The And
@@ -164,6 +161,7 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
         DocumentId unused;
         ICING_ASSIGN_OR_RETURN(
             unused, AdvanceTo(iterator.get(), potential_document_id));
+        (void)unused;  // Silence unused warning.
       }
 
       if (iterator->doc_hit_info().document_id() == potential_document_id) {

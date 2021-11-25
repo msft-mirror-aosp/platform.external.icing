@@ -28,10 +28,6 @@ namespace lib {
 // implementation.
 //
 // See https://www.zlib.net/manual.html#Checksum for more details.
-//
-// TODO (samzheng): investigate/benchmark swapping zlib crc32 with
-// util/hash/crc32c.h. Regarding util/hash/crc32c.h, CRC32C::Extend crashes as
-// described in b/145837799.
 class Crc32 {
  public:
   // Default to the checksum of an empty string, that is "0".

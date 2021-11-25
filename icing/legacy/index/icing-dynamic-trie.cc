@@ -11,9 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2011 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
 //
 // We store the trie in three areas: nodes, nexts and suffixes.
 //
@@ -65,15 +62,15 @@
 
 #include "icing/legacy/index/icing-dynamic-trie.h"
 
-#include <errno.h>
 #include <fcntl.h>
-#include <inttypes.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cinttypes>
+#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -84,6 +81,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 
@@ -98,14 +96,28 @@ using std::vector;
 namespace icing {
 namespace lib {
 
+namespace {
+constexpr uint32_t kInvalidNodeIndex = (1U << 24) - 1;
+constexpr uint32_t kInvalidNextIndex = ~0U;
+
+// Returns the number of valid nexts in the array.
+int GetValidNextsSize(IcingDynamicTrie::Next *next_array_start,
+                      int next_array_length) {
+  int valid_nexts_length = 0;
+  for (; valid_nexts_length < next_array_length &&
+         next_array_start[valid_nexts_length].node_index() != kInvalidNodeIndex;
+       ++valid_nexts_length) {
+  }
+  return valid_nexts_length;
+}
+}  // namespace
+
 // Based on the bit field widths.
 const uint32_t IcingDynamicTrie::Options::kMaxNodes = (1U << 24) - 1;
 const uint32_t IcingDynamicTrie::Options::kMaxNexts = (1U << 27) - 1;
 const uint32_t IcingDynamicTrie::Options::kMaxSuffixesSize = 1U << 27;
 const uint32_t IcingDynamicTrie::Options::kMaxValueSize = 1U << 16;
 
-const uint32_t IcingDynamicTrie::kInvalidNodeIndex = (1U << 24) - 1;
-const uint32_t IcingDynamicTrie::kInvalidNextIndex = ~0U;
 const uint32_t IcingDynamicTrie::kInvalidSuffixIndex = ~0U;
 
 const int IcingDynamicTrie::kMaxNextArraySize;
@@ -249,6 +261,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
                      const IcingFilesystem &filesystem);
   bool Sync();
   uint64_t GetDiskUsage() const;
+
+  // Returns the size of the elements held in the trie. This excludes the size
+  // of any internal metadata of the trie, e.g. the trie's header.
+  uint64_t GetElementsFileSize() const;
+
   void Warm();
 
   void Clear();
@@ -695,6 +712,18 @@ uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetDiskUsage() const {
   return total;
 }
 
+uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetElementsFileSize()
+    const {
+  // Trie files themselves, exclude size of the header. These arrays are dense,
+  // not sparse, so use file size for more accurate numbers.
+  uint64_t total = 0;
+  for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
+    IcingFilesystem::IncrementByOrSetInvalid(
+        filesystem_->GetFileSize(array_fds_[i].get()), &total);
+  }
+  return total;
+}
+
 IcingDynamicTrie::Node *IcingDynamicTrie::IcingDynamicTrieStorage::AllocNode() {
   if (nodes_left() == 0) {
     ICING_LOG(FATAL) << "No allocated nodes left";
@@ -876,7 +905,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::Init(
 
 bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::SerializeToArray(
     uint8_t *buf, uint32_t buf_size) const {
-  uint32_t size = hdr.ByteSize();
+  uint32_t size = hdr.ByteSizeLong();
   if (size + sizeof(kMagic) + sizeof(uint32_t) > buf_size) return false;
   memcpy(buf, &kMagic, sizeof(kMagic));
   memcpy(buf + sizeof(kMagic), &size, sizeof(uint32_t));
@@ -1150,6 +1179,30 @@ uint64_t IcingDynamicTrie::GetDiskUsage() const {
 
   // Storage.
   IcingFilesystem::IncrementByOrSetInvalid(storage_->GetDiskUsage(), &total);
+  return total;
+}
+
+uint64_t IcingDynamicTrie::GetElementsSize() const {
+  uint64_t total = 0;
+
+  // Bitmaps are sparsely populated, so disk usage is more accurate for those.
+  // Property bitmaps.
+  IcingFilesystem::IncrementByOrSetInvalid(deleted_bitmap_->GetDiskUsage(),
+                                           &total);
+  // The deleted bitmap is always initially grown to kGrowSize, whether there
+  // are elements or not. So even if there are no elements in the trie, we'll
+  // still have the bitmap of size kGrowSize, so subtract that from the size of
+  // the trie's elements.
+  total -= IcingFlashBitmap::kGrowSize;
+
+  for (auto &bitmap : property_bitmaps_) {
+    if (bitmap == nullptr) continue;
+    IcingFilesystem::IncrementByOrSetInvalid(bitmap->GetDiskUsage(), &total);
+  }
+
+  // Storage. We can use file size here since the storage files aren't sparse.
+  IcingFilesystem::IncrementByOrSetInvalid(storage_->GetElementsFileSize(),
+                                           &total);
   return total;
 }
 
@@ -1463,6 +1516,53 @@ void IcingDynamicTrie::Clear() {
   deleted_bitmap_->Truncate(0);
 }
 
+bool IcingDynamicTrie::ClearSuffixAndValue(uint32_t suffix_value_index) {
+  // The size 1 below is for a '\0' between the suffix and the value.
+  size_t suffix_and_value_length =
+      strlen(this->storage_->GetSuffix(suffix_value_index)) + 1 +
+      this->value_size();
+  char *mutable_suffix_and_value = this->storage_->GetMutableSuffix(
+      suffix_value_index, suffix_and_value_length);
+
+  if (mutable_suffix_and_value == nullptr) {
+    return false;
+  }
+
+  memset(mutable_suffix_and_value, 0, suffix_and_value_length);
+  return true;
+}
+
+bool IcingDynamicTrie::ResetNext(uint32_t next_index) {
+  Next *mutable_next =
+      this->storage_->GetMutableNextArray(next_index, /*len=*/1);
+
+  if (mutable_next == nullptr) {
+    return false;
+  }
+
+  mutable_next->set_val(0);
+  mutable_next->set_node_index(kInvalidNodeIndex);
+  return true;
+}
+
+bool IcingDynamicTrie::SortNextArray(const Node *node) {
+  if (node == nullptr) {
+    // Nothing to sort, return success directly.
+    return true;
+  }
+
+  uint32_t next_array_buffer_size = 1u << node->log2_num_children();
+  Next *next_array_start = this->storage_->GetMutableNextArray(
+      node->next_index(), next_array_buffer_size);
+
+  if (next_array_start == nullptr) {
+    return false;
+  }
+
+  std::sort(next_array_start, next_array_start + next_array_buffer_size - 1);
+  return true;
+}
+
 bool IcingDynamicTrie::Insert(const char *key, const void *value,
                               uint32_t *value_index, bool replace,
                               bool *pnew_key) {
@@ -1602,15 +1702,12 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
     new_leaf_node->set_log2_num_children(0);
 
     // Figure out the real length of the existing next array.
-    Next *cur_next = storage_->GetMutableNextArray(
-        best_node->next_index(), 1 << best_node->log2_num_children());
-    int next_len = 0;
-    for (; next_len < (1 << best_node->log2_num_children()) &&
-           cur_next[next_len].node_index() != kInvalidNodeIndex;
-         next_len++) {
-    }
+    uint32_t next_array_buffer_size = 1u << best_node->log2_num_children();
+    Next *cur_next = storage_->GetMutableNextArray(best_node->next_index(),
+                                                   next_array_buffer_size);
+    int next_len = GetValidNextsSize(cur_next, next_array_buffer_size);
     Next *new_next = cur_next;
-    if (next_len == (1 << best_node->log2_num_children())) {
+    if (next_len == (next_array_buffer_size)) {
       // Allocate a new, larger, array.
       new_next = storage_->AllocNextArray(next_len + 1);
       memcpy(new_next, cur_next, sizeof(Next) * next_len);
@@ -1867,18 +1964,18 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 
   // If we start with non-ascii, take all left branches while there is
   // a continuation byte.
-  if (!IcingStringUtil::IsAsciiChar(cur_[cur_len_ - 1])) {
+  if (!i18n_utils::IsAscii(cur_[cur_len_ - 1])) {
     while (!node->is_leaf()) {
-      if (cur_len_ >= UTFmax) break;
+      if (cur_len_ >= U8_MAX_LENGTH) break;
 
       InitBranch(branch_end_, node, 0);
       // When we are looking to complete a utf8 char, skip 0s.
       if (branch_end_->child->val() == 0) {
         // Check if we already have a valid cur_.
         cur_[cur_len_] = 0;
-        Rune rune;
-        chartorune(&rune, cur_);
-        if (rune == Runeerror && node->log2_num_children() > 0) {
+        UChar32 uchar32 = i18n_utils::GetUChar32At(cur_, cur_len_, 0);
+        if (uchar32 == i18n_utils::kInvalidUChar32 &&
+            node->log2_num_children() > 0) {
           branch_end_->child++;
         } else {
           // Good termination. Just break.
@@ -1914,8 +2011,8 @@ void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
 void IcingDynamicTrie::Utf8Iterator::GoIntoSuffix(const Node *node) {
   const char *suffix = trie_.storage_->GetSuffix(node->next_index());
   const char *cur_suffix;
-  for (cur_suffix = suffix;
-       cur_len_ < UTFmax && IcingStringUtil::IsContinuationByte(*cur_suffix);
+  for (cur_suffix = suffix; cur_len_ < U8_MAX_LENGTH &&
+                            IcingStringUtil::IsContinuationByte(*cur_suffix);
        cur_suffix++) {
     cur_[cur_len_++] = *cur_suffix;
   }
@@ -2033,7 +2130,8 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::LowerBound(
 }
 
 void IcingDynamicTrie::FindBestNode(const char *key, uint32_t *best_node_index,
-                                    int *key_offset, bool prefix) const {
+                                    int *key_offset, bool prefix,
+                                    bool utf8) const {
   // Find the best node such that:
   //
   // - If key is NOT in the trie, key[0..key_offset) is a prefix to
@@ -2054,6 +2152,8 @@ void IcingDynamicTrie::FindBestNode(const char *key, uint32_t *best_node_index,
 
   const Node *cur_node = storage_->GetRootNode();
   const char *cur_key = key;
+  const Node *utf8_node = cur_node;
+  const char *utf8_key = cur_key;
   while (!cur_node->is_leaf()) {
     const Next *found = GetNextByChar(cur_node, *cur_key);
     if (!found) break;
@@ -2069,10 +2169,99 @@ void IcingDynamicTrie::FindBestNode(const char *key, uint32_t *best_node_index,
       break;
     }
     cur_key++;
+
+    if (utf8 && i18n_utils::IsLeadUtf8Byte(*cur_key)) {
+      utf8_node = cur_node;
+      utf8_key = cur_key;
+    }
+  }
+
+  if (utf8) {
+    // Rewind.
+    cur_node = utf8_node;
+    cur_key = utf8_key;
   }
 
   *best_node_index = storage_->GetNodeIndex(cur_node);
   *key_offset = reinterpret_cast<const char *>(cur_key) - key;
+}
+
+int IcingDynamicTrie::FindNewBranchingPrefixLength(const char *key,
+                                                   bool utf8) const {
+  if (storage_->empty()) {
+    return kNoBranchFound;
+  }
+
+  uint32_t best_node_index;
+  int key_offset;
+  FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true, utf8);
+  const Node *cur_node = storage_->GetNode(best_node_index);
+  const char *cur_key = key + key_offset;
+  if (cur_node->is_leaf()) {
+    // Prefix in the trie. Split at leaf.
+    const char *prev_suffix = storage_->GetSuffix(cur_node->next_index());
+    while (*prev_suffix != '\0' && *prev_suffix == *cur_key) {
+      prev_suffix++;
+      cur_key++;
+    }
+
+    // Equal strings? No branching.
+    if (*prev_suffix == '\0' && *cur_key == '\0') {
+      return kNoBranchFound;
+    }
+
+    if (utf8) {
+      // Rewind to utf8 boundary.
+      size_t offset = i18n_utils::SafeTruncateUtf8Length(key, cur_key - key);
+      cur_key = key + offset;
+    }
+
+    return cur_key - key;
+  } else if (cur_node->log2_num_children() == 0) {
+    // Intermediate node going from no branching to branching.
+    return cur_key - key;
+  }
+
+  // If we've reached this point, then we're already at a branch point. So there
+  // is no *new* branch point.
+  return kNoBranchFound;
+}
+
+std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(const char *key,
+                                                              bool utf8) const {
+  std::vector<int> prefix_lengths;
+
+  if (storage_->empty()) {
+    return prefix_lengths;
+  }
+
+  const Node *cur_node = storage_->GetRootNode();
+  const char *cur_key = key;
+  while (*cur_key && !cur_node->is_leaf()) {
+    // Branching prefix?
+    if (cur_node->log2_num_children() > 0) {
+      int len = cur_key - key;
+      if (utf8) {
+        // Do not cut mid-utf8. Walk up to utf8 boundary.
+        len = i18n_utils::SafeTruncateUtf8Length(key, len);
+        if (prefix_lengths.empty() || len != prefix_lengths.back()) {
+          prefix_lengths.push_back(len);
+        }
+      } else {
+        prefix_lengths.push_back(len);
+      }
+    }
+
+    // Move to next.
+    const Next *found = GetNextByChar(cur_node, *cur_key);
+    if (found == nullptr) {
+      break;
+    }
+    cur_node = storage_->GetNode(found->node_index());
+
+    ++cur_key;
+  }
+  return prefix_lengths;
 }
 
 void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
@@ -2207,6 +2396,102 @@ bool IcingDynamicTrie::SetDeleted(uint32_t value_index) {
 bool IcingDynamicTrie::ClearDeleted(uint32_t value_index) {
   uint64_t idx = ValueIndexToPropertyBitmapIndex(value_index);
   return deleted_bitmap_->SetBit(idx, false);
+}
+
+// Steps:
+// 1. Find the key in the trie.
+// 2. Remove the suffix and the value.
+// 3. Reset the nexts that point to the nodes to be removed.
+// 4. Sort any next array if needed.
+bool IcingDynamicTrie::Delete(const std::string_view key) {
+  if (!is_initialized()) {
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return false;
+  }
+
+  if (storage_->empty()) {
+    // Nothing to delete.
+    return true;
+  }
+
+  // Tries to find the key in the trie, starting from the root.
+  const Node *current_node = storage_->GetRootNode();
+
+  // The node after which we start to remove data.
+  const Node *last_multichild_node = nullptr;
+
+  // While visiting the trie nodes, we store the indices of Nexts that point
+  // to all the nodes after last_multichild_node. Those nodes must be
+  // consecutive and all have only one child. Resetting those Nexts means that
+  // we remove the data of the key.
+  std::vector<uint32_t> nexts_to_reset;
+  nexts_to_reset.reserve(key.length());
+
+  // Iterates through chars in the key, finds nodes in the trie until a leaf
+  // node is reached. The max number of loops is key.length() + 1 because we
+  // start from the root.
+  for (size_t i = 0; i <= key.length(); ++i) {
+    if (current_node->is_leaf()) {
+      // Leaf node, now check the suffix.
+      if (key.substr(i) != storage_->GetSuffix(current_node->next_index())) {
+        // Key does not exist in the trie, nothing to delete.
+        return true;
+      }
+      // Otherwise, key is found.
+      break;
+    }
+
+    // Finds the next char.
+    const Next *next;
+    if (i == key.length()) {
+      // When we're at the end of the key, the next char is the termination char
+      // '\0'.
+      next = GetNextByChar(current_node, '\0');
+    } else {
+      next = GetNextByChar(current_node, key[i]);
+    }
+
+    if (next == nullptr) {
+      // Key does not exist in the trie, nothing to delete.
+      return true;
+    }
+
+    // Checks the real size of next array.
+    uint32_t next_array_buffer_size = 1u << current_node->log2_num_children();
+    Next *next_array_start = storage_->GetMutableNextArray(
+        current_node->next_index(), next_array_buffer_size);
+    int valid_next_array_size =
+        GetValidNextsSize(next_array_start, next_array_buffer_size);
+    if (valid_next_array_size == 0) {
+      // Key does not exist in the trie, nothing to delete.
+      // This shouldn't happen, but we put a sanity check here in case something
+      // is wrong.
+      return true;
+    } else if (valid_next_array_size == 1) {
+      // Single-child branch will be deleted.
+      nexts_to_reset.push_back(storage_->GetNextArrayIndex(next));
+    } else {
+      // We see a new node with multiple children, all the previously seen nodes
+      // shouldn't be removed.
+      last_multichild_node = current_node;
+      nexts_to_reset.clear();
+      nexts_to_reset.push_back(storage_->GetNextArrayIndex(next));
+    }
+
+    // Updates current_node.
+    current_node = storage_->GetNode(next->node_index());
+  }
+  // Now we've found the key in the trie.
+
+  ClearSuffixAndValue(current_node->next_index());
+
+  // Resets nexts to remove key information.
+  for (uint32_t next_index : nexts_to_reset) {
+    ResetNext(next_index);
+  }
+  SortNextArray(last_multichild_node);
+
+  return true;
 }
 
 bool IcingDynamicTrie::ClearPropertyForAllValues(uint32_t property_id) {

@@ -16,9 +16,14 @@
 #define ICING_TOKENIZATION_TOKENIZER_H_
 
 #include <cstdint>
+#include <memory>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/tokenization/token.h"
+#include "icing/util/character-iterator.h"
+
 namespace icing {
 namespace lib {
 
@@ -61,6 +66,18 @@ class Tokenizer {
     // true, otherwise an invalid token could be returned.
     virtual Token GetToken() const = 0;
 
+    virtual libtextclassifier3::StatusOr<CharacterIterator>
+    CalculateTokenStart() {
+      return absl_ports::UnimplementedError(
+          "CalculateTokenStart is not implemented!");
+    }
+
+    virtual libtextclassifier3::StatusOr<CharacterIterator>
+    CalculateTokenEndExclusive() {
+      return absl_ports::UnimplementedError(
+          "CalculateTokenEndExclusive is not implemented!");
+    }
+
     // Sets the tokenizer to point at the first token that *starts* *after*
     // offset. Returns false if there are no valid tokens starting after
     // offset.
@@ -82,6 +99,8 @@ class Tokenizer {
     // // "foo".
     // PrintToken(iterator.GetToken());  // prints "foo"
     virtual bool ResetToTokenBefore(int32_t offset) { return false; }
+
+    virtual bool ResetToStart() { return false; }
   };
 
   // Tokenizes the input text. The input text should outlive the returned

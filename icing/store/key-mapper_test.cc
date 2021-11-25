@@ -22,6 +22,9 @@
 
 using ::testing::_;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
+using ::testing::Pair;
+using ::testing::UnorderedElementsAre;
 
 namespace icing {
 namespace lib {
@@ -161,6 +164,23 @@ TEST_F(KeyMapperTest, CanDeleteAndRestartKeyMapping) {
   EXPECT_THAT(key_mapper->num_keys(), 0);
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   EXPECT_THAT(key_mapper->num_keys(), 1);
+}
+
+TEST_F(KeyMapperTest, GetValuesToKeys) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
+      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+  EXPECT_THAT(key_mapper->GetValuesToKeys(), IsEmpty());
+
+  ICING_EXPECT_OK(key_mapper->Put("foo", /*value=*/1));
+  ICING_EXPECT_OK(key_mapper->Put("bar", /*value=*/2));
+  EXPECT_THAT(key_mapper->GetValuesToKeys(),
+              UnorderedElementsAre(Pair(1, "foo"), Pair(2, "bar")));
+
+  ICING_EXPECT_OK(key_mapper->Put("baz", /*value=*/3));
+  EXPECT_THAT(
+      key_mapper->GetValuesToKeys(),
+      UnorderedElementsAre(Pair(1, "foo"), Pair(2, "bar"), Pair(3, "baz")));
 }
 
 }  // namespace
