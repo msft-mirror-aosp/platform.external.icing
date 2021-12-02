@@ -18,11 +18,7 @@
 #include <memory>
 #include <string_view>
 
-#ifdef __ANDROID__
 #include "icing/jni/jni-cache.h"
-#else   // __ANDROID__
-class JniCache;  // forward declaration to let non-Android builds work.
-#endif  // __ANDROID__
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
