@@ -55,14 +55,14 @@ using ::testing::IsEmpty;
 using ::testing::Return;
 using ::testing::SizeIs;
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
 
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
-constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
 
 class ResultRetrieverTest : public testing::Test {
  protected:
@@ -160,7 +160,7 @@ ResultSpecProto::SnippetSpecProto CreateSnippetSpec() {
   ResultSpecProto::SnippetSpecProto snippet_spec;
   snippet_spec.set_num_to_snippet(std::numeric_limits<int>::max());
   snippet_spec.set_num_matches_per_property(std::numeric_limits<int>::max());
-  snippet_spec.set_max_window_bytes(1024);
+  snippet_spec.set_max_window_utf32_length(1024);
   return snippet_spec;
 }
 

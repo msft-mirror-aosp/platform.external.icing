@@ -280,7 +280,7 @@ TEST_F(PlainTokenizerTest, CJKT) {
   }
 }
 
-TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
+TEST_F(PlainTokenizerTest, ResetToTokenStartingAfterSimple) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US,
                                                        jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -294,13 +294,13 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfterSimple) {
   constexpr std::string_view kText = "f b";
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
 
-  EXPECT_TRUE(iterator->ResetToTokenAfter(0));
+  EXPECT_TRUE(iterator->ResetToTokenStartingAfter(0));
   EXPECT_THAT(iterator->GetToken(), EqualsToken(Token::REGULAR, "b"));
 
-  EXPECT_FALSE(iterator->ResetToTokenAfter(2));
+  EXPECT_FALSE(iterator->ResetToTokenStartingAfter(2));
 }
 
-TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
+TEST_F(PlainTokenizerTest, ResetToTokenEndingBeforeSimple) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US,
                                                        jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -314,13 +314,13 @@ TEST_F(PlainTokenizerTest, ResetToTokenBeforeSimple) {
   constexpr std::string_view kText = "f b";
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
 
-  EXPECT_TRUE(iterator->ResetToTokenBefore(2));
+  EXPECT_TRUE(iterator->ResetToTokenEndingBefore(2));
   EXPECT_THAT(iterator->GetToken(), EqualsToken(Token::REGULAR, "f"));
 
-  EXPECT_FALSE(iterator->ResetToTokenBefore(0));
+  EXPECT_FALSE(iterator->ResetToTokenEndingBefore(0));
 }
 
-TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
+TEST_F(PlainTokenizerTest, ResetToTokenStartingAfter) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US,
                                                        jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -362,16 +362,16 @@ TEST_F(PlainTokenizerTest, ResetToTokenAfter) {
   EXPECT_THAT(iterator->GetToken(), EqualsToken(Token::REGULAR, "foo"));
   for (int i = 0; i < kText.length(); ++i) {
     if (i < expected_text.size()) {
-      EXPECT_TRUE(iterator->ResetToTokenAfter(i));
+      EXPECT_TRUE(iterator->ResetToTokenStartingAfter(i));
       EXPECT_THAT(iterator->GetToken(),
                   EqualsToken(Token::REGULAR, expected_text[i]));
     } else {
-      EXPECT_FALSE(iterator->ResetToTokenAfter(i));
+      EXPECT_FALSE(iterator->ResetToTokenStartingAfter(i));
     }
   }
 }
 
-TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
+TEST_F(PlainTokenizerTest, ResetToTokenEndingBefore) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US,
                                                        jni_cache_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -414,11 +414,11 @@ TEST_F(PlainTokenizerTest, ResetToTokenBefore) {
   for (int i = kText.length() - 1; i >= 0; --i) {
     int expected_index = kText.length() - 1 - i;
     if (expected_index < expected_text.size()) {
-      EXPECT_TRUE(iterator->ResetToTokenBefore(i));
+      EXPECT_TRUE(iterator->ResetToTokenEndingBefore(i));
       EXPECT_THAT(iterator->GetToken(),
                   EqualsToken(Token::REGULAR, expected_text[expected_index]));
     } else {
-      EXPECT_FALSE(iterator->ResetToTokenBefore(i));
+      EXPECT_FALSE(iterator->ResetToTokenEndingBefore(i));
     }
   }
 }

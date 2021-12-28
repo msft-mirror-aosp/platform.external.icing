@@ -17,6 +17,7 @@
 #include "gmock/gmock.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/store/document-store.h"
+#include "icing/testing/always-true-namespace-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
@@ -80,7 +81,6 @@ class SuggestionProcessorTest : public Test {
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
                               schema_store_.get()));
-    document_store_ = std::move(create_result.document_store);
   }
 
   libtextclassifier3::Status AddTokenToIndex(
@@ -93,7 +93,6 @@ class SuggestionProcessorTest : public Test {
   }
 
   void TearDown() override {
-    document_store_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
@@ -103,7 +102,6 @@ class SuggestionProcessorTest : public Test {
   std::unique_ptr<Index> index_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
-  std::unique_ptr<DocumentStore> document_store_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
   FakeClock fake_clock_;
@@ -131,9 +129,10 @@ TEST_F(SuggestionProcessorTest, PrependedPrefixTokenTest) {
       "prefix token should be prepended to the suggestion f");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms.at(0).content,
               "prefix token should be prepended to the suggestion foo");
 }
@@ -152,9 +151,10 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
   suggestion_spec.set_prefix("nonExistTerm");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
 
   EXPECT_THAT(terms, IsEmpty());
 }
@@ -173,9 +173,10 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
   suggestion_spec.set_prefix("f    ");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
 
   EXPECT_THAT(terms, IsEmpty());
 }
@@ -193,28 +194,26 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
   SuggestionSpecProto suggestion_spec;
   suggestion_spec.set_prefix("F");
   suggestion_spec.set_num_to_return(10);
+
+  AlwaysTrueNamespaceCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor->QuerySuggestions(suggestion_spec,
-                                             /*namespace_ids=*/{}));
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms.at(0).content, "foo");
 
   suggestion_spec.set_prefix("fO");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor->QuerySuggestions(suggestion_spec,
-                                                    /*namespace_ids=*/{}));
+      terms, suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms.at(0).content, "foo");
 
   suggestion_spec.set_prefix("Fo");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor->QuerySuggestions(suggestion_spec,
-                                                    /*namespace_ids=*/{}));
+      terms, suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms.at(0).content, "foo");
 
   suggestion_spec.set_prefix("FO");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor->QuerySuggestions(suggestion_spec,
-                                                    /*namespace_ids=*/{}));
+      terms, suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms.at(0).content, "foo");
 }
 
@@ -235,9 +234,10 @@ TEST_F(SuggestionProcessorTest, OrOperatorPrefixTest) {
   suggestion_spec.set_prefix("f OR");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
 
   // Last Operator token will be used to query suggestion
   EXPECT_THAT(terms.at(0).content, "f original");
@@ -256,19 +256,20 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
   suggestion_spec.set_prefix("{f}");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("[f]");
-  ICING_ASSERT_OK_AND_ASSIGN(terms, suggestion_processor->QuerySuggestions(
-                                        suggestion_spec, /*namespace_ids=*/{}));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      terms, suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("(f)");
-  ICING_ASSERT_OK_AND_ASSIGN(terms, suggestion_processor->QuerySuggestions(
-                                        suggestion_spec, /*namespace_ids=*/{}));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      terms, suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -286,15 +287,15 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   suggestion_spec.set_prefix("f:");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("f-");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor->QuerySuggestions(suggestion_spec,
-                                                    /*namespace_ids=*/{}));
+      terms, suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -312,9 +313,10 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   suggestion_spec.set_prefix("OR OR - :");
   suggestion_spec.set_num_to_return(10);
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms,
-                             suggestion_processor->QuerySuggestions(
-                                 suggestion_spec, /*namespace_ids=*/{}));
+  AlwaysTrueNamespaceCheckerImpl impl;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<TermMetadata> terms,
+      suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
   EXPECT_THAT(terms, IsEmpty());
 }
 

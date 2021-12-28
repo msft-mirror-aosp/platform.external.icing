@@ -59,6 +59,7 @@
 #include "icing/scoring/scoring-processor.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
+#include "icing/store/namespace-checker-impl.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
@@ -86,18 +87,6 @@ constexpr std::string_view kOptimizeStatusFilename = "optimize_status";
 // state that we will tolerate before deleting all data and starting from a
 // fresh state.
 constexpr int kMaxUnsuccessfulInitAttempts = 5;
-
-libtextclassifier3::Status ValidateOptions(
-    const IcingSearchEngineOptions& options) {
-  // These options are only used in IndexProcessor, which won't be created
-  // until the first Put call. So they must be checked here, so that any
-  // errors can be surfaced in Initialize.
-  if (options.max_tokens_per_doc() <= 0) {
-    return absl_ports::InvalidArgumentError(
-        "Options::max_tokens_per_doc must be greater than zero.");
-  }
-  return libtextclassifier3::Status::OK;
-}
 
 libtextclassifier3::Status ValidateResultSpec(
     const ResultSpecProto& result_spec) {
@@ -141,6 +130,11 @@ libtextclassifier3::Status ValidateSuggestionSpec(
   if (suggestion_spec.prefix().empty()) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("SuggestionSpecProto.prefix is empty!"));
+  }
+  if (suggestion_spec.scoring_spec().scoring_match_type() ==
+      TermMatchType::UNKNOWN) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("SuggestionSpecProto.term_match_type is unknown!"));
   }
   if (suggestion_spec.num_to_return() <= 0) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
@@ -399,7 +393,6 @@ InitializeResultProto IcingSearchEngine::InternalInitialize() {
 libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(initialize_stats);
-  ICING_RETURN_IF_ERROR(ValidateOptions(options_));
 
   // Make sure the base directory exists
   if (!filesystem_->CreateDirectoryRecursively(options_.base_dir().c_str())) {
@@ -1875,19 +1868,22 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   std::unique_ptr<SuggestionProcessor> suggestion_processor =
       std::move(suggestion_processor_or).ValueOrDie();
 
-  std::vector<NamespaceId> namespace_ids;
+  std::unordered_set<NamespaceId> namespace_ids;
   namespace_ids.reserve(suggestion_spec.namespace_filters_size());
   for (std::string_view name_space : suggestion_spec.namespace_filters()) {
     auto namespace_id_or = document_store_->GetNamespaceId(name_space);
     if (!namespace_id_or.ok()) {
       continue;
     }
-    namespace_ids.push_back(namespace_id_or.ValueOrDie());
+    namespace_ids.insert(namespace_id_or.ValueOrDie());
   }
 
   // Run suggestion based on given SuggestionSpec.
+  NamespaceCheckerImpl namespace_checker_impl(document_store_.get(),
+                                              std::move(namespace_ids));
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> terms_or =
-      suggestion_processor->QuerySuggestions(suggestion_spec, namespace_ids);
+      suggestion_processor->QuerySuggestions(suggestion_spec,
+                                             &namespace_checker_impl);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
     return response;

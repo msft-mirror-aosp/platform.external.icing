@@ -85,16 +85,16 @@ const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
   return std::move(NamespaceStorageInfoProto());
 }
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
 
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 
-constexpr PropertyConfigProto_DataType_Code TYPE_INT =
-    PropertyConfigProto_DataType_Code_INT64;
+constexpr PropertyConfigProto::DataType::Code TYPE_INT =
+    PropertyConfigProto::DataType::INT64;
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
                               int64 timestamp_ms,

@@ -336,6 +336,7 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
 
 int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
                           bool only_from_prefix_sections,
+                          const NamespaceChecker* namespace_checker,
                           std::vector<DocHitInfo>* hits_out) {
   int count = 0;
   DocumentId last_document_id = kInvalidDocumentId;
@@ -355,11 +356,18 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
     }
     DocumentId document_id = hit.document_id();
     if (document_id != last_document_id) {
+      last_document_id = document_id;
+      // Check does current document belongs to the given namespaces.
+      if (namespace_checker != nullptr &&
+          !namespace_checker->BelongsToTargetNamespaces(document_id)) {
+        // The document is removed or expired or not belongs to target
+        // namespaces.
+        continue;
+      }
       ++count;
       if (hits_out != nullptr) {
         hits_out->push_back(DocHitInfo(document_id));
       }
-      last_document_id = document_id;
     }
     if (hits_out != nullptr) {
       hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
@@ -368,9 +376,10 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
   return count;
 }
 
-int LiteIndex::CountHits(uint32_t term_id) {
+libtextclassifier3::StatusOr<int> LiteIndex::CountHits(
+    uint32_t term_id, const NamespaceChecker* namespace_checker) {
   return AppendHits(term_id, kSectionIdMaskAll,
-                    /*only_from_prefix_sections=*/false,
+                    /*only_from_prefix_sections=*/false, namespace_checker,
                     /*hits_out=*/nullptr);
 }
 

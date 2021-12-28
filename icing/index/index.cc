@@ -71,24 +71,6 @@ IcingDynamicTrie::Options GetMainLexiconOptions() {
   return IcingDynamicTrie::Options();
 }
 
-// Helper function to check if a term is in the given namespaces.
-// TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
-bool IsTermInNamespaces(
-    const IcingDynamicTrie::PropertyReadersAll& property_reader,
-    uint32_t value_index, const std::vector<NamespaceId>& namespace_ids) {
-  if (namespace_ids.empty()) {
-    return true;
-  }
-  for (NamespaceId namespace_id : namespace_ids) {
-    if (property_reader.HasProperty(GetNamespacePropertyId(namespace_id),
-                                    value_index)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 enum class MergeAction { kTakeLiteTerm, kTakeMainTerm, kMergeTerms };
 
 // Merge the TermMetadata from lite index and main index. If the term exists in
@@ -228,32 +210,26 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 Index::FindLiteTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids) {
+                             const NamespaceChecker* namespace_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
                                            prefix.c_str());
-
-  // A property reader to help check if a term has some property.
-  IcingDynamicTrie::PropertyReadersAll property_reader(lite_index_->lexicon());
 
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
-    // Skips the terms that don't exist in the given namespaces. We won't skip
-    // any terms if namespace_ids is empty.
-    if (!IsTermInNamespaces(property_reader, term_value_index, namespace_ids)) {
-      term_iterator.Advance();
-      continue;
-    }
-
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(term_value_index, TviType::LITE),
         absl_ports::InternalError("Failed to access terms in lexicon."));
-
-    term_metadata_list.emplace_back(term_iterator.GetKey(),
-                                    lite_index_->CountHits(term_id));
+    ICING_ASSIGN_OR_RETURN(int hit_count,
+                           lite_index_->CountHits(term_id, namespace_checker));
+    if (hit_count > 0) {
+      // There is at least one document in the given namespace has this term.
+      term_metadata_list.push_back(
+          TermMetadata(term_iterator.GetKey(), hit_count));
+    }
 
     term_iterator.Advance();
   }
@@ -261,21 +237,20 @@ Index::FindLiteTermsByPrefix(const std::string& prefix,
 }
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
-Index::FindTermsByPrefix(const std::string& prefix,
-                         const std::vector<NamespaceId>& namespace_ids,
-                         int num_to_return) {
+Index::FindTermsByPrefix(const std::string& prefix, int num_to_return,
+                         TermMatchType::Code term_match_type,
+                         const NamespaceChecker* namespace_checker) {
   std::vector<TermMetadata> term_metadata_list;
   if (num_to_return <= 0) {
     return term_metadata_list;
   }
-
   // Get results from the LiteIndex.
   ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> lite_term_metadata_list,
-                         FindLiteTermsByPrefix(prefix, namespace_ids));
+                         FindLiteTermsByPrefix(prefix, namespace_checker));
   // Append results from the MainIndex.
   ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> main_term_metadata_list,
-                         main_index_->FindTermsByPrefix(prefix, namespace_ids));
-
+                         main_index_->FindTermsByPrefix(prefix, term_match_type,
+                                                        namespace_checker));
   return MergeAndRankTermMetadatas(std::move(lite_term_metadata_list),
                                    std::move(main_term_metadata_list),
                                    num_to_return);

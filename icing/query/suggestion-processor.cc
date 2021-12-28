@@ -35,7 +35,7 @@ SuggestionProcessor::Create(Index* index,
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 SuggestionProcessor::QuerySuggestions(
     const icing::lib::SuggestionSpecProto& suggestion_spec,
-    const std::vector<NamespaceId>& namespace_ids) {
+    const NamespaceChecker* namespace_checker) {
   // We use query tokenizer to tokenize the give prefix, and we only use the
   // last token to be the suggestion prefix.
   ICING_ASSIGN_OR_RETURN(
@@ -73,8 +73,11 @@ SuggestionProcessor::QuerySuggestions(
   // lowercase.
   ICING_ASSIGN_OR_RETURN(
       std::vector<TermMetadata> terms,
-      index_.FindTermsByPrefix(normalizer_.NormalizeTerm(last_token),
-                               namespace_ids, suggestion_spec.num_to_return()));
+      index_.FindTermsByPrefix(
+          normalizer_.NormalizeTerm(last_token),
+          suggestion_spec.num_to_return(),
+          suggestion_spec.scoring_spec().scoring_match_type(),
+          namespace_checker));
 
   for (TermMetadata& term : terms) {
     term.content = query_prefix + term.content;

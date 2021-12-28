@@ -41,6 +41,7 @@
 #include "icing/transform/normalizer.h"
 #include "icing/util/character-iterator.h"
 #include "icing/util/i18n-utils.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -75,6 +76,68 @@ inline std::string AddIndexToPath(int values_size, int index,
                             kRBracket);
 }
 
+// Returns a string of the normalized text of the input Token. Normalization
+// is applied based on the Token's type.
+std::string NormalizeToken(const Normalizer& normalizer,
+                           const Token& token) {
+  switch (token.type) {
+    case Token::REGULAR:
+      return normalizer.NormalizeTerm(token.text);
+    case Token::VERBATIM:
+      return std::string(token.text);
+    case Token::QUERY_EXCLUSION:
+      [[fallthrough]];
+    case Token::QUERY_LEFT_PARENTHESES:
+      [[fallthrough]];
+    case Token::QUERY_RIGHT_PARENTHESES:
+      [[fallthrough]];
+    case Token::QUERY_OR:
+      [[fallthrough]];
+    case Token::QUERY_PROPERTY:
+      [[fallthrough]];
+    case Token::INVALID:
+      ICING_LOG(WARNING) << "Unable to normalize token of type: "
+                         << token.type;
+      return std::string(token.text);
+  }
+}
+
+// Returns a CharacterIterator for token's text, advancing one past the last
+// matching character from the query term.
+CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
+                               const std::string& match_query_term) {
+  switch (token.type) {
+    case Token::VERBATIM: {
+      // VERBATIM tokens are not normalized. This means the non-normalized
+      // matched query term must be either equal to or a prefix of the token's
+      // text. Therefore, the match must end at the end of the matched query
+      // term.
+      CharacterIterator verbatim_match_end =
+          CharacterIterator(token.text, 0, 0, 0);
+      verbatim_match_end.AdvanceToUtf8(match_query_term.length());
+      return verbatim_match_end;
+    }
+    case Token::QUERY_EXCLUSION:
+      [[fallthrough]];
+    case Token::QUERY_LEFT_PARENTHESES:
+      [[fallthrough]];
+    case Token::QUERY_RIGHT_PARENTHESES:
+      [[fallthrough]];
+    case Token::QUERY_OR:
+      [[fallthrough]];
+    case Token::QUERY_PROPERTY:
+      [[fallthrough]];
+    case Token::INVALID:
+      ICING_LOG(WARNING)
+          << "Unexpected Token type " << token.type
+          << " found when finding match end of query term and token.";
+      [[fallthrough]];
+    case Token::REGULAR:
+      return normalizer.FindNormalizedMatchEndPosition(token.text,
+                                                       match_query_term);
+  }
+}
+
 class TokenMatcher {
  public:
   virtual ~TokenMatcher() = default;
@@ -102,15 +165,16 @@ class TokenMatcherExact : public TokenMatcher {
         normalizer_(normalizer) {}
 
   CharacterIterator Matches(Token token) const override {
-    std::string s = normalizer_.NormalizeTerm(token.text);
+    std::string s = NormalizeToken(normalizer_, token);
     auto itr = unrestricted_query_terms_.find(s);
     if (itr == unrestricted_query_terms_.end()) {
       itr = restricted_query_terms_.find(s);
     }
     if (itr != unrestricted_query_terms_.end() &&
         itr != restricted_query_terms_.end()) {
-      return normalizer_.FindNormalizedMatchEndPosition(token.text, *itr);
+      return FindMatchEnd(normalizer_, token, *itr);
     }
+
     return CharacterIterator(token.text, -1, -1, -1);
   }
 
@@ -131,19 +195,17 @@ class TokenMatcherPrefix : public TokenMatcher {
         normalizer_(normalizer) {}
 
   CharacterIterator Matches(Token token) const override {
-    std::string s = normalizer_.NormalizeTerm(token.text);
+    std::string s = NormalizeToken(normalizer_, token);
     for (const std::string& query_term : unrestricted_query_terms_) {
       if (query_term.length() <= s.length() &&
           s.compare(0, query_term.length(), query_term) == 0) {
-        return normalizer_.FindNormalizedMatchEndPosition(token.text,
-                                                          query_term);
+        return FindMatchEnd(normalizer_, token, query_term);
       }
     }
     for (const std::string& query_term : restricted_query_terms_) {
       if (query_term.length() <= s.length() &&
           s.compare(0, query_term.length(), query_term) == 0) {
-        return normalizer_.FindNormalizedMatchEndPosition(token.text,
-                                                          query_term);
+        return FindMatchEnd(normalizer_, token, query_term);
       }
     }
     return CharacterIterator(token.text, -1, -1, -1);
@@ -184,7 +246,7 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowStart(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     std::string_view value, int window_start_min_exclusive_utf32,
     Tokenizer::Iterator* iterator) {
-  if (!iterator->ResetToTokenAfter(window_start_min_exclusive_utf32)) {
+  if (!iterator->ResetToTokenStartingAfter(window_start_min_exclusive_utf32)) {
     return absl_ports::InternalError(
         "Couldn't reset tokenizer to determine snippet window!");
   }
@@ -219,7 +281,7 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowEnd(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     std::string_view value, int window_end_max_exclusive_utf32,
     Tokenizer::Iterator* iterator) {
-  if (!iterator->ResetToTokenBefore(window_end_max_exclusive_utf32)) {
+  if (!iterator->ResetToTokenEndingBefore(window_end_max_exclusive_utf32)) {
     return absl_ports::InternalError(
         "Couldn't reset tokenizer to determine snippet window!");
   }
@@ -283,9 +345,9 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
   int match_len_utf32 = end_itr.utf32_index() - match_pos_utf32;
   int match_mid_utf32 = match_pos_utf32 + match_len_utf32 / 2;
   int window_start_min_exclusive_utf32 =
-      (match_mid_utf32 - snippet_spec.max_window_bytes() / 2) - 1;
+      (match_mid_utf32 - snippet_spec.max_window_utf32_length() / 2) - 1;
   int window_end_max_exclusive_utf32 =
-      match_mid_utf32 + (snippet_spec.max_window_bytes() + 1) / 2;
+      match_mid_utf32 + (snippet_spec.max_window_utf32_length() + 1) / 2;
 
   snippet_match.set_exact_match_byte_position(start_itr.utf8_index());
   snippet_match.set_exact_match_utf16_position(start_itr.utf16_index());
@@ -296,7 +358,7 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
 
   // Only include windows if it'll at least include the matched text. Otherwise,
   // it'll just be an empty string anyways.
-  if (snippet_spec.max_window_bytes() >= match_len_utf32) {
+  if (snippet_spec.max_window_utf32_length() >= match_len_utf32) {
     // Find the beginning of the window.
     ICING_ASSIGN_OR_RETURN(
         CharacterIterator window_start,
@@ -337,8 +399,13 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
 
     // DetermineWindowStart/End may change the position of the iterator. So,
     // reset the iterator back to the original position.
-    bool success = (match_pos_utf32 > 0) ? iterator->ResetToTokenAfter(match_pos_utf32 - 1)
-                                   : iterator->ResetToStart();
+    bool success = false;
+    if (match_pos_utf32 > 0) {
+      success = iterator->ResetToTokenStartingAfter(match_pos_utf32 - 1);
+    } else {
+      success = iterator->ResetToStart();
+    }
+
     if (!success) {
       return absl_ports::InternalError(
           "Couldn't reset tokenizer to determine snippet window!");
