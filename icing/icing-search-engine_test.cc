@@ -8049,6 +8049,111 @@ TEST_F(IcingSearchEngineTest, PutDocumentIndexFailureDeletion) {
   ASSERT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // Creates and inserts 6 documents, and index 6 termSix, 5 termFive, 4
+  // termFour, 3 termThree, 2 termTwo and one termOne.
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty(
+              "subject", "termOne termTwo termThree termFour termFive termSix")
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject",
+                             "termTwo termThree termFour termFive termSix")
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "termThree termFour termFive termSix")
+          .Build();
+  DocumentProto document4 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri4")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "termFour termFive termSix")
+          .Build();
+  DocumentProto document5 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri5")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "termFive termSix")
+          .Build();
+  DocumentProto document6 = DocumentBuilder()
+                                .SetKey("namespace", "uri6")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "termSix")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document6).status(), ProtoIsOk());
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("t");
+  suggestion_spec.set_num_to_return(10);
+
+  // Query all suggestions, and they will be ranked.
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions().at(0).query(), "termsix");
+  ASSERT_THAT(response.suggestions().at(1).query(), "termfive");
+  ASSERT_THAT(response.suggestions().at(2).query(), "termfour");
+  ASSERT_THAT(response.suggestions().at(3).query(), "termthree");
+  ASSERT_THAT(response.suggestions().at(4).query(), "termtwo");
+  ASSERT_THAT(response.suggestions().at(5).query(), "termone");
+
+  // Query first three suggestions, and they will be ranked.
+  suggestion_spec.set_num_to_return(3);
+  response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions().at(0).query(), "termsix");
+  ASSERT_THAT(response.suggestions().at(1).query(), "termfive");
+  ASSERT_THAT(response.suggestions().at(2).query(), "termfour");
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_emptyPrefix) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("");
+  suggestion_spec.set_num_to_return(10);
+
+  ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NonPositiveNumToReturn) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("prefix");
+  suggestion_spec.set_num_to_return(0);
+
+  ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
 #ifndef ICING_JNI_TEST
 // We skip this test case when we're running in a jni_test since the data files
 // will be stored in the android-instrumented storage location, rather than the
