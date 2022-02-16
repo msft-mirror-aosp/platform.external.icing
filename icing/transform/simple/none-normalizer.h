@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
-#define ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
+#ifndef ICING_TRANSFORM_SIMPLE_NONE_NORMALIZER_H_
+#define ICING_TRANSFORM_SIMPLE_NONE_NORMALIZER_H_
 
 #include <string>
 #include <string_view>
@@ -23,21 +23,22 @@
 namespace icing {
 namespace lib {
 
-class MapNormalizer : public Normalizer {
+// This normalizer is not meant for production use. Currently only used to get
+// the Icing library to compile in Jetpack.
+//
+// No normalization is done, but the term is truncated if it exceeds
+// max_term_byte_size.
+class NoneNormalizer : public Normalizer {
  public:
-  explicit MapNormalizer(int max_term_byte_size)
+  explicit NoneNormalizer(int max_term_byte_size)
       : max_term_byte_size_(max_term_byte_size){};
 
-  // Normalizes the input term based on character mappings. The mappings
-  // contain the following categories:
-  //   - Uppercase -> lowercase
-  //   - Hiragana -> Katakana
-  //   - Common full-width characters -> ASCII
-  //   - Common ideographic punctuation marks -> ASCII
-  //   - Common diacritic Latin characters -> ASCII
-  //
-  // Read more mapping details in normalization-map.cc
-  std::string NormalizeTerm(std::string_view term) const override;
+  std::string NormalizeTerm(std::string_view term) const override {
+    if (term.length() > max_term_byte_size_) {
+      return std::string(term.substr(0, max_term_byte_size_));
+    }
+    return std::string(term);
+  }
 
  private:
   // The maximum term length allowed after normalization.
@@ -47,4 +48,4 @@ class MapNormalizer : public Normalizer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TRANSFORM_MAP_MAP_NORMALIZER_H_
+#endif  // ICING_TRANSFORM_SIMPLE_NONE_NORMALIZER_H_

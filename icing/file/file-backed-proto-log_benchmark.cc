@@ -1,4 +1,4 @@
-// Copyright (C) 2021 Google LLC
+// Copyright (C) 2019 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,8 @@
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "icing/document-builder.h"
+#include "icing/file/file-backed-proto-log.h"
 #include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/testing/common-matchers.h"
@@ -30,24 +30,24 @@
 //
 // To build and run on a local machine:
 //   $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
-//   icing/file:portable-file-backed-proto-log_benchmark
+//   icing/file:file-backed-proto-log_benchmark
 //
-//   $ blaze-bin/icing/file/portable-file-backed-proto-log_benchmark
+//   $ blaze-bin/icing/file/file-backed-proto-log_benchmark
 //   --benchmarks=all
 //
 //
 // To build and run on an Android device (must be connected and rooted):
 //   $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
 //   --config=android_arm64 -c opt --dynamic_mode=off --copt=-gmlt
-//   icing/file:portable-file-backed-proto-log_benchmark
+//   icing/file:file-backed-proto-log_benchmark
 //
 //   $ adb root
 //
 //   $ adb push
-//   blaze-bin/icing/file/portable-file-backed-proto-log_benchmark
+//   blaze-bin/icing/file/file-backed-proto-log_benchmark
 //   /data/local/tmp/
 //
-//   $ adb shell /data/local/tmp/portable-file-backed-proto-log-benchmark
+//   $ adb shell /data/local/tmp/file-backed-proto-log-benchmark
 //   --benchmarks=all
 
 namespace icing {
@@ -66,12 +66,12 @@ static void BM_Write(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem, file_path,
+          FileBackedProtoLog<DocumentProto>::Options(compress, max_proto_size))
+          .ValueOrDie()
+          .proto_log;
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -119,12 +119,12 @@ static void BM_Read(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem, file_path,
+          FileBackedProtoLog<DocumentProto>::Options(compress, max_proto_size))
+          .ValueOrDie()
+          .proto_log;
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -163,7 +163,7 @@ BENCHMARK(BM_Read)
     ->Arg(15 * 1024 * 1024);  // We do 15MiB here since our max proto size is
                               // 16MiB, and we need some extra space for the
                               // rest of the document properties
-                              //
+
 static void BM_Erase(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = IcingStringUtil::StringPrintf(
@@ -174,12 +174,12 @@ static void BM_Erase(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem, file_path,
+          FileBackedProtoLog<DocumentProto>::Options(compress, max_proto_size))
+          .ValueOrDie()
+          .proto_log;
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
@@ -213,12 +213,12 @@ static void BM_ComputeChecksum(benchmark::State& state) {
   // Make sure it doesn't already exist.
   filesystem.DeleteFile(file_path.c_str());
 
-  auto proto_log = PortableFileBackedProtoLog<DocumentProto>::Create(
-                       &filesystem, file_path,
-                       PortableFileBackedProtoLog<DocumentProto>::Options(
-                           compress, max_proto_size))
-                       .ValueOrDie()
-                       .proto_log;
+  auto proto_log =
+      FileBackedProtoLog<DocumentProto>::Create(
+          &filesystem, file_path,
+          FileBackedProtoLog<DocumentProto>::Options(compress, max_proto_size))
+          .ValueOrDie()
+          .proto_log;
 
   DocumentProto document = DocumentBuilder().SetKey("namespace", "uri").Build();
 
