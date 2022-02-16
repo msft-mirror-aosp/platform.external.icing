@@ -15,15 +15,16 @@
 #ifndef ICING_LEGACY_INDEX_ICING_MOCK_FILESYSTEM_H_
 #define ICING_LEGACY_INDEX_ICING_MOCK_FILESYSTEM_H_
 
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "gmock/gmock.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "gmock/gmock.h"
 
 namespace icing {
 namespace lib {

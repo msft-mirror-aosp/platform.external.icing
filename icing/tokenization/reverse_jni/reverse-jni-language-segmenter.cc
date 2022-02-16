@@ -291,12 +291,9 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
       return true;
     }
 
-    UChar32 uchar32 = i18n_utils::GetUChar32At(text_.data(), text_.length(),
-                                               term_start_.utf8_index());
-    // Rule 2: for non-ASCII terms, only the alphanumeric terms are returned.
-    // We know it's an alphanumeric term by checking the first unicode
-    // character.
-    if (i18n_utils::IsAlphaNumeric(uchar32)) {
+    // Rule 2: for non-ASCII terms, only the alphabetic terms are returned.
+    // We know it's an alphabetic term by checking the first unicode character.
+    if (i18n_utils::IsAlphabeticAt(text_, term_start_.utf8_index())) {
       return true;
     }
     return false;
