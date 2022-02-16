@@ -15,8 +15,9 @@
 #ifndef ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 #define ICING_LEGACY_CORE_ICING_STRING_UTIL_H_
 
-#include <cstdarg>
-#include <cstdint>
+#include <stdarg.h>
+#include <stdint.h>
+
 #include <string>
 
 #include "icing/legacy/core/icing-compat.h"
