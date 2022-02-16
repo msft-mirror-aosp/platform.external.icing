@@ -36,7 +36,6 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
-#include "icing/scoring/ranker.h"
 #include "icing/store/document-id.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -90,24 +89,20 @@ bool IsTermInNamespaces(
 }
 
 enum class MergeAction { kTakeLiteTerm, kTakeMainTerm, kMergeTerms };
-
-// Merge the TermMetadata from lite index and main index. If the term exists in
-// both index, sum up its hit count and push it to the term heap.
-// The heap is a min-heap. So that we can avoid some push operation but the time
-// complexity is O(NlgK) which N is total number of term and K is num_to_return.
-std::vector<TermMetadata> MergeAndRankTermMetadatas(
+std::vector<TermMetadata> MergeTermMetadatas(
     std::vector<TermMetadata> lite_term_metadata_list,
     std::vector<TermMetadata> main_term_metadata_list, int num_to_return) {
-  std::vector<TermMetadata> merged_term_metadata_heap;
-  merged_term_metadata_heap.reserve(
+  std::vector<TermMetadata> merged_term_metadata_list;
+  merged_term_metadata_list.reserve(
       std::min(lite_term_metadata_list.size() + main_term_metadata_list.size(),
                static_cast<size_t>(num_to_return)));
 
   auto lite_term_itr = lite_term_metadata_list.begin();
   auto main_term_itr = main_term_metadata_list.begin();
   MergeAction merge_action;
-  while (lite_term_itr != lite_term_metadata_list.end() ||
-         main_term_itr != main_term_metadata_list.end()) {
+  while (merged_term_metadata_list.size() < num_to_return &&
+         (lite_term_itr != lite_term_metadata_list.end() ||
+          main_term_itr != main_term_metadata_list.end())) {
     // Get pointers to the next metadatas in each group, if available
     // Determine how to merge.
     if (main_term_itr == main_term_metadata_list.end()) {
@@ -124,32 +119,23 @@ std::vector<TermMetadata> MergeAndRankTermMetadatas(
     }
     switch (merge_action) {
       case MergeAction::kTakeLiteTerm:
-        PushToTermHeap(std::move(*lite_term_itr), num_to_return,
-                       merged_term_metadata_heap);
+        merged_term_metadata_list.push_back(std::move(*lite_term_itr));
         ++lite_term_itr;
         break;
       case MergeAction::kTakeMainTerm:
-        PushToTermHeap(std::move(*main_term_itr), num_to_return,
-                       merged_term_metadata_heap);
+        merged_term_metadata_list.push_back(std::move(*main_term_itr));
         ++main_term_itr;
         break;
       case MergeAction::kMergeTerms:
         int total_est_hit_count =
             lite_term_itr->hit_count + main_term_itr->hit_count;
-        PushToTermHeap(TermMetadata(std::move(lite_term_itr->content),
-                         total_est_hit_count),
-                       num_to_return, merged_term_metadata_heap);
+        merged_term_metadata_list.emplace_back(
+            std::move(lite_term_itr->content), total_est_hit_count);
         ++lite_term_itr;
         ++main_term_itr;
         break;
     }
   }
-  // Reverse the list since we pop them from a min heap and we need to return in
-  // decreasing order.
-  std::vector<TermMetadata> merged_term_metadata_list =
-      PopAllTermsFromHeap(merged_term_metadata_heap);
-  std::reverse(merged_term_metadata_list.begin(),
-               merged_term_metadata_list.end());
   return merged_term_metadata_list;
 }
 
@@ -228,7 +214,8 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 Index::FindLiteTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids) {
+                             const std::vector<NamespaceId>& namespace_ids,
+                             int num_to_return) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
                                            prefix.c_str());
@@ -237,7 +224,7 @@ Index::FindLiteTermsByPrefix(const std::string& prefix,
   IcingDynamicTrie::PropertyReadersAll property_reader(lite_index_->lexicon());
 
   std::vector<TermMetadata> term_metadata_list;
-  while (term_iterator.IsValid()) {
+  while (term_iterator.IsValid() && term_metadata_list.size() < num_to_return) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
     // Skips the terms that don't exist in the given namespaces. We won't skip
@@ -257,6 +244,13 @@ Index::FindLiteTermsByPrefix(const std::string& prefix,
 
     term_iterator.Advance();
   }
+  if (term_iterator.IsValid()) {
+    // We exited the loop above because we hit the num_to_return limit.
+    ICING_LOG(WARNING) << "Ran into limit of " << num_to_return
+                       << " retrieving suggestions for " << prefix
+                       << ". Some suggestions may not be returned and others "
+                          "may be misranked.";
+  }
   return term_metadata_list;
 }
 
@@ -270,15 +264,17 @@ Index::FindTermsByPrefix(const std::string& prefix,
   }
 
   // Get results from the LiteIndex.
-  ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> lite_term_metadata_list,
-                         FindLiteTermsByPrefix(prefix, namespace_ids));
-  // Append results from the MainIndex.
-  ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> main_term_metadata_list,
-                         main_index_->FindTermsByPrefix(prefix, namespace_ids));
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<TermMetadata> lite_term_metadata_list,
+      FindLiteTermsByPrefix(prefix, namespace_ids, num_to_return));
 
-  return MergeAndRankTermMetadatas(std::move(lite_term_metadata_list),
-                                   std::move(main_term_metadata_list),
-                                   num_to_return);
+  // Append results from the MainIndex.
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<TermMetadata> main_term_metadata_list,
+      main_index_->FindTermsByPrefix(prefix, namespace_ids, num_to_return));
+
+  return MergeTermMetadatas(std::move(lite_term_metadata_list),
+                            std::move(main_term_metadata_list), num_to_return);
 }
 
 IndexStorageInfoProto Index::GetStorageInfo() const {

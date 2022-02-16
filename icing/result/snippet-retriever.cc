@@ -78,17 +78,7 @@ inline std::string AddIndexToPath(int values_size, int index,
 class TokenMatcher {
  public:
   virtual ~TokenMatcher() = default;
-
-  // Returns a CharacterIterator pointing just past the end of the substring in
-  // token.text that matches a query term. Note that the utf* indices will be
-  // in relation to token.text's start.
-  //
-  // If there is no match, then it will construct a CharacterIterator with all
-  // of its indices set to -1.
-  //
-  // Ex. With an exact matcher, query terms=["foo","bar"] and token.text="bar",
-  // Matches will return a CharacterIterator(u8:3, u16:3, u32:3).
-  virtual CharacterIterator Matches(Token token) const = 0;
+  virtual bool Matches(Token token) const = 0;
 };
 
 class TokenMatcherExact : public TokenMatcher {
@@ -101,17 +91,10 @@ class TokenMatcherExact : public TokenMatcher {
         restricted_query_terms_(restricted_query_terms),
         normalizer_(normalizer) {}
 
-  CharacterIterator Matches(Token token) const override {
+  bool Matches(Token token) const override {
     std::string s = normalizer_.NormalizeTerm(token.text);
-    auto itr = unrestricted_query_terms_.find(s);
-    if (itr == unrestricted_query_terms_.end()) {
-      itr = restricted_query_terms_.find(s);
-    }
-    if (itr != unrestricted_query_terms_.end() &&
-        itr != restricted_query_terms_.end()) {
-      return normalizer_.FindNormalizedMatchEndPosition(token.text, *itr);
-    }
-    return CharacterIterator(token.text, -1, -1, -1);
+    return (unrestricted_query_terms_.count(s) > 0) ||
+           (restricted_query_terms_.count(s) > 0);
   }
 
  private:
@@ -130,23 +113,22 @@ class TokenMatcherPrefix : public TokenMatcher {
         restricted_query_terms_(restricted_query_terms),
         normalizer_(normalizer) {}
 
-  CharacterIterator Matches(Token token) const override {
+  bool Matches(Token token) const override {
     std::string s = normalizer_.NormalizeTerm(token.text);
-    for (const std::string& query_term : unrestricted_query_terms_) {
-      if (query_term.length() <= s.length() &&
-          s.compare(0, query_term.length(), query_term) == 0) {
-        return normalizer_.FindNormalizedMatchEndPosition(token.text,
-                                                          query_term);
-      }
+    if (std::any_of(unrestricted_query_terms_.begin(),
+                    unrestricted_query_terms_.end(),
+                    [&s](const std::string& term) {
+                      return term.length() <= s.length() &&
+                             s.compare(0, term.length(), term) == 0;
+                    })) {
+      return true;
     }
-    for (const std::string& query_term : restricted_query_terms_) {
-      if (query_term.length() <= s.length() &&
-          s.compare(0, query_term.length(), query_term) == 0) {
-        return normalizer_.FindNormalizedMatchEndPosition(token.text,
-                                                          query_term);
-      }
-    }
-    return CharacterIterator(token.text, -1, -1, -1);
+    return std::any_of(restricted_query_terms_.begin(),
+                       restricted_query_terms_.end(),
+                       [&s](const std::string& term) {
+                         return term.length() <= s.length() &&
+                                s.compare(0, term.length(), term) == 0;
+                       });
   }
 
  private:
@@ -382,10 +364,7 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
     CharacterIterator char_iterator(value);
     while (iterator->Advance()) {
       Token token = iterator->GetToken();
-      CharacterIterator submatch_end = matcher->Matches(token);
-      // If the token matched a query term, then submatch_end will point to an
-      // actual position within token.text.
-      if (submatch_end.utf8_index() != -1) {
+      if (matcher->Matches(token)) {
         if (!char_iterator.AdvanceToUtf8(token.text.data() - value.data())) {
           // We can't get the char_iterator to a valid position, so there's no
           // way for us to provide valid utf-16 indices. There's nothing more we
@@ -414,15 +393,7 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
           }
         }
         SnippetMatchProto match = std::move(match_or).ValueOrDie();
-        // submatch_end refers to a position *within* token.text.
-        // This, conveniently enough, means that index that submatch_end points
-        // to is the length of the submatch (because the submatch starts at 0 in
-        // token.text).
-        match.set_submatch_byte_length(submatch_end.utf8_index());
-        match.set_submatch_utf16_length(submatch_end.utf16_index());
-        // Add the values for the submatch.
         snippet_entry.mutable_snippet_matches()->Add(std::move(match));
-
         if (--match_options->max_matches_remaining <= 0) {
           *snippet_proto->add_entries() = std::move(snippet_entry);
           return;

@@ -15,10 +15,10 @@
 #ifndef ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
 #define ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
 
+#include <string.h>
 #include <sys/mman.h>
 
 #include <cstdint>
-#include <cstring>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -115,7 +115,7 @@ class PostingListFree {
   // bytes which will store the next posting list index, the rest are unused and
   // can be anything.
   uint8_t *posting_list_buffer_;
-  [[maybe_unused]] uint32_t size_in_bytes_;
+  uint32_t size_in_bytes_;
 
   static_assert(sizeof(PostingListIndex) <=
                     posting_list_utils::min_posting_list_size(),
