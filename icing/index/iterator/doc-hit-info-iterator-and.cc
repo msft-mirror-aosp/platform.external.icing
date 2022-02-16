@@ -14,7 +14,8 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 
-#include <cstddef>
+#include <stddef.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -161,7 +162,6 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
         DocumentId unused;
         ICING_ASSIGN_OR_RETURN(
             unused, AdvanceTo(iterator.get(), potential_document_id));
-        (void)unused;  // Silence unused warning.
       }
 
       if (iterator->doc_hit_info().document_id() == potential_document_id) {
