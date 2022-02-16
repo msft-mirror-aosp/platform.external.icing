@@ -68,6 +68,9 @@ class SchemaStore {
     // to file.
     bool success = false;
 
+    // Whether the new schema changes invalidate the index.
+    bool index_incompatible = false;
+
     // SchemaTypeIds of schema types can be reassigned new SchemaTypeIds if:
     //   1. Schema types are added in the middle of the SchemaProto
     //   2. Schema types are removed from the middle of the SchemaProto
@@ -97,21 +100,6 @@ class SchemaStore {
     // SchemaUtil::ComputeCompatibilityDelta. Represented by the SchemaTypeId
     // assigned to this SchemaTypeConfigProto in the *old* schema.
     std::unordered_set<SchemaTypeId> schema_types_incompatible_by_id;
-
-    // Schema types that were added in the new schema. Represented by the
-    // `schema_type` field in the SchemaTypeConfigProto.
-    std::unordered_set<std::string> schema_types_new_by_name;
-
-    // Schema types that were changed in a way that was backwards compatible and
-    // didn't invalidate the index. Represented by the `schema_type` field in
-    // the SchemaTypeConfigProto.
-    std::unordered_set<std::string>
-        schema_types_changed_fully_compatible_by_name;
-
-    // Schema types that were changed in a way that was backwards compatible,
-    // but invalidated the index. Represented by the `schema_type` field in the
-    // SchemaTypeConfigProto.
-    std::unordered_set<std::string> schema_types_index_incompatible_by_name;
   };
 
   // Factory function to create a SchemaStore which does not take ownership
@@ -245,12 +233,6 @@ class SchemaStore {
   //   Combined checksum on success
   //   INTERNAL_ERROR on compute error
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
-
-  // Returns:
-  //   - On success, the section metadata list for the specified schema type
-  //   - NOT_FOUND if the schema type is not present in the schema
-  libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
-  GetSectionMetadata(const std::string& schema_type) const;
 
   // Calculates the StorageInfo for the Schema Store.
   //

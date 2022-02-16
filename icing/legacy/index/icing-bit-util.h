@@ -20,8 +20,9 @@
 #ifndef ICING_LEGACY_INDEX_ICING_BIT_UTIL_H_
 #define ICING_LEGACY_INDEX_ICING_BIT_UTIL_H_
 
-#include <cstdint>
-#include <cstdio>
+#include <stdint.h>
+#include <stdio.h>
+
 #include <limits>
 #include <vector>
 

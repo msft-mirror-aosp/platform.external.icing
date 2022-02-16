@@ -88,11 +88,6 @@ constexpr DocumentId kDocumentId4 = 4;
 constexpr DocumentId kDocumentId5 = 5;
 constexpr DocumentId kDocumentId6 = 6;
 constexpr DocumentId kDocumentId7 = 7;
-constexpr DocumentId kDocumentId8 = 8;
-constexpr DocumentId kDocumentId9 = 9;
-constexpr DocumentId kDocumentId10 = 10;
-constexpr DocumentId kDocumentId11 = 11;
-constexpr DocumentId kDocumentId12 = 12;
 constexpr SectionId kSectionId2 = 2;
 constexpr SectionId kSectionId3 = 3;
 
@@ -1110,10 +1105,11 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
   EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 2 hits.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
-                                        /*num_to_return=*/10),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
-                                       EqualsTermMetadata("foo", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                /*num_to_return=*/10),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 2))));
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -1124,155 +1120,6 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
               IsOkAndHolds(UnorderedElementsAre(
                   EqualsTermMetadata("foo", kMinSizePlApproxHits),
                   EqualsTermMetadata("fool", kMinSizePlApproxHits))));
-}
-
-TEST_F(IndexTest, FindTermByPrefixShouldReturnInOrder) {
-  // Push 6 term-six, 5 term-five, 4 term-four, 3 term-three, 2 term-two and one
-  // term-one into lite index.
-  Index::Editor edit1 =
-      index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit1.BufferTerm("term-one"), IsOk());
-  EXPECT_THAT(edit1.BufferTerm("term-two"), IsOk());
-  EXPECT_THAT(edit1.BufferTerm("term-three"), IsOk());
-  EXPECT_THAT(edit1.BufferTerm("term-four"), IsOk());
-  EXPECT_THAT(edit1.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit1.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit2 =
-      index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit2.BufferTerm("term-two"), IsOk());
-  EXPECT_THAT(edit2.BufferTerm("term-three"), IsOk());
-  EXPECT_THAT(edit2.BufferTerm("term-four"), IsOk());
-  EXPECT_THAT(edit2.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit2.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit3 =
-      index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit3.BufferTerm("term-three"), IsOk());
-  EXPECT_THAT(edit3.BufferTerm("term-four"), IsOk());
-  EXPECT_THAT(edit3.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit3.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit3.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit4 =
-      index_->Edit(kDocumentId4, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit4.BufferTerm("term-four"), IsOk());
-  EXPECT_THAT(edit4.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit4.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit4.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit5 =
-      index_->Edit(kDocumentId5, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit5.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit5.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit5.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit6 =
-      index_->Edit(kDocumentId6, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit6.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit6.IndexAllBufferedTerms(), IsOk());
-
-  // verify the order in lite index is correct.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"t", /*namespace_ids=*/{0},
-                                        /*num_to_return=*/10),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-six", 6),
-                                       EqualsTermMetadata("term-five", 5),
-                                       EqualsTermMetadata("term-four", 4),
-                                       EqualsTermMetadata("term-three", 3),
-                                       EqualsTermMetadata("term-two", 2),
-                                       EqualsTermMetadata("term-one", 1))));
-
-  ICING_ASSERT_OK(index_->Merge());
-
-  // Since most of term has same approx hit count, we don't verify order in the
-  // main index.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"t", /*namespace_ids=*/{0},
-                                        /*num_to_return=*/10),
-              IsOkAndHolds(UnorderedElementsAre(
-                  EqualsTermMetadata("term-six", kSecondSmallestPlApproxHits),
-                  EqualsTermMetadata("term-five", kSecondSmallestPlApproxHits),
-                  EqualsTermMetadata("term-four", kMinSizePlApproxHits),
-                  EqualsTermMetadata("term-three", kMinSizePlApproxHits),
-                  EqualsTermMetadata("term-two", kMinSizePlApproxHits),
-                  EqualsTermMetadata("term-one", kMinSizePlApproxHits))));
-
-  // keep push terms to the lite index. For term 1-4, since they has same hit
-  // count kMinSizePlApproxHits, we will push 4 term-one, 3 term-two, 2
-  // term-three and one term-four to make them in reverse order. And for term
-  // 5 & 6, we will push 2 term-five and one term-six.
-  Index::Editor edit7 =
-      index_->Edit(kDocumentId7, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit7.BufferTerm("term-one"), IsOk());
-  EXPECT_THAT(edit7.BufferTerm("term-two"), IsOk());
-  EXPECT_THAT(edit7.BufferTerm("term-three"), IsOk());
-  EXPECT_THAT(edit7.BufferTerm("term-four"), IsOk());
-  EXPECT_THAT(edit7.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit8 =
-      index_->Edit(kDocumentId8, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit8.BufferTerm("term-one"), IsOk());
-  EXPECT_THAT(edit8.BufferTerm("term-two"), IsOk());
-  EXPECT_THAT(edit8.BufferTerm("term-three"), IsOk());
-  EXPECT_THAT(edit8.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit9 =
-      index_->Edit(kDocumentId9, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit9.BufferTerm("term-one"), IsOk());
-  EXPECT_THAT(edit9.BufferTerm("term-two"), IsOk());
-  EXPECT_THAT(edit9.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit10 =
-      index_->Edit(kDocumentId10, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit10.BufferTerm("term-one"), IsOk());
-  EXPECT_THAT(edit10.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit11 =
-      index_->Edit(kDocumentId11, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit11.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit11.BufferTerm("term-six"), IsOk());
-  EXPECT_THAT(edit11.IndexAllBufferedTerms(), IsOk());
-
-  Index::Editor edit12 =
-      index_->Edit(kDocumentId12, kSectionId2, TermMatchType::EXACT_ONLY,
-                   /*namespace_id=*/0);
-  EXPECT_THAT(edit12.BufferTerm("term-five"), IsOk());
-  EXPECT_THAT(edit12.IndexAllBufferedTerms(), IsOk());
-
-  // verify the combination of lite index and main index is in correct order.
-  EXPECT_THAT(
-      index_->FindTermsByPrefix(/*prefix=*/"t", /*namespace_ids=*/{0},
-                                /*num_to_return=*/10),
-      IsOkAndHolds(ElementsAre(
-          EqualsTermMetadata("term-five",
-                             kSecondSmallestPlApproxHits + 2),              // 9
-          EqualsTermMetadata("term-six", kSecondSmallestPlApproxHits + 1),  // 8
-          EqualsTermMetadata("term-one", kMinSizePlApproxHits + 4),         // 7
-          EqualsTermMetadata("term-two", kMinSizePlApproxHits + 3),         // 6
-          EqualsTermMetadata("term-three", kMinSizePlApproxHits + 2),       // 5
-          EqualsTermMetadata("term-four", kMinSizePlApproxHits + 1))));     // 4
-
-  // Get the first three terms.
-  EXPECT_THAT(
-      index_->FindTermsByPrefix(/*prefix=*/"t", /*namespace_ids=*/{0},
-                                /*num_to_return=*/3),
-      IsOkAndHolds(ElementsAre(
-          EqualsTermMetadata("term-five",
-                             kSecondSmallestPlApproxHits + 2),              // 9
-          EqualsTermMetadata("term-six", kSecondSmallestPlApproxHits + 1),  // 8
-          EqualsTermMetadata("term-one", kMinSizePlApproxHits + 4))));      // 7
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnApproximateHitCountForMain) {
@@ -1313,10 +1160,11 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnApproximateHitCountForMain) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 8 hits.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
-                                        /*num_to_return=*/10),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 8),
-                                       EqualsTermMetadata("foo", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                /*num_to_return=*/10),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 8))));
 
   ICING_ASSERT_OK(index_->Merge());
 
@@ -1347,9 +1195,9 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCombinedHitCount) {
   // 1 hit in the lite index.
   EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
                                         /*num_to_return=*/10),
-              IsOkAndHolds(ElementsAre(
-                  EqualsTermMetadata("fool", kMinSizePlApproxHits + 1),
-                  EqualsTermMetadata("foo", kMinSizePlApproxHits))));
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", kMinSizePlApproxHits + 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
@@ -1367,11 +1215,11 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit in the main index, 'fool' has 1 hit in the lite index.
-  EXPECT_THAT(
-      index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
-                                /*num_to_return=*/10),
-      IsOkAndHolds(ElementsAre(EqualsTermMetadata("foo", kMinSizePlApproxHits),
-                               EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*namespace_ids=*/{0},
+                                        /*num_to_return=*/10),
+              IsOkAndHolds(UnorderedElementsAre(
+                  EqualsTermMetadata("foo", kMinSizePlApproxHits),
+                  EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, GetElementsSize) {

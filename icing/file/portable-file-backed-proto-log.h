@@ -64,6 +64,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include <google/protobuf/io/gzip_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
@@ -71,7 +72,6 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/endian.h"
-#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/portable/zlib.h"
 #include "icing/util/bit-util.h"
@@ -141,57 +141,49 @@ class PortableFileBackedProtoLog {
       return crc.Get();
     }
 
-    int32_t GetMagic() const { return GNetworkToHostL(magic_nbytes_); }
+    int32_t GetMagic() const { return gntohl(magic_nbytes_); }
 
-    void SetMagic(int32_t magic_in) {
-      magic_nbytes_ = GHostToNetworkL(magic_in);
-    }
+    void SetMagic(int32_t magic_in) { magic_nbytes_ = ghtonl(magic_in); }
 
     int32_t GetFileFormatVersion() const {
-      return GNetworkToHostL(file_format_version_nbytes_);
+      return gntohl(file_format_version_nbytes_);
     }
 
     void SetFileFormatVersion(int32_t file_format_version_in) {
-      file_format_version_nbytes_ = GHostToNetworkL(file_format_version_in);
+      file_format_version_nbytes_ = ghtonl(file_format_version_in);
     }
 
-    int32_t GetMaxProtoSize() const {
-      return GNetworkToHostL(max_proto_size_nbytes_);
-    }
+    int32_t GetMaxProtoSize() const { return gntohl(max_proto_size_nbytes_); }
 
     void SetMaxProtoSize(int32_t max_proto_size_in) {
-      max_proto_size_nbytes_ = GHostToNetworkL(max_proto_size_in);
+      max_proto_size_nbytes_ = ghtonl(max_proto_size_in);
     }
 
-    int32_t GetLogChecksum() const {
-      return GNetworkToHostL(log_checksum_nbytes_);
-    }
+    int32_t GetLogChecksum() const { return gntohl(log_checksum_nbytes_); }
 
     void SetLogChecksum(int32_t log_checksum_in) {
-      log_checksum_nbytes_ = GHostToNetworkL(log_checksum_in);
+      log_checksum_nbytes_ = ghtonl(log_checksum_in);
     }
 
-    int64_t GetRewindOffset() const {
-      return GNetworkToHostLL(rewind_offset_nbytes_);
-    }
+    int64_t GetRewindOffset() const { return gntohll(rewind_offset_nbytes_); }
 
     void SetRewindOffset(int64_t rewind_offset_in) {
-      rewind_offset_nbytes_ = GHostToNetworkLL(rewind_offset_in);
+      rewind_offset_nbytes_ = ghtonll(rewind_offset_in);
     }
 
     int32_t GetHeaderChecksum() const {
-      return GNetworkToHostL(header_checksum_nbytes_);
+      return gntohl(header_checksum_nbytes_);
     }
 
     void SetHeaderChecksum(int32_t header_checksum_in) {
-      header_checksum_nbytes_ = GHostToNetworkL(header_checksum_in);
+      header_checksum_nbytes_ = ghtonl(header_checksum_in);
     }
 
     bool GetCompressFlag() const { return GetFlag(kCompressBit); }
 
     void SetCompressFlag(bool compress) { SetFlag(kCompressBit, compress); }
 
-    bool GetDirtyFlag() const { return GetFlag(kDirtyBit); }
+    bool GetDirtyFlag() { return GetFlag(kDirtyBit); }
 
     void SetDirtyFlag(bool dirty) { SetFlag(kDirtyBit, dirty); }
 
@@ -217,7 +209,7 @@ class PortableFileBackedProtoLog {
     // Holds the magic as a quick sanity check against file corruption.
     //
     // Field is in network-byte order.
-    int32_t magic_nbytes_ = GHostToNetworkL(kMagic);
+    int32_t magic_nbytes_ = ghtonl(kMagic);
 
     // Must be at the beginning after kMagic. Contains the crc checksum of
     // the following fields.
@@ -231,7 +223,7 @@ class PortableFileBackedProtoLog {
     // valid instead of throwing away the entire log.
     //
     // Field is in network-byte order.
-    int64_t rewind_offset_nbytes_ = GHostToNetworkLL(kHeaderReservedBytes);
+    int64_t rewind_offset_nbytes_ = ghtonll(kHeaderReservedBytes);
 
     // Version number tracking how we serialize the file to disk. If we change
     // how/what we write to disk, this version should be updated and this class
@@ -576,6 +568,9 @@ class PortableFileBackedProtoLog {
 };
 
 template <typename ProtoT>
+constexpr uint8_t PortableFileBackedProtoLog<ProtoT>::kProtoMagic;
+
+template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
     std::unique_ptr<Header> header)
@@ -730,7 +725,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
       return absl_ports::InternalError(IcingStringUtil::StringPrintf(
           "Failed to truncate '%s' to size %lld", file_path.data(),
           static_cast<long long>(header->GetRewindOffset())));
-    }
+    };
     data_loss = DataLoss::PARTIAL;
   }
 
@@ -886,11 +881,12 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   google::protobuf::io::StringOutputStream proto_stream(&proto_str);
 
   if (header_->GetCompressFlag()) {
-    protobuf_ports::GzipOutputStream::Options options;
-    options.format = protobuf_ports::GzipOutputStream::ZLIB;
+    google::protobuf::io::GzipOutputStream::Options options;
+    options.format = google::protobuf::io::GzipOutputStream::ZLIB;
     options.compression_level = kDeflateCompressionLevel;
 
-    protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
+    google::protobuf::io::GzipOutputStream compressing_stream(&proto_stream,
+                                                                  options);
 
     bool success = proto.SerializeToZeroCopyStream(&compressing_stream) &&
                    compressing_stream.Close();
@@ -970,7 +966,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   // Deserialize proto
   ProtoT proto;
   if (header_->GetCompressFlag()) {
-    protobuf_ports::GzipInputStream decompress_stream(&proto_stream);
+    google::protobuf::io::GzipInputStream decompress_stream(&proto_stream);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);
@@ -1152,7 +1148,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
   memcpy(&portable_metadata, mmapped_file->region(), metadata_size);
 
   // Need to switch it back to host order endianness after reading from disk.
-  int32_t host_order_metadata = GNetworkToHostL(portable_metadata);
+  int32_t host_order_metadata = gntohl(portable_metadata);
 
   // Checks magic number
   uint8_t stored_k_proto_magic = GetProtoMagic(host_order_metadata);
@@ -1170,7 +1166,7 @@ libtextclassifier3::Status
 PortableFileBackedProtoLog<ProtoT>::WriteProtoMetadata(
     const Filesystem* filesystem, int fd, int32_t host_order_metadata) {
   // Convert it into portable endian format before writing to disk
-  int32_t portable_metadata = GHostToNetworkL(host_order_metadata);
+  int32_t portable_metadata = ghtonl(host_order_metadata);
   int portable_metadata_size = sizeof(portable_metadata);
 
   // Write metadata
@@ -1190,7 +1186,21 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
     return libtextclassifier3::Status::OK;
   }
 
-  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
+  int64_t new_content_size = file_size - header_->GetRewindOffset();
+  Crc32 crc;
+  if (new_content_size < 0) {
+    // File shrunk, recalculate the entire checksum.
+    ICING_ASSIGN_OR_RETURN(
+        crc,
+        ComputeChecksum(filesystem_, file_path_, Crc32(),
+                        /*start=*/kHeaderReservedBytes, /*end=*/file_size));
+  } else {
+    // Append new changes to the existing checksum.
+    ICING_ASSIGN_OR_RETURN(
+        crc, ComputeChecksum(filesystem_, file_path_,
+                             Crc32(header_->GetLogChecksum()),
+                             header_->GetRewindOffset(), file_size));
+  }
 
   header_->SetLogChecksum(crc.Get());
   header_->SetRewindOffset(file_size);
@@ -1209,26 +1219,9 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::PersistToDisk() {
 template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32>
 PortableFileBackedProtoLog<ProtoT>::ComputeChecksum() {
-  int64_t file_size = filesystem_->GetFileSize(file_path_.c_str());
-  int64_t new_content_size = file_size - header_->GetRewindOffset();
-  Crc32 crc;
-  if (new_content_size == 0) {
-    // No new protos appended, return cached checksum
-    return Crc32(header_->GetLogChecksum());
-  } else if (new_content_size < 0) {
-    // File shrunk, recalculate the entire checksum.
-    ICING_ASSIGN_OR_RETURN(
-        crc,
-        ComputeChecksum(filesystem_, file_path_, Crc32(),
-                        /*start=*/kHeaderReservedBytes, /*end=*/file_size));
-  } else {
-    // Append new changes to the existing checksum.
-    ICING_ASSIGN_OR_RETURN(
-        crc, ComputeChecksum(
-                 filesystem_, file_path_, Crc32(header_->GetLogChecksum()),
-                 /*start=*/header_->GetRewindOffset(), /*end=*/file_size));
-  }
-  return crc;
+  return PortableFileBackedProtoLog<ProtoT>::ComputeChecksum(
+      filesystem_, file_path_, Crc32(), /*start=*/kHeaderReservedBytes,
+      /*end=*/filesystem_->GetFileSize(file_path_.c_str()));
 }
 
 }  // namespace lib
