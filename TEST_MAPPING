@@ -6,7 +6,7 @@
   ],
   "imports": [
     {
-      "path": "frameworks/base/apex/appsearch/service/java/com/android/server/appsearch"
+      "path": "packages/modules/AppSearch"
     }
   ]
 }

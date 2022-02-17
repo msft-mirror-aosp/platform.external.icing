@@ -217,8 +217,7 @@ bool IsTermInNamespaces(
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids,
-                             int num_to_return) {
+                             const std::vector<NamespaceId>& namespace_ids) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
@@ -226,7 +225,7 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
   IcingDynamicTrie::PropertyReadersAll property_reader(*main_lexicon_);
 
   std::vector<TermMetadata> term_metadata_list;
-  while (term_iterator.IsValid() && term_metadata_list.size() < num_to_return) {
+  while (term_iterator.IsValid()) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
     // Skips the terms that don't exist in the given namespaces. We won't skip
@@ -249,13 +248,6 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
     term_metadata_list.emplace_back(term_iterator.GetKey(), approx_hit_count);
 
     term_iterator.Advance();
-  }
-  if (term_iterator.IsValid()) {
-    // We exited the loop above because we hit the num_to_return limit.
-    ICING_LOG(WARNING) << "Ran into limit of " << num_to_return
-                       << " retrieving suggestions for " << prefix
-                       << ". Some suggestions may not be returned and others "
-                          "may be misranked.";
   }
   return term_metadata_list;
 }
