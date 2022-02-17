@@ -17,11 +17,9 @@
 #ifndef ICING_FILE_FILESYSTEM_H_
 #define ICING_FILE_FILESYSTEM_H_
 
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_set>
