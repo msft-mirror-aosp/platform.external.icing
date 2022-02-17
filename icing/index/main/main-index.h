@@ -81,8 +81,7 @@ class MainIndex {
   //   A list of TermMetadata on success
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
-      int num_to_return);
+      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
 
   struct LexiconMergeOutputs {
     // Maps from main_lexicon tvi for new branching point to the main_lexicon
