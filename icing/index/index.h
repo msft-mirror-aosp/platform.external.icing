@@ -267,8 +267,7 @@ class Index {
         filesystem_(filesystem) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
-      int num_to_return);
+      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
 
   std::unique_ptr<LiteIndex> lite_index_;
   std::unique_ptr<MainIndex> main_index_;
