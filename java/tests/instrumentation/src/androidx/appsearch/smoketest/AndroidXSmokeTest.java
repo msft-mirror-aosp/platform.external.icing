@@ -24,6 +24,7 @@ import androidx.appsearch.app.AppSearchSchema;
 import androidx.appsearch.app.AppSearchSchema.PropertyConfig;
 import androidx.appsearch.app.AppSearchSchema.StringPropertyConfig;
 import androidx.appsearch.app.AppSearchSession;
+import androidx.appsearch.app.GenericDocument;
 import androidx.appsearch.app.PutDocumentsRequest;
 import androidx.appsearch.app.SearchResult;
 import androidx.appsearch.app.SearchResults;
@@ -32,15 +33,16 @@ import androidx.appsearch.app.SetSchemaRequest;
 import androidx.appsearch.localstorage.LocalStorage;
 import androidx.appsearch.localstorage.LocalStorage.SearchContext;
 import androidx.test.core.app.ApplicationProvider;
-import androidx.test.filters.SmallTest;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 
 import java.util.List;
 
-@SmallTest
-public class AppSearchSmokeTest {
+@RunWith(AndroidJUnit4.class)
+public class AndroidXSmokeTest {
     private AppSearchSession appSearch;
 
     @Before
@@ -48,7 +50,8 @@ public class AppSearchSmokeTest {
         appSearch =
                 LocalStorage.createSearchSession(
                                 new SearchContext.Builder(
-                                                ApplicationProvider.getApplicationContext())
+                                                ApplicationProvider.getApplicationContext(),
+                                                "database")
                                         .build())
                         .get();
         // Remove all data before test
@@ -79,7 +82,7 @@ public class AppSearchSmokeTest {
                                 .build())
                 .get();
 
-        TestDocument input = new TestDocument("uri1", "avocado");
+        TestDocument input = new TestDocument("namespace", "id1", "avocado");
         appSearch
                 .put(new PutDocumentsRequest.Builder().addDocuments(input).build())
                 .get()
@@ -95,10 +98,11 @@ public class AppSearchSmokeTest {
         SearchResult result = page.get(0);
         assertThat(results.getNextPage().get()).isEmpty();
 
-        assertEquals("uri1", result.getDocument().getUri());
-        assertEquals("avocado", result.getDocument().getPropertyString("body"));
-        TestDocument output = result.getDocument().toDocumentClass(TestDocument.class);
-        assertEquals("uri1", output.getUri());
+        GenericDocument genericOutput = result.getGenericDocument();
+        assertEquals("id1", genericOutput.getId());
+        assertEquals("avocado", genericOutput.getPropertyString("body"));
+        TestDocument output = genericOutput.toDocumentClass(TestDocument.class);
+        assertEquals("id1", output.getId());
         assertEquals("avocado", output.getBody());
     }
 }
