@@ -121,34 +121,14 @@ libtextclassifier3::Status MainIndex::Init(
 }
 
 libtextclassifier3::StatusOr<int64_t> MainIndex::GetElementsSize() const {
-  IndexStorageInfoProto storage_info = GetStorageInfo(IndexStorageInfoProto());
-  if (storage_info.main_index_storage_size() == -1 ||
-      storage_info.main_index_lexicon_size() == -1) {
-    return absl_ports::AbortedError(
-        "Failed to get size of MainIndex's members.");
-  }
-  return storage_info.main_index_storage_size() +
-         storage_info.main_index_lexicon_size();
-}
-
-IndexStorageInfoProto MainIndex::GetStorageInfo(
-    IndexStorageInfoProto storage_info) const {
   int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
-  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
-    storage_info.set_main_index_lexicon_size(lexicon_elt_size);
-  } else {
-    storage_info.set_main_index_lexicon_size(-1);
-  }
   int64_t index_elt_size = flash_index_storage_->GetElementsSize();
-  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
-    storage_info.set_main_index_storage_size(index_elt_size);
-  } else {
-    storage_info.set_main_index_storage_size(-1);
+  if (lexicon_elt_size == IcingFilesystem::kBadFileSize ||
+      index_elt_size == IcingFilesystem::kBadFileSize) {
+    return absl_ports::InternalError(
+        "Failed to get element size of LiteIndex's lexicon");
   }
-  storage_info.set_main_index_block_size(flash_index_storage_->block_size());
-  storage_info.set_num_blocks(flash_index_storage_->num_blocks());
-  storage_info.set_min_free_fraction(flash_index_storage_->min_free_fraction());
-  return storage_info;
+  return lexicon_elt_size + index_elt_size;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListAccessor>>
@@ -217,7 +197,8 @@ bool IsTermInNamespaces(
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids) {
+                             const std::vector<NamespaceId>& namespace_ids,
+                             int num_to_return) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
@@ -225,7 +206,7 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
   IcingDynamicTrie::PropertyReadersAll property_reader(*main_lexicon_);
 
   std::vector<TermMetadata> term_metadata_list;
-  while (term_iterator.IsValid()) {
+  while (term_iterator.IsValid() && term_metadata_list.size() < num_to_return) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
     // Skips the terms that don't exist in the given namespaces. We won't skip
@@ -248,6 +229,13 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
     term_metadata_list.emplace_back(term_iterator.GetKey(), approx_hit_count);
 
     term_iterator.Advance();
+  }
+  if (term_iterator.IsValid()) {
+    // We exited the loop above because we hit the num_to_return limit.
+    ICING_LOG(WARNING) << "Ran into limit of " << num_to_return
+                       << " retrieving suggestions for " << prefix
+                       << ". Some suggestions may not be returned and others "
+                          "may be misranked.";
   }
   return term_metadata_list;
 }

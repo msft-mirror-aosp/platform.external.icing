@@ -577,41 +577,6 @@ TEST_F(UsageStoreTest, GetElementsFileSize) {
               IsOkAndHolds(Gt(empty_file_size)));
 }
 
-TEST_F(UsageStoreTest, GetDiskUsageEmpty) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<UsageStore> usage_store,
-                             UsageStore::Create(&filesystem_, test_dir_));
-
-  // There's some internal metadata, so our disk usage will round up to 1 block.
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t empty_disk_usage,
-                             usage_store->GetDiskUsage());
-  EXPECT_THAT(empty_disk_usage, Gt(0));
-}
-
-TEST_F(UsageStoreTest, GetDiskUsageNonEmpty) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<UsageStore> usage_store,
-                             UsageStore::Create(&filesystem_, test_dir_));
-
-  // There's some internal metadata, so our disk usage will round up to 1 block.
-  ICING_ASSERT_OK_AND_ASSIGN(int64_t empty_disk_usage,
-                             usage_store->GetDiskUsage());
-
-  // Since our GetDiskUsage can only get sizes in increments of block_size, we
-  // need to insert enough usage reports so the disk usage will increase by at
-  // least 1 block size. The number 200 is a bit arbitrary, gotten from manually
-  // testing.
-  UsageReport usage_report = CreateUsageReport(
-      "namespace", "uri", /*timestamp_ms=*/1000, UsageReport::USAGE_TYPE1);
-  for (int i = 0; i < 200; ++i) {
-    usage_store->AddUsageReport(usage_report, /*document_id=*/i);
-  }
-
-  // We need to persist since iOS won't see the new disk allocations until after
-  // everything gets written.
-  usage_store->PersistToDisk();
-
-  EXPECT_THAT(usage_store->GetDiskUsage(), IsOkAndHolds(Gt(empty_disk_usage)));
-}
-
 }  // namespace
 
 }  // namespace lib

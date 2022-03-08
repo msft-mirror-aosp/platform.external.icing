@@ -15,7 +15,6 @@
 #include "icing/performance-configuration.h"
 
 #include "icing/result/result-state.h"
-#include "icing/scoring/scored-document-hit.h"
 
 namespace icing {
 namespace lib {
@@ -55,21 +54,38 @@ constexpr int kMaxQueryLength = 23000;
 constexpr int kDefaultNumToScore = 30000;
 
 // New Android devices nowadays all allow more than 16 MB memory per app. Using
-// that as a guideline and being more conservative, we set 4 MB as the safe
-// memory threshold.
+// that as a guideline, we set 16 MB as the safe memory threshold.
 // TODO(b/150029642): Android apps / framework have better understanding of how
 // much memory is allowed, so it would be better to let clients pass in this
 // value.
-constexpr int kSafeMemoryUsage = 4 * 1024 * 1024;  // 4MB
+constexpr int kSafeMemoryUsage = 16 * 1024 * 1024;  // 16MB
 
-// The maximum number of hits that can fit below the kSafeMemoryUsage threshold.
-constexpr int kMaxNumTotalHits = kSafeMemoryUsage / sizeof(ScoredDocumentHit);
+// This number is not determined by benchmarks. We just assume that returning
+// the best 1000 scored document hits of a query is enough. To find the best
+// 1000 scored document hits from a heap, we need roughly 0.7 ms on a Pixel 3 XL
+// according to //icing/scoring:ranker_benchmark.
+constexpr int kMaxNumHitsPerQuery = 1000;
 
+// A rough estimation of the size of ResultState if it stores the maximum number
+// of scored document hits.
+constexpr int kMaxMemoryPerResult =
+    sizeof(ResultState) + kMaxNumHitsPerQuery * sizeof(ScoredDocumentHit);
+
+// To be safer, we assume that all the Results contain the maximum number of
+// hits and only use half of the memory allowed.
+constexpr int kDefaultNumResultsToCache =
+    kSafeMemoryUsage / 2 / kMaxMemoryPerResult;
+
+static_assert(
+    kDefaultNumResultsToCache > 500,
+    "Default number of results to cache has changed, please update and make "
+    "sure it still meets our requirements.");
 }  // namespace
 
 PerformanceConfiguration::PerformanceConfiguration()
     : PerformanceConfiguration(kMaxQueryLength, kDefaultNumToScore,
-                               kMaxNumTotalHits) {}
+                               kMaxNumHitsPerQuery, kDefaultNumResultsToCache) {
+}
 
 }  // namespace lib
 }  // namespace icing

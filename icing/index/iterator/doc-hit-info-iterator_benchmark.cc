@@ -14,15 +14,15 @@
 
 #include <vector>
 
-#include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "testing/base/public/benchmark.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace icing {
 namespace lib {

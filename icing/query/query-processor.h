@@ -27,6 +27,7 @@
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -46,7 +47,7 @@ class QueryProcessor {
   static libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>> Create(
       Index* index, const LanguageSegmenter* language_segmenter,
       const Normalizer* normalizer, const DocumentStore* document_store,
-      const SchemaStore* schema_store);
+      const SchemaStore* schema_store, const Clock* clock);
 
   struct QueryResults {
     std::unique_ptr<DocHitInfoIterator> root_iterator;
@@ -76,7 +77,7 @@ class QueryProcessor {
                           const LanguageSegmenter* language_segmenter,
                           const Normalizer* normalizer,
                           const DocumentStore* document_store,
-                          const SchemaStore* schema_store);
+                          const SchemaStore* schema_store, const Clock* clock);
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.
@@ -102,6 +103,7 @@ class QueryProcessor {
   const Normalizer& normalizer_;
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
+  const Clock& clock_;
 };
 
 }  // namespace lib

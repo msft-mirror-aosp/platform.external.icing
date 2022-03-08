@@ -25,15 +25,13 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/schema-builder.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
-#include "icing/util/crc32.h"
+#include "icing/testing/fake-clock.h"
 
 namespace icing {
 namespace lib {
@@ -43,39 +41,26 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::testing::Ge;
 using ::testing::Not;
 using ::testing::Pointee;
-
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
-    PropertyConfigProto_Cardinality_Code_REPEATED;
-
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
-
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
-
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
-constexpr PropertyConfigProto_DataType_Code TYPE_DOUBLE =
-    PropertyConfigProto_DataType_Code_DOUBLE;
 
 class SchemaStoreTest : public ::testing::Test {
  protected:
   SchemaStoreTest() : test_dir_(GetTestTempDir() + "/icing") {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
 
-    schema_ =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-                // Add an indexed property so we generate section metadata on it
-                PropertyConfigBuilder()
-                    .SetName("subject")
-                    .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                    .SetCardinality(CARDINALITY_OPTIONAL)))
-            .Build();
+    auto type = schema_.add_types();
+    type->set_schema_type("email");
+
+    // Add an indexed property so we generate section metadata on it
+    auto property = type->add_properties();
+    property->set_property_name("subject");
+    property->set_data_type(PropertyConfigProto::DataType::STRING);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+    property->mutable_string_indexing_config()->set_term_match_type(
+        TermMatchType::EXACT_ONLY);
+    property->mutable_string_indexing_config()->set_tokenizer_type(
+        StringIndexingConfig::TokenizerType::PLAIN);
   }
 
   void TearDown() override {
@@ -89,9 +74,8 @@ class SchemaStoreTest : public ::testing::Test {
 };
 
 TEST_F(SchemaStoreTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(
-      SchemaStore::Create(/*filesystem=*/nullptr, test_dir_, &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(SchemaStore::Create(/*filesystem=*/nullptr, test_dir_, &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(SchemaStoreTest, CorruptSchemaError) {
@@ -103,7 +87,6 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
     // Set it for the first time
     SchemaStore::SetSchemaResult result;
     result.success = true;
-    result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(schema_),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -114,10 +97,9 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
   // "Corrupt" the  ground truth schema by adding new data to it. This will mess
   // up the checksum of the schema store
 
-  SchemaProto corrupt_schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("corrupted"))
-          .Build();
+  SchemaProto corrupt_schema;
+  auto type = corrupt_schema.add_types();
+  type->set_schema_type("corrupted");
 
   const std::string schema_file = absl_ports::StrCat(test_dir_, "/schema.pb");
   const std::string serialized_schema = corrupt_schema.SerializeAsString();
@@ -139,7 +121,6 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
     // Set it for the first time
     SchemaStore::SetSchemaResult result;
     result.success = true;
-    result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(schema_),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -177,7 +158,6 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
     // Set it for the first time
     SchemaStore::SetSchemaResult result;
     result.success = true;
-    result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(schema_),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -210,36 +190,7 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
 }
 
 TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> store,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-
-  // The apis to retrieve information about the schema should fail gracefully.
-  EXPECT_THAT(store->GetSchema(),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(store->GetSchemaTypeConfig("foo"),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(store->GetSchemaTypeId("foo"),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(store->GetSectionMetadata(/*schema_type_id=*/0, /*section_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  // The apis to extract content from a document should fail gracefully.
-  DocumentProto doc;
-  PropertyProto* prop = doc.add_properties();
-  prop->set_name("name");
-  prop->add_string_values("foo bar baz");
-
-  EXPECT_THAT(store->GetStringSectionContent(doc, /*section_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(store->GetStringSectionContent(doc, "name"),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(store->ExtractSections(doc),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  // The apis to persist and checksum data should succeed.
-  EXPECT_THAT(store->ComputeChecksum(), IsOkAndHolds(Crc32()));
-  EXPECT_THAT(store->PersistToDisk(), IsOk());
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_), IsOk());
 }
 
 TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
@@ -249,13 +200,11 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
 
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   schema_store.reset();
-  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_),
-              IsOk());
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_), IsOk());
 }
 
 TEST_F(SchemaStoreTest, MultipleCreateOk) {
@@ -271,7 +220,6 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
 
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
@@ -308,7 +256,6 @@ TEST_F(SchemaStoreTest, SetNewSchemaOk) {
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -324,7 +271,6 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -332,8 +278,6 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
   // And one more for fun
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
@@ -348,7 +292,6 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -359,7 +302,6 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
   schema_.clear_types();
 
   // Set the incompatible schema
-  result = SchemaStore::SetSchemaResult();
   result.success = false;
   result.schema_types_deleted_by_name.emplace("email");
   result.schema_types_deleted_by_id.emplace(0);
@@ -372,14 +314,13 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto schema = SchemaBuilder()
-                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
-                           .Build();
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -387,14 +328,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 
   // Add a type, shouldn't affect the index or cached SchemaTypeIds
-  schema = SchemaBuilder(schema)
-               .AddType(SchemaTypeConfigBuilder().SetType("new_type"))
-               .Build();
+  type = schema.add_types();
+  type->set_schema_type("new_type");
 
   // Set the compatible schema
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
-  result.schema_types_new_by_name.insert("new_type");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
@@ -406,17 +343,15 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email"))
-          .AddType(SchemaTypeConfigBuilder().SetType("message"))
-          .Build();
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
+  type = schema.add_types();
+  type->set_schema_type("message");
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("email");
-  result.schema_types_new_by_name.insert("message");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -429,9 +364,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
                              schema_store->GetSchemaTypeId("message"));
 
   // Remove "email" type, this also changes previous SchemaTypeIds
-  schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
-               .Build();
+  schema.Clear();
+  type = schema.add_types();
+  type->set_schema_type("message");
 
   SchemaStore::SetSchemaResult incompatible_result;
   incompatible_result.success = false;
@@ -464,17 +399,15 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email"))
-          .AddType(SchemaTypeConfigBuilder().SetType("message"))
-          .Build();
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
+  type = schema.add_types();
+  type->set_schema_type("message");
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("email");
-  result.schema_types_new_by_name.insert("message");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -482,15 +415,14 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 
   // Reorder the types
-  schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("message"))
-               .AddType(SchemaTypeConfigBuilder().SetType("email"))
-               .Build();
+  schema.clear_types();
+  type = schema.add_types();
+  type->set_schema_type("message");
+  type = schema.add_types();
+  type->set_schema_type("email");
 
   // Since we assign SchemaTypeIds based on order in the SchemaProto, this will
   // cause SchemaTypeIds to change
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
   result.old_schema_type_ids_changed.emplace(0);  // Old SchemaTypeId of "email"
   result.old_schema_type_ids_changed.emplace(
       1);  // Old SchemaTypeId of "message"
@@ -502,25 +434,24 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 }
 
-TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
+TEST_F(SchemaStoreTest, SetSchemaThatRequiresReindexingOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-              // Add an unindexed property
-              PropertyConfigBuilder()
-                  .SetName("subject")
-                  .SetDataType(TYPE_STRING)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
+
+  // Add an unindexed property
+  auto property = type->add_properties();
+  property->set_property_name("subject");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -528,91 +459,20 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 
   // Make a previously unindexed property indexed
-  schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-                   PropertyConfigBuilder()
-                       .SetName("subject")
-                       .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                       .SetCardinality(CARDINALITY_OPTIONAL)))
-               .Build();
+  property = schema.mutable_types(0)->mutable_properties(0);
+  property->mutable_string_indexing_config()->set_term_match_type(
+      TermMatchType::EXACT_ONLY);
+  property->mutable_string_indexing_config()->set_tokenizer_type(
+      StringIndexingConfig::TokenizerType::PLAIN);
+
+  // With a new indexed property, we'll need to reindex
+  result.index_incompatible = true;
 
   // Set the compatible schema
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
-  result.schema_types_index_incompatible_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
-}
-
-TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-
-  // Make two schemas. One that sets index_nested_properties to false and one
-  // that sets it to true.
-  SchemaTypeConfigProto email_type_config =
-      SchemaTypeConfigBuilder()
-          .SetType("email")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
-          .Build();
-  SchemaProto no_nested_index_schema =
-      SchemaBuilder()
-          .AddType(email_type_config)
-          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("emails")
-                  .SetDataTypeDocument("email",
-                                       /*index_nested_properties=*/false)
-                  .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-
-  SchemaProto nested_index_schema =
-      SchemaBuilder()
-          .AddType(email_type_config)
-          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("emails")
-                  .SetDataTypeDocument("email",
-                                       /*index_nested_properties=*/true)
-                  .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-
-  // Set schema with index_nested_properties=false to start.
-  SchemaStore::SetSchemaResult result;
-  result.success = true;
-  result.schema_types_new_by_name.insert("email");
-  result.schema_types_new_by_name.insert("person");
-  EXPECT_THAT(schema_store->SetSchema(no_nested_index_schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
-  EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
-
-  // Set schema with index_nested_properties=true and confirm that the change to
-  // 'person' is index incompatible.
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
-  result.schema_types_index_incompatible_by_name.insert("person");
-  EXPECT_THAT(schema_store->SetSchema(nested_index_schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
-  EXPECT_THAT(*actual_schema, EqualsProto(nested_index_schema));
-
-  // Set schema with index_nested_properties=false and confirm that the change
-  // to 'person' is index incompatible.
-  result = SchemaStore::SetSchemaResult();
-  result.success = true;
-  result.schema_types_index_incompatible_by_name.insert("person");
-  EXPECT_THAT(schema_store->SetSchema(no_nested_index_schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
-  EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
@@ -620,20 +480,19 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-              // Add a STRING property
-              PropertyConfigBuilder()
-                  .SetName("subject")
-                  .SetDataType(TYPE_STRING)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
+  SchemaProto schema;
+  auto type = schema.add_types();
+  type->set_schema_type("email");
+
+  // Add a STRING property
+  auto property = type->add_properties();
+  property->set_property_name("subject");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
 
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(schema),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -644,14 +503,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
                              schema_store->GetSchemaTypeId("email"));
 
   // Make a previously STRING property into DOUBLE
-  schema = SchemaBuilder()
-               .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-                   // Add a STRING property
-                   PropertyConfigBuilder()
-                       .SetName("subject")
-                       .SetDataType(TYPE_DOUBLE)
-                       .SetCardinality(CARDINALITY_OPTIONAL)))
-               .Build();
+  property = schema.mutable_types(0)->mutable_properties(0);
+  property->set_data_type(PropertyConfigProto::DataType::DOUBLE);
 
   SchemaStore::SetSchemaResult incompatible_result;
   incompatible_result.success = false;
@@ -696,8 +549,6 @@ TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   // Set it for the first time
   SchemaStore::SetSchemaResult result;
   result.success = true;
-  result.schema_types_new_by_name.insert(first_type);
-  result.schema_types_new_by_name.insert(second_type);
   EXPECT_THAT(schema_store->SetSchema(schema_),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
@@ -719,8 +570,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameBetweenCalls) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto foo_schema =
-      SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
+  SchemaProto foo_schema;
+  auto type_config = foo_schema.add_types();
+  type_config->set_schema_type("foo");
 
   ICING_EXPECT_OK(schema_store->SetSchema(foo_schema));
 
@@ -735,8 +587,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto foo_schema =
-      SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
+  SchemaProto foo_schema;
+  auto type_config = foo_schema.add_types();
+  type_config->set_schema_type("foo");
 
   ICING_EXPECT_OK(schema_store->SetSchema(foo_schema));
 
@@ -755,19 +608,20 @@ TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto foo_schema =
-      SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
+  SchemaProto foo_schema;
+  auto type_config = foo_schema.add_types();
+  type_config->set_schema_type("foo");
 
   ICING_EXPECT_OK(schema_store->SetSchema(foo_schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
 
   // Modifying the SchemaStore changes the checksum
-  SchemaProto foo_bar_schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("foo"))
-          .AddType(SchemaTypeConfigBuilder().SetType("bar"))
-          .Build();
+  SchemaProto foo_bar_schema;
+  type_config = foo_bar_schema.add_types();
+  type_config->set_schema_type("foo");
+  type_config = foo_bar_schema.add_types();
+  type_config->set_schema_type("bar");
 
   ICING_EXPECT_OK(schema_store->SetSchema(foo_bar_schema));
 
@@ -788,8 +642,9 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
 
-  SchemaProto schema =
-      SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
+  SchemaProto schema;
+  auto type_config = schema.add_types();
+  type_config->set_schema_type("foo");
 
   ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
@@ -801,9 +656,8 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 
   // Modify the schema so that something different is persisted next time
-  schema = SchemaBuilder(schema)
-               .AddType(SchemaTypeConfigBuilder().SetType("bar"))
-               .Build();
+  type_config = schema.add_types();
+  type_config->set_schema_type("bar");
   ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   // Should also persist on destruction
@@ -814,58 +668,6 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
       schema_store, SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
-}
-
-TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-
-  // Create a schema with two types: one simple type and one type that uses all
-  // 16 sections.
-  PropertyConfigProto prop =
-      PropertyConfigBuilder()
-          .SetName("subject")
-          .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-          .SetCardinality(CARDINALITY_OPTIONAL)
-          .Build();
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-              PropertyConfigBuilder(prop)))
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("fullSectionsType")
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop0"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop2"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop3"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop4"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop5"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop7"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop8"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop9"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop10"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop11"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop12"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop13"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop14"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop15")))
-          .Build();
-
-  SchemaStore::SetSchemaResult result;
-  result.success = true;
-  result.schema_types_new_by_name.insert("email");
-  result.schema_types_new_by_name.insert("fullSectionsType");
-  EXPECT_THAT(schema_store->SetSchema(schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
-
-  SchemaStoreStorageInfoProto storage_info = schema_store->GetStorageInfo();
-  EXPECT_THAT(storage_info.schema_store_size(), Ge(0));
-  EXPECT_THAT(storage_info.num_schema_types(), Eq(2));
-  EXPECT_THAT(storage_info.num_total_sections(), Eq(17));
-  EXPECT_THAT(storage_info.num_schema_types_sections_exhausted(), Eq(1));
 }
 
 }  // namespace

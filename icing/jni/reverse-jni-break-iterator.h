@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
-#define ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
+#ifndef ICING_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
+#define ICING_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
 
 #include <jni.h>
 
@@ -121,4 +121,4 @@ class ReverseJniBreakIterator {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TOKENIZATION_REVERSE_JNI_REVERSE_JNI_BREAK_ITERATOR_H_
+#endif  // ICING_JNI_REVERSE_JNI_BREAK_ITERATOR_H_

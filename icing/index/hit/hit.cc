@@ -67,10 +67,9 @@ Hit::Hit(SectionId section_id, DocumentId document_id,
                         &temp_value);
   bit_util::BitfieldSet(section_id, kNumFlags, kSectionIdBits, &temp_value);
   bit_util::BitfieldSet(term_frequency != kDefaultTermFrequency,
-                        kHasTermFrequency, /*len=*/1, &temp_value);
-  bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, /*len=*/1, &temp_value);
-  bit_util::BitfieldSet(is_in_prefix_section, kInPrefixSection,
-                        /*len=*/1, &temp_value);
+                        kHasTermFrequency, 1, &temp_value);
+  bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, 1, &temp_value);
+  bit_util::BitfieldSet(is_in_prefix_section, kInPrefixSection, 1, &temp_value);
   value_ = temp_value;
 }
 

@@ -23,8 +23,8 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 12
-message InitializeStatsProto {
+// Next tag: 11
+message NativeInitializeStats {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
 
@@ -40,9 +40,8 @@ message InitializeStatsProto {
     // Data in index is inconsistent with ground truth.
     INCONSISTENT_WITH_GROUND_TRUTH = 2;
 
-    // Changes were made to the schema, but possibly not fully applied to the
-    // document store and the index - requiring a recovery.
-    SCHEMA_CHANGES_OUT_OF_SYNC = 3;
+    // Total checksum of all the components does not match.
+    TOTAL_CHECKSUM_MISMATCH = 3;
 
     // Random I/O errors.
     IO_ERROR = 4;
@@ -50,13 +49,13 @@ message InitializeStatsProto {
 
   // Possible recovery causes for document store:
   // - DATA_LOSS
-  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - TOTAL_CHECKSUM_MISMATCH
   // - IO_ERROR
   optional RecoveryCause document_store_recovery_cause = 2;
 
   // Possible recovery causes for index:
   // - INCONSISTENT_WITH_GROUND_TRUTH
-  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - TOTAL_CHECKSUM_MISMATCH
   // - IO_ERROR
   optional RecoveryCause index_restoration_cause = 3;
 
@@ -92,15 +91,11 @@ message InitializeStatsProto {
 
   // Number of schema types currently in schema store.
   optional int32 num_schema_types = 10;
-
-  // Number of consecutive initialization failures that immediately preceded
-  // this initialization.
-  optional int32 num_previous_init_failures = 11;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
 // Next tag: 7
-message PutDocumentStatsProto {
+message NativePutDocumentStats {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
 
@@ -118,21 +113,20 @@ message PutDocumentStatsProto {
   optional int32 document_size = 5;
 
   message TokenizationStats {
+    // Whether the number of tokens to be indexed exceeded the max number of
+    // tokens per document.
+    optional bool exceeded_max_token_num = 2;
+
     // Number of tokens added to the index.
     optional int32 num_tokens_indexed = 1;
-
-    reserved 2;
   }
   optional TokenizationStats tokenization_stats = 6;
 }
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 17
-message QueryStatsProto {
-  // The UTF-8 length of the query string
-  optional int32 query_length = 16;
-
+// Next tag: 15
+message NativeQueryStats {
   // Number of terms in the query string.
   optional int32 num_terms = 1;
 
@@ -160,7 +154,7 @@ message QueryStatsProto {
   optional int32 num_documents_scored = 8;
 
   // How many of the results in the page returned were snippeted.
-  optional int32 num_results_with_snippets = 15;
+  optional bool num_results_snippeted = 9;
 
   // Overall time used for the function call.
   optional int32 latency_ms = 10;
@@ -178,14 +172,13 @@ message QueryStatsProto {
   // Time used to fetch the document protos. Note that it includes the
   // time to snippet if ‘has_snippets’ is true.
   optional int32 document_retrieval_latency_ms = 14;
-
-  reserved 9;
 }
 
 // Stats of the top-level functions IcingSearchEngine::Delete,
-// IcingSearchEngine::DeleteByNamespace, IcingSearchEngine::DeleteBySchemaType.
+// IcingSearchEngine::DeleteByNamespace, IcingSearchEngine::DeleteBySchemaType,
+// IcingSearchEngine::DeleteByQuery.
 // Next tag: 4
-message DeleteStatsProto {
+message NativeDeleteStats {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
 
@@ -197,10 +190,8 @@ message DeleteStatsProto {
       // Delete one document.
       SINGLE = 1;
 
-      // Delete by query. This value is deprecated.
-      // IcingSearchEngine::DeleteByQuery will return a DeleteByQueryStatsProto
-      // rather than a DeleteStatsProto.
-      DEPRECATED_QUERY = 2 [deprecated = true];
+      // Delete by query.
+      QUERY = 2;
 
       // Delete by namespace.
       NAMESPACE = 3;
@@ -213,33 +204,4 @@ message DeleteStatsProto {
 
   // Number of documents deleted by this call.
   optional int32 num_documents_deleted = 3;
-}
-
-// Stats of the top-level functions IcingSearchEngine::DeleteByQuery.
-// Next tag: 9
-message DeleteByQueryStatsProto {
-  // Overall time used for the function call.
-  optional int32 latency_ms = 1;
-
-  // Number of documents deleted by this call.
-  optional int32 num_documents_deleted = 2;
-
-  // The UTF-8 length of the query string
-  optional int32 query_length = 3;
-
-  // Number of terms in the query string.
-  optional int32 num_terms = 4;
-
-  // Number of namespaces filtered.
-  optional int32 num_namespaces_filtered = 5;
-
-  // Number of schema types filtered.
-  optional int32 num_schema_types_filtered = 6;
-
-  // Time used to parse the query, including 2 parts: tokenizing and
-  // transforming tokens into an iterator tree.
-  optional int32 parse_query_latency_ms = 7;
-
-  // Time used to delete each document.
-  optional int32 document_removal_latency_ms = 8;
 }

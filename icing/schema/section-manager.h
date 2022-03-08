@@ -30,9 +30,7 @@
 namespace icing {
 namespace lib {
 
-inline constexpr std::string_view kPropertySeparator = ".";
-inline constexpr std::string_view kLBracket = "[";
-inline constexpr std::string_view kRBracket = "]";
+inline constexpr char kPropertySeparator[] = ".";
 
 // This class provides section-related operations. It assigns sections according
 // to type configs and extracts section / sections from documents.
@@ -95,12 +93,6 @@ class SectionManager {
   //   NOT_FOUND if type config name of document not found
   libtextclassifier3::StatusOr<std::vector<Section>> ExtractSections(
       const DocumentProto& document) const;
-
-  // Returns:
-  //   - On success, the section metadatas for the specified type
-  //   - NOT_FOUND if the type config name is not present in the schema
-  libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
-  GetMetadataList(const std::string& type_config_name) const;
 
  private:
   // Use SectionManager::Create() to instantiate

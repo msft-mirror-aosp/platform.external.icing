@@ -147,7 +147,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), language_segmenter.get(),
                              normalizer.get(), document_store.get(),
-                             schema_store.get()));
+                             schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -278,7 +278,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), language_segmenter.get(),
                              normalizer.get(), document_store.get(),
-                             schema_store.get()));
+                             schema_store.get(), &clock));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -402,7 +402,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), language_segmenter.get(),
                              normalizer.get(), document_store.get(),
-                             schema_store.get()));
+                             schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -522,7 +522,7 @@ void BM_QueryHiragana(benchmark::State& state) {
       std::unique_ptr<QueryProcessor> query_processor,
       QueryProcessor::Create(index.get(), language_segmenter.get(),
                              normalizer.get(), document_store.get(),
-                             schema_store.get()));
+                             schema_store.get(), &clock));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);

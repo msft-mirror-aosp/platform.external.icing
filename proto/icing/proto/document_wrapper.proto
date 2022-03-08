@@ -20,6 +20,7 @@ import "icing/proto/document.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
+
 option objc_class_prefix = "ICNG";
 
 // DocumentWrapper as a wrapper of the user-facing DocumentProto is meant to
@@ -29,5 +30,6 @@ option objc_class_prefix = "ICNG";
 message DocumentWrapper {
   optional DocumentProto document = 1;
 
-  reserved 2;
+  // Indicates if the document is marked as deleted
+  optional bool deleted = 2;
 }

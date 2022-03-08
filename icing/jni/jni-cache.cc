@@ -14,8 +14,6 @@
 
 #include "icing/jni/jni-cache.h"
 
-#ifdef ICING_REVERSE_JNI_SEGMENTATION
-
 #include "icing/text_classifier/lib3/utils/java/jni-base.h"
 #include "icing/text_classifier/lib3/utils/java/jni-helper.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -216,5 +214,3 @@ JniCache::ConvertToJavaString(const char* utf8_text,
 
 }  // namespace lib
 }  // namespace icing
-
-#endif  // ICING_REVERSE_JNI_SEGMENTATION

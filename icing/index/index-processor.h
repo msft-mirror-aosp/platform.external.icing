@@ -32,6 +32,23 @@ namespace lib {
 
 class IndexProcessor {
  public:
+  struct Options {
+    int32_t max_tokens_per_document;
+
+    // Indicates how a document exceeding max_tokens_per_document should be
+    // handled.
+    enum class TokenLimitBehavior {
+      // When set, the first max_tokens_per_document will be indexed. If the
+      // token count exceeds max_tokens_per_document, a ResourceExhausted error
+      // will be returned.
+      kReturnError,
+      // When set, the first max_tokens_per_document will be indexed. If the
+      // token count exceeds max_tokens_per_document, OK will be returned.
+      kSuppressError,
+    };
+    TokenLimitBehavior token_limit_behavior;
+  };
+
   // Factory function to create an IndexProcessor which does not take ownership
   // of any input components, and all pointers must refer to valid objects that
   // outlive the created IndexProcessor instance.
@@ -40,7 +57,8 @@ class IndexProcessor {
   //   An IndexProcessor on success
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
-      const Normalizer* normalizer, Index* index, const Clock* clock);
+      const Normalizer* normalizer, Index* index, const Options& options,
+      const Clock* clock);
 
   // Add tokenized document to the index, associated with document_id. If the
   // number of tokens in the document exceeds max_tokens_per_document, then only
@@ -63,16 +81,21 @@ class IndexProcessor {
   //   INTERNAL_ERROR if any other errors occur
   libtextclassifier3::Status IndexDocument(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      PutDocumentStatsProto* put_document_stats = nullptr);
+      NativePutDocumentStats* put_document_stats = nullptr);
 
  private:
-  IndexProcessor(const Normalizer* normalizer, Index* index, const Clock* clock)
-      : normalizer_(*normalizer), index_(index), clock_(*clock) {}
+  IndexProcessor(const Normalizer* normalizer, Index* index,
+                 const Options& options, const Clock* clock)
+      : normalizer_(*normalizer),
+        index_(index),
+        options_(options),
+        clock_(*clock) {}
 
   std::string NormalizeToken(const Token& token);
 
   const Normalizer& normalizer_;
   Index* const index_;
+  const Options options_;
   const Clock& clock_;
 };
 

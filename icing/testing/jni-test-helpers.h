@@ -15,8 +15,6 @@
 #ifndef ICING_TESTING_JNI_TEST_HELPERS_H_
 #define ICING_TESTING_JNI_TEST_HELPERS_H_
 
-#include <memory>
-
 #include "icing/jni/jni-cache.h"
 
 #ifdef ICING_REVERSE_JNI_SEGMENTATION

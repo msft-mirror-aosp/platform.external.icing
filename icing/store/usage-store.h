@@ -157,14 +157,6 @@ class UsageStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
-  // Calculates and returns the disk usage in bytes. Rounds up to the nearest
-  // block size.
-  //
-  // Returns:
-  //   Disk usage on success
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<int64_t> GetDiskUsage() const;
-
   // Resizes the storage so that only the usage scores of and before
   // last_document_id are stored.
   //
