@@ -37,7 +37,8 @@ inline constexpr uint64_t kInvalidNextPageToken = 0;
 // Used to store and manage ResultState.
 class ResultStateManager {
  public:
-  explicit ResultStateManager(int max_hits_per_query, int max_result_states);
+  explicit ResultStateManager(int max_total_hits,
+                              const DocumentStore& document_store);
 
   ResultStateManager(const ResultStateManager&) = delete;
   ResultStateManager& operator=(const ResultStateManager&) = delete;
@@ -77,13 +78,17 @@ class ResultStateManager {
  private:
   absl_ports::shared_mutex mutex_;
 
-  // The maximum number of scored document hits to return for a query. When we
-  // have more than the maximum number, extra hits will be truncated.
-  const int max_hits_per_query_;
+  const DocumentStore& document_store_;
 
-  // The maximum number of result states. When we have more than the maximum
-  // number, the oldest / firstly added result state will be removed.
-  const int max_result_states_;
+  // The maximum number of scored document hits that all result states may
+  // have. When a new result state is added such that num_total_hits_ would
+  // exceed max_total_hits_, the oldest result states are evicted until
+  // num_total_hits_ is below max_total_hits.
+  const int max_total_hits_;
+
+  // The number of scored document hits that all result states currently held by
+  // the result state manager have.
+  int num_total_hits_;
 
   // A hash map of (next-page token -> result state)
   std::unordered_map<uint64_t, ResultState> result_state_map_
@@ -112,12 +117,20 @@ class ResultStateManager {
   uint64_t GetUniqueToken() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to remove old states to make room for incoming states.
-  void RemoveStatesIfNeeded() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  void RemoveStatesIfNeeded(const ResultState& result_state)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to remove a result state from result_state_map_, the token
   // will then be temporarily kept in invalidated_token_set_ until it's finally
   // removed from token_queue_.
   void InternalInvalidateResultState(uint64_t token)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Internal method to invalidates all result states / tokens currently in
+  // ResultStateManager. We need this separate method so that other public
+  // methods don't need to call InvalidateAllResultStates(). Public methods
+  // calling each other may cause deadlock issues.
+  void InternalInvalidateAllResultStates()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

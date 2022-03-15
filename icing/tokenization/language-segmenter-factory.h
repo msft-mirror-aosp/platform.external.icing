@@ -19,10 +19,9 @@
 #include <string_view>
 
 #include "icing/jni/jni-cache.h"
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "icing/util/i18n-utils.h"
-#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -30,7 +29,7 @@ namespace lib {
 namespace language_segmenter_factory {
 
 struct SegmenterOptions {
-  explicit SegmenterOptions(std::string locale = ULOC_US,
+  explicit SegmenterOptions(std::string locale,
                             const JniCache* jni_cache = nullptr)
       : locale(std::move(locale)), jni_cache(jni_cache) {}
 
@@ -46,7 +45,7 @@ struct SegmenterOptions {
 //   A LanguageSegmenter on success
 //   INVALID_ARGUMENT if locale string is invalid
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(
-    SegmenterOptions options = SegmenterOptions());
+    SegmenterOptions options);
 
 }  // namespace language_segmenter_factory
 

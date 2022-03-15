@@ -28,6 +28,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -59,18 +60,20 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
     test_document3_ =
         DocumentBuilder().SetKey("icing", "email/3").SetSchema("email").Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("email");
-
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email"))
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -98,38 +101,11 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, EmptyOriginalIterator) {
   std::unique_ptr<DocHitInfoIterator> original_iterator_empty =
       std::make_unique<DocHitInfoIteratorDummy>();
 
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator_empty),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
-}
-
-TEST_F(DocHitInfoIteratorDeletedFilterTest, TurnOffDeletedFilterOk) {
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(test_document1_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             document_store_->Put(test_document2_));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             document_store_->Put(test_document3_));
-
-  // Deletes test document 2
-  ICING_ASSERT_OK(document_store_->Delete(test_document2_.namespace_(),
-                                          test_document2_.uri()));
-
-  std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1),
-                                           DocHitInfo(document_id2),
-                                           DocHitInfo(document_id3)};
-  std::unique_ptr<DocHitInfoIterator> original_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  options_.filter_deleted = false;
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
-
-  EXPECT_THAT(GetDocumentIds(&filtered_iterator),
-              ElementsAre(document_id1, document_id2, document_id3));
 }
 
 TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
@@ -149,9 +125,9 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id1, document_id3));
@@ -175,9 +151,9 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, NonExistingDocumentsAreFiltered) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id1, document_id2, document_id3));
@@ -188,9 +164,9 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, NegativeDocumentIdIsIgnored) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(filtered_iterator.Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -202,9 +178,9 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, InvalidDocumentIdIsIgnored) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(filtered_iterator.Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -219,9 +195,9 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, GreaterThanMaxDocumentIdIsIgnored) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(filtered_iterator.Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -251,18 +227,20 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
                                 .SetSchema("email")
                                 .Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type("email");
-
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("email"))
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -293,9 +271,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, EmptyOriginalIterator) {
       std::make_unique<DocHitInfoIteratorDummy>();
 
   options_.namespaces = std::vector<std::string_view>{};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator_empty),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -311,9 +289,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.namespaces = std::vector<std::string_view>{"nonexistent_namespace"};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -328,9 +306,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, NoNamespacesReturnsAll) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.namespaces = std::vector<std::string_view>{};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -352,9 +330,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.namespaces = std::vector<std::string_view>{namespace1_};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id1, document_id2));
@@ -378,9 +356,9 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, FilterForMultipleNamespacesOk) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.namespaces = std::vector<std::string_view>{namespace1_, namespace3_};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id1, document_id2, document_id4));
@@ -402,22 +380,22 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
     document4_schema1_ =
         DocumentBuilder().SetKey("namespace", "4").SetSchema(schema1_).Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type(schema1_);
-    type_config = schema.add_types();
-    type_config->set_schema_type(schema2_);
-    type_config = schema.add_types();
-    type_config->set_schema_type(schema3_);
-
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType(schema1_))
+            .AddType(SchemaTypeConfigBuilder().SetType(schema2_))
+            .AddType(SchemaTypeConfigBuilder().SetType(schema3_))
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -448,9 +426,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, EmptyOriginalIterator) {
       std::make_unique<DocHitInfoIteratorDummy>();
 
   options_.schema_types = std::vector<std::string_view>{};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator_empty),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -467,9 +445,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
 
   options_.schema_types =
       std::vector<std::string_view>{"nonexistent_schema_type"};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
@@ -484,9 +462,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, NoSchemaTypesReturnsAll) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.schema_types = std::vector<std::string_view>{};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -505,9 +483,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.schema_types = std::vector<std::string_view>{schema1_};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -528,9 +506,9 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, FilterForMultipleSchemaTypesOk) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   options_.schema_types = std::vector<std::string_view>{schema2_, schema3_};
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id2, document_id3));
@@ -544,18 +522,20 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
   void SetUp() override {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type(email_schema_);
-
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType(email_schema_))
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -576,6 +556,16 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
 };
 
 TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
+  // Arbitrary value
+  fake_clock_.SetSystemTimeMilliseconds(100);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
   // Insert a document
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
@@ -584,23 +574,30 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
                                .SetTtlMs(0)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document));
+                             document_store->Put(document));
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // Arbitrary value
-  fake_clock_.SetSystemTimeMilliseconds(100);
-
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
 
 TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
+  // Arbitrary value, but must be less than document's creation_timestamp + ttl
+  fake_clock_.SetSystemTimeMilliseconds(50);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
   // Insert a document
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
@@ -609,90 +606,82 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
                                .SetTtlMs(100)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document));
+                             document_store->Put(document));
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // Arbitrary value, but must be less than document's creation_timestamp + ttl
-  fake_clock_.SetSystemTimeMilliseconds(50);
-
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
 
 TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
+  // Current time is exactly the document's creation_timestamp + ttl
+  fake_clock_.SetSystemTimeMilliseconds(150);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
   // Insert a document
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema(email_schema_)
-                               .SetCreationTimestampMs(0)
+                               .SetCreationTimestampMs(50)
                                .SetTtlMs(100)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document));
+                             document_store->Put(document));
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // Current time is exactly the document's creation_timestamp + ttl
-  fake_clock_.SetSystemTimeMilliseconds(100);
-
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
 }
 
 TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
+  // Arbitrary value, but must be greater than the document's
+  // creation_timestamp + ttl
+  fake_clock_.SetSystemTimeMilliseconds(151);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
   // Insert a document
   DocumentProto document = DocumentBuilder()
                                .SetKey("namespace", "1")
                                .SetSchema(email_schema_)
-                               .SetCreationTimestampMs(0)
+                               .SetCreationTimestampMs(50)
                                .SetTtlMs(100)
                                .Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             document_store_->Put(document));
+                             document_store->Put(document));
 
   std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(document_id1)};
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  // Arbitrary value, but must be greater than the document's
-  // creation_timestamp + ttl
-  fake_clock_.SetSystemTimeMilliseconds(101);
-
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store.get(),
+                                             schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
-}
-
-TEST_F(DocHitInfoIteratorExpirationFilterTest,
-       InvalidTimeFiltersReturnsInternalError) {
-  // Put something in the original iterator so we don't get a ResourceExhausted
-  // error
-  std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(/*document_id_in=*/0)};
-  std::unique_ptr<DocHitInfoIterator> original_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
-
-  // -1 is an invalid timestamp
-  fake_clock_.SetSystemTimeMilliseconds(-1);
-
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options_);
-
-  EXPECT_THAT(filtered_iterator.Advance(),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 class DocHitInfoIteratorFilterTest : public ::testing::Test {
@@ -728,24 +717,25 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
     document5_namespace1_schema1_ = DocumentBuilder()
                                         .SetKey(namespace1_, "5")
                                         .SetSchema(schema1_)
-                                        .SetCreationTimestampMs(0)
+                                        .SetCreationTimestampMs(1)
                                         .SetTtlMs(100)
                                         .Build();
 
-    SchemaProto schema;
-    auto type_config = schema.add_types();
-    type_config->set_schema_type(schema1_);
-    type_config = schema.add_types();
-    type_config->set_schema_type(schema2_);
-
-    ICING_ASSERT_OK_AND_ASSIGN(schema_store_,
-                               SchemaStore::Create(&filesystem_, test_dir_));
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType(schema1_))
+            .AddType(SchemaTypeConfigBuilder().SetType(schema2_))
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        document_store_,
+        DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
                               schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
   }
 
   void TearDown() override {
@@ -773,26 +763,36 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
 };
 
 TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
+  // Filters out document5 since it's expired
+  fake_clock_.SetSystemTimeMilliseconds(199);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id1,
-      document_store_->Put(document1_namespace1_schema1_));
+      document_store->Put(document1_namespace1_schema1_));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id2,
-      document_store_->Put(document2_namespace1_schema1_));
+      document_store->Put(document2_namespace1_schema1_));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id3,
-      document_store_->Put(document3_namespace2_schema1_));
+      document_store->Put(document3_namespace2_schema1_));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id4,
-      document_store_->Put(document4_namespace1_schema2_));
+      document_store->Put(document4_namespace1_schema2_));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id5,
-      document_store_->Put(document5_namespace1_schema1_));
+      document_store->Put(document5_namespace1_schema1_));
 
   // Deletes document2, causing it to be filtered out
   ICING_ASSERT_OK(
-      document_store_->Delete(document2_namespace1_schema1_.namespace_(),
-                              document2_namespace1_schema1_.uri()));
+      document_store->Delete(document2_namespace1_schema1_.namespace_(),
+                             document2_namespace1_schema1_.uri()));
 
   std::vector<DocHitInfo> doc_hit_infos = {
       DocHitInfo(document_id1), DocHitInfo(document_id2),
@@ -810,13 +810,9 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
   // Filters out document4 by schema type
   options.schema_types = std::vector<std::string_view>{schema1_};
 
-  // Filters out document5 since it's expired
-  FakeClock fake_clock;
-  fake_clock.SetSystemTimeMilliseconds(199);
-
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock, options);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store.get(),
+                                             schema_store_.get(), options);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), ElementsAre(document_id1));
 }
@@ -847,9 +843,9 @@ TEST_F(DocHitInfoIteratorFilterTest, SectionIdMasksArePopulatedCorrectly) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   DocHitInfoIteratorFilter::Options options;
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options);
 
   EXPECT_THAT(GetDocHitInfos(&filtered_iterator),
               ElementsAre(EqualsDocHitInfo(document_id1, section_ids1),
@@ -862,9 +858,9 @@ TEST_F(DocHitInfoIteratorFilterTest, GetNumBlocksInspected) {
   original_iterator->SetNumBlocksInspected(5);
 
   DocHitInfoIteratorFilter::Options options;
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options);
 
   EXPECT_THAT(filtered_iterator.GetNumBlocksInspected(), Eq(5));
 }
@@ -874,9 +870,9 @@ TEST_F(DocHitInfoIteratorFilterTest, GetNumLeafAdvanceCalls) {
   original_iterator->SetNumLeafAdvanceCalls(6);
 
   DocHitInfoIteratorFilter::Options options;
-  DocHitInfoIteratorFilter filtered_iterator(
-      std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      &fake_clock_, options);
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options);
 
   EXPECT_THAT(filtered_iterator.GetNumLeafAdvanceCalls(), Eq(6));
 }

@@ -35,8 +35,7 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -288,6 +287,16 @@ class IcingDynamicTrie : public IIcingStorage {
   // Empty out the trie without closing or removing.
   void Clear();
 
+  // Clears the suffix and value at the given index. Returns true on success.
+  bool ClearSuffixAndValue(uint32_t suffix_value_index);
+
+  // Resets the next at the given index so that it points to no node.
+  // Returns true on success.
+  bool ResetNext(uint32_t next_index);
+
+  // Sorts the next array of the node. Returns true on success.
+  bool SortNextArray(const Node *node);
+
   // Sync to disk.
   bool Sync() override;
 
@@ -375,6 +384,16 @@ class IcingDynamicTrie : public IIcingStorage {
     bool is_full_match() const { return value_index != kInvalidValueIndex; }
   };
 
+  static constexpr int kNoBranchFound = -1;
+  // Return prefix of any new branches created if key were inserted. If utf8 is
+  // true, does not cut key mid-utf8. Returns kNoBranchFound if no branches
+  // would be created.
+  int FindNewBranchingPrefixLength(const char *key, bool utf8) const;
+
+  // Find all prefixes of key where the trie branches. Excludes the key
+  // itself. If utf8 is true, does not cut key mid-utf8.
+  std::vector<int> FindBranchingPrefixLengths(const char *key, bool utf8) const;
+
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
   double min_free_fraction() const;
@@ -401,6 +420,10 @@ class IcingDynamicTrie : public IIcingStorage {
 
   // Clears the deleted property for each value.
   bool ClearDeleted(uint32_t value_index);
+
+  // Deletes the entry associated with the key. Data can not be recovered after
+  // the deletion. Returns true on success.
+  bool Delete(std::string_view key);
 
   // Clear a specific property id from all values.  For each value that has this
   // property cleared, also check to see if it was the only property set;  if
@@ -575,8 +598,6 @@ class IcingDynamicTrie : public IIcingStorage {
   void GetHeader(IcingDynamicTrieHeader *hdr) const;
   void SetHeader(const IcingDynamicTrieHeader &new_hdr);
 
-  static const uint32_t kInvalidNodeIndex;
-  static const uint32_t kInvalidNextIndex;
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
@@ -587,7 +608,7 @@ class IcingDynamicTrie : public IIcingStorage {
   const Next *LowerBound(const Next *start, const Next *end,
                          uint8_t key_char) const;
   void FindBestNode(const char *key, uint32_t *best_node_index, int *key_offset,
-                    bool prefix) const;
+                    bool prefix, bool utf8 = false) const;
 
   // For value properties.  This truncates the data by clearing it, but leaving
   // the storage intact.

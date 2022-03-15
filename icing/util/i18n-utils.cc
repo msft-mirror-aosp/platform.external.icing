@@ -99,21 +99,24 @@ void SafeTruncateUtf8(std::string* str, int truncate_to_length) {
     return;
   }
 
-  while (truncate_to_length > 0) {
-    if (IsLeadUtf8Byte(str->at(truncate_to_length))) {
-      str->resize(truncate_to_length);
-      return;
-    }
-    truncate_to_length--;
-  }
+  str->resize(SafeTruncateUtf8Length(str->c_str(), truncate_to_length));
+}
 
-  // Truncates to an empty string
-  str->resize(0);
+int SafeTruncateUtf8Length(const char* str, int desired_length) {
+  while (desired_length > 0) {
+    if (IsLeadUtf8Byte(str[desired_length])) {
+      break;
+    }
+    --desired_length;
+  }
+  return desired_length;
 }
 
 bool IsAscii(char c) { return U8_IS_SINGLE((uint8_t)c); }
 
 bool IsAscii(UChar32 c) { return U8_LENGTH(c) == 1; }
+
+bool IsAlphaNumeric(UChar32 c) { return u_isalnum(c); }
 
 int GetUtf8Length(UChar32 c) { return U8_LENGTH(c); }
 
@@ -155,7 +158,7 @@ void AppendUchar32ToUtf8(std::string* utf8_string, UChar32 uchar) {
   uint8_t utf8_buffer[4];  // U8_APPEND writes 0 to 4 bytes
 
   int utf8_index = 0;
-  UBool has_error = FALSE;
+  UBool has_error = false;
 
   // utf8_index is advanced to the end of the contents if successful
   U8_APPEND(utf8_buffer, utf8_index, sizeof(utf8_buffer), uchar, has_error);
