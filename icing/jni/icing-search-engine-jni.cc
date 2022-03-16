@@ -420,4 +420,23 @@ Java_com_google_android_icing_IcingSearchEngine_nativeReset(
   return SerializeProtoToJniByteArray(env, reset_result_proto);
 }
 
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeSearchSuggestions(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray suggestion_spec_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::SuggestionSpecProto suggestion_spec_proto;
+  if (!ParseProtoFromJniByteArray(env, suggestion_spec_bytes,
+                                  &suggestion_spec_proto)) {
+    ICING_LOG(ERROR) << "Failed to parse SuggestionSpecProto in nativeSearch";
+    return nullptr;
+  }
+  icing::lib::SuggestionResponse suggestionResponse =
+      icing->SearchSuggestions(suggestion_spec_proto);
+
+  return SerializeProtoToJniByteArray(env, suggestionResponse);
+}
+
 }  // extern "C"

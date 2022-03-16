@@ -47,20 +47,20 @@ using ::testing::Ge;
 using ::testing::Not;
 using ::testing::Pointee;
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
-    PropertyConfigProto_Cardinality_Code_REPEATED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
+    PropertyConfigProto::Cardinality::REPEATED;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
 
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
-constexpr PropertyConfigProto_DataType_Code TYPE_DOUBLE =
-    PropertyConfigProto_DataType_Code_DOUBLE;
+constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
+    PropertyConfigProto::DataType::STRING;
+constexpr PropertyConfigProto::DataType::Code TYPE_DOUBLE =
+    PropertyConfigProto::DataType::DOUBLE;
 
 class SchemaStoreTest : public ::testing::Test {
  protected:
