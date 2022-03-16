@@ -88,6 +88,7 @@ cc_library_shared {
         "libz",
     ],
     version_script: "icing/jni.lds",
+    min_sdk_version: "Tiramisu",
 }
 
 // TODO(cassiewang): Add build rules and a TEST_MAPPING for cc_tests
