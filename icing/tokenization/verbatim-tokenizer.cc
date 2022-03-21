@@ -72,7 +72,7 @@ class VerbatimTokenIterator : public Tokenizer::Iterator {
     }
   }
 
-  bool ResetToTokenStartingAfter(int32_t utf32_offset) {
+  bool ResetToTokenStartingAfter(int32_t utf32_offset) override {
     // We can only reset to the sole verbatim token, so we must have a negative
     // offset for it to be considered the token after.
     if (utf32_offset < 0) {

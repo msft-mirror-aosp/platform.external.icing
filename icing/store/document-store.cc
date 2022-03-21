@@ -431,7 +431,19 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
   // Iterates through document log
   auto iterator = document_log_->GetIterator();
   auto iterator_status = iterator.Advance();
+  libtextclassifier3::StatusOr<int64_t> element_size =
+      document_log_->GetElementsFileSize();
+  libtextclassifier3::StatusOr<int64_t> disk_usage =
+      document_log_->GetDiskUsage();
+  if (element_size.ok() && disk_usage.ok()) {
+    ICING_VLOG(1) << "Starting recovery of document store. Document store "
+                     "elements file size:"
+                  << element_size.ValueOrDie()
+                  << ", disk usage=" << disk_usage.ValueOrDie();
+  }
   while (iterator_status.ok()) {
+    ICING_VLOG(2) << "Attempting to read document at offset="
+                  << iterator.GetOffset();
     libtextclassifier3::StatusOr<DocumentWrapper> document_wrapper_or =
         document_log_->ReadProto(iterator.GetOffset());
 
