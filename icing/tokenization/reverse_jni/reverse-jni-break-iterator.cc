@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/jni/reverse-jni-break-iterator.h"
+#include "icing/tokenization/reverse_jni/reverse-jni-break-iterator.h"
 
 #include <jni.h>
-#include <math.h>
 
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <map>
 
 #include "icing/jni/jni-cache.h"
