@@ -43,45 +43,46 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
   // Advances to the next term. Returns false if it has reached the end.
   bool Advance() override {
-    // Prerequisite check
-    if (IsDone()) {
-      return false;
-    }
+    while (true) {
+      // Prerequisite check
+      if (IsDone()) {
+        return false;
+      }
 
-    if (term_end_exclusive_.utf16_index() == 0) {
-      int first = break_iterator_->First();
-      if (!term_start_.MoveToUtf16(first)) {
-        // First is guaranteed to succeed and return a position within bonds. So
-        // the only possible failure could be an invalid sequence. Mark as DONE
-        // and return.
+      if (term_end_exclusive_.utf16_index() == 0) {
+        int first = break_iterator_->First();
+        if (!term_start_.MoveToUtf16(first)) {
+          // First is guaranteed to succeed and return a position within bonds.
+          // So the only possible failure could be an invalid sequence. Mark as
+          // DONE and return.
+          MarkAsDone();
+          return false;
+        }
+      } else {
+        term_start_ = term_end_exclusive_;
+      }
+
+      int next_utf16_index_exclusive = break_iterator_->Next();
+      // Reached the end
+      if (next_utf16_index_exclusive == ReverseJniBreakIterator::kDone) {
         MarkAsDone();
         return false;
       }
-    } else {
-      term_start_ = term_end_exclusive_;
-    }
+      if (!term_end_exclusive_.MoveToUtf16(next_utf16_index_exclusive)) {
+        // next_utf16_index_exclusive is guaranteed to be within bonds thanks to
+        // the check for kDone above. So the only possible failure could be an
+        // invalid sequence. Mark as DONE and return.
+        MarkAsDone();
+        return false;
+      }
 
-    int next_utf16_index_exclusive = break_iterator_->Next();
-    // Reached the end
-    if (next_utf16_index_exclusive == ReverseJniBreakIterator::kDone) {
-      MarkAsDone();
-      return false;
+      // Check if the current term is valid. We consider any term valid if its
+      // first character is valid. If it's not valid, then we need to advance to
+      // the next term.
+      if (IsValidTerm()) {
+        return true;
+      }
     }
-    if (!term_end_exclusive_.MoveToUtf16(next_utf16_index_exclusive)) {
-      // next_utf16_index_exclusive is guaranteed to be within bonds thanks to
-      // the check for kDone above. So the only possible failure could be an
-      // invalid sequence. Mark as DONE and return.
-      MarkAsDone();
-      return false;
-    }
-
-    // Check if the current term is valid. We consider any term valid if its
-    // first character is valid. If it's not valid, then we need to advance to
-    // the next term.
-    if (IsValidTerm()) {
-      return true;
-    }
-    return Advance();
   }
 
   // Returns the current term. It can be called only when Advance() returns
