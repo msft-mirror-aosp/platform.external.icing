@@ -69,24 +69,11 @@ class ScoringProcessorTest : public testing::Test {
     // Creates a simple email schema
     SchemaProto test_email_schema =
         SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("email")
-                         .AddProperty(
-                             PropertyConfigBuilder()
-                                 .SetName("subject")
-                                 .SetDataTypeString(
-                                     TermMatchType::PREFIX,
-                                     StringIndexingConfig::TokenizerType::PLAIN)
-                                 .SetDataType(TYPE_STRING)
-                                 .SetCardinality(CARDINALITY_OPTIONAL))
-                         .AddProperty(
-                             PropertyConfigBuilder()
-                                 .SetName("body")
-                                 .SetDataTypeString(
-                                     TermMatchType::PREFIX,
-                                     StringIndexingConfig::TokenizerType::PLAIN)
-                                 .SetDataType(TYPE_STRING)
-                                 .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("subject")
+                    .SetDataType(TYPE_STRING)
+                    .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
   }
@@ -98,8 +85,6 @@ class ScoringProcessorTest : public testing::Test {
   }
 
   DocumentStore* document_store() { return document_store_.get(); }
-
-  SchemaStore* schema_store() { return schema_store_.get(); }
 
  private:
   const std::string test_dir_;
@@ -154,46 +139,16 @@ UsageReport CreateUsageReport(std::string name_space, std::string uri,
   return usage_report;
 }
 
-TypePropertyWeights CreateTypePropertyWeights(
-    std::string schema_type, std::vector<PropertyWeight> property_weights) {
-  TypePropertyWeights type_property_weights;
-  type_property_weights.set_schema_type(std::move(schema_type));
-  type_property_weights.mutable_property_weights()->Reserve(
-      property_weights.size());
-
-  for (PropertyWeight& property_weight : property_weights) {
-    *type_property_weights.add_property_weights() = std::move(property_weight);
-  }
-
-  return type_property_weights;
-}
-
-PropertyWeight CreatePropertyWeight(std::string path, double weight) {
-  PropertyWeight property_weight;
-  property_weight.set_path(std::move(path));
-  property_weight.set_weight(weight);
-  return property_weight;
-}
-
-TEST_F(ScoringProcessorTest, CreationWithNullDocumentStoreShouldFail) {
+TEST_F(ScoringProcessorTest, CreationWithNullPointerShouldFail) {
   ScoringSpecProto spec_proto;
-  EXPECT_THAT(ScoringProcessor::Create(spec_proto, /*document_store=*/nullptr,
-                                       schema_store()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-}
-
-TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
-  ScoringSpecProto spec_proto;
-  EXPECT_THAT(ScoringProcessor::Create(spec_proto, document_store(),
-                                       /*schema_store=*/nullptr),
+  EXPECT_THAT(ScoringProcessor::Create(spec_proto, /*document_store=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(ScoringProcessorTest, ShouldCreateInstance) {
   ScoringSpecProto spec_proto;
   spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  ICING_EXPECT_OK(
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+  ICING_EXPECT_OK(ScoringProcessor::Create(spec_proto, document_store()));
 }
 
 TEST_F(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
@@ -208,7 +163,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/5),
@@ -234,7 +189,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/-1),
@@ -264,7 +219,7 @@ TEST_F(ScoringProcessorTest, ShouldRespectNumToScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/2),
@@ -296,7 +251,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -351,7 +306,7 @@ TEST_F(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -361,11 +316,11 @@ TEST_F(ScoringProcessorTest,
   // the document's length determines the final score. Document shorter than the
   // average corpus length are slightly boosted.
   ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask,
-                                             /*score=*/0.187114);
+                                             /*score=*/0.255482);
   ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask,
-                                             /*score=*/0.084904);
+                                             /*score=*/0.115927);
   ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask,
-                                             /*score=*/0.121896);
+                                             /*score=*/0.166435);
   EXPECT_THAT(
       scoring_processor->Score(std::move(doc_hit_info_iterator),
                                /*num_to_score=*/3, &query_term_iterators),
@@ -420,7 +375,7 @@ TEST_F(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -429,11 +384,11 @@ TEST_F(ScoringProcessorTest,
   // Since the three documents all contain the query term "foo" exactly once
   // and they have the same length, they will have the same BM25F scoret.
   ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask,
-                                             /*score=*/0.118455);
+                                             /*score=*/0.16173716);
   ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask,
-                                             /*score=*/0.118455);
+                                             /*score=*/0.16173716);
   ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask,
-                                             /*score=*/0.118455);
+                                             /*score=*/0.16173716);
   EXPECT_THAT(
       scoring_processor->Score(std::move(doc_hit_info_iterator),
                                /*num_to_score=*/3, &query_term_iterators),
@@ -493,7 +448,7 @@ TEST_F(ScoringProcessorTest,
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
       query_term_iterators;
@@ -502,291 +457,17 @@ TEST_F(ScoringProcessorTest,
   // Since the three documents all have the same length, the score is decided by
   // the frequency of the query term "foo".
   ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask1,
-                                             /*score=*/0.226674);
+                                             /*score=*/0.309497);
   ScoredDocumentHit expected_scored_doc_hit2(document_id2, section_id_mask2,
-                                             /*score=*/0.118455);
+                                             /*score=*/0.16173716);
   ScoredDocumentHit expected_scored_doc_hit3(document_id3, section_id_mask3,
-                                             /*score=*/0.196720);
+                                             /*score=*/0.268599);
   EXPECT_THAT(
       scoring_processor->Score(std::move(doc_hit_info_iterator),
                                /*num_to_score=*/3, &query_term_iterators),
       ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
                   EqualsScoredDocumentHit(expected_scored_doc_hit2),
                   EqualsScoredDocumentHit(expected_scored_doc_hit3)));
-}
-
-TEST_F(ScoringProcessorTest,
-       ShouldScoreByRelevanceScore_HitTermWithZeroFrequency) {
-  DocumentProto document1 =
-      CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store()->Put(document1, /*num_tokens=*/10));
-
-  // Document 1 contains the term "foo" 0 times in the "subject" property
-  DocHitInfo doc_hit_info1(document_id1);
-  doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/0);
-
-  // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
-
-  // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
-
-  // Creates a ScoringProcessor
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
-
-  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-      query_term_iterators;
-  query_term_iterators["foo"] =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  SectionIdMask section_id_mask1 = 0b00000001;
-
-  // Since the document hit has zero frequency, expect a score of zero.
-  ScoredDocumentHit expected_scored_doc_hit1(document_id1, section_id_mask1,
-                                             /*score=*/0.000000);
-  EXPECT_THAT(
-      scoring_processor->Score(std::move(doc_hit_info_iterator),
-                               /*num_to_score=*/1, &query_term_iterators),
-      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1)));
-}
-
-TEST_F(ScoringProcessorTest,
-       ShouldScoreByRelevanceScore_SameHitFrequencyDifferentPropertyWeights) {
-  DocumentProto document1 =
-      CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-  DocumentProto document2 =
-      CreateDocument("icing", "email/2", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store()->Put(document1, /*num_tokens=*/1));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
-      document_store()->Put(document2, /*num_tokens=*/1));
-
-  // Document 1 contains the term "foo" 1 time in the "body" property
-  SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
-  doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
-
-  // Document 2 contains the term "foo" 1 time in the "subject" property
-  SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
-  doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
-
-  // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
-
-  // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
-
-  PropertyWeight body_property_weight =
-      CreatePropertyWeight(/*path=*/"body", /*weight=*/0.5);
-  PropertyWeight subject_property_weight =
-      CreatePropertyWeight(/*path=*/"subject", /*weight=*/2.0);
-  *spec_proto.add_type_property_weights() = CreateTypePropertyWeights(
-      /*schema_type=*/"email", {body_property_weight, subject_property_weight});
-
-  // Creates a ScoringProcessor
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
-
-  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-      query_term_iterators;
-  query_term_iterators["foo"] =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  SectionIdMask body_section_id_mask = 1U << body_section_id;
-  SectionIdMask subject_section_id_mask = 1U << subject_section_id;
-
-  // We expect document 2 to have a higher score than document 1 as it matches
-  // "foo" in the "subject" property, which is weighed higher than the "body"
-  // property. Final scores are computed with smoothing applied.
-  ScoredDocumentHit expected_scored_doc_hit1(document_id1, body_section_id_mask,
-                                             /*score=*/0.053624);
-  ScoredDocumentHit expected_scored_doc_hit2(document_id2,
-                                             subject_section_id_mask,
-                                             /*score=*/0.153094);
-  EXPECT_THAT(
-      scoring_processor->Score(std::move(doc_hit_info_iterator),
-                               /*num_to_score=*/2, &query_term_iterators),
-      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
-                  EqualsScoredDocumentHit(expected_scored_doc_hit2)));
-}
-
-TEST_F(ScoringProcessorTest,
-       ShouldScoreByRelevanceScore_WithImplicitPropertyWeight) {
-  DocumentProto document1 =
-      CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-  DocumentProto document2 =
-      CreateDocument("icing", "email/2", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store()->Put(document1, /*num_tokens=*/1));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
-      document_store()->Put(document2, /*num_tokens=*/1));
-
-  // Document 1 contains the term "foo" 1 time in the "body" property
-  SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
-  doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
-
-  // Document 2 contains the term "foo" 1 time in the "subject" property
-  SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
-  doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
-
-  // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
-
-  // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
-
-  PropertyWeight body_property_weight =
-      CreatePropertyWeight(/*path=*/"body", /*weight=*/0.5);
-  *spec_proto.add_type_property_weights() = CreateTypePropertyWeights(
-      /*schema_type=*/"email", {body_property_weight});
-
-  // Creates a ScoringProcessor
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
-
-  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-      query_term_iterators;
-  query_term_iterators["foo"] =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  SectionIdMask body_section_id_mask = 1U << body_section_id;
-  SectionIdMask subject_section_id_mask = 1U << subject_section_id;
-
-  // We expect document 2 to have a higher score than document 1 as it matches
-  // "foo" in the "subject" property, which is weighed higher than the "body"
-  // property. This is because the "subject" property is implictly given a
-  // a weight of 1.0, the default weight value. Final scores are computed with
-  // smoothing applied.
-  ScoredDocumentHit expected_scored_doc_hit1(document_id1, body_section_id_mask,
-                                             /*score=*/0.094601);
-  ScoredDocumentHit expected_scored_doc_hit2(document_id2,
-                                             subject_section_id_mask,
-                                             /*score=*/0.153094);
-  EXPECT_THAT(
-      scoring_processor->Score(std::move(doc_hit_info_iterator),
-                               /*num_to_score=*/2, &query_term_iterators),
-      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1),
-                  EqualsScoredDocumentHit(expected_scored_doc_hit2)));
-}
-
-TEST_F(ScoringProcessorTest,
-       ShouldScoreByRelevanceScore_WithDefaultPropertyWeight) {
-  DocumentProto document1 =
-      CreateDocument("icing", "email/1", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-  DocumentProto document2 =
-      CreateDocument("icing", "email/2", kDefaultScore,
-                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store()->Put(document1, /*num_tokens=*/1));
-
-  // Document 1 contains the term "foo" 1 time in the "body" property
-  SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
-  doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
-
-  // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
-
-  // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
-  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
-
-  *spec_proto.add_type_property_weights() =
-      CreateTypePropertyWeights(/*schema_type=*/"email", {});
-
-  // Creates a ScoringProcessor with no explicit weights set.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
-
-  ScoringSpecProto spec_proto_with_weights;
-  spec_proto_with_weights.set_rank_by(
-      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
-
-  PropertyWeight body_property_weight = CreatePropertyWeight(/*path=*/"body",
-                                                             /*weight=*/1.0);
-  *spec_proto_with_weights.add_type_property_weights() =
-      CreateTypePropertyWeights(/*schema_type=*/"email",
-                                {body_property_weight});
-
-  // Creates a ScoringProcessor with default weight set for "body" property.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ScoringProcessor> scoring_processor_with_weights,
-      ScoringProcessor::Create(spec_proto_with_weights, document_store(),
-                               schema_store()));
-
-  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-      query_term_iterators;
-  query_term_iterators["foo"] =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  // Create a doc hit iterator
-  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-      query_term_iterators_scoring_with_weights;
-  query_term_iterators_scoring_with_weights["foo"] =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  SectionIdMask body_section_id_mask = 1U << body_section_id;
-
-  // We expect document 1 to have the same score whether a weight is explicitly
-  // set to 1.0 or implictly scored with the default weight. Final scores are
-  // computed with smoothing applied.
-  ScoredDocumentHit expected_scored_doc_hit(document_id1, body_section_id_mask,
-                                            /*score=*/0.208191);
-  EXPECT_THAT(
-      scoring_processor->Score(std::move(doc_hit_info_iterator),
-                               /*num_to_score=*/1, &query_term_iterators),
-      ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit)));
-
-  // Restore ownership of doc hit iterator and query term iterator to test.
-  doc_hit_info_iterator =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-  query_term_iterators["foo"] =
-      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
-
-  EXPECT_THAT(scoring_processor_with_weights->Score(
-                  std::move(doc_hit_info_iterator),
-                  /*num_to_score=*/1, &query_term_iterators),
-              ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit)));
 }
 
 TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
@@ -828,7 +509,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -888,7 +569,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageCount) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -948,7 +629,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
@@ -984,7 +665,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/4),
               ElementsAre(EqualsScoredDocumentHit(scored_document_hit_default),
@@ -1033,7 +714,7 @@ TEST_F(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
-      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+      ScoringProcessor::Create(spec_proto, document_store()));
 
   EXPECT_THAT(scoring_processor->Score(std::move(doc_hit_info_iterator),
                                        /*num_to_score=*/3),
