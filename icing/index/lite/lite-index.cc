@@ -14,11 +14,12 @@
 
 #include "icing/index/lite/lite-index.h"
 
+#include <inttypes.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/mman.h>
 
 #include <algorithm>
-#include <cinttypes>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>

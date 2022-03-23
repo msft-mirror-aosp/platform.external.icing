@@ -16,8 +16,7 @@
 #define ICING_LEGACY_CORE_ICING_TIMER_H_
 
 #include <sys/time.h>
-
-#include <ctime>
+#include <time.h>
 
 namespace icing {
 namespace lib {

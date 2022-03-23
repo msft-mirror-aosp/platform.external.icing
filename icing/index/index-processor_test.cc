@@ -27,7 +27,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/helpers/icu/icu-data-file-helper.h"
@@ -49,7 +48,6 @@
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -195,9 +193,15 @@ class IndexProcessorTest : public Test {
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
+    IndexProcessor::Options processor_options;
+    processor_options.max_tokens_per_document = 1000;
+    processor_options.token_limit_behavior =
+        IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
     ICING_ASSERT_OK_AND_ASSIGN(
         index_processor_,
-        IndexProcessor::Create(normalizer_.get(), index_.get(), &fake_clock_));
+        IndexProcessor::Create(normalizer_.get(), index_.get(),
+                               processor_options, &fake_clock_));
     mock_icing_filesystem_ = std::make_unique<IcingMockFilesystem>();
   }
 
@@ -228,12 +232,17 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
 }
 
 TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
   EXPECT_THAT(IndexProcessor::Create(/*normalizer=*/nullptr, index_.get(),
-                                     &fake_clock_),
+                                     processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(IndexProcessor::Create(normalizer_.get(), /*index=*/nullptr,
-                                     &fake_clock_),
+                                     processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -425,68 +434,103 @@ TEST_F(IndexProcessorTest, DocWithRepeatedProperty) {
                   kDocumentId0, std::vector<SectionId>{kRepeatedSectionId})));
 }
 
-// TODO(b/196771754) This test is disabled on Android because it takes too long
-// to generate all of the unique terms and the test times out. Try storing these
-// unique terms in a file that the test can read from.
-#ifndef __ANDROID__
+TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
+  // Only allow the first four tokens ("hello", "world", "good", "night") to be
+  // indexed.
+  IndexProcessor::Options options;
+  options.max_tokens_per_document = 4;
+  options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
-TEST_F(IndexProcessorTest, HitBufferExhaustedTest) {
-  // Testing has shown that adding ~600,000 hits will fill up the hit buffer.
-  std::vector<std::string> unique_terms_ = GenerateUniqueTerms(200000);
-  std::string content = absl_ports::StrJoin(unique_terms_, " ");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_, IndexProcessor::Create(normalizer_.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kExactProperty), content)
-          .AddStringProperty(std::string(kPrefixedProperty), content)
-          .AddStringProperty(std::string(kRepeatedProperty), content)
+          .AddStringProperty(std::string(kExactProperty), "hello world")
+          .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
-                       testing::HasSubstr("Hit buffer is full!")));
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // "night" should have been indexed.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("night", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
+
+  // "moon" should not have been.
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("moon", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
-TEST_F(IndexProcessorTest, LexiconExhaustedTest) {
-  // Testing has shown that adding ~300,000 terms generated this way will
-  // fill up the lexicon.
-  std::vector<std::string> unique_terms_ = GenerateUniqueTerms(300000);
-  std::string content = absl_ports::StrJoin(unique_terms_, " ");
+TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
+  // Only allow the first four tokens ("hello", "world", "good", "night") to be
+  // indexed.
+  IndexProcessor::Options options;
+  options.max_tokens_per_document = 4;
+  options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kSuppressError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_, IndexProcessor::Create(normalizer_.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kExactProperty), content)
+          .AddStringProperty(std::string(kExactProperty), "hello world")
+          .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
-                       testing::HasSubstr("Unable to add term")));
+              IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-}
 
-#endif  // __ANDROID__
+  // "night" should have been indexed.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("night", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
+
+  // "moon" should not have been.
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("moon", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+}
 
 TEST_F(IndexProcessorTest, TooLongTokens) {
   // Only allow the tokens of length four, truncating "hello", "world" and
   // "night".
+  IndexProcessor::Options options;
+  options.max_tokens_per_document = 1000;
+
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
                              normalizer_factory::Create(
                                  /*max_term_byte_size=*/4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer.get(), index_.get(), &fake_clock_));
+      index_processor_, IndexProcessor::Create(normalizer.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -648,6 +692,16 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
       lang_segmenter_,
       language_segmenter_factory::Create(std::move(segmenter_options)));
 
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -673,13 +727,23 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
 
 TEST_F(IndexProcessorTest,
        LexiconFullIndexesSmallerTokensReturnsResourceExhausted) {
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
+
   // This is the maximum token length that an empty lexicon constructed for a
   // lite index with merge size of 1MiB can support.
   constexpr int kMaxTokenLength = 16777217;
   // Create a string "ppppppp..." with a length that is too large to fit into
   // the lexicon.
   std::string enormous_string(kMaxTokenLength + 1, 'p');
-  DocumentProto document_one =
+  DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
@@ -690,10 +754,24 @@ TEST_F(IndexProcessorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document_one));
+                                document));
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kExactSectionId})));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
 }
 
 TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
@@ -717,9 +795,15 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(), &fake_clock_));
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
   DocumentId doc_id = 0;
   // Have determined experimentally that indexing 3373 documents with this text
   // will cause the LiteIndex to fill up. Further indexing will fail unless the
@@ -773,9 +857,15 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
       index_,
       Index::Create(options, &filesystem_, mock_icing_filesystem_.get()));
 
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(), &fake_clock_));
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
 
   // 3. Index one document. This should fit in the LiteIndex without requiring a
   // merge.
