@@ -69,8 +69,6 @@ class IndexProcessor {
   IndexProcessor(const Normalizer* normalizer, Index* index, const Clock* clock)
       : normalizer_(*normalizer), index_(index), clock_(*clock) {}
 
-  std::string NormalizeToken(const Token& token);
-
   const Normalizer& normalizer_;
   Index* const index_;
   const Clock& clock_;
