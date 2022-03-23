@@ -705,7 +705,6 @@ TEST(SchemaUtilTest, NewOptionalPropertyIsCompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_changed_fully_compatible.insert(kEmailType);
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema_with_optional, no_dependencies_map),
@@ -818,8 +817,6 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
 
   // We can have the new schema be less restrictive, OPTIONAL->REPEATED;
   SchemaUtil::SchemaDelta compatible_schema_delta;
-  compatible_schema_delta.schema_types_changed_fully_compatible.insert(
-      kEmailType);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/more_restrictive_schema,
                   /*new_schema=*/less_restrictive_schema, no_dependencies_map),
@@ -915,6 +912,7 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, dependencies_map);
   EXPECT_THAT(actual, Eq(schema_delta));
+  EXPECT_THAT(actual.index_incompatible, testing::IsFalse());
   EXPECT_THAT(actual.schema_types_incompatible,
               testing::ElementsAre(kEmailType));
   EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
@@ -946,7 +944,7 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.index_incompatible = true;
 
   // New schema gained a new indexed property.
   SchemaUtil::DependencyMap no_dependencies_map;
@@ -993,7 +991,7 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.index_incompatible = true;
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                                     no_dependencies_map),
@@ -1033,7 +1031,6 @@ TEST(SchemaUtilTest, AddingTypeIsCompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_new.insert(kEmailType);
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                                     no_dependencies_map),
@@ -1112,7 +1109,7 @@ TEST(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  schema_delta.schema_types_index_incompatible.emplace(kEmailType);
+  schema_delta.index_incompatible = true;
   SchemaUtil::DependencyMap no_dependencies_map;
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, no_dependencies_map);
@@ -1160,7 +1157,7 @@ TEST(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   // should make kPersonType index_incompatible. kEmailType should be
   // unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.index_incompatible = true;
   SchemaUtil::DependencyMap dependencies_map = {{kEmailType, {kPersonType}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       no_nested_index_schema, nested_index_schema, dependencies_map);

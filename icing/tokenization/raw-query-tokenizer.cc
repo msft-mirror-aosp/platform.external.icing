@@ -14,8 +14,9 @@
 
 #include "icing/tokenization/raw-query-tokenizer.h"
 
+#include <stddef.h>
+
 #include <cctype>
-#include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
