@@ -46,15 +46,15 @@ constexpr char kPropertyEmails[] = "emails";
 constexpr char kDefaultNamespace[] = "icing";
 constexpr char kDefaultString[] = "This is a string.";
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
-    PropertyConfigProto_Cardinality_Code_REQUIRED;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
-    PropertyConfigProto_Cardinality_Code_REPEATED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
+    PropertyConfigProto::Cardinality::REQUIRED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
+    PropertyConfigProto::Cardinality::REPEATED;
 
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
+constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
+    PropertyConfigProto::DataType::STRING;
 
 class DocumentValidatorTest : public ::testing::Test {
  protected:
