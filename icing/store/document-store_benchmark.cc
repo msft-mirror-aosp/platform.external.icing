@@ -32,6 +32,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
@@ -63,13 +64,13 @@ namespace lib {
 
 namespace {
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
 
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 
 class DestructibleDirectory {
  public:
@@ -254,6 +255,74 @@ void BM_Delete(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_Delete);
+
+void BM_Create(benchmark::State& state) {
+  Filesystem filesystem;
+  Clock clock;
+
+  std::string directory = GetTestTempDir() + "/icing";
+  std::string document_store_dir = directory + "/store";
+
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, directory, &clock);
+
+  // Create an initial document store and put some data in.
+  {
+    DestructibleDirectory ddir(filesystem, directory);
+
+    filesystem.CreateDirectoryRecursively(document_store_dir.data());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem, document_store_dir, &clock,
+                              schema_store.get()));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+
+    DocumentProto document = CreateDocument("namespace", "uri");
+    ICING_ASSERT_OK(document_store->Put(document));
+    ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::FULL));
+  }
+
+  // Recreating it with some content to checksum over.
+  DestructibleDirectory ddir(filesystem, directory);
+
+  filesystem.CreateDirectoryRecursively(document_store_dir.data());
+
+  for (auto s : state) {
+    benchmark::DoNotOptimize(DocumentStore::Create(
+        &filesystem, document_store_dir, &clock, schema_store.get()));
+  }
+}
+BENCHMARK(BM_Create);
+
+void BM_ComputeChecksum(benchmark::State& state) {
+  Filesystem filesystem;
+  Clock clock;
+
+  std::string directory = GetTestTempDir() + "/icing";
+  DestructibleDirectory ddir(filesystem, directory);
+
+  std::string document_store_dir = directory + "/store";
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, directory, &clock);
+
+  filesystem.CreateDirectoryRecursively(document_store_dir.data());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem, document_store_dir, &clock,
+                            schema_store.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document = CreateDocument("namespace", "uri");
+  ICING_ASSERT_OK(document_store->Put(document));
+  ICING_ASSERT_OK(document_store->PersistToDisk(PersistType::LITE));
+
+  for (auto s : state) {
+    benchmark::DoNotOptimize(document_store->ComputeChecksum());
+  }
+}
+BENCHMARK(BM_ComputeChecksum);
 
 }  // namespace
 
