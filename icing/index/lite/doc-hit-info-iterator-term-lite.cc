@@ -45,8 +45,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
   if (cached_hits_idx_ == -1) {
     libtextclassifier3::Status status = RetrieveMoreHits();
     if (!status.ok()) {
-      ICING_LOG(ERROR) << "Failed to retrieve more hits "
-                       << status.error_message();
+      if (!absl_ports::IsNotFound(status)) {
+        // NOT_FOUND is expected to happen (not every term will be in the main
+        // index!). Other errors are worth logging.
+        ICING_LOG(ERROR)
+            << "Encountered unexpected failure while retrieving  hits "
+            << status.error_message();
+      }
       return absl_ports::ResourceExhaustedError(
           "No more DocHitInfos in iterator");
     }
@@ -72,7 +77,8 @@ libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   lite_index_->AppendHits(term_id, section_restrict_mask_,
-                          /*only_from_prefix_sections=*/false, &cached_hits_);
+                          /*only_from_prefix_sections=*/false,
+                          /*namespace_checker=*/nullptr, &cached_hits_);
   cached_hits_idx_ = 0;
   return libtextclassifier3::Status::OK;
 }
@@ -95,7 +101,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
     lite_index_->AppendHits(term_id, section_restrict_mask_,
                             /*only_from_prefix_sections=*/!exact_match,
-                            &cached_hits_);
+                            /*namespace_checker=*/nullptr, &cached_hits_);
     ++terms_matched;
   }
   if (terms_matched > 1) {

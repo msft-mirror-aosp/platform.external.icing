@@ -38,32 +38,32 @@ constexpr char kEmailType[] = "EmailMessage";
 constexpr char kMessageType[] = "Text";
 constexpr char kPersonType[] = "Person";
 
-constexpr PropertyConfigProto_DataType_Code TYPE_DOCUMENT =
-    PropertyConfigProto_DataType_Code_DOCUMENT;
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
-constexpr PropertyConfigProto_DataType_Code TYPE_INT =
-    PropertyConfigProto_DataType_Code_INT64;
-constexpr PropertyConfigProto_DataType_Code TYPE_DOUBLE =
-    PropertyConfigProto_DataType_Code_DOUBLE;
+constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
+    PropertyConfigProto::DataType::DOCUMENT;
+constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
+    PropertyConfigProto::DataType::STRING;
+constexpr PropertyConfigProto::DataType::Code TYPE_INT =
+    PropertyConfigProto::DataType::INT64;
+constexpr PropertyConfigProto::DataType::Code TYPE_DOUBLE =
+    PropertyConfigProto::DataType::DOUBLE;
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_UNKNOWN =
-    PropertyConfigProto_Cardinality_Code_UNKNOWN;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
-    PropertyConfigProto_Cardinality_Code_REQUIRED;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
-    PropertyConfigProto_Cardinality_Code_REPEATED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_UNKNOWN =
+    PropertyConfigProto::Cardinality::UNKNOWN;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
+    PropertyConfigProto::Cardinality::REQUIRED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
+    PropertyConfigProto::Cardinality::REPEATED;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_NONE =
-    StringIndexingConfig_TokenizerType_Code_NONE;
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_NONE =
+    StringIndexingConfig::TokenizerType::NONE;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
 
-constexpr TermMatchType_Code MATCH_UNKNOWN = TermMatchType_Code_UNKNOWN;
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
-constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+constexpr TermMatchType::Code MATCH_UNKNOWN = TermMatchType::UNKNOWN;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
 
 TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
   // Create a schema with the following dependencies:
@@ -705,6 +705,7 @@ TEST(SchemaUtilTest, NewOptionalPropertyIsCompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_changed_fully_compatible.insert(kEmailType);
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema_with_optional, no_dependencies_map),
@@ -817,6 +818,8 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
 
   // We can have the new schema be less restrictive, OPTIONAL->REPEATED;
   SchemaUtil::SchemaDelta compatible_schema_delta;
+  compatible_schema_delta.schema_types_changed_fully_compatible.insert(
+      kEmailType);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/more_restrictive_schema,
                   /*new_schema=*/less_restrictive_schema, no_dependencies_map),
@@ -912,7 +915,6 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, dependencies_map);
   EXPECT_THAT(actual, Eq(schema_delta));
-  EXPECT_THAT(actual.index_incompatible, testing::IsFalse());
   EXPECT_THAT(actual.schema_types_incompatible,
               testing::ElementsAre(kEmailType));
   EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
@@ -944,7 +946,7 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.index_incompatible = true;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed property.
   SchemaUtil::DependencyMap no_dependencies_map;
@@ -991,7 +993,7 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.index_incompatible = true;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                                     no_dependencies_map),
@@ -1031,6 +1033,7 @@ TEST(SchemaUtilTest, AddingTypeIsCompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_new.insert(kEmailType);
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                                     no_dependencies_map),
@@ -1109,7 +1112,7 @@ TEST(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  schema_delta.index_incompatible = true;
+  schema_delta.schema_types_index_incompatible.emplace(kEmailType);
   SchemaUtil::DependencyMap no_dependencies_map;
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, no_dependencies_map);
@@ -1157,7 +1160,7 @@ TEST(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   // should make kPersonType index_incompatible. kEmailType should be
   // unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.index_incompatible = true;
+  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependencyMap dependencies_map = {{kEmailType, {kPersonType}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       no_nested_index_schema, nested_index_schema, dependencies_map);
