@@ -85,16 +85,16 @@ message ResultSpecProto {
     // have snippet information provided. If set to 0, snippeting is disabled.
     optional int32 num_matches_per_property = 2;
 
-    // How large of a window to provide. Windows start at max_window_bytes / 2
-    // bytes before the middle of the matching token and end at max_window_bytes
-    // / 2 bytes after the middle of the matching token. Windowing respects
-    // token boundaries.
-    // Therefore, the returned window may be smaller than requested. Setting
-    // max_window_bytes to 0 will disable windowing information. If matches
-    // enabled is also set to false, then snippeting is disabled.
-    // Ex. max_window_bytes = 16. "foo bar baz bat rat" with a query of "baz"
+    // How large of a window to provide. Windows start at
+    // max_window_utf32_length / 2 bytes before the middle of the matching token
+    // and end at max_window_utf32_length / 2 bytes after the middle of the
+    // matching token. Windowing respects token boundaries. Therefore, the
+    // returned window may be smaller than requested. Setting
+    // max_window_utf32_length to 0 will disable windowing information. If
+    // matches enabled is also set to false, then snippeting is disabled. Ex.
+    // max_window_utf32_length = 16. "foo bar baz bat rat" with a query of "baz"
     // will return a window of "bar baz bat" which is only 11 bytes long.
-    optional int32 max_window_bytes = 3;
+    optional int32 max_window_utf32_length = 3;
   }
   optional SnippetSpecProto snippet_spec = 3;
 
@@ -309,7 +309,7 @@ message GetResultSpecProto {
   repeated TypePropertyMask type_property_masks = 1;
 }
 
-// Next tag: 4
+// Next tag: 5
 message SuggestionSpecProto {
   // REQUIRED: The "raw" prefix string that users may type. For example, "f"
   // will search for suggested query that start with "f" like "foo", "fool".
@@ -323,6 +323,23 @@ message SuggestionSpecProto {
 
   // REQUIRED: The number of suggestions to be returned.
   optional int32 num_to_return = 3;
+
+  // Indicates how the suggestion terms should be scored and ranked.
+  message SuggestionScoringSpecProto {
+    // TermMatchType.Code=UNKNOWN
+    // Should never purposely be set and may lead to undefined behavior. This is
+    // used for backwards compatibility reasons.
+    //
+    // TermMatchType.Code=EXACT_ONLY
+    // Only exact hits will be counted to score a suggestion term.
+    //
+    // TermMatchType.Code=PREFIX
+    // Both exact hits and prefix hits will be counted to score a suggestion
+    // term.
+    optional TermMatchType.Code scoring_match_type = 1;
+  }
+
+  optional SuggestionScoringSpecProto scoring_spec = 4;
 }
 
 // Next tag: 3
