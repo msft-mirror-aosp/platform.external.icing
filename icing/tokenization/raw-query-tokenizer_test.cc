@@ -16,9 +16,9 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/tokenizer-factory.h"
@@ -59,13 +59,15 @@ TEST_F(RawQueryTokenizerTest, Simple) {
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("Hello World!"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "Hello"),
-                                       EqualsToken(Token::REGULAR, "World"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("Hello World!"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "World"))));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("hElLo WORLD"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "hElLo"),
-                                       EqualsToken(Token::REGULAR, "WORLD"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("hElLo WORLD"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "hElLo"),
+                               EqualsToken(Token::Type::REGULAR, "WORLD"))));
 }
 
 TEST_F(RawQueryTokenizerTest, Parentheses) {
@@ -80,82 +82,82 @@ TEST_F(RawQueryTokenizerTest, Parentheses) {
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("()"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("( )"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1 term2)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("((term1 term2) (term3 term4))"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term3"),
-                  EqualsToken(Token::REGULAR, "term4"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term3"),
+                  EqualsToken(Token::Type::REGULAR, "term4"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1(term2)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("(term1)term2"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                               EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                               EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)term2"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)(term2)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("(term1)-term2"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                               EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                               EqualsToken(Token::QUERY_EXCLUSION, ""),
-                               EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)-term2"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"))));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("(term1)OR term2"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                               EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                               EqualsToken(Token::QUERY_OR, ""),
-                               EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)OR term2"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_OR, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)OR(term2)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_OR, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_OR, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1):term2"),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
@@ -180,44 +182,49 @@ TEST_F(RawQueryTokenizerTest, Exclustion) {
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                       EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("-term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                               EqualsToken(Token::Type::REGULAR, "term1"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(-term1)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_EXCLUSION, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // Exclusion operator is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("- term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("- term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // Exclusion operator is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1- term2"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"),
-                                       EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("term1- term2"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"),
+                               EqualsToken(Token::Type::REGULAR, "term2"))));
 
   // Exclusion operator is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1 -)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // First exclusion operator is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("--term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                       EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("--term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                               EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // First "-" is exclusion operator, second is not and will be discarded.
   // In other words, exclusion only applies to the term right after it.
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-term1-term2"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                       EqualsToken(Token::REGULAR, "term1"),
-                                       EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("-term1-term2"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                               EqualsToken(Token::Type::REGULAR, "term1"),
+                               EqualsToken(Token::Type::REGULAR, "term2"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-(term1)"),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
@@ -249,73 +256,75 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1:term1"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:term1"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "term1"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(property1:term1)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // Colon is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll(":term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll(":term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // Colon is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(:term1)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // Colon is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1:"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("term1:"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // property name can be a path
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("email.title:hello"),
-              IsOkAndHolds(
-                  ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "email.title"),
-                              EqualsToken(Token::REGULAR, "hello"))));
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "email.title"),
+                  EqualsToken(Token::Type::REGULAR, "hello"))));
 
   // The first colon ":" triggers property restriction, the second colon is used
   // as a word connector per ICU's rule
   // (https://unicode.org/reports/tr29/#Word_Boundaries).
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property:foo:bar"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property"),
-                               EqualsToken(Token::REGULAR, "foo:bar"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property:foo:bar"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property"),
+                  EqualsToken(Token::Type::REGULAR, "foo:bar"))));
 
   // Property restriction only applies to the term right after it.
   // Note: "term1:term2" is not a term but 2 terms because word connectors
   // don't apply to numbers and alphabets.
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1:term1:term2"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:term1:term2"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::REGULAR, "term2"))));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1:今天:天气"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "今天"),
-                               EqualsToken(Token::REGULAR, "天气"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:今天:天气"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "今天"),
+                  EqualsToken(Token::Type::REGULAR, "天气"))));
 
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1:term1-"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:term1-"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // Multiple continuous colons will still be recognized as a property
   // restriction operator
-  EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1::term1"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1::term1"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "term1"))));
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("property1:(term1)"),
@@ -345,105 +354,109 @@ TEST_F(RawQueryTokenizerTest, OR) {
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1 OR term2"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"),
-                                       EqualsToken(Token::QUERY_OR, ""),
-                                       EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("term1 OR term2"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"),
+                               EqualsToken(Token::Type::QUERY_OR, ""),
+                               EqualsToken(Token::Type::REGULAR, "term2"))));
 
   // Two continuous "OR"s are treated as one
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1 OR OR term2"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"),
-                                       EqualsToken(Token::QUERY_OR, ""),
-                                       EqualsToken(Token::REGULAR, "term2"))));
-
   EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("(term1) OR term2"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                               EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                               EqualsToken(Token::QUERY_OR, ""),
-                               EqualsToken(Token::REGULAR, "term2"))));
+      raw_query_tokenizer->TokenizeAll("term1 OR OR term2"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"),
+                               EqualsToken(Token::Type::QUERY_OR, ""),
+                               EqualsToken(Token::Type::REGULAR, "term2"))));
+
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1) OR term2"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_OR, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1 OR (term2)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_OR, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_OR, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("((term1) OR (term2))"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_OR, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_OR, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // Only "OR" (all in uppercase) is the operator
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("term1 or term2 Or term3 oR term4"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::REGULAR, "or"),
-                               EqualsToken(Token::REGULAR, "term2"),
-                               EqualsToken(Token::REGULAR, "Or"),
-                               EqualsToken(Token::REGULAR, "term3"),
-                               EqualsToken(Token::REGULAR, "oR"),
-                               EqualsToken(Token::REGULAR, "term4"))));
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"),
+                               EqualsToken(Token::Type::REGULAR, "or"),
+                               EqualsToken(Token::Type::REGULAR, "term2"),
+                               EqualsToken(Token::Type::REGULAR, "Or"),
+                               EqualsToken(Token::Type::REGULAR, "term3"),
+                               EqualsToken(Token::Type::REGULAR, "oR"),
+                               EqualsToken(Token::Type::REGULAR, "term4"))));
 
   // "OR" is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("OR term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("OR term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // "OR" is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1 OR"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("term1 OR"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   // "OR" is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(OR term1)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // "OR" is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("( OR term1)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // "OR" is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1 OR)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // "OR" is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1 OR )"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // "OR" is ignored
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("( OR )"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1 OR(term2)"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_OR, ""),
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term2"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_OR, ""),
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term2"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("term1 OR-term2"),
@@ -472,31 +485,31 @@ TEST_F(RawQueryTokenizerTest, CJKT) {
   if (IsCfStringTokenization()) {
     EXPECT_THAT(
         raw_query_tokenizer->TokenizeAll("-今天天气很好"),
-        IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                 EqualsToken(Token::REGULAR, "今天"),
-                                 EqualsToken(Token::REGULAR, "天气"),
-                                 EqualsToken(Token::REGULAR, "很"),
-                                 EqualsToken(Token::REGULAR, "好"))));
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                                 EqualsToken(Token::Type::REGULAR, "今天"),
+                                 EqualsToken(Token::Type::REGULAR, "天气"),
+                                 EqualsToken(Token::Type::REGULAR, "很"),
+                                 EqualsToken(Token::Type::REGULAR, "好"))));
   } else {
     EXPECT_THAT(
         raw_query_tokenizer->TokenizeAll("-今天天气很好"),
-        IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                 EqualsToken(Token::REGULAR, "今天"),
-                                 EqualsToken(Token::REGULAR, "天气"),
-                                 EqualsToken(Token::REGULAR, "很好"))));
+        IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                                 EqualsToken(Token::Type::REGULAR, "今天"),
+                                 EqualsToken(Token::Type::REGULAR, "天气"),
+                                 EqualsToken(Token::Type::REGULAR, "很好"))));
   }
 
   if (IsCfStringTokenization()) {
     EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:你好"),
-                IsOkAndHolds(
-                    ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                                EqualsToken(Token::REGULAR, "你"),
-                                EqualsToken(Token::REGULAR, "好"))));
+                IsOkAndHolds(ElementsAre(
+                    EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                    EqualsToken(Token::Type::REGULAR, "你"),
+                    EqualsToken(Token::Type::REGULAR, "好"))));
   } else {
     EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:你好"),
-                IsOkAndHolds(
-                    ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                                EqualsToken(Token::REGULAR, "你好"))));
+                IsOkAndHolds(ElementsAre(
+                    EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                    EqualsToken(Token::Type::REGULAR, "你好"))));
   }
 
   EXPECT_THAT(
@@ -504,10 +517,11 @@ TEST_F(RawQueryTokenizerTest, CJKT) {
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("Characters in property name must all be ASCII")));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("cat OR ねこ"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "cat"),
-                                       EqualsToken(Token::QUERY_OR, ""),
-                                       EqualsToken(Token::REGULAR, "ねこ"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("cat OR ねこ"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "cat"),
+                               EqualsToken(Token::Type::QUERY_OR, ""),
+                               EqualsToken(Token::Type::REGULAR, "ねこ"))));
 
   EXPECT_THAT(
       raw_query_tokenizer->TokenizeAll("cat ORねこ"),
@@ -543,40 +557,45 @@ TEST_F(RawQueryTokenizerTest, OtherChars) {
                                               language_segmenter.get()));
 
   // Comma is ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll(",term1, ,"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll(",term1, ,"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(,term1),"),
               IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::REGULAR, "term1"),
-                  EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
 
   // Exclusion operator and comma are ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-,term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"))));
-
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("-term1,"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_EXCLUSION, ""),
-                                       EqualsToken(Token::REGULAR, "term1"))));
-
-  // Colon and comma are ignored
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:,term1"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "property1"),
-                                       EqualsToken(Token::REGULAR, "term1"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("-,term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"))));
 
   EXPECT_THAT(
-      raw_query_tokenizer->TokenizeAll("property1:term1,term2"),
-      IsOkAndHolds(ElementsAre(EqualsToken(Token::QUERY_PROPERTY, "property1"),
-                               EqualsToken(Token::REGULAR, "term1"),
-                               EqualsToken(Token::REGULAR, "term2"))));
+      raw_query_tokenizer->TokenizeAll("-term1,"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                               EqualsToken(Token::Type::REGULAR, "term1"))));
+
+  // Colon and comma are ignored
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("property1:,term1"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "property1"),
+                               EqualsToken(Token::Type::REGULAR, "term1"))));
+
+  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property1:term1,term2"),
+              IsOkAndHolds(ElementsAre(
+                  EqualsToken(Token::Type::QUERY_PROPERTY, "property1"),
+                  EqualsToken(Token::Type::REGULAR, "term1"),
+                  EqualsToken(Token::Type::REGULAR, "term2"))));
 
   // This is a special case for OR, unknown chars are treated the same as
   // whitespaces before and after OR.
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1,OR,term2"),
-              IsOkAndHolds(ElementsAre(EqualsToken(Token::REGULAR, "term1"),
-                                       EqualsToken(Token::QUERY_OR, ""),
-                                       EqualsToken(Token::REGULAR, "term2"))));
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("term1,OR,term2"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"),
+                               EqualsToken(Token::Type::QUERY_OR, ""),
+                               EqualsToken(Token::Type::REGULAR, "term2"))));
 }
 
 TEST_F(RawQueryTokenizerTest, Mix) {
@@ -593,37 +612,38 @@ TEST_F(RawQueryTokenizerTest, Mix) {
     EXPECT_THAT(raw_query_tokenizer->TokenizeAll(
                     "こんにちはgood afternoon, title:今天 OR (ในวันนี้ -B12)"),
                 IsOkAndHolds(ElementsAre(
-                    EqualsToken(Token::REGULAR, "こんにちは"),
-                    EqualsToken(Token::REGULAR, "good"),
-                    EqualsToken(Token::REGULAR, "afternoon"),
-                    EqualsToken(Token::QUERY_PROPERTY, "title"),
-                    EqualsToken(Token::REGULAR, "今天"),
-                    EqualsToken(Token::QUERY_OR, ""),
-                    EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                    EqualsToken(Token::REGULAR, "ใน"),
-                    EqualsToken(Token::REGULAR, "วันนี้"),
-                    EqualsToken(Token::QUERY_EXCLUSION, ""),
-                    EqualsToken(Token::REGULAR, "B12"),
-                    EqualsToken(Token::QUERY_RIGHT_PARENTHESES, ""))));
+                    EqualsToken(Token::Type::REGULAR, "こんにちは"),
+                    EqualsToken(Token::Type::REGULAR, "good"),
+                    EqualsToken(Token::Type::REGULAR, "afternoon"),
+                    EqualsToken(Token::Type::QUERY_PROPERTY, "title"),
+                    EqualsToken(Token::Type::REGULAR, "今天"),
+                    EqualsToken(Token::Type::QUERY_OR, ""),
+                    EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                    EqualsToken(Token::Type::REGULAR, "ใน"),
+                    EqualsToken(Token::Type::REGULAR, "วันนี้"),
+                    EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                    EqualsToken(Token::Type::REGULAR, "B12"),
+                    EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
   } else {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::vector<Token> tokens,
         raw_query_tokenizer->TokenizeAll(
             "こんにちはgood afternoon, title:今天 OR (ในวันนี้ -B12)"));
-    EXPECT_THAT(tokens,
-                ElementsAre(EqualsToken(Token::REGULAR, "こんにちは"),
-                            EqualsToken(Token::REGULAR, "good"),
-                            EqualsToken(Token::REGULAR, "afternoon"),
-                            EqualsToken(Token::QUERY_PROPERTY, "title"),
-                            EqualsToken(Token::REGULAR, "今天"),
-                            EqualsToken(Token::QUERY_OR, ""),
-                            EqualsToken(Token::QUERY_LEFT_PARENTHESES, ""),
-                            EqualsToken(Token::REGULAR, "ใน"),
-                            EqualsToken(Token::REGULAR, "วัน"),
-                            EqualsToken(Token::REGULAR, "นี้"),
-                            EqualsToken(Token::QUERY_EXCLUSION, ""),
-                            EqualsToken(Token::REGULAR, "B12"),
-                            EqualsToken(Token::QUERY_RIGHT_PARENTHESES, "")));
+    EXPECT_THAT(
+        tokens,
+        ElementsAre(EqualsToken(Token::Type::REGULAR, "こんにちは"),
+                    EqualsToken(Token::Type::REGULAR, "good"),
+                    EqualsToken(Token::Type::REGULAR, "afternoon"),
+                    EqualsToken(Token::Type::QUERY_PROPERTY, "title"),
+                    EqualsToken(Token::Type::REGULAR, "今天"),
+                    EqualsToken(Token::Type::QUERY_OR, ""),
+                    EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                    EqualsToken(Token::Type::REGULAR, "ใน"),
+                    EqualsToken(Token::Type::REGULAR, "วัน"),
+                    EqualsToken(Token::Type::REGULAR, "นี้"),
+                    EqualsToken(Token::Type::QUERY_EXCLUSION, ""),
+                    EqualsToken(Token::Type::REGULAR, "B12"),
+                    EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, "")));
   }
 }
 
