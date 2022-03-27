@@ -152,8 +152,13 @@ class IcingDynamicTrie : public IIcingStorage {
     uint32_t max_nodes;
     // Count of intermediate nodes.
     uint32_t num_intermediates;
+    // Total and maximum number of children of intermediate nodes.
+    uint32_t sum_children, max_children;
+
     // Count of leaf nodes.
     uint32_t num_leaves;
+    // Total and maximum depth of leaf nodes.
+    uint32_t sum_depth, max_depth;
 
     // Next stats
 
@@ -186,6 +191,7 @@ class IcingDynamicTrie : public IIcingStorage {
     uint32_t dirty_pages_nexts;
     uint32_t dirty_pages_suffixes;
 
+    // TODO(b/222349894) Convert the string output to a protocol buffer instead.
     std::string DumpStats(int verbosity) const;
   };
 
@@ -601,7 +607,8 @@ class IcingDynamicTrie : public IIcingStorage {
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
-  void CollectStatsRecursive(const Node &node, Stats *stats) const;
+  void CollectStatsRecursive(const Node &node, Stats *stats,
+                             uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.
   const Next *GetNextByChar(const Node *node, uint8_t key_char) const;

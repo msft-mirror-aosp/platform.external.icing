@@ -46,6 +46,9 @@ message InitializeStatsProto {
 
     // Random I/O errors.
     IO_ERROR = 4;
+
+    // The document log is using legacy format.
+    LEGACY_DOCUMENT_LOG_FORMAT = 5;
   }
 
   // Possible recovery causes for document store:
