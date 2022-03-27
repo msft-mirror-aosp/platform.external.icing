@@ -138,6 +138,7 @@ class IcingFlashBitmap {
   // Upgrade for version 18.
   bool UpgradeTo18();
 
+  // Legacy file system. Switch to use the new Filesystem class instead.
   const IcingFilesystem *const filesystem_;
   std::string filename_;
   OpenType open_type_;
