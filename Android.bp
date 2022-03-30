@@ -82,7 +82,7 @@ cc_library_shared {
         "libutf",
     ],
     shared_libs: [
-        "libandroidicu",
+        "libicu",
         "liblog",
         "libprotobuf-cpp-lite",
         "libz",
