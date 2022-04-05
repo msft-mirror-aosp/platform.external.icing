@@ -302,14 +302,16 @@ IcuNormalizer::TermTransformer::FindNormalizedNonLatinMatchEndPosition(
   int32_t c16_length;
   int32_t limit;
 
-  constexpr int kUtf32CharBufferLength = 3;
-  UChar32 normalized_buffer[kUtf32CharBufferLength];
-  int32_t c32_length;
+  constexpr int kCharBufferLength = 3 * 4;
+  char normalized_buffer[kCharBufferLength];
+  int32_t c8_length;
   while (char_itr.utf8_index() < term.length() &&
          normalized_char_itr.utf8_index() < normalized_term.length()) {
     UChar32 c = char_itr.GetCurrentChar();
-    u_strFromUTF32(c16, kUtf16CharBufferLength, &c16_length, &c,
-                   /*srcLength=*/1, &status);
+    int c_lenth = i18n_utils::GetUtf8Length(c);
+    u_strFromUTF8(c16, kUtf16CharBufferLength, &c16_length,
+                  term.data() + char_itr.utf8_index(),
+                  /*srcLength=*/c_lenth, &status);
     if (U_FAILURE(status)) {
       break;
     }
@@ -322,19 +324,20 @@ IcuNormalizer::TermTransformer::FindNormalizedNonLatinMatchEndPosition(
       break;
     }
 
-    u_strToUTF32(normalized_buffer, kUtf32CharBufferLength, &c32_length, c16,
-                 c16_length, &status);
+    u_strToUTF8(normalized_buffer, kCharBufferLength, &c8_length, c16,
+                c16_length, &status);
     if (U_FAILURE(status)) {
       break;
     }
 
-    for (int i = 0; i < c32_length; ++i) {
-      UChar32 normalized_c = normalized_char_itr.GetCurrentChar();
-      if (normalized_buffer[i] != normalized_c) {
+    for (int i = 0; i < c8_length; ++i) {
+      if (normalized_buffer[i] !=
+          normalized_term[normalized_char_itr.utf8_index() + i]) {
         return char_itr;
       }
-      normalized_char_itr.AdvanceToUtf32(normalized_char_itr.utf32_index() + 1);
     }
+    normalized_char_itr.AdvanceToUtf8(normalized_char_itr.utf8_index() +
+                                      c8_length);
     char_itr.AdvanceToUtf32(char_itr.utf32_index() + 1);
   }
   if (U_FAILURE(status)) {
