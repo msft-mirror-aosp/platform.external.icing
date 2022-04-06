@@ -24,8 +24,11 @@
 #include "icing/index/main/flash-index-storage.h"
 #include "icing/index/main/posting-list-accessor.h"
 #include "icing/index/term-id-codec.h"
+#include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/store/namespace-id.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -36,8 +39,8 @@ class MainIndex {
   // RETURNS:
   //  - valid instance of MainIndex, on success.
   //  - INTERNAL error if unable to create the lexicon or flash storage.
-  static libtextclassifier3::StatusOr<MainIndex> Create(
-      const std::string& index_filename, const Filesystem* filesystem,
+  static libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> Create(
+      const std::string& index_directory, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
   // Get a PostingListAccessor that holds the posting list chain for 'term'.
@@ -65,6 +68,21 @@ class MainIndex {
   libtextclassifier3::StatusOr<GetPrefixAccessorResult>
   GetAccessorForPrefixTerm(const std::string& prefix);
 
+  // Finds terms with the given prefix in the given namespaces. If
+  // 'namespace_ids' is empty, returns results from all the namespaces. The
+  // input prefix must be normalized, otherwise inaccurate results may be
+  // returned. Results are not sorted specifically and are in lexigraphical
+  // order. Number of results are no more than 'num_to_return'.
+  //
+  // The hit count returned with each TermMetadata is an approximation based of
+  // posting list size.
+  //
+  // Returns:
+  //   A list of TermMetadata on success
+  //   INTERNAL_ERROR if failed to access term data.
+  libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
+      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
+
   struct LexiconMergeOutputs {
     // Maps from main_lexicon tvi for new branching point to the main_lexicon
     // tvi for posting list whose hits must be backfilled.
@@ -72,6 +90,10 @@ class MainIndex {
 
     // Maps from lexicon tvis to main_lexicon tvis.
     std::unordered_map<uint32_t, uint32_t> other_tvi_to_main_tvi;
+
+    // Maps from main lexicon tvi to the block index. Tvis with no entry do not
+    // have an allocated posting list.
+    std::unordered_map<uint32_t, int> main_tvi_to_block_index;
 
     // Maps from the lexicon tvi to the beginning position in
     // prefix_tvis_buf and the length.
@@ -124,10 +146,48 @@ class MainIndex {
   libtextclassifier3::Status AddHits(
       const TermIdCodec& term_id_codec,
       std::unordered_map<uint32_t, uint32_t>&& backfill_map,
-      std::vector<TermIdHitPair>&& hits);
+      std::vector<TermIdHitPair>&& hits, DocumentId last_added_document_id);
+
+  libtextclassifier3::Status PersistToDisk() {
+    if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
+      return libtextclassifier3::Status::OK;
+    }
+    return absl_ports::InternalError("Unable to sync lite index components.");
+  }
+
+  DocumentId last_added_document_id() const {
+    return flash_index_storage_->get_last_indexed_docid();
+  }
+
+  libtextclassifier3::Status Reset() {
+    ICING_RETURN_IF_ERROR(flash_index_storage_->Reset());
+    main_lexicon_->Clear();
+    return libtextclassifier3::Status::OK;
+  }
+
+  void Warm() { main_lexicon_->Warm(); }
+
+  // Returns:
+  //  - elements size of lexicon and index, on success
+  //  - INTERNAL on IO error
+  libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
+
+  // Takes the provided storage_info, populates the fields related to the main
+  // index and returns that storage_info.
+  //
+  // If an IO error occurs while trying to calculate the value for a field, then
+  // that field will be set to -1.
+  IndexStorageInfoProto GetStorageInfo(
+      IndexStorageInfoProto storage_info) const;
+
+  // Returns debug information for the main index in out.
+  // verbosity <= 0, simplest debug information - just the lexicon
+  // verbosity > 0, more detailed debug information including raw postings
+  //                lists.
+  void GetDebugInfo(int verbosity, std::string* out) const;
 
  private:
-  libtextclassifier3::Status Init(const std::string& index_filename,
+  libtextclassifier3::Status Init(const std::string& index_directory,
                                   const Filesystem* filesystem,
                                   const IcingFilesystem* icing_filesystem);
 

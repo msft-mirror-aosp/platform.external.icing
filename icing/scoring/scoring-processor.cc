@@ -39,28 +39,31 @@ constexpr double kDefaultScoreInAscendingOrder =
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
-                         const DocumentStore* document_store) {
+                         const DocumentStore* document_store,
+                         const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   bool is_descending_order =
       scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(scoring_spec.rank_by(),
+      Scorer::Create(scoring_spec,
                      is_descending_order ? kDefaultScoreInDescendingOrder
                                          : kDefaultScoreInAscendingOrder,
-                     document_store));
-
+                     document_store, schema_store));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
 }
 
 std::vector<ScoredDocumentHit> ScoringProcessor::Score(
-    std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator,
-    int num_to_score) {
+    std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator, int num_to_score,
+    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+        query_term_iterators) {
   std::vector<ScoredDocumentHit> scored_document_hits;
+  scorer_->PrepareToScore(query_term_iterators);
 
   while (doc_hit_info_iterator->Advance().ok() && num_to_score-- > 0) {
     const DocHitInfo& doc_hit_info = doc_hit_info_iterator->doc_hit_info();
@@ -69,7 +72,8 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
     // The final score of the doc_hit_info = score of doc * demotion factor of
     // hit.
     double score =
-        scorer_->GetScore(doc_hit_info.document_id()) * hit_demotion_factor;
+        scorer_->GetScore(doc_hit_info, doc_hit_info_iterator.get()) *
+        hit_demotion_factor;
     scored_document_hits.emplace_back(
         doc_hit_info.document_id(), doc_hit_info.hit_section_ids_mask(), score);
   }
