@@ -37,10 +37,10 @@ class VerbatimTokenIterator : public Tokenizer::Iterator {
 
   Token GetToken() const override {
     if (term_.empty() || !has_advanced_to_end_) {
-      return Token(Token::INVALID);
+      return Token(Token::Type::INVALID);
     }
 
-    return Token(Token::VERBATIM, term_);
+    return Token(Token::Type::VERBATIM, term_);
   }
 
   libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenStart()

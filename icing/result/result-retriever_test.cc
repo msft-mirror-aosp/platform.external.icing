@@ -22,7 +22,6 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/mock-filesystem.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -36,6 +35,7 @@
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -362,8 +362,8 @@ TEST_F(ResultRetrieverTest, NotIgnoreErrors) {
 
 TEST_F(ResultRetrieverTest, IOErrorShouldReturnInternalError) {
   MockFilesystem mock_filesystem;
-  ON_CALL(mock_filesystem, OpenForRead(_)).WillByDefault(Return(false));
-
+  ON_CALL(mock_filesystem, PRead(A<int>(), A<void*>(), A<size_t>(), A<off_t>()))
+      .WillByDefault(Return(false));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(&mock_filesystem, test_dir_, &fake_clock_,

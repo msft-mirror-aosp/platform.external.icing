@@ -268,7 +268,7 @@ libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
 libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   schema_type_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = KeyMapper<SchemaTypeId>::Delete(
       filesystem_, MakeSchemaTypeMapperFilename(base_dir_));
@@ -464,11 +464,8 @@ libtextclassifier3::Status SchemaStore::PersistToDisk() {
 SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
   SchemaStoreStorageInfoProto storage_info;
   int64_t directory_size = filesystem_.GetDiskUsage(base_dir_.c_str());
-  if (directory_size != Filesystem::kBadFileSize) {
-    storage_info.set_schema_store_size(directory_size);
-  } else {
-    storage_info.set_schema_store_size(-1);
-  }
+  storage_info.set_schema_store_size(
+      Filesystem::SanitizeFileSize(directory_size));
   ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema(), storage_info);
   storage_info.set_num_schema_types(schema->types_size());
   int total_sections = 0;

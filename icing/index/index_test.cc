@@ -31,6 +31,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -1394,12 +1395,14 @@ TEST_F(IndexTest, GetDebugInfo) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId1, kSectionId3, TermMatchType::PREFIX,
                       /*namespace_id=*/0);
+  index_->set_last_added_document_id(kDocumentId1);
   ASSERT_THAT(edit.BufferTerm("foot"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   ICING_ASSERT_OK(index_->Merge());
 
   edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
+  index_->set_last_added_document_id(kDocumentId2);
   ASSERT_THAT(edit.BufferTerm("footer"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::PREFIX,
@@ -1407,40 +1410,45 @@ TEST_F(IndexTest, GetDebugInfo) {
   ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  std::string out0;
-  index_->GetDebugInfo(/*verbosity=*/0, &out0);
-  EXPECT_THAT(out0, Not(IsEmpty()));
+  IndexDebugInfoProto out0 = index_->GetDebugInfo(/*verbosity=*/0);
+  EXPECT_FALSE(out0.main_index_info().has_flash_index_storage_info());
+  EXPECT_THAT(out0.main_index_info().last_added_document_id(),
+              Eq(kDocumentId1));
+  EXPECT_THAT(out0.lite_index_info().curr_size(), Eq(2));
+  EXPECT_THAT(out0.lite_index_info().last_added_document_id(),
+              Eq(kDocumentId2));
 
-  std::string out1;
-  index_->GetDebugInfo(/*verbosity=*/1, &out1);
-  EXPECT_THAT(out1, SizeIs(Gt(out0.size())));
+  IndexDebugInfoProto out1 = index_->GetDebugInfo(/*verbosity=*/1);
+  EXPECT_THAT(out1.main_index_info().flash_index_storage_info(),
+              Not(IsEmpty()));
 
   // Add one more doc to the lite index. Debug strings should change.
   edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
                       /*namespace_id=*/0);
+  index_->set_last_added_document_id(kDocumentId3);
   ASSERT_THAT(edit.BufferTerm("far"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  std::string out2;
-  index_->GetDebugInfo(/*verbosity=*/0, &out2);
-  EXPECT_THAT(out2, Ne(out0));
-
-  std::string out3;
-  index_->GetDebugInfo(/*verbosity=*/1, &out3);
-  EXPECT_THAT(out3, Ne(out1));
+  IndexDebugInfoProto out2 = index_->GetDebugInfo(/*verbosity=*/0);
+  EXPECT_THAT(out2.lite_index_info().curr_size(), Eq(3));
+  EXPECT_THAT(out2.lite_index_info().last_added_document_id(),
+              Eq(kDocumentId3));
 
   // Merge into the man index. Debuug strings should change again.
   ICING_ASSERT_OK(index_->Merge());
 
-  std::string out4;
-  index_->GetDebugInfo(/*verbosity=*/0, &out4);
-  EXPECT_THAT(out4, Ne(out0));
-  EXPECT_THAT(out4, Ne(out2));
-
-  std::string out5;
-  index_->GetDebugInfo(/*verbosity=*/1, &out5);
-  EXPECT_THAT(out5, Ne(out1));
-  EXPECT_THAT(out5, Ne(out3));
+  IndexDebugInfoProto out3 = index_->GetDebugInfo(/*verbosity=*/0);
+  EXPECT_TRUE(out3.has_index_storage_info());
+  EXPECT_THAT(out3.main_index_info().lexicon_info(), Not(IsEmpty()));
+  EXPECT_THAT(out3.main_index_info().last_added_document_id(),
+              Eq(kDocumentId3));
+  EXPECT_THAT(out3.lite_index_info().curr_size(), Eq(0));
+  EXPECT_THAT(out3.lite_index_info().hit_buffer_size(), Gt(0));
+  EXPECT_THAT(out3.lite_index_info().last_added_document_id(),
+              Eq(kInvalidDocumentId));
+  EXPECT_THAT(out3.lite_index_info().searchable_end(), Eq(0));
+  EXPECT_THAT(out3.lite_index_info().index_crc(), Gt(0));
+  EXPECT_THAT(out3.lite_index_info().lexicon_info(), Not(IsEmpty()));
 }
 
 TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {

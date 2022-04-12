@@ -27,7 +27,6 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -46,6 +45,7 @@
 #include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/snippet-helpers.h"
@@ -3491,6 +3491,105 @@ TEST_F(IcingSearchEngineTest, DeleteByQuery) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, DeleteByQueryReturnInfo) {
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body3")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(7);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = document1;
+  EXPECT_THAT(
+      icing.Get("namespace1", "uri1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document2;
+  EXPECT_THAT(
+      icing.Get("namespace2", "uri2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() = document3;
+  EXPECT_THAT(
+      icing.Get("namespace2", "uri3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+
+  // Delete all docs to test the information is correctly grouped.
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  DeleteByQueryResultProto result_proto =
+      icing.DeleteByQuery(search_spec, true);
+  EXPECT_THAT(result_proto.status(), ProtoIsOk());
+  DeleteByQueryStatsProto exp_stats;
+  exp_stats.set_latency_ms(7);
+  exp_stats.set_num_documents_deleted(3);
+  exp_stats.set_query_length(search_spec.query().length());
+  exp_stats.set_num_terms(1);
+  exp_stats.set_num_namespaces_filtered(0);
+  exp_stats.set_num_schema_types_filtered(0);
+  exp_stats.set_parse_query_latency_ms(7);
+  exp_stats.set_document_removal_latency_ms(7);
+  EXPECT_THAT(result_proto.delete_by_query_stats(), EqualsProto(exp_stats));
+
+  // Check that DeleteByQuery can return information for deleted documents.
+  DeleteByQueryResultProto::DocumentGroupInfo info1, info2;
+  info1.set_namespace_("namespace1");
+  info1.set_schema("Message");
+  info1.add_uris("uri1");
+  info2.set_namespace_("namespace2");
+  info2.set_schema("Message");
+  info2.add_uris("uri3");
+  info2.add_uris("uri2");
+  EXPECT_THAT(result_proto.deleted_documents(),
+              UnorderedElementsAre(EqualsProto(info1), EqualsProto(info2)));
+
+  EXPECT_THAT(
+      icing.Get("namespace1", "uri1", GetResultSpecProto::default_instance())
+          .status()
+          .code(),
+      Eq(StatusProto::NOT_FOUND));
+  EXPECT_THAT(
+      icing.Get("namespace2", "uri2", GetResultSpecProto::default_instance())
+          .status()
+          .code(),
+      Eq(StatusProto::NOT_FOUND));
+  EXPECT_THAT(
+      icing.Get("namespace2", "uri3", GetResultSpecProto::default_instance())
+          .status()
+          .code(),
+      Eq(StatusProto::NOT_FOUND));
 }
 
 TEST_F(IcingSearchEngineTest, DeleteByQueryNotFound) {
@@ -8489,7 +8588,7 @@ TEST_F(IcingSearchEngineTest, MigrateToPortableFileBackedProtoLog) {
   EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
               Eq(InitializeStatsProto::NO_DATA_LOSS));
   EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
+              Eq(InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT));
   EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
               Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),

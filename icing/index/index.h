@@ -32,6 +32,7 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -143,9 +144,14 @@ class Index {
   //                 index.
   // verbosity > 0, more detailed debug information including raw postings
   //                lists.
-  void GetDebugInfo(int verbosity, std::string* out) const {
-    lite_index_->GetDebugInfo(verbosity, out);
-    main_index_->GetDebugInfo(verbosity, out);
+  IndexDebugInfoProto GetDebugInfo(int verbosity) const {
+    IndexDebugInfoProto debug_info;
+    *debug_info.mutable_index_storage_info() = GetStorageInfo();
+    *debug_info.mutable_lite_index_info() =
+        lite_index_->GetDebugInfo(verbosity);
+    *debug_info.mutable_main_index_info() =
+        main_index_->GetDebugInfo(verbosity);
+    return debug_info;
   }
 
   // Returns the byte size of the all the elements held in the index. This

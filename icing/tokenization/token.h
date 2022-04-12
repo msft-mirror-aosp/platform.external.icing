@@ -21,7 +21,7 @@ namespace icing {
 namespace lib {
 
 struct Token {
-  enum Type {
+  enum class Type {
     // Common types
     REGULAR,  // A token without special meanings, the value of it will be
               // indexed or searched directly

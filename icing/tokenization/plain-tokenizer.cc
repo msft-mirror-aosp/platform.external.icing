@@ -66,9 +66,9 @@ class PlainTokenIterator : public Tokenizer::Iterator {
 
   Token GetToken() const override {
     if (current_term_.empty()) {
-      return Token(Token::INVALID);
+      return Token(Token::Type::INVALID);
     }
-    return Token(Token::REGULAR, current_term_);
+    return Token(Token::Type::REGULAR, current_term_);
   }
 
   libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenStart()

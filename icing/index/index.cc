@@ -119,7 +119,7 @@ std::vector<TermMetadata> MergeAndRankTermMetadatas(
         int total_est_hit_count =
             lite_term_itr->hit_count + main_term_itr->hit_count;
         PushToTermHeap(TermMetadata(std::move(lite_term_itr->content),
-                         total_est_hit_count),
+                                    total_est_hit_count),
                        num_to_return, merged_term_metadata_heap);
         ++lite_term_itr;
         ++main_term_itr;
@@ -259,11 +259,7 @@ Index::FindTermsByPrefix(const std::string& prefix, int num_to_return,
 IndexStorageInfoProto Index::GetStorageInfo() const {
   IndexStorageInfoProto storage_info;
   int64_t directory_size = filesystem_->GetDiskUsage(options_.base_dir.c_str());
-  if (directory_size != Filesystem::kBadFileSize) {
-    storage_info.set_index_size(directory_size);
-  } else {
-    storage_info.set_index_size(-1);
-  }
+  storage_info.set_index_size(Filesystem::SanitizeFileSize(directory_size));
   storage_info = lite_index_->GetStorageInfo(std::move(storage_info));
   return main_index_->GetStorageInfo(std::move(storage_info));
 }

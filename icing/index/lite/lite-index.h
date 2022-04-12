@@ -37,6 +37,7 @@
 #include "icing/legacy/index/icing-lite-index-header.h"
 #include "icing/legacy/index/icing-lite-index-options.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -241,7 +242,7 @@ class LiteIndex {
   // Returns debug information for the index in out.
   // verbosity <= 0, simplest debug information - size of lexicon, hit buffer
   // verbosity > 0, more detailed debug information from the lexicon.
-  void GetDebugInfo(int verbosity, std::string* out) const;
+  IndexDebugInfoProto::LiteIndexDebugInfoProto GetDebugInfo(int verbosity);
 
   // Returns the byte size of all the elements held in the index. This excludes
   // the size of any internal metadata of the index, e.g. the index's header.

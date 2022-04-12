@@ -78,26 +78,25 @@ inline std::string AddIndexToPath(int values_size, int index,
 
 // Returns a string of the normalized text of the input Token. Normalization
 // is applied based on the Token's type.
-std::string NormalizeToken(const Normalizer& normalizer,
-                           const Token& token) {
+std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
   switch (token.type) {
-    case Token::REGULAR:
+    case Token::Type::REGULAR:
       return normalizer.NormalizeTerm(token.text);
-    case Token::VERBATIM:
+    case Token::Type::VERBATIM:
       return std::string(token.text);
-    case Token::QUERY_EXCLUSION:
+    case Token::Type::QUERY_EXCLUSION:
       [[fallthrough]];
-    case Token::QUERY_LEFT_PARENTHESES:
+    case Token::Type::QUERY_LEFT_PARENTHESES:
       [[fallthrough]];
-    case Token::QUERY_RIGHT_PARENTHESES:
+    case Token::Type::QUERY_RIGHT_PARENTHESES:
       [[fallthrough]];
-    case Token::QUERY_OR:
+    case Token::Type::QUERY_OR:
       [[fallthrough]];
-    case Token::QUERY_PROPERTY:
+    case Token::Type::QUERY_PROPERTY:
       [[fallthrough]];
-    case Token::INVALID:
+    case Token::Type::INVALID:
       ICING_LOG(WARNING) << "Unable to normalize token of type: "
-                         << token.type;
+                         << static_cast<int>(token.type);
       return std::string(token.text);
   }
 }
@@ -107,7 +106,7 @@ std::string NormalizeToken(const Normalizer& normalizer,
 CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
                                const std::string& match_query_term) {
   switch (token.type) {
-    case Token::VERBATIM: {
+    case Token::Type::VERBATIM: {
       // VERBATIM tokens are not normalized. This means the non-normalized
       // matched query term must be either equal to or a prefix of the token's
       // text. Therefore, the match must end at the end of the matched query
@@ -117,22 +116,22 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       verbatim_match_end.AdvanceToUtf8(match_query_term.length());
       return verbatim_match_end;
     }
-    case Token::QUERY_EXCLUSION:
+    case Token::Type::QUERY_EXCLUSION:
       [[fallthrough]];
-    case Token::QUERY_LEFT_PARENTHESES:
+    case Token::Type::QUERY_LEFT_PARENTHESES:
       [[fallthrough]];
-    case Token::QUERY_RIGHT_PARENTHESES:
+    case Token::Type::QUERY_RIGHT_PARENTHESES:
       [[fallthrough]];
-    case Token::QUERY_OR:
+    case Token::Type::QUERY_OR:
       [[fallthrough]];
-    case Token::QUERY_PROPERTY:
+    case Token::Type::QUERY_PROPERTY:
       [[fallthrough]];
-    case Token::INVALID:
+    case Token::Type::INVALID:
       ICING_LOG(WARNING)
-          << "Unexpected Token type " << token.type
+          << "Unexpected Token type " << static_cast<int>(token.type)
           << " found when finding match end of query term and token.";
       [[fallthrough]];
-    case Token::REGULAR:
+    case Token::Type::REGULAR:
       return normalizer.FindNormalizedMatchEndPosition(token.text,
                                                        match_query_term);
   }

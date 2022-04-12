@@ -27,6 +27,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/store/namespace-checker.h"
 #include "icing/store/namespace-id.h"
@@ -185,7 +186,8 @@ class MainIndex {
   // verbosity <= 0, simplest debug information - just the lexicon
   // verbosity > 0, more detailed debug information including raw postings
   //                lists.
-  void GetDebugInfo(int verbosity, std::string* out) const;
+  IndexDebugInfoProto::MainIndexDebugInfoProto GetDebugInfo(
+      int verbosity) const;
 
  private:
   libtextclassifier3::Status Init(const std::string& index_directory,

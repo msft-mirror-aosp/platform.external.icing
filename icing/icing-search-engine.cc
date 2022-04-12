@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -87,6 +88,23 @@ constexpr std::string_view kOptimizeStatusFilename = "optimize_status";
 // state that we will tolerate before deleting all data and starting from a
 // fresh state.
 constexpr int kMaxUnsuccessfulInitAttempts = 5;
+
+// A pair that holds namespace and type.
+struct NamespaceTypePair {
+  std::string namespace_;
+  std::string type;
+
+  bool operator==(const NamespaceTypePair& other) const {
+    return namespace_ == other.namespace_ && type == other.type;
+  }
+};
+
+struct NamespaceTypePairHasher {
+  std::size_t operator()(const NamespaceTypePair& pair) const {
+    return std::hash<std::string>()(pair.namespace_) ^
+           std::hash<std::string>()(pair.type);
+  }
+};
 
 libtextclassifier3::Status ValidateResultSpec(
     const ResultSpecProto& result_spec) {
@@ -253,6 +271,28 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
   }
   status_proto->set_code(code);
   status_proto->set_message(internal_status.error_message());
+}
+
+libtextclassifier3::Status RetrieveAndAddDocumentInfo(
+    const DocumentStore* document_store, DeleteByQueryResultProto& result_proto,
+    std::unordered_map<NamespaceTypePair,
+                       DeleteByQueryResultProto::DocumentGroupInfo*,
+                       NamespaceTypePairHasher>& info_map,
+    DocumentId document_id) {
+  ICING_ASSIGN_OR_RETURN(DocumentProto document,
+                         document_store->Get(document_id));
+  NamespaceTypePair key = {document.namespace_(), document.schema()};
+  auto iter = info_map.find(key);
+  if (iter == info_map.end()) {
+    auto entry = result_proto.add_deleted_documents();
+    entry->set_namespace_(std::move(document.namespace_()));
+    entry->set_schema(std::move(document.schema()));
+    entry->add_uris(std::move(document.uri()));
+    info_map[key] = entry;
+  } else {
+    iter->second->add_uris(std::move(document.uri()));
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace
@@ -443,8 +483,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // last tried to set the schema.
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
-    initialize_stats->set_document_store_recovery_cause(
-        InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
 
     // We're going to need to build the index from scratch. So just delete its
     // files now.
@@ -934,7 +972,7 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   delete_stats->set_delete_type(DeleteStatsProto::DeleteType::SINGLE);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = document_store_->Delete(name_space, uri);
   if (!status.ok()) {
@@ -968,7 +1006,7 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
   delete_stats->set_delete_type(DeleteStatsProto::DeleteType::NAMESPACE);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   DocumentStore::DeleteByGroupResult doc_store_result =
       document_store_->DeleteByNamespace(name_space);
@@ -1002,7 +1040,7 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
   delete_stats->set_delete_type(DeleteStatsProto::DeleteType::SCHEMA_TYPE);
 
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   DocumentStore::DeleteByGroupResult doc_store_result =
       document_store_->DeleteBySchemaType(schema_type);
@@ -1020,7 +1058,7 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
 }
 
 DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
-    const SearchSpecProto& search_spec) {
+    const SearchSpecProto& search_spec, bool return_deleted_document_info) {
   ICING_VLOG(1) << "Deleting documents for query " << search_spec.query()
                 << " from doc store";
 
@@ -1074,12 +1112,27 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
   ICING_VLOG(2) << "Deleting the docs that matched the query.";
   int num_deleted = 0;
+  // A map used to group deleted documents.
+  // From the (namespace, type) pair to a list of uris.
+  std::unordered_map<NamespaceTypePair,
+                     DeleteByQueryResultProto::DocumentGroupInfo*,
+                     NamespaceTypePairHasher>
+      deleted_info_map;
 
   component_timer = clock_->GetNewTimer();
   while (query_results.root_iterator->Advance().ok()) {
     ICING_VLOG(3) << "Deleting doc "
                   << query_results.root_iterator->doc_hit_info().document_id();
     ++num_deleted;
+    if (return_deleted_document_info) {
+      status = RetrieveAndAddDocumentInfo(
+          document_store_.get(), result_proto, deleted_info_map,
+          query_results.root_iterator->doc_hit_info().document_id());
+      if (!status.ok()) {
+        TransformStatus(status, result_status);
+        return result_proto;
+      }
+    }
     status = document_store_->Delete(
         query_results.root_iterator->doc_hit_info().document_id());
     if (!status.ok()) {
@@ -1148,12 +1201,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   std::unique_ptr<Timer> optimize_timer = clock_->GetNewTimer();
   OptimizeStatsProto* optimize_stats = result_proto.mutable_optimize_stats();
   int64_t before_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
-  if (before_size != Filesystem::kBadFileSize) {
-    optimize_stats->set_storage_size_before(before_size);
-  } else {
-    // Set -1 as a sentinel value when failures occur.
-    optimize_stats->set_storage_size_before(-1);
-  }
+  optimize_stats->set_storage_size_before(
+      Filesystem::SanitizeFileSize(before_size));
 
   // Flushes data to disk before doing optimization
   auto status = InternalPersistToDisk(PersistType::FULL);
@@ -1230,12 +1279,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   optimize_status_file.Write(std::move(optimize_status));
 
   int64_t after_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
-  if (after_size != Filesystem::kBadFileSize) {
-    optimize_stats->set_storage_size_after(after_size);
-  } else {
-    // Set -1 as a sentinel value when failures occur.
-    optimize_stats->set_storage_size_after(-1);
-  }
+  optimize_stats->set_storage_size_after(
+      Filesystem::SanitizeFileSize(after_size));
   optimize_stats->set_latency_ms(optimize_timer->GetElapsedMilliseconds());
 
   TransformStatus(optimization_status, result_status);
@@ -1317,11 +1362,8 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   }
 
   int64_t index_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
-  if (index_size != Filesystem::kBadFileSize) {
-    result.mutable_storage_info()->set_total_storage_size(index_size);
-  } else {
-    result.mutable_storage_info()->set_total_storage_size(-1);
-  }
+  result.mutable_storage_info()->set_total_storage_size(
+      Filesystem::SanitizeFileSize(index_size));
   *result.mutable_storage_info()->mutable_document_storage_info() =
       document_store_->GetStorageInfo();
   *result.mutable_storage_info()->mutable_schema_store_storage_info() =

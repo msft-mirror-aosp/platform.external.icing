@@ -133,18 +133,10 @@ libtextclassifier3::StatusOr<int64_t> MainIndex::GetElementsSize() const {
 
 IndexStorageInfoProto MainIndex::GetStorageInfo(
     IndexStorageInfoProto storage_info) const {
-  int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
-  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
-    storage_info.set_main_index_lexicon_size(lexicon_elt_size);
-  } else {
-    storage_info.set_main_index_lexicon_size(-1);
-  }
-  int64_t index_elt_size = flash_index_storage_->GetElementsSize();
-  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
-    storage_info.set_main_index_storage_size(index_elt_size);
-  } else {
-    storage_info.set_main_index_storage_size(-1);
-  }
+  storage_info.set_main_index_lexicon_size(
+      IcingFilesystem::SanitizeFileSize(main_lexicon_->GetElementsSize()));
+  storage_info.set_main_index_storage_size(
+      Filesystem::SanitizeFileSize(flash_index_storage_->GetElementsSize()));
   storage_info.set_main_index_block_size(flash_index_storage_->block_size());
   storage_info.set_num_blocks(flash_index_storage_->num_blocks());
   storage_info.set_min_free_fraction(flash_index_storage_->min_free_fraction());
@@ -615,16 +607,22 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
   return libtextclassifier3::Status::OK;
 }
 
-void MainIndex::GetDebugInfo(int verbosity, std::string* out) const {
+IndexDebugInfoProto::MainIndexDebugInfoProto MainIndex::GetDebugInfo(
+    int verbosity) const {
+  IndexDebugInfoProto::MainIndexDebugInfoProto res;
+
   // Lexicon.
-  out->append("Main Lexicon stats:\n");
-  main_lexicon_->GetDebugInfo(verbosity, out);
+  main_lexicon_->GetDebugInfo(verbosity, res.mutable_lexicon_info());
+
+  res.set_last_added_document_id(last_added_document_id());
 
   if (verbosity <= 0) {
-    return;
+    return res;
   }
 
-  flash_index_storage_->GetDebugInfo(verbosity, out);
+  flash_index_storage_->GetDebugInfo(verbosity,
+                                     res.mutable_flash_index_storage_info());
+  return res;
 }
 
 }  // namespace lib
