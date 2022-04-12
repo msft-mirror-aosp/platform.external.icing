@@ -493,5 +493,17 @@ SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
   return section_manager_->GetMetadataList(schema_type);
 }
 
+libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
+    const {
+  SchemaDebugInfoProto debug_info;
+  if (has_schema_successfully_set_) {
+    ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema());
+    *debug_info.mutable_schema() = *schema;
+  }
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
+  debug_info.set_crc(crc.Get());
+  return debug_info;
+}
+
 }  // namespace lib
 }  // namespace icing

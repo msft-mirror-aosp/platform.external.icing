@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/schema.proto";
 import "icing/proto/status.proto";
 import "icing/proto/storage.proto";
 
@@ -90,12 +91,26 @@ message DocumentDebugInfoProto {
 }
 
 // Next tag: 3
+message SchemaDebugInfoProto {
+  // Copy of the SchemaProto if it has been set in the schema store.
+  // Modifying this does not affect the Schema that IcingSearchEngine holds.
+  optional SchemaProto schema = 1;
+
+  // The most recent checksum of the schema store, by calling
+  // SchemaStore::ComputeChecksum().
+  optional uint32 crc = 2;
+}
+
+// Next tag: 4
 message DebugInfoProto {
   // Debug information of the index.
   optional IndexDebugInfoProto index_info = 1;
 
   // Debug information of the document store.
   optional DocumentDebugInfoProto document_info = 2;
+
+  // Debug information of the schema store.
+  optional SchemaDebugInfoProto schema_info = 3;
 }
 
 // Next tag: 3
