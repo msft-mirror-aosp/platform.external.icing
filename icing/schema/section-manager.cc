@@ -48,39 +48,6 @@ namespace {
 using TypeSectionMap =
     std::unordered_map<std::string, const std::vector<SectionMetadata>>;
 
-// This state helps detect infinite loops (e.g. two type configs referencing
-// each other) when assigning sections. The combination of 'number of section
-// assigned' and 'current schema name' represents a unique state in the
-// section-assign process. If the same state is seen the second time, that means
-// an infinite loop.
-struct SectionAssigningState {
-  size_t num_sections_assigned;
-  std::string current_schema_name;
-
-  SectionAssigningState(size_t num_sections_assigned_in,
-                        std::string&& current_schema_name_in)
-      : num_sections_assigned(num_sections_assigned_in),
-        current_schema_name(std::move(current_schema_name_in)) {}
-};
-
-// Provides a hash value of this struct so that it can be stored in a hash
-// set.
-struct SectionAssigningStateHasher {
-  size_t operator()(const SectionAssigningState& state) const {
-    size_t str_hash = std::hash<std::string>()(state.current_schema_name);
-    size_t int_hash = std::hash<size_t>()(state.num_sections_assigned);
-    // Combine the two hashes by taking the upper 16-bits of the string hash and
-    // the lower 16-bits of the int hash.
-    return (str_hash & 0xFFFF0000) | (int_hash & 0x0000FFFF);
-  }
-};
-
-bool operator==(const SectionAssigningState& lhs,
-                const SectionAssigningState& rhs) {
-  return lhs.num_sections_assigned == rhs.num_sections_assigned &&
-         lhs.current_schema_name == rhs.current_schema_name;
-}
-
 // Helper function to concatenate a path and a property name
 std::string ConcatenatePath(const std::string& path,
                             const std::string& next_property_name) {
@@ -90,28 +57,14 @@ std::string ConcatenatePath(const std::string& path,
   return absl_ports::StrCat(path, kPropertySeparator, next_property_name);
 }
 
-// Helper function to recursively identify sections from a type config and add
-// them to a section metadata list
 libtextclassifier3::Status AssignSections(
-    const SchemaTypeConfigProto& type_config,
+    const SchemaTypeConfigProto& current_type_config,
     const std::string& current_section_path,
     const SchemaUtil::TypeConfigMap& type_config_map,
-    std::unordered_set<SectionAssigningState, SectionAssigningStateHasher>*
-        visited_states,
     std::vector<SectionMetadata>* metadata_list) {
-  if (!visited_states
-           ->emplace(metadata_list->size(),
-                     std::string(type_config.schema_type()))
-           .second) {
-    // Failed to insert, the same state has been seen before, there's an
-    // infinite loop in type configs
-    return absl_ports::InvalidArgumentError(
-        "Infinite loop detected in type configs");
-  }
-
   // Sorts properties by name's alphabetical order so that order doesn't affect
   // section assigning.
-  auto sorted_properties = type_config.properties();
+  auto sorted_properties = current_type_config.properties();
   std::sort(sorted_properties.pointer_begin(), sorted_properties.pointer_end(),
             [](const PropertyConfigProto* p1, const PropertyConfigProto* p2) {
               return p1->property_name() < p2->property_name();
@@ -137,7 +90,7 @@ libtextclassifier3::Status AssignSections(
             AssignSections(nested_type_config,
                            ConcatenatePath(current_section_path,
                                            property_config.property_name()),
-                           type_config_map, visited_states, metadata_list));
+                           type_config_map, metadata_list));
       }
     }
 
@@ -162,6 +115,7 @@ libtextclassifier3::Status AssignSections(
           "allowed: %d",
           kMaxSectionId - kMinSectionId + 1));
     }
+
     // Creates section metadata from property config
     metadata_list->emplace_back(
         new_section_id,
@@ -182,17 +136,14 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
   std::vector<std::vector<SectionMetadata>> section_metadata_cache(
       schema_type_mapper.num_keys());
 
-  std::unordered_set<SectionAssigningState, SectionAssigningStateHasher>
-      visited_states;
   for (const auto& name_and_type : type_config_map) {
     // Assigns sections for each type config
-    visited_states.clear();
     const std::string& type_config_name = name_and_type.first;
     const SchemaTypeConfigProto& type_config = name_and_type.second;
     std::vector<SectionMetadata> metadata_list;
-    ICING_RETURN_IF_ERROR(
-        AssignSections(type_config, /*current_section_path*/ "",
-                       type_config_map, &visited_states, &metadata_list));
+    ICING_RETURN_IF_ERROR(AssignSections(type_config,
+                                         /*current_section_path*/ "",
+                                         type_config_map, &metadata_list));
 
     // Insert the section metadata list at the index of the type's SchemaTypeId
     ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
@@ -204,23 +155,14 @@ BuildSectionMetadataCache(const SchemaUtil::TypeConfigMap& type_config_map,
 
 // Helper function to get string content from a property. Repeated values are
 // joined into one string. We only care about the STRING data type.
-std::vector<std::string> GetPropertyContent(const PropertyProto& property) {
-  std::vector<std::string> values;
+std::vector<std::string_view> GetStringPropertyContent(
+    const PropertyProto& property) {
+  std::vector<std::string_view> values;
   if (!property.string_values().empty()) {
     std::copy(property.string_values().begin(), property.string_values().end(),
               std::back_inserter(values));
   }
   return values;
-}
-
-// Helper function to get metadata list of a type config
-libtextclassifier3::StatusOr<std::vector<SectionMetadata>> GetMetadataList(
-    const KeyMapper<SchemaTypeId>& schema_type_mapper,
-    const std::vector<std::vector<SectionMetadata>>& section_metadata_cache,
-    const std::string& type_config_name) {
-  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
-                         schema_type_mapper.Get(type_config_name));
-  return section_metadata_cache.at(schema_type_id);
 }
 
 }  // namespace
@@ -243,9 +185,9 @@ SectionManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
       schema_type_mapper, std::move(section_metadata_cache)));
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SectionManager::GetSectionContent(const DocumentProto& document,
-                                  std::string_view section_path) const {
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SectionManager::GetStringSectionContent(const DocumentProto& document,
+                                        std::string_view section_path) const {
   // Finds the first property name in section_path
   size_t separator_position = section_path.find(kPropertySeparator);
   std::string_view current_property_name =
@@ -270,7 +212,8 @@ SectionManager::GetSectionContent(const DocumentProto& document,
 
   if (separator_position == std::string::npos) {
     // Current property name is the last one in section path
-    std::vector<std::string> content = GetPropertyContent(*property_iterator);
+    std::vector<std::string_view> content =
+        GetStringPropertyContent(*property_iterator);
     if (content.empty()) {
       // The content of property is explicitly set to empty, we'll treat it as
       // NOT_FOUND because the index doesn't care about empty strings.
@@ -283,11 +226,13 @@ SectionManager::GetSectionContent(const DocumentProto& document,
   // Gets section content recursively
   std::string_view sub_section_path =
       section_path.substr(separator_position + 1);
-  std::vector<std::string> nested_document_content;
+  std::vector<std::string_view> nested_document_content;
   for (const auto& nested_document : property_iterator->document_values()) {
-    auto content_or = GetSectionContent(nested_document, sub_section_path);
+    auto content_or =
+        GetStringSectionContent(nested_document, sub_section_path);
     if (content_or.ok()) {
-      std::vector<std::string> content = std::move(content_or).ValueOrDie();
+      std::vector<std::string_view> content =
+          std::move(content_or).ValueOrDie();
       std::move(content.begin(), content.end(),
                 std::back_inserter(nested_document_content));
     }
@@ -300,26 +245,24 @@ SectionManager::GetSectionContent(const DocumentProto& document,
   return nested_document_content;
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SectionManager::GetSectionContent(const DocumentProto& document,
-                                  SectionId section_id) const {
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SectionManager::GetStringSectionContent(const DocumentProto& document,
+                                        SectionId section_id) const {
   if (!IsSectionIdValid(section_id)) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Section id %d is greater than the max value %d", section_id,
         kMaxSectionId));
   }
-  ICING_ASSIGN_OR_RETURN(
-      const std::vector<SectionMetadata>& metadata_list,
-      GetMetadataList(schema_type_mapper_, section_metadata_cache_,
-                      document.schema()));
-  if (section_id >= metadata_list.size()) {
+  ICING_ASSIGN_OR_RETURN(const std::vector<SectionMetadata>* metadata_list,
+                         GetMetadataList(document.schema()));
+  if (section_id >= metadata_list->size()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Section with id %d doesn't exist in type config %s", section_id,
         document.schema().c_str()));
   }
   // The index of metadata list is the same as the section id, so we can use
   // section id as the index.
-  return GetSectionContent(document, metadata_list[section_id].path);
+  return GetStringSectionContent(document, metadata_list->at(section_id).path);
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>
@@ -345,14 +288,12 @@ SectionManager::GetSectionMetadata(SchemaTypeId schema_type_id,
 
 libtextclassifier3::StatusOr<std::vector<Section>>
 SectionManager::ExtractSections(const DocumentProto& document) const {
-  ICING_ASSIGN_OR_RETURN(
-      const std::vector<SectionMetadata>& metadata_list,
-      GetMetadataList(schema_type_mapper_, section_metadata_cache_,
-                      document.schema()));
+  ICING_ASSIGN_OR_RETURN(const std::vector<SectionMetadata>* metadata_list,
+                         GetMetadataList(document.schema()));
   std::vector<Section> sections;
-  for (const auto& section_metadata : metadata_list) {
+  for (const auto& section_metadata : *metadata_list) {
     auto section_content_or =
-        GetSectionContent(document, section_metadata.path);
+        GetStringSectionContent(document, section_metadata.path);
     // Adds to result vector if section is found in document
     if (section_content_or.ok()) {
       sections.emplace_back(SectionMetadata(section_metadata),
@@ -360,6 +301,13 @@ SectionManager::ExtractSections(const DocumentProto& document) const {
     }
   }
   return sections;
+}
+
+libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
+SectionManager::GetMetadataList(const std::string& type_config_name) const {
+  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+                         schema_type_mapper_.Get(type_config_name));
+  return &section_metadata_cache_.at(schema_type_id);
 }
 
 }  // namespace lib
