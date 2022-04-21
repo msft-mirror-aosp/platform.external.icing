@@ -37,8 +37,7 @@
 #ifndef ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 #define ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 
