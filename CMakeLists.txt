@@ -14,6 +14,8 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
+project(icing)
+
 add_definitions("-DICING_REVERSE_JNI_SEGMENTATION=1")
 set(VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/icing/jni.lds")
 set(CMAKE_SHARED_LINKER_FLAGS

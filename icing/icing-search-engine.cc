@@ -47,6 +47,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/query/query-processor.h"
+#include "icing/query/suggestion-processor.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"
 #include "icing/result/result-retriever.h"
@@ -129,6 +130,26 @@ libtextclassifier3::Status ValidateSearchSpec(
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("SearchSpecProto.query is longer than the maximum "
                            "allowed query length: ",
+                           std::to_string(configuration.max_query_length)));
+  }
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status ValidateSuggestionSpec(
+    const SuggestionSpecProto& suggestion_spec,
+    const PerformanceConfiguration& configuration) {
+  if (suggestion_spec.prefix().empty()) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("SuggestionSpecProto.prefix is empty!"));
+  }
+  if (suggestion_spec.num_to_return() <= 0) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "SuggestionSpecProto.num_to_return must be positive."));
+  }
+  if (suggestion_spec.prefix().size() > configuration.max_query_length) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("SuggestionSpecProto.prefix is longer than the "
+                           "maximum allowed prefix length: ",
                            std::to_string(configuration.max_query_length)));
   }
   return libtextclassifier3::Status::OK;
@@ -1397,8 +1418,8 @@ SearchResultProto IcingSearchEngine::Search(
   component_timer = clock_->GetNewTimer();
   // Scores but does not rank the results.
   libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
-      scoring_processor_or =
-          ScoringProcessor::Create(scoring_spec, document_store_.get());
+      scoring_processor_or = ScoringProcessor::Create(
+          scoring_spec, document_store_.get(), schema_store_.get());
   if (!scoring_processor_or.ok()) {
     TransformStatus(scoring_processor_or.status(), result_status);
     return result_proto;
@@ -1823,6 +1844,63 @@ ResetResultProto IcingSearchEngine::ResetInternal() {
 
   result_status->set_code(StatusProto::OK);
   return result_proto;
+}
+
+SuggestionResponse IcingSearchEngine::SearchSuggestions(
+    const SuggestionSpecProto& suggestion_spec) {
+  // TODO(b/146008613) Explore ideas to make this function read-only.
+  absl_ports::unique_lock l(&mutex_);
+  SuggestionResponse response;
+  StatusProto* response_status = response.mutable_status();
+  if (!initialized_) {
+    response_status->set_code(StatusProto::FAILED_PRECONDITION);
+    response_status->set_message("IcingSearchEngine has not been initialized!");
+    return response;
+  }
+
+  libtextclassifier3::Status status =
+      ValidateSuggestionSpec(suggestion_spec, performance_configuration_);
+  if (!status.ok()) {
+    TransformStatus(status, response_status);
+    return response;
+  }
+
+  // Create the suggestion processor.
+  auto suggestion_processor_or = SuggestionProcessor::Create(
+      index_.get(), language_segmenter_.get(), normalizer_.get());
+  if (!suggestion_processor_or.ok()) {
+    TransformStatus(suggestion_processor_or.status(), response_status);
+    return response;
+  }
+  std::unique_ptr<SuggestionProcessor> suggestion_processor =
+      std::move(suggestion_processor_or).ValueOrDie();
+
+  std::vector<NamespaceId> namespace_ids;
+  namespace_ids.reserve(suggestion_spec.namespace_filters_size());
+  for (std::string_view name_space : suggestion_spec.namespace_filters()) {
+    auto namespace_id_or = document_store_->GetNamespaceId(name_space);
+    if (!namespace_id_or.ok()) {
+      continue;
+    }
+    namespace_ids.push_back(namespace_id_or.ValueOrDie());
+  }
+
+  // Run suggestion based on given SuggestionSpec.
+  libtextclassifier3::StatusOr<std::vector<TermMetadata>> terms_or =
+      suggestion_processor->QuerySuggestions(suggestion_spec, namespace_ids);
+  if (!terms_or.ok()) {
+    TransformStatus(terms_or.status(), response_status);
+    return response;
+  }
+
+  // Convert vector<TermMetaData> into final SuggestionResponse proto.
+  for (TermMetadata& term : terms_or.ValueOrDie()) {
+    SuggestionResponse::Suggestion suggestion;
+    suggestion.set_query(std::move(term.content));
+    response.mutable_suggestions()->Add(std::move(suggestion));
+  }
+  response_status->set_code(StatusProto::OK);
+  return response;
 }
 
 }  // namespace lib
