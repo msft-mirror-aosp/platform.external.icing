@@ -14,9 +14,8 @@
 
 #include "icing/index/main/index-block.h"
 
-#include <inttypes.h>
-
 #include <algorithm>
+#include <cinttypes>
 #include <limits>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -51,7 +50,7 @@ libtextclassifier3::Status ValidatePostingListBytes(uint32_t posting_list_bytes,
 
 uint32_t IndexBlock::ApproximateFullPostingListHitsForBlock(
     uint32_t block_size, int posting_list_index_bits) {
-  // Assume 50% compressed and most don't have scores.
+  // Assume 50% compressed and most don't have term frequencies.
   uint32_t bytes_per_hit = sizeof(Hit::Value) / 2;
   return (block_size - sizeof(BlockHeader)) /
          ((1u << posting_list_index_bits) * bytes_per_hit);

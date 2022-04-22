@@ -20,7 +20,6 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/proto/schema.proto.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/schema-util.h"
@@ -163,67 +162,6 @@ TEST_F(SectionManagerTest, CreationWithNullPointerShouldFail) {
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(SectionManagerTest, CreationWithSchemaInfiniteLoopShouldFail) {
-  // Creates 2 type configs that reference each other
-  SchemaTypeConfigProto type_config1;
-  type_config1.set_schema_type("type1");
-  auto property1 = type_config1.add_properties();
-  property1->set_property_name("property1");
-  property1->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  property1->set_schema_type("type2");  // Here we reference type2
-  property1->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property1->mutable_document_indexing_config()->set_index_nested_properties(
-      true);
-
-  SchemaTypeConfigProto type_config2;
-  type_config2.set_schema_type("type2");
-  auto property2 = type_config2.add_properties();
-  property2->set_property_name("property2");
-  property2->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  // Here we reference type1, which references type2 causing the infinite loop
-  property2->set_schema_type("type1");
-  property2->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property2->mutable_document_indexing_config()->set_index_nested_properties(
-      true);
-
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace("type1", type_config1);
-  type_config_map.emplace("type2", type_config2);
-
-  EXPECT_THAT(
-      SectionManager::Create(type_config_map, schema_type_mapper_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-               HasSubstr("Infinite loop detected")));
-}
-
-TEST_F(SectionManagerTest, CreationWithSchemaSelfReferenceShouldFail) {
-  // Creates a type config that has a section and references to self.
-  SchemaTypeConfigProto type_config;
-  type_config.set_schema_type("type");
-  auto property1 = type_config.add_properties();
-  property1->set_property_name("property1");
-  property1->set_data_type(PropertyConfigProto::DataType::STRING);
-  property1->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-  property1->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
-  auto property2 = type_config.add_properties();
-  property2->set_property_name("property2");
-  property2->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-  property2->mutable_document_indexing_config()->set_index_nested_properties(
-      true);
-  // Here we're referencing our own type, causing an infinite loop
-  property2->set_schema_type("type");
-  property2->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace("type", type_config);
-
-  EXPECT_THAT(
-      SectionManager::Create(type_config_map, schema_type_mapper_.get()),
-      StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE,
-               HasSubstr("Too many properties")));
-}
-
 TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
   SchemaTypeConfigProto type_config;
   type_config.set_schema_type("type");
@@ -247,60 +185,64 @@ TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
                HasSubstr("Too many properties")));
 }
 
-TEST_F(SectionManagerTest, GetSectionContent) {
+TEST_F(SectionManagerTest, GetStringSectionContent) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto section_manager,
       SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Test simple section paths
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "subject"),
-              IsOkAndHolds(ElementsAre("the subject")));
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "text"),
+  EXPECT_THAT(
+      section_manager->GetStringSectionContent(email_document_,
+                                               /*section_path*/ "subject"),
+      IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
+                                                       /*section_path*/ "text"),
               IsOkAndHolds(ElementsAre("the text")));
 
   // Test repeated values, they are joined into one string
-  ICING_ASSERT_OK_AND_ASSIGN(auto content, section_manager->GetSectionContent(
-                                               email_document_,
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto content,
+      section_manager->GetStringSectionContent(email_document_,
                                                /*section_path*/ "recipients"));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3"));
 
   // Test concatenated section paths: "property1.property2"
-  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetSectionContent(
+  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetStringSectionContent(
                                           conversation_document_,
                                           /*section_path*/ "emails.subject"));
   EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetSectionContent(
+  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetStringSectionContent(
                                           conversation_document_,
                                           /*section_path*/ "emails.text"));
   EXPECT_THAT(content, ElementsAre("the text", "the text"));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      content,
-      section_manager->GetSectionContent(conversation_document_,
-                                         /*section_path*/ "emails.recipients"));
+  ICING_ASSERT_OK_AND_ASSIGN(content,
+                             section_manager->GetStringSectionContent(
+                                 conversation_document_,
+                                 /*section_path*/ "emails.recipients"));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3",
                                    "recipient1", "recipient2", "recipient3"));
 
   // Test non-existing paths
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "name"),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "invalid"),
+  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
+                                                       /*section_path*/ "name"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(
-      section_manager->GetSectionContent(conversation_document_,
-                                         /*section_path*/ "emails.invalid"),
+      section_manager->GetStringSectionContent(email_document_,
+                                               /*section_path*/ "invalid"),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetStringSectionContent(
+                  conversation_document_,
+                  /*section_path*/ "emails.invalid"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // Test other data types
   // BYTES type can't be indexed, so content won't be returned
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 /*section_path*/ "attachment"),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      section_manager->GetStringSectionContent(email_document_,
+                                               /*section_path*/ "attachment"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // The following tests are similar to the ones above but use section ids
   // instead of section paths
@@ -310,16 +252,16 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   SectionId subject_section_id = 1;
   SectionId invalid_email_section_id = 2;
   ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(email_document_,
-                                                  recipients_section_id));
+      content, section_manager->GetStringSectionContent(email_document_,
+                                                        recipients_section_id));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3"));
 
-  EXPECT_THAT(
-      section_manager->GetSectionContent(email_document_, subject_section_id),
-      IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
+                                                       subject_section_id),
+              IsOkAndHolds(ElementsAre("the subject")));
 
-  EXPECT_THAT(section_manager->GetSectionContent(email_document_,
-                                                 invalid_email_section_id),
+  EXPECT_THAT(section_manager->GetStringSectionContent(
+                  email_document_, invalid_email_section_id),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Conversation (section id -> section path):
@@ -331,21 +273,21 @@ TEST_F(SectionManagerTest, GetSectionContent) {
   SectionId name_section_id = 2;
   SectionId invalid_conversation_section_id = 3;
   ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(
+      content, section_manager->GetStringSectionContent(
                    conversation_document_, emails_recipients_section_id));
   EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3",
                                    "recipient1", "recipient2", "recipient3"));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetSectionContent(conversation_document_,
-                                                  emails_subject_section_id));
+      content, section_manager->GetStringSectionContent(
+                   conversation_document_, emails_subject_section_id));
   EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
 
-  EXPECT_THAT(section_manager->GetSectionContent(conversation_document_,
-                                                 name_section_id),
+  EXPECT_THAT(section_manager->GetStringSectionContent(conversation_document_,
+                                                       name_section_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  EXPECT_THAT(section_manager->GetSectionContent(
+  EXPECT_THAT(section_manager->GetStringSectionContent(
                   conversation_document_, invalid_conversation_section_id),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }

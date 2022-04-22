@@ -40,19 +40,22 @@ class ScoringProcessor {
   //   A ScoringProcessor on success
   //   FAILED_PRECONDITION on any null pointer input
   static libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>> Create(
-      const ScoringSpecProto& scoring_spec,
-      const DocumentStore* document_store);
+      const ScoringSpecProto& scoring_spec, const DocumentStore* document_store,
+      const SchemaStore* schema_store);
 
   // Assigns scores to DocHitInfos from the given DocHitInfoIterator and returns
   // a vector of ScoredDocumentHits. The size of results is no more than
   // num_to_score. The order of results is the same as DocHitInfos from
   // DocHitInfoIterator.
   //
-  // NOTE: if the scoring spec doesn't require a scoring strategy, all
+  // If necessary, query_term_iterators is used to compute the BM25F relevance
+  // score. NOTE: if the scoring spec doesn't require a scoring strategy, all
   // ScoredDocumentHits will be assigned a default score 0.
   std::vector<ScoredDocumentHit> Score(
       std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator,
-      int num_to_score);
+      int num_to_score,
+      std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+          query_term_iterators = nullptr);
 
  private:
   explicit ScoringProcessor(std::unique_ptr<Scorer> scorer)

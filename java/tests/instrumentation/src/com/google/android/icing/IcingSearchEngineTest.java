@@ -18,18 +18,21 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
+import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
+import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
+import com.google.android.icing.proto.PersistType;
 import com.google.android.icing.proto.PropertyConfigProto;
 import com.google.android.icing.proto.PropertyProto;
 import com.google.android.icing.proto.PutResultProto;
@@ -42,9 +45,14 @@ import com.google.android.icing.proto.ScoringSpecProto;
 import com.google.android.icing.proto.SearchResultProto;
 import com.google.android.icing.proto.SearchSpecProto;
 import com.google.android.icing.proto.SetSchemaResultProto;
+import com.google.android.icing.proto.SnippetMatchProto;
+import com.google.android.icing.proto.SnippetProto;
 import com.google.android.icing.proto.StatusProto;
+import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.StringIndexingConfig;
 import com.google.android.icing.proto.StringIndexingConfig.TokenizerType;
+import com.google.android.icing.proto.SuggestionResponse;
+import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.UsageReport;
 import com.google.android.icing.IcingSearchEngine;
@@ -116,7 +124,7 @@ public final class IcingSearchEngineTest {
 
   @After
   public void tearDown() throws Exception {
-    icingSearchEngine.destroy();
+    icingSearchEngine.close();
   }
 
   @Test
@@ -162,7 +170,8 @@ public final class IcingSearchEngineTest {
     PutResultProto putResultProto = icingSearchEngine.put(emailDocument);
     assertStatusOk(putResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertStatusOk(getResultProto.getStatus());
     assertThat(getResultProto.getDocument()).isEqualTo(emailDocument);
   }
@@ -280,7 +289,8 @@ public final class IcingSearchEngineTest {
     DeleteResultProto deleteResultProto = icingSearchEngine.delete("namespace", "uri");
     assertStatusOk(deleteResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
@@ -304,7 +314,8 @@ public final class IcingSearchEngineTest {
         icingSearchEngine.deleteByNamespace("namespace");
     assertStatusOk(deleteByNamespaceResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
@@ -328,7 +339,8 @@ public final class IcingSearchEngineTest {
         icingSearchEngine.deleteBySchemaType(EMAIL_TYPE);
     assertStatusOk(deleteBySchemaTypeResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
@@ -373,12 +385,14 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument1);
 
-    DeleteResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
+    DeleteByQueryResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
     assertStatusOk(deleteResultProto.getStatus());
 
-    GetResultProto getResultProto = icingSearchEngine.get("namespace", "uri1");
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
     assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
-    getResultProto = icingSearchEngine.get("namespace", "uri2");
+    getResultProto =
+        icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
     assertStatusOk(getResultProto.getStatus());
   }
 
@@ -386,7 +400,8 @@ public final class IcingSearchEngineTest {
   public void testPersistToDisk() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
-    PersistToDiskResultProto persistToDiskResultProto = icingSearchEngine.persistToDisk();
+    PersistToDiskResultProto persistToDiskResultProto =
+        icingSearchEngine.persistToDisk(PersistType.Code.LITE);
     assertStatusOk(persistToDiskResultProto.getStatus());
   }
 
@@ -406,6 +421,14 @@ public final class IcingSearchEngineTest {
     assertStatusOk(getOptimizeInfoResultProto.getStatus());
     assertThat(getOptimizeInfoResultProto.getOptimizableDocs()).isEqualTo(0);
     assertThat(getOptimizeInfoResultProto.getEstimatedOptimizableBytes()).isEqualTo(0);
+  }
+
+  @Test
+  public void testGetStorageInfo() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    StorageInfoResultProto storageInfoResultProto = icingSearchEngine.getStorageInfo();
+    assertStatusOk(storageInfoResultProto.getStatus());
   }
 
   @Test
@@ -465,6 +488,175 @@ public final class IcingSearchEngineTest {
             .build();
     ReportUsageResultProto reportUsageResultProto = icingSearchEngine.reportUsage(usageReport);
     assertStatusOk(reportUsageResultProto.getStatus());
+  }
+
+  @Test
+  public void testCJKTSnippets() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(createEmailTypeConfig()).build();
+    assertStatusOk(
+        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false).getStatus());
+
+    // String:     "天是蓝的"
+    //              ^ ^^ ^
+    // UTF16 idx:   0 1 2 3
+    // Breaks into segments: "天", "是", "蓝", "的"
+    // "The sky is blue"
+    String chinese = "天是蓝的";
+    assertThat(chinese.length()).isEqualTo(4);
+    DocumentProto emailDocument1 =
+        createEmailDocument("namespace", "uri1").toBuilder()
+            .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues(chinese))
+            .build();
+    assertStatusOk(icingSearchEngine.put(emailDocument1).getStatus());
+
+    // Search and request snippet matching but no windowing.
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            .setQuery("是")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+    ResultSpecProto resultSpecProto =
+        ResultSpecProto.newBuilder()
+            .setSnippetSpec(
+                ResultSpecProto.SnippetSpecProto.newBuilder()
+                    .setNumToSnippet(Integer.MAX_VALUE)
+                    .setNumMatchesPerProperty(Integer.MAX_VALUE))
+            .build();
+
+    // Search and make sure that we got a single successful results
+    SearchResultProto searchResultProto =
+        icingSearchEngine.search(
+            searchSpec, ScoringSpecProto.getDefaultInstance(), resultSpecProto);
+    assertStatusOk(searchResultProto.getStatus());
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+
+    // Ensure that one and only one property was matched and it was "subject"
+    SnippetProto snippetProto = searchResultProto.getResults(0).getSnippet();
+    assertThat(snippetProto.getEntriesList()).hasSize(1);
+    SnippetProto.EntryProto entryProto = snippetProto.getEntries(0);
+    assertThat(entryProto.getPropertyName()).isEqualTo("subject");
+
+    // Get the content for "subject" and see what the match is.
+    DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
+    assertThat(resultDocument.getPropertiesList()).hasSize(1);
+    PropertyProto subjectProperty = resultDocument.getProperties(0);
+    assertThat(subjectProperty.getName()).isEqualTo("subject");
+    assertThat(subjectProperty.getStringValuesList()).hasSize(1);
+    String content = subjectProperty.getStringValues(0);
+
+    // Ensure that there is one and only one match within "subject"
+    assertThat(entryProto.getSnippetMatchesList()).hasSize(1);
+    SnippetMatchProto matchProto = entryProto.getSnippetMatches(0);
+
+    int matchStart = matchProto.getExactMatchUtf16Position();
+    int matchEnd = matchStart + matchProto.getExactMatchUtf16Length();
+    assertThat(matchStart).isEqualTo(1);
+    assertThat(matchEnd).isEqualTo(2);
+    String match = content.substring(matchStart, matchEnd);
+    assertThat(match).isEqualTo("是");
+  }
+
+  @Test
+  public void testUtf16MultiByteSnippets() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(createEmailTypeConfig()).build();
+    assertStatusOk(
+        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false).getStatus());
+
+    // String:    "𐀀𐀁 𐀂𐀃 𐀄"
+    //             ^  ^  ^
+    // UTF16 idx:  0  5  10
+    // Breaks into segments: "𐀀𐀁", "𐀂𐀃", "𐀄"
+    String text = "𐀀𐀁 𐀂𐀃 𐀄";
+    assertThat(text.length()).isEqualTo(12);
+    DocumentProto emailDocument1 =
+        createEmailDocument("namespace", "uri1").toBuilder()
+            .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues(text))
+            .build();
+    assertStatusOk(icingSearchEngine.put(emailDocument1).getStatus());
+
+    // Search and request snippet matching but no windowing.
+    SearchSpecProto searchSpec =
+        SearchSpecProto.newBuilder()
+            .setQuery("𐀂")
+            .setTermMatchType(TermMatchType.Code.PREFIX)
+            .build();
+    ResultSpecProto resultSpecProto =
+        ResultSpecProto.newBuilder()
+            .setSnippetSpec(
+                ResultSpecProto.SnippetSpecProto.newBuilder()
+                    .setNumToSnippet(Integer.MAX_VALUE)
+                    .setNumMatchesPerProperty(Integer.MAX_VALUE))
+            .build();
+
+    // Search and make sure that we got a single successful results
+    SearchResultProto searchResultProto =
+        icingSearchEngine.search(
+            searchSpec, ScoringSpecProto.getDefaultInstance(), resultSpecProto);
+    assertStatusOk(searchResultProto.getStatus());
+    assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
+
+    // Ensure that one and only one property was matched and it was "subject"
+    SnippetProto snippetProto = searchResultProto.getResults(0).getSnippet();
+    assertThat(snippetProto.getEntriesList()).hasSize(1);
+    SnippetProto.EntryProto entryProto = snippetProto.getEntries(0);
+    assertThat(entryProto.getPropertyName()).isEqualTo("subject");
+
+    // Get the content for "subject" and see what the match is.
+    DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
+    assertThat(resultDocument.getPropertiesList()).hasSize(1);
+    PropertyProto subjectProperty = resultDocument.getProperties(0);
+    assertThat(subjectProperty.getName()).isEqualTo("subject");
+    assertThat(subjectProperty.getStringValuesList()).hasSize(1);
+    String content = subjectProperty.getStringValues(0);
+
+    // Ensure that there is one and only one match within "subject"
+    assertThat(entryProto.getSnippetMatchesList()).hasSize(1);
+    SnippetMatchProto matchProto = entryProto.getSnippetMatches(0);
+
+    int matchStart = matchProto.getExactMatchUtf16Position();
+    int matchEnd = matchStart + matchProto.getExactMatchUtf16Length();
+    assertThat(matchStart).isEqualTo(5);
+    assertThat(matchEnd).isEqualTo(9);
+    String match = content.substring(matchStart, matchEnd);
+    assertThat(match).isEqualTo("𐀂𐀃");
+  }
+
+  @Test
+  public void testSearchSuggestions() {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument1 =
+        createEmailDocument("namespace", "uri1").toBuilder()
+            .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("fo"))
+            .build();
+    DocumentProto emailDocument2 =
+        createEmailDocument("namespace", "uri2").toBuilder()
+            .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
+            .build();
+    assertStatusOk(icingSearchEngine.put(emailDocument1).getStatus());
+    assertStatusOk(icingSearchEngine.put(emailDocument2).getStatus());
+
+    SuggestionSpecProto suggestionSpec =
+        SuggestionSpecProto.newBuilder().setPrefix("f").setNumToReturn(10).build();
+
+    SuggestionResponse response = icingSearchEngine.searchSuggestions(suggestionSpec);
+    assertStatusOk(response.getStatus());
+    assertThat(response.getSuggestionsList()).hasSize(2);
+    assertThat(response.getSuggestions(0).getQuery()).isEqualTo("foo");
+    assertThat(response.getSuggestions(1).getQuery()).isEqualTo("fo");
   }
 
   private static void assertStatusOk(StatusProto status) {

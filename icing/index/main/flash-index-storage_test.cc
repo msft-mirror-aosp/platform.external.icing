@@ -14,10 +14,10 @@
 
 #include "icing/index/main/flash-index-storage.h"
 
-#include <stdlib.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -160,10 +160,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
     std::vector<Hit> hits1 = {
-        Hit(/*section_id=*/1, /*document_id=*/0, /*score=*/12),
-        Hit(/*section_id=*/6, /*document_id=*/2, /*score=*/19),
-        Hit(/*section_id=*/5, /*document_id=*/2, /*score=*/100),
-        Hit(/*section_id=*/8, /*document_id=*/5, /*score=*/197)};
+        Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
+        Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
+        Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
+        Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
     for (const Hit& hit : hits1) {
       ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
     }
@@ -183,10 +183,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
     std::vector<Hit> hits2 = {
-        Hit(/*section_id=*/4, /*document_id=*/0, /*score=*/12),
-        Hit(/*section_id=*/8, /*document_id=*/4, /*score=*/19),
-        Hit(/*section_id=*/9, /*document_id=*/7, /*score=*/100),
-        Hit(/*section_id=*/6, /*document_id=*/7, /*score=*/197)};
+        Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
+        Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
+        Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
+        Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
     for (const Hit& hit : hits2) {
       ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
     }
@@ -217,10 +217,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
                 IsOkAndHolds(IsEmpty()));
     std::vector<Hit> hits3 = {
-        Hit(/*section_id=*/7, /*document_id=*/1, /*score=*/62),
-        Hit(/*section_id=*/12, /*document_id=*/3, /*score=*/45),
-        Hit(/*section_id=*/11, /*document_id=*/18, /*score=*/12),
-        Hit(/*section_id=*/7, /*document_id=*/100, /*score=*/74)};
+        Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
+        Hit(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45),
+        Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
+        Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
     for (const Hit& hit : hits3) {
       ICING_ASSERT_OK(posting_list_holder3.posting_list.PrependHit(hit));
     }
@@ -256,10 +256,10 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
     std::vector<Hit> hits1 = {
-        Hit(/*section_id=*/1, /*document_id=*/0, /*score=*/12),
-        Hit(/*section_id=*/6, /*document_id=*/2, /*score=*/19),
-        Hit(/*section_id=*/5, /*document_id=*/2, /*score=*/100),
-        Hit(/*section_id=*/8, /*document_id=*/5, /*score=*/197)};
+        Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
+        Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
+        Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
+        Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
     for (const Hit& hit : hits1) {
       ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
     }
@@ -279,10 +279,10 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
     std::vector<Hit> hits2 = {
-        Hit(/*section_id=*/4, /*document_id=*/0, /*score=*/12),
-        Hit(/*section_id=*/8, /*document_id=*/4, /*score=*/19),
-        Hit(/*section_id=*/9, /*document_id=*/7, /*score=*/100),
-        Hit(/*section_id=*/6, /*document_id=*/7, /*score=*/197)};
+        Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
+        Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
+        Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
+        Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
     for (const Hit& hit : hits2) {
       ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
     }
@@ -313,10 +313,10 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
                 IsOkAndHolds(IsEmpty()));
     std::vector<Hit> hits3 = {
-        Hit(/*section_id=*/7, /*document_id=*/1, /*score=*/62),
-        Hit(/*section_id=*/12, /*document_id=*/3, /*score=*/45),
-        Hit(/*section_id=*/11, /*document_id=*/18, /*score=*/12),
-        Hit(/*section_id=*/7, /*document_id=*/100, /*score=*/74)};
+        Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
+        Hit(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45),
+        Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
+        Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
     for (const Hit& hit : hits3) {
       ICING_ASSERT_OK(posting_list_holder3.posting_list.PrependHit(hit));
     }
@@ -354,10 +354,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
       std::vector<Hit> hits1 = {
-          Hit(/*section_id=*/1, /*document_id=*/0, /*score=*/12),
-          Hit(/*section_id=*/6, /*document_id=*/2, /*score=*/19),
-          Hit(/*section_id=*/5, /*document_id=*/2, /*score=*/100),
-          Hit(/*section_id=*/8, /*document_id=*/5, /*score=*/197)};
+          Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
+          Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
+          Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
+          Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
       for (const Hit& hit : hits1) {
         ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
       }
@@ -377,10 +377,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
       std::vector<Hit> hits2 = {
-          Hit(/*section_id=*/4, /*document_id=*/0, /*score=*/12),
-          Hit(/*section_id=*/8, /*document_id=*/4, /*score=*/19),
-          Hit(/*section_id=*/9, /*document_id=*/7, /*score=*/100),
-          Hit(/*section_id=*/6, /*document_id=*/7, /*score=*/197)};
+          Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
+          Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
+          Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
+          Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
       for (const Hit& hit : hits2) {
         ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
       }
@@ -425,10 +425,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
                   IsOkAndHolds(IsEmpty()));
       std::vector<Hit> hits3 = {
-          Hit(/*section_id=*/7, /*document_id=*/1, /*score=*/62),
-          Hit(/*section_id=*/12, /*document_id=*/3, /*score=*/45),
-          Hit(/*section_id=*/11, /*document_id=*/18, /*score=*/12),
-          Hit(/*section_id=*/7, /*document_id=*/100, /*score=*/74)};
+          Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
+          Hit(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45),
+          Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
+          Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
       for (const Hit& hit : hits3) {
         ICING_ASSERT_OK(posting_list_holder3.posting_list.PrependHit(hit));
       }
@@ -466,10 +466,10 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
     std::vector<Hit> hits1 = {
-        Hit(/*section_id=*/1, /*document_id=*/0, /*score=*/12),
-        Hit(/*section_id=*/6, /*document_id=*/2, /*score=*/19),
-        Hit(/*section_id=*/5, /*document_id=*/2, /*score=*/100),
-        Hit(/*section_id=*/8, /*document_id=*/5, /*score=*/197)};
+        Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
+        Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
+        Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
+        Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
     for (const Hit& hit : hits1) {
       ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
     }
@@ -492,10 +492,10 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
     std::vector<Hit> hits2 = {
-        Hit(/*section_id=*/4, /*document_id=*/0, /*score=*/12),
-        Hit(/*section_id=*/8, /*document_id=*/4, /*score=*/19),
-        Hit(/*section_id=*/9, /*document_id=*/7, /*score=*/100),
-        Hit(/*section_id=*/6, /*document_id=*/7, /*score=*/197)};
+        Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
+        Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
+        Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
+        Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
     for (const Hit& hit : hits2) {
       ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
     }

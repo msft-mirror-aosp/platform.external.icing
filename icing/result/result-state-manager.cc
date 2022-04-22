@@ -16,15 +16,17 @@
 
 #include "icing/proto/search.pb.h"
 #include "icing/util/clock.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
-ResultStateManager::ResultStateManager(int max_hits_per_query,
-                                       int max_result_states)
-    : max_hits_per_query_(max_hits_per_query),
-      max_result_states_(max_result_states),
+ResultStateManager::ResultStateManager(int max_total_hits,
+                                       const DocumentStore& document_store)
+    : document_store_(document_store),
+      max_total_hits_(max_total_hits),
+      num_total_hits_(0),
       random_generator_(GetSteadyTimeNanoseconds()) {}
 
 libtextclassifier3::StatusOr<PageResultState>
@@ -33,39 +35,44 @@ ResultStateManager::RankAndPaginate(ResultState result_state) {
     return absl_ports::InvalidArgumentError("ResultState has no results");
   }
 
-  // Truncates scored document hits so that they don't take up too much space.
-  result_state.TruncateHitsTo(max_hits_per_query_);
-
   // Gets the number before calling GetNextPage() because num_returned() may
   // change after returning more results.
   int num_previously_returned = result_state.num_returned();
+  int num_per_page = result_state.num_per_page();
 
   std::vector<ScoredDocumentHit> page_result_document_hits =
-      result_state.GetNextPage();
+      result_state.GetNextPage(document_store_);
 
+  SnippetContext snippet_context_copy = result_state.snippet_context();
+
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map_copy =
+      result_state.projection_tree_map();
   if (!result_state.HasMoreResults()) {
     // No more pages, won't store ResultState, returns directly
     return PageResultState(
         std::move(page_result_document_hits), kInvalidNextPageToken,
-        result_state.snippet_context(), num_previously_returned);
+        std::move(snippet_context_copy), std::move(projection_tree_map_copy),
+        num_previously_returned, num_per_page);
   }
 
   absl_ports::unique_lock l(&mutex_);
 
   // ResultState has multiple pages, storing it
-  SnippetContext snippet_context_copy = result_state.snippet_context();
   uint64_t next_page_token = Add(std::move(result_state));
 
   return PageResultState(std::move(page_result_document_hits), next_page_token,
                          std::move(snippet_context_copy),
-                         num_previously_returned);
+                         std::move(projection_tree_map_copy),
+                         num_previously_returned, num_per_page);
 }
 
 uint64_t ResultStateManager::Add(ResultState result_state) {
-  RemoveStatesIfNeeded();
+  RemoveStatesIfNeeded(result_state);
+  result_state.TruncateHitsTo(max_total_hits_);
 
   uint64_t new_token = GetUniqueToken();
 
+  num_total_hits_ += result_state.num_remaining();
   result_state_map_.emplace(new_token, std::move(result_state));
   // Tracks the insertion order
   token_queue_.push(new_token);
@@ -83,8 +90,9 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
   }
 
   int num_returned = state_iterator->second.num_returned();
+  int num_per_page = state_iterator->second.num_per_page();
   std::vector<ScoredDocumentHit> result_of_page =
-      state_iterator->second.GetNextPage();
+      state_iterator->second.GetNextPage(document_store_);
   if (result_of_page.empty()) {
     // This shouldn't happen, all our active states should contain results, but
     // a sanity check here in case of any data inconsistency.
@@ -97,13 +105,18 @@ libtextclassifier3::StatusOr<PageResultState> ResultStateManager::GetNextPage(
   SnippetContext snippet_context_copy =
       state_iterator->second.snippet_context();
 
+  std::unordered_map<std::string, ProjectionTree> projection_tree_map_copy =
+      state_iterator->second.projection_tree_map();
+
   if (!state_iterator->second.HasMoreResults()) {
     InternalInvalidateResultState(next_page_token);
     next_page_token = kInvalidNextPageToken;
   }
 
-  return PageResultState(result_of_page, next_page_token,
-                         std::move(snippet_context_copy), num_returned);
+  num_total_hits_ -= result_of_page.size();
+  return PageResultState(
+      result_of_page, next_page_token, std::move(snippet_context_copy),
+      std::move(projection_tree_map_copy), num_returned, num_per_page);
 }
 
 void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {
@@ -118,10 +131,14 @@ void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {
 
 void ResultStateManager::InvalidateAllResultStates() {
   absl_ports::unique_lock l(&mutex_);
+  InternalInvalidateAllResultStates();
+}
 
+void ResultStateManager::InternalInvalidateAllResultStates() {
   result_state_map_.clear();
   invalidated_token_set_.clear();
-  token_queue_ = {};
+  token_queue_ = std::queue<uint64_t>();
+  num_total_hits_ = 0;
 }
 
 uint64_t ResultStateManager::GetUniqueToken() {
@@ -137,12 +154,21 @@ uint64_t ResultStateManager::GetUniqueToken() {
   return new_token;
 }
 
-void ResultStateManager::RemoveStatesIfNeeded() {
+void ResultStateManager::RemoveStatesIfNeeded(const ResultState& result_state) {
   if (result_state_map_.empty() || token_queue_.empty()) {
     return;
   }
 
-  // Removes any tokens that were previously invalidated.
+  // 1. Check if this new result_state would take up the entire result state
+  // manager budget.
+  if (result_state.num_remaining() > max_total_hits_) {
+    // This single result state will exceed our budget. Drop everything else to
+    // accomodate it.
+    InternalInvalidateAllResultStates();
+    return;
+  }
+
+  // 2. Remove any tokens that were previously invalidated.
   while (!token_queue_.empty() &&
          invalidated_token_set_.find(token_queue_.front()) !=
              invalidated_token_set_.end()) {
@@ -150,11 +176,13 @@ void ResultStateManager::RemoveStatesIfNeeded() {
     token_queue_.pop();
   }
 
-  // Removes the oldest state
-  if (result_state_map_.size() >= max_result_states_ && !token_queue_.empty()) {
-    result_state_map_.erase(token_queue_.front());
+  // 3. If we're over budget, remove states from oldest to newest until we fit
+  // into our budget.
+  while (result_state.num_remaining() + num_total_hits_ > max_total_hits_) {
+    InternalInvalidateResultState(token_queue_.front());
     token_queue_.pop();
   }
+  invalidated_token_set_.clear();
 }
 
 void ResultStateManager::InternalInvalidateResultState(uint64_t token) {
@@ -162,7 +190,10 @@ void ResultStateManager::InternalInvalidateResultState(uint64_t token) {
   // invalidated_token_set_. The entry in token_queue_ can't be easily removed
   // right now (may need O(n) time), so we leave it there and later completely
   // remove the token in RemoveStatesIfNeeded().
-  if (result_state_map_.erase(token) > 0) {
+  auto itr = result_state_map_.find(token);
+  if (itr != result_state_map_.end()) {
+    num_total_hits_ -= itr->second.num_remaining();
+    result_state_map_.erase(itr);
     invalidated_token_set_.insert(token);
   }
 }

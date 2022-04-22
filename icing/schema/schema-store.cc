@@ -104,7 +104,7 @@ std::unordered_set<SchemaTypeId> SchemaTypeIdsChanged(
 
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, NativeInitializeStats* initialize_stats) {
+    const Clock* clock, InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
 
@@ -122,7 +122,7 @@ SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
       schema_file_(*filesystem, MakeSchemaFilename(base_dir_)) {}
 
 SchemaStore::~SchemaStore() {
-  if (initialized_) {
+  if (has_schema_successfully_set_) {
     if (!PersistToDisk().ok()) {
       ICING_LOG(ERROR) << "Error persisting to disk in SchemaStore destructor";
     }
@@ -130,7 +130,7 @@ SchemaStore::~SchemaStore() {
 }
 
 libtextclassifier3::Status SchemaStore::Initialize(
-    NativeInitializeStats* initialize_stats) {
+    InitializeStatsProto* initialize_stats) {
   auto schema_proto_or = GetSchema();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     // Don't have an existing schema proto, that's fine
@@ -139,6 +139,7 @@ libtextclassifier3::Status SchemaStore::Initialize(
     // Real error when trying to read the existing schema
     return schema_proto_or.status();
   }
+  has_schema_successfully_set_ = true;
 
   if (!InitializeDerivedFiles().ok()) {
     ICING_VLOG(3)
@@ -147,7 +148,7 @@ libtextclassifier3::Status SchemaStore::Initialize(
     std::unique_ptr<Timer> regenerate_timer = clock_.GetNewTimer();
     if (initialize_stats != nullptr) {
       initialize_stats->set_schema_store_recovery_cause(
-          NativeInitializeStats::IO_ERROR);
+          InitializeStatsProto::IO_ERROR);
     }
     ICING_RETURN_IF_ERROR(RegenerateDerivedFiles());
     if (initialize_stats != nullptr) {
@@ -156,7 +157,6 @@ libtextclassifier3::Status SchemaStore::Initialize(
     }
   }
 
-  initialized_ = true;
   if (initialize_stats != nullptr) {
     initialize_stats->set_num_schema_types(type_config_map_.size());
   }
@@ -253,9 +253,12 @@ libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
   header.magic = SchemaStore::Header::kMagic;
   header.checksum = checksum.Get();
 
+  ScopedFd scoped_fd(
+      filesystem_.OpenForWrite(MakeHeaderFilename(base_dir_).c_str()));
   // This should overwrite the header.
-  if (!filesystem_.Write(MakeHeaderFilename(base_dir_).c_str(), &header,
-                         sizeof(header))) {
+  if (!scoped_fd.is_valid() ||
+      !filesystem_.Write(scoped_fd.get(), &header, sizeof(header)) ||
+      !filesystem_.DataSync(scoped_fd.get())) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to write SchemaStore header: ", MakeHeaderFilename(base_dir_)));
   }
@@ -285,18 +288,11 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
 
 libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
   Crc32 total_checksum;
-
-  auto schema_proto_or = GetSchema();
-  if (absl_ports::IsNotFound(schema_proto_or.status())) {
+  if (!has_schema_successfully_set_) {
     // Nothing to checksum
     return total_checksum;
-  } else if (!schema_proto_or.ok()) {
-    // Some real error. Pass it up
-    return schema_proto_or.status();
   }
-
-  // Guaranteed to have a schema proto now
-  const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
+  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
   Crc32 schema_checksum;
   schema_checksum.Append(schema_proto->SerializeAsString());
 
@@ -326,12 +322,18 @@ SchemaStore::SetSchema(const SchemaProto& new_schema,
 libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
                        bool ignore_errors_and_delete_documents) {
+  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependencyMap new_dependency_map,
+                         SchemaUtil::Validate(new_schema));
+
   SetSchemaResult result;
 
   auto schema_proto_or = GetSchema();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     // We don't have a pre-existing schema, so anything is valid.
     result.success = true;
+    for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
+      result.schema_types_new_by_name.insert(type_config.schema_type());
+    }
   } else if (!schema_proto_or.ok()) {
     // Real error
     return schema_proto_or.status();
@@ -349,10 +351,14 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
     // Different schema, track the differences and see if we can still write it
     SchemaUtil::SchemaDelta schema_delta =
-        SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema);
+        SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                              new_dependency_map);
 
-    // An incompatible index is fine, we can just reindex
-    result.index_incompatible = schema_delta.index_incompatible;
+    result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
+    result.schema_types_changed_fully_compatible_by_name =
+        std::move(schema_delta.schema_types_changed_fully_compatible);
+    result.schema_types_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_index_incompatible);
 
     for (const auto& schema_type : schema_delta.schema_types_deleted) {
       // We currently don't support deletions, so mark this as not possible.
@@ -390,6 +396,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
     // Write the schema (and potentially overwrite a previous schema)
     ICING_RETURN_IF_ERROR(
         schema_file_.Write(std::make_unique<SchemaProto>(new_schema)));
+    has_schema_successfully_set_ = true;
 
     ICING_RETURN_IF_ERROR(RegenerateDerivedFiles());
   }
@@ -399,14 +406,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
 
 libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
 SchemaStore::GetSchemaTypeConfig(std::string_view schema_type) const {
-  auto schema_proto_or = GetSchema();
-  if (absl_ports::IsNotFound(schema_proto_or.status())) {
-    return absl_ports::FailedPreconditionError("Schema not set yet.");
-  } else if (!schema_proto_or.ok()) {
-    // Some other real error, pass it up
-    return schema_proto_or.status();
-  }
-
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
   const auto& type_config_iter =
       type_config_map_.find(std::string(schema_type));
   if (type_config_iter == type_config_map_.end()) {
@@ -418,44 +418,82 @@ SchemaStore::GetSchemaTypeConfig(std::string_view schema_type) const {
 
 libtextclassifier3::StatusOr<SchemaTypeId> SchemaStore::GetSchemaTypeId(
     std::string_view schema_type) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return schema_type_mapper_->Get(schema_type);
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SchemaStore::GetSectionContent(const DocumentProto& document,
-                               std::string_view section_path) const {
-  return section_manager_->GetSectionContent(document, section_path);
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SchemaStore::GetStringSectionContent(const DocumentProto& document,
+                                     std::string_view section_path) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return section_manager_->GetStringSectionContent(document, section_path);
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string>>
-SchemaStore::GetSectionContent(const DocumentProto& document,
-                               SectionId section_id) const {
-  return section_manager_->GetSectionContent(document, section_id);
+libtextclassifier3::StatusOr<std::vector<std::string_view>>
+SchemaStore::GetStringSectionContent(const DocumentProto& document,
+                                     SectionId section_id) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return section_manager_->GetStringSectionContent(document, section_id);
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>
 SchemaStore::GetSectionMetadata(SchemaTypeId schema_type_id,
                                 SectionId section_id) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return section_manager_->GetSectionMetadata(schema_type_id, section_id);
 }
 
 libtextclassifier3::StatusOr<std::vector<Section>> SchemaStore::ExtractSections(
     const DocumentProto& document) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return section_manager_->ExtractSections(document);
 }
 
 libtextclassifier3::Status SchemaStore::PersistToDisk() {
-  if (schema_type_mapper_ != nullptr) {
-    // It's possible we haven't had a schema set yet, so SchemaTypeMapper hasn't
-    // been initialized and is still a nullptr
-    ICING_RETURN_IF_ERROR(schema_type_mapper_->PersistToDisk());
+  if (!has_schema_successfully_set_) {
+    return libtextclassifier3::Status::OK;
   }
-
+  ICING_RETURN_IF_ERROR(schema_type_mapper_->PersistToDisk());
   // Write the header
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
 
   return libtextclassifier3::Status::OK;
+}
+
+SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
+  SchemaStoreStorageInfoProto storage_info;
+  int64_t directory_size = filesystem_.GetDiskUsage(base_dir_.c_str());
+  if (directory_size != Filesystem::kBadFileSize) {
+    storage_info.set_schema_store_size(directory_size);
+  } else {
+    storage_info.set_schema_store_size(-1);
+  }
+  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema(), storage_info);
+  storage_info.set_num_schema_types(schema->types_size());
+  int total_sections = 0;
+  int num_types_sections_exhausted = 0;
+  for (const SchemaTypeConfigProto& type : schema->types()) {
+    auto sections_list_or =
+        section_manager_->GetMetadataList(type.schema_type());
+    if (!sections_list_or.ok()) {
+      continue;
+    }
+    total_sections += sections_list_or.ValueOrDie()->size();
+    if (sections_list_or.ValueOrDie()->size() == kMaxSectionId + 1) {
+      ++num_types_sections_exhausted;
+    }
+  }
+
+  storage_info.set_num_total_sections(total_sections);
+  storage_info.set_num_schema_types_sections_exhausted(
+      num_types_sections_exhausted);
+  return storage_info;
+}
+
+libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
+SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
+  return section_manager_->GetMetadataList(schema_type);
 }
 
 }  // namespace lib

@@ -19,17 +19,18 @@ namespace lib {
 
 // Returns a hit that has a delta of desired_byte_length from last_hit.
 Hit CreateHit(Hit last_hit, int desired_byte_length) {
-  Hit hit =
-      (last_hit.section_id() == kMinSectionId)
-          ? Hit(kMaxSectionId, last_hit.document_id() + 1, last_hit.score())
-          : Hit(last_hit.section_id() - 1, last_hit.document_id(),
-                last_hit.score());
+  Hit hit = (last_hit.section_id() == kMinSectionId)
+                ? Hit(kMaxSectionId, last_hit.document_id() + 1,
+                      last_hit.term_frequency())
+                : Hit(last_hit.section_id() - 1, last_hit.document_id(),
+                      last_hit.term_frequency());
   uint8_t buf[5];
   while (VarInt::Encode(last_hit.value() - hit.value(), buf) <
          desired_byte_length) {
     hit = (hit.section_id() == kMinSectionId)
-              ? Hit(kMaxSectionId, hit.document_id() + 1, hit.score())
-              : Hit(hit.section_id() - 1, hit.document_id(), hit.score());
+              ? Hit(kMaxSectionId, hit.document_id() + 1, hit.term_frequency())
+              : Hit(hit.section_id() - 1, hit.document_id(),
+                    hit.term_frequency());
   }
   return hit;
 }
@@ -42,8 +43,8 @@ std::vector<Hit> CreateHits(DocumentId start_docid, int num_hits,
   if (num_hits < 1) {
     return hits;
   }
-  hits.push_back(
-      Hit(/*section_id=*/1, /*document_id=*/start_docid, Hit::kMaxHitScore));
+  hits.push_back(Hit(/*section_id=*/1, /*document_id=*/start_docid,
+                     Hit::kDefaultTermFrequency));
   while (hits.size() < num_hits) {
     hits.push_back(CreateHit(hits.back(), desired_byte_length));
   }
