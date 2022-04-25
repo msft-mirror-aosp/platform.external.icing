@@ -64,7 +64,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include <google/protobuf/io/gzip_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
@@ -72,6 +71,7 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/endian.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/portable/zlib.h"
 #include "icing/util/bit-util.h"
@@ -576,9 +576,6 @@ class PortableFileBackedProtoLog {
 };
 
 template <typename ProtoT>
-constexpr uint8_t PortableFileBackedProtoLog<ProtoT>::kProtoMagic;
-
-template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     const Filesystem* filesystem, const std::string& file_path,
     std::unique_ptr<Header> header)
@@ -733,7 +730,7 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
       return absl_ports::InternalError(IcingStringUtil::StringPrintf(
           "Failed to truncate '%s' to size %lld", file_path.data(),
           static_cast<long long>(header->GetRewindOffset())));
-    };
+    }
     data_loss = DataLoss::PARTIAL;
   }
 
@@ -889,12 +886,11 @@ PortableFileBackedProtoLog<ProtoT>::WriteProto(const ProtoT& proto) {
   google::protobuf::io::StringOutputStream proto_stream(&proto_str);
 
   if (header_->GetCompressFlag()) {
-    google::protobuf::io::GzipOutputStream::Options options;
-    options.format = google::protobuf::io::GzipOutputStream::ZLIB;
+    protobuf_ports::GzipOutputStream::Options options;
+    options.format = protobuf_ports::GzipOutputStream::ZLIB;
     options.compression_level = kDeflateCompressionLevel;
 
-    google::protobuf::io::GzipOutputStream compressing_stream(&proto_stream,
-                                                                  options);
+    protobuf_ports::GzipOutputStream compressing_stream(&proto_stream, options);
 
     bool success = proto.SerializeToZeroCopyStream(&compressing_stream) &&
                    compressing_stream.Close();
@@ -974,7 +970,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   // Deserialize proto
   ProtoT proto;
   if (header_->GetCompressFlag()) {
-    google::protobuf::io::GzipInputStream decompress_stream(&proto_stream);
+    protobuf_ports::GzipInputStream decompress_stream(&proto_stream);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);

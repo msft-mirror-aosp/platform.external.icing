@@ -302,6 +302,17 @@ class IcingSearchEngine {
                            const ResultSpecProto& result_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Retrieves, scores, ranks and returns the suggested query string according
+  // to the specs. Results can be empty.
+  //
+  // Returns a SuggestionResponse with status:
+  //   OK with results on success
+  //   INVALID_ARGUMENT if any of specs is invalid
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on any other errors
+  SuggestionResponse SearchSuggestions(
+      const SuggestionSpecProto& suggestion_spec) ICING_LOCKS_EXCLUDED(mutex_);
+
   // Fetches the next page of results of a previously executed query. Results
   // can be empty if next-page token is invalid. Invalid next page tokens are
   // tokens that are either zero or were previously passed to
@@ -454,6 +465,10 @@ class IcingSearchEngine {
 
   // Resets all members that are created during Initialize.
   void ResetMembers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Resets all members that are created during Initialize, deletes all
+  // underlying files and initializes a fresh index.
+  ResetResultProto ResetInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Checks for the existence of the init marker file. If the failed init count
   // exceeds kMaxUnsuccessfulInitAttempts, all data is deleted and the index is

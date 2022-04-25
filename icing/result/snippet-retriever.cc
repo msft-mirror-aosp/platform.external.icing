@@ -109,7 +109,7 @@ class TokenMatcherExact : public TokenMatcher {
     }
     if (itr != unrestricted_query_terms_.end() &&
         itr != restricted_query_terms_.end()) {
-      return normalizer_.CalculateNormalizedMatchLength(token.text, *itr);
+      return normalizer_.FindNormalizedMatchEndPosition(token.text, *itr);
     }
     return CharacterIterator(token.text, -1, -1, -1);
   }
@@ -135,14 +135,14 @@ class TokenMatcherPrefix : public TokenMatcher {
     for (const std::string& query_term : unrestricted_query_terms_) {
       if (query_term.length() <= s.length() &&
           s.compare(0, query_term.length(), query_term) == 0) {
-        return normalizer_.CalculateNormalizedMatchLength(token.text,
+        return normalizer_.FindNormalizedMatchEndPosition(token.text,
                                                           query_term);
       }
     }
     for (const std::string& query_term : restricted_query_terms_) {
       if (query_term.length() <= s.length() &&
           s.compare(0, query_term.length(), query_term) == 0) {
-        return normalizer_.CalculateNormalizedMatchLength(token.text,
+        return normalizer_.FindNormalizedMatchEndPosition(token.text,
                                                           query_term);
       }
     }
