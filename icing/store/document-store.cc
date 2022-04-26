@@ -53,6 +53,7 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
@@ -125,22 +126,13 @@ std::string MakeCorpusMapperFilename(const std::string& base_dir) {
 // overhead per key. As we know that these fingerprints are always 8-bytes in
 // length and that they're random, we might be able to store them more
 // compactly.
-std::string MakeFingerprint(std::string_view name_space, std::string_view uri) {
+std::string MakeFingerprint(std::string_view field1, std::string_view field2) {
   // Using a 64-bit fingerprint to represent the key could lead to collisions.
   // But, even with 200K unique keys, the probability of collision is about
   // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
   uint64_t fprint =
-      tc3farmhash::Fingerprint64(absl_ports::StrCat(name_space, uri));
-
-  std::string encoded_fprint;
-  // DynamicTrie cannot handle keys with '0' as bytes. So, we encode it in
-  // base128 and add 1 to make sure that no byte is '0'. This increases the
-  // size of the encoded_fprint from 8-bytes to 10-bytes.
-  while (fprint) {
-    encoded_fprint.push_back((fprint & 0x7F) + 1);
-    fprint >>= 7;
-  }
-  return encoded_fprint;
+      tc3farmhash::Fingerprint64(absl_ports::StrCat(field1, field2));
+  return fingerprint_util::GetFingerprintString(fprint);
 }
 
 int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
@@ -349,7 +341,8 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   auto document_key_mapper_or =
-      KeyMapper<DocumentId>::Create(*filesystem_, base_dir_, kUriMapperMaxSize);
+      KeyMapper<DocumentId, fingerprint_util::FingerprintStringFormatter>::
+          Create(*filesystem_, base_dir_, kUriMapperMaxSize);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to initialize KeyMapper";
@@ -389,10 +382,14 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
       usage_store_,
       UsageStore::Create(filesystem_, MakeUsageStoreDirectoryName(base_dir_)));
 
-  ICING_ASSIGN_OR_RETURN(corpus_mapper_,
-                         KeyMapper<CorpusId>::Create(
-                             *filesystem_, MakeCorpusMapperFilename(base_dir_),
-                             kCorpusMapperMaxSize));
+  auto corpus_mapper_or =
+      KeyMapper<CorpusId, fingerprint_util::FingerprintStringFormatter>::Create(
+          *filesystem_, MakeCorpusMapperFilename(base_dir_),
+          kCorpusMapperMaxSize);
+  if (!corpus_mapper_or.ok()) {
+    return std::move(corpus_mapper_or).status();
+  }
+  corpus_mapper_ = std::move(corpus_mapper_or).ValueOrDie();
 
   ICING_ASSIGN_OR_RETURN(corpus_score_cache_,
                          FileBackedVector<CorpusAssociatedScoreData>::Create(
@@ -571,7 +568,8 @@ libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
   // TODO(b/216487496): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   auto document_key_mapper_or =
-      KeyMapper<DocumentId>::Create(*filesystem_, base_dir_, kUriMapperMaxSize);
+      KeyMapper<DocumentId, fingerprint_util::FingerprintStringFormatter>::
+          Create(*filesystem_, base_dir_, kUriMapperMaxSize);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to re-init key mapper";
@@ -675,10 +673,14 @@ libtextclassifier3::Status DocumentStore::ResetCorpusMapper() {
                      << "Failed to delete old corpus_id mapper";
     return status;
   }
-  ICING_ASSIGN_OR_RETURN(corpus_mapper_,
-                         KeyMapper<CorpusId>::Create(
-                             *filesystem_, MakeCorpusMapperFilename(base_dir_),
-                             kCorpusMapperMaxSize));
+  auto corpus_mapper_or =
+      KeyMapper<CorpusId, fingerprint_util::FingerprintStringFormatter>::Create(
+          *filesystem_, MakeCorpusMapperFilename(base_dir_),
+          kCorpusMapperMaxSize);
+  if (!corpus_mapper_or.ok()) {
+    return std::move(corpus_mapper_or).status();
+  }
+  corpus_mapper_ = std::move(corpus_mapper_or).ValueOrDie();
   return libtextclassifier3::Status::OK;
 }
 

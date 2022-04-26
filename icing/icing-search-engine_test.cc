@@ -8539,6 +8539,82 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NonPositiveNumToReturn) {
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
+TEST_F(IcingSearchEngineTest, GetDebugInfoVerbosityZeroSucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Create a document.
+  DocumentProto document = CreateMessageDocument("namespace", "email");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  DebugInfoResultProto result = icing.GetDebugInfo(/*verbosity=*/0);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+
+  // Some sanity checks
+  DebugInfoProto debug_info = result.debug_info();
+  EXPECT_THAT(
+      debug_info.index_info().lite_index_info().last_added_document_id(),
+      Eq(0));
+  EXPECT_THAT(
+      debug_info.document_info().document_storage_info().num_alive_documents(),
+      Eq(1));
+  EXPECT_THAT(debug_info.document_info().corpus_info(),
+              IsEmpty());  // because verbosity=0
+  EXPECT_THAT(debug_info.schema_info().crc(), Gt(0));
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoVerbosityOneSucceedsWithCorpusInfo) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Create 4 documents.
+  DocumentProto document1 = CreateMessageDocument("namespace1", "email/1");
+  DocumentProto document2 = CreateMessageDocument("namespace1", "email/2");
+  DocumentProto document3 = CreateMessageDocument("namespace2", "email/3");
+  DocumentProto document4 = CreateMessageDocument("namespace2", "email/4");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+
+  DebugInfoResultProto result = icing.GetDebugInfo(/*verbosity=*/1);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+
+  // Some sanity checks
+  DebugInfoProto debug_info = result.debug_info();
+  EXPECT_THAT(
+      debug_info.index_info().lite_index_info().last_added_document_id(),
+      Eq(3));
+  EXPECT_THAT(
+      debug_info.document_info().document_storage_info().num_alive_documents(),
+      Eq(4));
+  EXPECT_THAT(debug_info.document_info().corpus_info(), SizeIs(2));
+  EXPECT_THAT(debug_info.schema_info().crc(), Gt(0));
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoUninitialized) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  DebugInfoResultProto result = icing.GetDebugInfo(/*verbosity=*/1);
+  EXPECT_THAT(result.status(), ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoNoSchemaNoDocumentsSucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  DebugInfoResultProto result = icing.GetDebugInfo(/*verbosity=*/1);
+  ASSERT_THAT(result.status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoWithSchemaNoDocumentsSucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  DebugInfoResultProto result = icing.GetDebugInfo(/*verbosity=*/1);
+  ASSERT_THAT(result.status(), ProtoIsOk());
+}
+
 #ifndef ICING_JNI_TEST
 // We skip this test case when we're running in a jni_test since the data files
 // will be stored in the android-instrumented storage location, rather than the

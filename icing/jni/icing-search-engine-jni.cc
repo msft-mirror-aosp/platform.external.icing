@@ -15,6 +15,7 @@
 #include <jni.h>
 
 #include <string>
+#include <utility>
 
 #include "icing/jni/jni-cache.h"
 #include <google/protobuf/message_lite.h>
@@ -29,6 +30,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace {
@@ -340,7 +342,8 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteBySchemaType(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
-    JNIEnv* env, jclass clazz, jobject object, jbyteArray search_spec_bytes) {
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray search_spec_bytes,
+    jboolean return_deleted_document_info) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
@@ -350,7 +353,7 @@ Java_com_google_android_icing_IcingSearchEngine_nativeDeleteByQuery(
     return nullptr;
   }
   icing::lib::DeleteByQueryResultProto delete_result_proto =
-      icing->DeleteByQuery(search_spec_proto);
+      icing->DeleteByQuery(search_spec_proto, return_deleted_document_info);
 
   return SerializeProtoToJniByteArray(env, delete_result_proto);
 }
@@ -439,4 +442,29 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSearchSuggestions(
   return SerializeProtoToJniByteArray(env, suggestionResponse);
 }
 
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetDebugInfo(
+    JNIEnv* env, jclass clazz, jobject object, jint verbosity) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::DebugInfoResultProto debug_info_result_proto =
+      icing->GetDebugInfo(verbosity);
+
+  return SerializeProtoToJniByteArray(env, debug_info_result_proto);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeShouldLog(
+    JNIEnv* env, jclass clazz, jshort severity, jshort verbosity) {
+  return icing::lib::ShouldLog(
+      static_cast<icing::lib::LogSeverity::Code>(severity), verbosity);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeSetLoggingLevel(
+    JNIEnv* env, jclass clazz, jshort priority, jshort verbosity) {
+  return icing::lib::SetLoggingLevel(
+      static_cast<icing::lib::LogSeverity::Code>(priority), verbosity);
+}
 }  // extern "C"
