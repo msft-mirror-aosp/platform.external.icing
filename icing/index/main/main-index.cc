@@ -612,7 +612,7 @@ IndexDebugInfoProto::MainIndexDebugInfoProto MainIndex::GetDebugInfo(
   IndexDebugInfoProto::MainIndexDebugInfoProto res;
 
   // Lexicon.
-  main_lexicon_->GetDebugInfo(verbosity, res.mutable_lexicon_info());
+  *res.mutable_lexicon_info() = main_lexicon_->GetDebugInfo(verbosity);
 
   res.set_last_added_document_id(last_added_document_id());
 
