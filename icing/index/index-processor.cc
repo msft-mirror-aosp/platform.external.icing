@@ -73,9 +73,23 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
                      section.metadata.term_match_type, /*namespace_id=*/0);
     for (std::string_view token : section.token_sequence) {
       ++num_tokens;
-      std::string term = normalizer_.NormalizeTerm(token);
-      // Add this term to Hit buffer.
-      status = editor.BufferTerm(term.c_str());
+
+      switch (section.metadata.tokenizer) {
+        case StringIndexingConfig::TokenizerType::VERBATIM:
+          // data() is safe to use here because a token created from the
+          // VERBATIM tokenizer is the entire string value. The character at
+          // data() + token.length() is guaranteed to be a null char.
+          status = editor.BufferTerm(token.data());
+          break;
+        case StringIndexingConfig::TokenizerType::NONE:
+          ICING_LOG(WARNING)
+              << "Unexpected TokenizerType::NONE found when indexing document.";
+          [[fallthrough]];
+        case StringIndexingConfig::TokenizerType::PLAIN:
+          std::string normalized_term = normalizer_.NormalizeTerm(token);
+          status = editor.BufferTerm(normalized_term.c_str());
+      }
+
       if (!status.ok()) {
         // We've encountered a failure. Bail out. We'll mark this doc as deleted
         // and signal a failure to the client.
