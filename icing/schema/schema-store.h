@@ -26,6 +26,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -137,9 +138,7 @@ class SchemaStore {
   // Persists and updates checksum of subcomponents.
   ~SchemaStore();
 
-  // Retrieve the current schema if it exists. Caller does not get ownership of
-  // the schema proto and modifying the returned pointer does not affect the
-  // underlying schema proto.
+  // Retrieve the current schema if it exists.
   //
   // Returns:
   //   SchemaProto* if exists
@@ -257,6 +256,13 @@ class SchemaStore {
   // If an IO error occurs while trying to calculate the value for a field, then
   // that field will be set to -1.
   SchemaStoreStorageInfoProto GetStorageInfo() const;
+
+  // Get debug information for the schema store.
+  //
+  // Returns:
+  //   SchemaDebugInfoProto on success
+  //   INTERNAL_ERROR on IO errors, crc compute error
+  libtextclassifier3::StatusOr<SchemaDebugInfoProto> GetDebugInfo() const;
 
  private:
   // Use SchemaStore::Create instead.
