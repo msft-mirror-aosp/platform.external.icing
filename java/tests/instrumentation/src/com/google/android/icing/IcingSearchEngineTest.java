@@ -53,7 +53,9 @@ import com.google.android.icing.proto.StringIndexingConfig;
 import com.google.android.icing.proto.StringIndexingConfig.TokenizerType;
 import com.google.android.icing.proto.SuggestionResponse;
 import com.google.android.icing.proto.SuggestionSpecProto;
+import com.google.android.icing.proto.SuggestionSpecProto.SuggestionScoringSpecProto;
 import com.google.android.icing.proto.TermMatchType;
+import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
 import com.google.android.icing.IcingSearchEngine;
 import java.io.File;
@@ -650,7 +652,14 @@ public final class IcingSearchEngineTest {
     assertStatusOk(icingSearchEngine.put(emailDocument2).getStatus());
 
     SuggestionSpecProto suggestionSpec =
-        SuggestionSpecProto.newBuilder().setPrefix("f").setNumToReturn(10).build();
+        SuggestionSpecProto.newBuilder()
+            .setPrefix("f")
+            .setNumToReturn(10)
+            .setScoringSpec(
+                SuggestionScoringSpecProto.newBuilder()
+                    .setScoringMatchType(Code.EXACT_ONLY)
+                    .build())
+            .build();
 
     SuggestionResponse response = icingSearchEngine.searchSuggestions(suggestionSpec);
     assertStatusOk(response.getStatus());
