@@ -46,7 +46,7 @@
 //    //icing/store:document-store_benchmark
 //
 //    $ blaze-bin/icing/store/document-store_benchmark
-//    --benchmarks=all --benchmark_memory_usage
+//    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -57,7 +57,7 @@
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/document-store_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 
 namespace icing {
 namespace lib {
