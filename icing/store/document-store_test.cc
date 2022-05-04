@@ -3762,7 +3762,6 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
   }
 }
 
-#ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   // Set up schema.
   SchemaProto schema =
@@ -3883,7 +3882,6 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   EXPECT_THAT(document_store->Get(/*document_id=*/2),
               IsOkAndHolds(EqualsProto(document3)));
 }
-#endif  // DISABLE_BACKWARDS_COMPAT_TEST
 
 TEST_F(DocumentStoreTest, GetDebugInfo) {
   SchemaProto schema =
