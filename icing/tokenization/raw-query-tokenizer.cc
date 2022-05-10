@@ -14,9 +14,8 @@
 
 #include "icing/tokenization/raw-query-tokenizer.h"
 
-#include <stddef.h>
-
 #include <cctype>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -423,7 +422,7 @@ std::pair<TermType, std::string_view> GetTerm(std::string_view text,
 // and [(cat OR)]. This helps assert extra rule 3: "OR" is ignored if there's no
 // valid token on its right.
 void RemoveLastTokenIfOrOperator(std::vector<Token>* tokens) {
-  if (!tokens->empty() && tokens->back().type == Token::QUERY_OR) {
+  if (!tokens->empty() && tokens->back().type == Token::Type::QUERY_OR) {
     tokens->pop_back();
   }
 }
@@ -437,11 +436,11 @@ libtextclassifier3::Status OutputOrOperatorToken(std::vector<Token>* tokens) {
   }
   Token::Type last_token_type = tokens->back().type;
   switch (last_token_type) {
-    case Token::REGULAR:
-    case Token::QUERY_RIGHT_PARENTHESES:
-      tokens->emplace_back(Token::QUERY_OR);
+    case Token::Type::REGULAR:
+    case Token::Type::QUERY_RIGHT_PARENTHESES:
+      tokens->emplace_back(Token::Type::QUERY_OR);
       break;
-    case Token::QUERY_OR:
+    case Token::Type::QUERY_OR:
       // Ignores "OR" because there's already an "OR", e.g. "term1 OR OR term2"
       break;
     default:
@@ -482,21 +481,21 @@ libtextclassifier3::Status OutputToken(State new_state,
                 GetErrorMessage(ERROR_NON_ASCII_AS_PROPERTY_NAME));
           }
         }
-        tokens->emplace_back(Token::QUERY_PROPERTY, current_term);
+        tokens->emplace_back(Token::Type::QUERY_PROPERTY, current_term);
       } else {
-        tokens->emplace_back(Token::REGULAR, current_term);
+        tokens->emplace_back(Token::Type::REGULAR, current_term);
       }
       break;
     case LEFT_PARENTHESES:
-      tokens->emplace_back(Token::QUERY_LEFT_PARENTHESES);
+      tokens->emplace_back(Token::Type::QUERY_LEFT_PARENTHESES);
       break;
     case RIGHT_PARENTHESES:
       // Ignores "OR" if it's followed by right parentheses.
       RemoveLastTokenIfOrOperator(tokens);
-      tokens->emplace_back(Token::QUERY_RIGHT_PARENTHESES);
+      tokens->emplace_back(Token::Type::QUERY_RIGHT_PARENTHESES);
       break;
     case EXCLUSION_OPERATOR:
-      tokens->emplace_back(Token::QUERY_EXCLUSION);
+      tokens->emplace_back(Token::Type::QUERY_EXCLUSION);
       break;
     case OR_OPERATOR:
       return OutputOrOperatorToken(tokens);
@@ -649,7 +648,7 @@ class RawQueryTokenIterator : public Tokenizer::Iterator {
 
   Token GetToken() const override {
     if (current_ < 0 || current_ >= tokens_.size()) {
-      return Token(Token::INVALID);
+      return Token(Token::Type::INVALID);
     }
     return tokens_.at(current_);
   }
