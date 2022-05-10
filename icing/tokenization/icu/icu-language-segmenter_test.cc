@@ -21,8 +21,8 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
@@ -370,6 +370,15 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Number) {
 
   EXPECT_THAT(language_segmenter->GetAllTerms("-123"),
               IsOkAndHolds(ElementsAre("-", "123")));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest, FullWidthNumbers) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(
+          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+  EXPECT_THAT(language_segmenter->GetAllTerms("０１２３４５６７８９"),
+              IsOkAndHolds(ElementsAre("０１２３４５６７８９")));
 }
 
 TEST_P(IcuLanguageSegmenterAllLocalesTest, ContinuousWhitespaces) {
