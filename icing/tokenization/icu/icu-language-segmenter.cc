@@ -59,34 +59,35 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
   ~IcuLanguageSegmenterIterator() {
     ubrk_close(break_iterator_);
-    utext_close(&u_text_);
+    utext_close(u_text_);
   }
 
   // Advances to the next term. Returns false if it has reached the end.
   bool Advance() override {
-    // Prerequisite check
-    if (term_end_index_exclusive_ == UBRK_DONE) {
-      return false;
-    }
+    while (true) {
+      // Prerequisite check
+      if (term_end_index_exclusive_ == UBRK_DONE) {
+        return false;
+      }
 
-    if (term_end_index_exclusive_ == 0) {
-      // First Advance() call
-      term_start_index_ = ubrk_first(break_iterator_);
-    } else {
-      term_start_index_ = term_end_index_exclusive_;
-    }
-    term_end_index_exclusive_ = ubrk_next(break_iterator_);
+      if (term_end_index_exclusive_ == 0) {
+        // First Advance() call
+        term_start_index_ = ubrk_first(break_iterator_);
+      } else {
+        term_start_index_ = term_end_index_exclusive_;
+      }
+      term_end_index_exclusive_ = ubrk_next(break_iterator_);
 
-    // Reached the end
-    if (term_end_index_exclusive_ == UBRK_DONE) {
-      MarkAsDone();
-      return false;
-    }
+      // Reached the end
+      if (term_end_index_exclusive_ == UBRK_DONE) {
+        MarkAsDone();
+        return false;
+      }
 
-    if (!IsValidSegment()) {
-      return Advance();
+      if (IsValidSegment()) {
+        return true;
+      }
     }
-    return true;
   }
 
   // Returns the current term. It can be called only when Advance() returns
@@ -253,7 +254,7 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
       : break_iterator_(nullptr),
         text_(text),
         locale_(locale),
-        u_text_(UTEXT_INITIALIZER),
+        u_text_(nullptr),
         offset_iterator_(text),
         term_start_index_(0),
         term_end_index_exclusive_(0) {}
@@ -261,10 +262,13 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
   // Returns true on success
   bool Initialize() {
     UErrorCode status = U_ZERO_ERROR;
-    utext_openUTF8(&u_text_, text_.data(), text_.length(), &status);
+    u_text_ = utext_openUTF8(nullptr, text_.data(), text_.length(), &status);
+    if (u_text_ == nullptr) {
+      return false;
+    }
     break_iterator_ = ubrk_open(UBRK_WORD, locale_.data(), /*text=*/nullptr,
                                 /*textLength=*/0, &status);
-    ubrk_setUText(break_iterator_, &u_text_, &status);
+    ubrk_setUText(break_iterator_, u_text_, &status);
     return !U_FAILURE(status);
   }
 
@@ -300,9 +304,10 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
     UChar32 uchar32 = i18n_utils::GetUChar32At(text_.data(), text_.length(),
                                                term_start_index_);
-    // Rule 2: for non-ASCII terms, only the alphabetic terms are returned.
-    // We know it's an alphabetic term by checking the first unicode character.
-    if (u_isUAlphabetic(uchar32)) {
+    // Rule 2: for non-ASCII terms, only the alphanumeric terms are returned.
+    // We know it's an alphanumeric term by checking the first unicode
+    // character.
+    if (i18n_utils::IsAlphaNumeric(uchar32)) {
       return true;
     }
     return false;
@@ -321,8 +326,8 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
   std::string_view locale_;
 
   // A thin wrapper around the input UTF8 text, needed by break_iterator_.
-  // utext_close() must be called after using.
-  UText u_text_;
+  // Allocated by calling utext_openUtf8() and freed by calling utext_close().
+  UText* u_text_;
 
   // Offset iterator. This iterator is not guaranteed to point to any particular
   // character, but is guaranteed to point to a valid UTF character sequence.
