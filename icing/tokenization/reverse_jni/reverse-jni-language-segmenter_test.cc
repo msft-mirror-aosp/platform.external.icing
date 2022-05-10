@@ -366,6 +366,17 @@ TEST_P(ReverseJniLanguageSegmenterTest, Number) {
               IsOkAndHolds(ElementsAre("-", "123")));
 }
 
+TEST_P(ReverseJniLanguageSegmenterTest, FullWidthNumbers) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(
+          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+
+  EXPECT_THAT(language_segmenter->GetAllTerms("０１２３４５６７８９"),
+              IsOkAndHolds(ElementsAre("０", "１", "２", "３", "４", "５", "６",
+                                       "７", "８", "９")));
+}
+
 TEST_P(ReverseJniLanguageSegmenterTest, ContinuousWhitespaces) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
