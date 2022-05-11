@@ -268,7 +268,7 @@ libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
 libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   schema_type_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = KeyMapper<SchemaTypeId>::Delete(
       filesystem_, MakeSchemaTypeMapperFilename(base_dir_));
@@ -331,6 +331,9 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     // We don't have a pre-existing schema, so anything is valid.
     result.success = true;
+    for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
+      result.schema_types_new_by_name.insert(type_config.schema_type());
+    }
   } else if (!schema_proto_or.ok()) {
     // Real error
     return schema_proto_or.status();
@@ -351,8 +354,11 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
         SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                               new_dependency_map);
 
-    // An incompatible index is fine, we can just reindex
-    result.index_incompatible = schema_delta.index_incompatible;
+    result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
+    result.schema_types_changed_fully_compatible_by_name =
+        std::move(schema_delta.schema_types_changed_fully_compatible);
+    result.schema_types_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_index_incompatible);
 
     for (const auto& schema_type : schema_delta.schema_types_deleted) {
       // We currently don't support deletions, so mark this as not possible.
@@ -458,11 +464,8 @@ libtextclassifier3::Status SchemaStore::PersistToDisk() {
 SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
   SchemaStoreStorageInfoProto storage_info;
   int64_t directory_size = filesystem_.GetDiskUsage(base_dir_.c_str());
-  if (directory_size != Filesystem::kBadFileSize) {
-    storage_info.set_schema_store_size(directory_size);
-  } else {
-    storage_info.set_schema_store_size(-1);
-  }
+  storage_info.set_schema_store_size(
+      Filesystem::SanitizeFileSize(directory_size));
   ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema(), storage_info);
   storage_info.set_num_schema_types(schema->types_size());
   int total_sections = 0;
@@ -483,6 +486,23 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
   storage_info.set_num_schema_types_sections_exhausted(
       num_types_sections_exhausted);
   return storage_info;
+}
+
+libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
+SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
+  return section_manager_->GetMetadataList(schema_type);
+}
+
+libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
+    const {
+  SchemaDebugInfoProto debug_info;
+  if (has_schema_successfully_set_) {
+    ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema());
+    *debug_info.mutable_schema() = *schema;
+  }
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
+  debug_info.set_crc(crc.Get());
+  return debug_info;
 }
 
 }  // namespace lib
