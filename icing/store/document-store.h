@@ -26,6 +26,8 @@
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
@@ -155,6 +157,7 @@ class DocumentStore {
   //
   // Returns:
   //   A newly generated document id on success
+  //   RESOURCE_EXHAUSED if exceeds maximum number of allowed documents
   //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if the schema_type or a property config of the document doesn't
   //     exist in schema
@@ -420,6 +423,17 @@ class DocumentStore {
   //   INTERNAL_ERROR on compute error
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
 
+  // Get debug information for the document store.
+  // verbosity <= 0, simplest debug information
+  // verbosity > 0, also return the total number of documents and tokens in each
+  // (namespace, schema type) pair.
+  //
+  // Returns:
+  //   DocumentDebugInfoProto on success
+  //   INTERNAL_ERROR on IO errors, crc compute error
+  libtextclassifier3::StatusOr<DocumentDebugInfoProto> GetDebugInfo(
+      int verbosity) const;
+
  private:
   // Use DocumentStore::Create() to instantiate.
   DocumentStore(const Filesystem* filesystem, std::string_view base_dir,
@@ -438,7 +452,7 @@ class DocumentStore {
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
-  std::unique_ptr<FileBackedProtoLog<DocumentWrapper>> document_log_;
+  std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log_;
 
   // Key (namespace + uri) to DocumentId mapping
   std::unique_ptr<KeyMapper<DocumentId>> document_key_mapper_;
@@ -496,10 +510,12 @@ class DocumentStore {
       InitializeStatsProto* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
+  // This assumes that the the underlying files already exist, and will return
+  // an error if it doesn't find what it's expecting.
   //
   // Returns an error if subcomponents failed to initialize successfully.
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status InitializeDerivedFiles();
+  libtextclassifier3::Status InitializeExistingDerivedFiles();
 
   // Re-generates all files derived from the ground truth: the document log.
   //
@@ -692,6 +708,13 @@ class DocumentStore {
   //     the document_id_mapper somehow became larger than the filter cache.
   DocumentStorageInfoProto CalculateDocumentStatusCounts(
       DocumentStorageInfoProto storage_info) const;
+
+  // Returns:
+  //   - on success, a RepeatedPtrField for CorpusInfo collected.
+  //   - OUT_OF_RANGE, this should never happen.
+  libtextclassifier3::StatusOr<google::protobuf::RepeatedPtrField<
+      DocumentDebugInfoProto::CorpusInfo>>
+  CollectCorpusInfo() const;
 };
 
 }  // namespace lib

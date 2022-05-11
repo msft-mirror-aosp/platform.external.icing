@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_HELPERS_ICU_ICU_DATA_FILE_HELPER
-#define ICING_HELPERS_ICU_ICU_DATA_FILE_HELPER
+#ifndef ICING_TESTING_ICU_DATA_FILE_HELPER
+#define ICING_TESTING_ICU_DATA_FILE_HELPER
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 
@@ -40,4 +40,4 @@ libtextclassifier3::Status SetUpICUDataFile(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_HELPERS_ICU_ICU_DATA_FILE_HELPER
+#endif  // ICING_TESTING_ICU_DATA_FILE_HELPER

@@ -33,6 +33,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -44,6 +45,7 @@
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-log-creator.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
@@ -62,7 +64,6 @@ namespace {
 
 // Used in DocumentId mapper to mark a document as deleted
 constexpr int64_t kDocDeletedFlag = -1;
-constexpr char kDocumentLogFilename[] = "document_log";
 constexpr char kDocumentIdMapperFilename[] = "document_id_mapper";
 constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
@@ -72,7 +73,9 @@ constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
 constexpr char kUsageStoreDirectoryName[] = "usage_store";
 constexpr char kCorpusIdMapperFilename[] = "corpus_mapper";
 
-constexpr int32_t kUriMapperMaxSize = 12 * 1024 * 1024;  // 12 MiB
+// Determined through manual testing to allow for 1 million uris. 1 million
+// because we allow up to 1 million DocumentIds.
+constexpr int32_t kUriMapperMaxSize = 36 * 1024 * 1024;  // 36 MiB
 
 // 384 KiB for a KeyMapper would allow each internal array to have a max of
 // 128 KiB for storage.
@@ -91,10 +94,6 @@ std::string MakeHeaderFilename(const std::string& base_dir) {
 
 std::string MakeDocumentIdMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentIdMapperFilename);
-}
-
-std::string MakeDocumentLogFilename(const std::string& base_dir) {
-  return absl_ports::StrCat(base_dir, "/", kDocumentLogFilename);
 }
 
 std::string MakeScoreCacheFilename(const std::string& base_dir) {
@@ -165,6 +164,32 @@ int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
   return expiration_timestamp_ms;
 }
 
+InitializeStatsProto::RecoveryCause GetRecoveryCause(
+    const DocumentLogCreator::CreateResult& create_result,
+    bool force_recovery_and_revalidate_documents) {
+  if (force_recovery_and_revalidate_documents) {
+    return InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC;
+  } else if (create_result.log_create_result.has_data_loss()) {
+    return InitializeStatsProto::DATA_LOSS;
+  } else if (create_result.preexisting_file_version !=
+             DocumentLogCreator::kCurrentVersion) {
+    return InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT;
+  }
+  return InitializeStatsProto::NONE;
+}
+
+InitializeStatsProto::DocumentStoreDataStatus GetDataStatus(
+    DataLoss data_loss) {
+  switch (data_loss) {
+    case DataLoss::PARTIAL:
+      return InitializeStatsProto::PARTIAL_LOSS;
+    case DataLoss::COMPLETE:
+      return InitializeStatsProto::COMPLETE_LOSS;
+    case DataLoss::NONE:
+      return InitializeStatsProto::NO_DATA_LOSS;
+  }
+}
+
 }  // namespace
 
 DocumentStore::DocumentStore(const Filesystem* filesystem,
@@ -224,45 +249,47 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
-  auto create_result_or = FileBackedProtoLog<DocumentWrapper>::Create(
-      filesystem_, MakeDocumentLogFilename(base_dir_),
-      FileBackedProtoLog<DocumentWrapper>::Options(
-          /*compress_in=*/true));
+  auto create_result_or = DocumentLogCreator::Create(filesystem_, base_dir_);
+
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   if (!create_result_or.ok()) {
     ICING_LOG(ERROR) << create_result_or.status().error_message()
-                     << "\nFailed to initialize DocumentLog";
+                     << "\nFailed to initialize DocumentLog.";
     return create_result_or.status();
   }
-  FileBackedProtoLog<DocumentWrapper>::CreateResult create_result =
+  DocumentLogCreator::CreateResult create_result =
       std::move(create_result_or).ValueOrDie();
-  document_log_ = std::move(create_result.proto_log);
 
-  if (force_recovery_and_revalidate_documents ||
-      create_result.has_data_loss()) {
-    if (create_result.has_data_loss() && initialize_stats != nullptr) {
-      ICING_LOG(WARNING)
-          << "Data loss in document log, regenerating derived files.";
-      initialize_stats->set_document_store_recovery_cause(
-          InitializeStatsProto::DATA_LOSS);
+  document_log_ = std::move(create_result.log_create_result.proto_log);
+  InitializeStatsProto::RecoveryCause recovery_cause =
+      GetRecoveryCause(create_result, force_recovery_and_revalidate_documents);
 
-      if (create_result.data_loss == DataLoss::PARTIAL) {
-        // Ground truth is partially lost.
-        initialize_stats->set_document_store_data_status(
-            InitializeStatsProto::PARTIAL_LOSS);
-      } else {
-        // Ground truth is completely lost.
-        initialize_stats->set_document_store_data_status(
-            InitializeStatsProto::COMPLETE_LOSS);
-      }
-    }
+  if (recovery_cause != InitializeStatsProto::NONE || create_result.new_file) {
+    ICING_LOG(WARNING) << "Starting Document Store Recovery with cause="
+        << recovery_cause << ", and create result { new_file="
+        << create_result.new_file << ", preeisting_file_version="
+        << create_result.preexisting_file_version << ", data_loss="
+        << create_result.log_create_result.data_loss << "} and kCurrentVersion="
+        << DocumentLogCreator::kCurrentVersion;
+    // We can't rely on any existing derived files. Recreate them from scratch.
+    // Currently happens if:
+    //   1) This is a new log and we don't have derived files yet
+    //   2) Client wanted us to force a regeneration.
+    //   3) Log has some data loss, can't rely on existing derived data.
     std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
     libtextclassifier3::Status status =
         RegenerateDerivedFiles(force_recovery_and_revalidate_documents);
-    if (initialize_stats != nullptr) {
+    if (initialize_stats != nullptr &&
+        recovery_cause != InitializeStatsProto::NONE) {
+      // Only consider it a recovery if the client forced a recovery or there
+      // was data loss. Otherwise, this could just be the first time we're
+      // initializing and generating derived files.
       initialize_stats->set_document_store_recovery_latency_ms(
           document_recovery_timer->GetElapsedMilliseconds());
+      initialize_stats->set_document_store_recovery_cause(recovery_cause);
+      initialize_stats->set_document_store_data_status(
+          GetDataStatus(create_result.log_create_result.data_loss));
     }
     if (!status.ok()) {
       ICING_LOG(ERROR)
@@ -270,14 +297,14 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
       return status;
     }
   } else {
-    if (!InitializeDerivedFiles().ok()) {
-      ICING_VLOG(1)
+    if (!InitializeExistingDerivedFiles().ok()) {
+      ICING_LOG(WARNING)
           << "Couldn't find derived files or failed to initialize them, "
              "regenerating derived files for DocumentStore.";
       std::unique_ptr<Timer> document_recovery_timer = clock_.GetNewTimer();
       libtextclassifier3::Status status = RegenerateDerivedFiles(
-          /*force_recovery_and_revalidate_documents*/ false);
-      if (initialize_stats != nullptr && num_documents() > 0) {
+          /*force_recovery_and_revalidate_documents=*/false);
+      if (initialize_stats != nullptr) {
         initialize_stats->set_document_store_recovery_cause(
             InitializeStatsProto::IO_ERROR);
         initialize_stats->set_document_store_recovery_latency_ms(
@@ -296,10 +323,10 @@ libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     initialize_stats->set_num_documents(document_id_mapper_->num_elements());
   }
 
-  return create_result.data_loss;
+  return create_result.log_create_result.data_loss;
 }
 
-libtextclassifier3::Status DocumentStore::InitializeDerivedFiles() {
+libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
   if (!HeaderExists()) {
     // Without a header, we don't know if things are consistent between each
     // other so the caller should just regenerate everything from ground
@@ -404,7 +431,19 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
   // Iterates through document log
   auto iterator = document_log_->GetIterator();
   auto iterator_status = iterator.Advance();
+  libtextclassifier3::StatusOr<int64_t> element_size =
+      document_log_->GetElementsFileSize();
+  libtextclassifier3::StatusOr<int64_t> disk_usage =
+      document_log_->GetDiskUsage();
+  if (element_size.ok() && disk_usage.ok()) {
+    ICING_VLOG(1) << "Starting recovery of document store. Document store "
+                     "elements file size:"
+                  << element_size.ValueOrDie()
+                  << ", disk usage=" << disk_usage.ValueOrDie();
+  }
   while (iterator_status.ok()) {
+    ICING_VLOG(2) << "Attempting to read document at offset="
+                  << iterator.GetOffset();
     libtextclassifier3::StatusOr<DocumentWrapper> document_wrapper_or =
         document_log_->ReadProto(iterator.GetOffset());
 
@@ -519,7 +558,7 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
 libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   document_key_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status =
       KeyMapper<DocumentId>::Delete(*filesystem_, base_dir_);
@@ -529,7 +568,7 @@ libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
     return status;
   }
 
-  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // TODO(b/216487496): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   auto document_key_mapper_or =
       KeyMapper<DocumentId>::Create(*filesystem_, base_dir_, kUriMapperMaxSize);
@@ -545,7 +584,7 @@ libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
 libtextclassifier3::Status DocumentStore::ResetDocumentIdMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   document_id_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = FileBackedVector<int64_t>::Delete(
       *filesystem_, MakeDocumentIdMapperFilename(base_dir_));
@@ -554,7 +593,7 @@ libtextclassifier3::Status DocumentStore::ResetDocumentIdMapper() {
                      << "Failed to delete old document_id mapper";
     return status;
   }
-  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // TODO(b/216487496): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   auto document_id_mapper_or = FileBackedVector<int64_t>::Create(
       *filesystem_, MakeDocumentIdMapperFilename(base_dir_),
@@ -607,7 +646,7 @@ libtextclassifier3::Status DocumentStore::ResetFilterCache() {
 libtextclassifier3::Status DocumentStore::ResetNamespaceMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   namespace_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = KeyMapper<NamespaceId>::Delete(
       *filesystem_, MakeNamespaceMapperFilename(base_dir_));
@@ -627,7 +666,7 @@ libtextclassifier3::Status DocumentStore::ResetNamespaceMapper() {
 libtextclassifier3::Status DocumentStore::ResetCorpusMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   corpus_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = KeyMapper<CorpusId>::Delete(
       *filesystem_, MakeCorpusMapperFilename(base_dir_));
@@ -796,6 +835,12 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
 
   // Creates a new document id, updates key mapper and document_id mapper
   DocumentId new_document_id = document_id_mapper_->num_elements();
+  if (!IsDocumentIdValid(new_document_id)) {
+    return absl_ports::ResourceExhaustedError(
+        "Exceeded maximum number of documents. Try calling Optimize to reclaim "
+        "some space.");
+  }
+
   ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
       MakeFingerprint(name_space, uri), new_document_id));
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
@@ -1560,6 +1605,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   int size = document_id_mapper_->num_elements();
   int num_deleted = 0;
   int num_expired = 0;
+  UsageStore::UsageScores default_usage;
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
@@ -1608,10 +1654,14 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
                            usage_store_->GetUsageScores(document_id));
-
-    DocumentId new_document_id = new_document_id_or.ValueOrDie();
-    ICING_RETURN_IF_ERROR(
-        new_doc_store->SetUsageScores(new_document_id, usage_scores));
+    if (!(usage_scores == default_usage)) {
+      // If the usage scores for this document are the default (no usage), then
+      // don't bother setting it. No need to possibly allocate storage if
+      // there's nothing interesting to store.
+      DocumentId new_document_id = new_document_id_or.ValueOrDie();
+      ICING_RETURN_IF_ERROR(
+          new_doc_store->SetUsageScores(new_document_id, usage_scores));
+    }
   }
   if (stats != nullptr) {
     stats->set_num_original_documents(size);
@@ -1725,6 +1775,64 @@ libtextclassifier3::Status DocumentStore::ClearDerivedData(
 libtextclassifier3::Status DocumentStore::SetUsageScores(
     DocumentId document_id, const UsageStore::UsageScores& usage_scores) {
   return usage_store_->SetUsageScores(document_id, usage_scores);
+}
+
+libtextclassifier3::StatusOr<
+    google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
+DocumentStore::CollectCorpusInfo() const {
+  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
+      corpus_info;
+  libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
+      schema_store_->GetSchema();
+  if (!schema_proto_or.ok()) {
+    return corpus_info;
+  }
+  // Maps from CorpusId to the corresponding protocol buffer in the result.
+  std::unordered_map<CorpusId, DocumentDebugInfoProto::CorpusInfo*> info_map;
+  std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
+      namespace_mapper_->GetValuesToKeys();
+  const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
+  for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
+       ++document_id) {
+    if (!InternalDoesDocumentExist(document_id)) {
+      continue;
+    }
+    ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
+                           filter_cache_->Get(document_id));
+    ICING_ASSIGN_OR_RETURN(const DocumentAssociatedScoreData* score_data,
+                           score_cache_->Get(document_id));
+    const std::string& name_space =
+        namespace_id_to_namespace[filter_data->namespace_id()];
+    const std::string& schema =
+        schema_proto->types()[filter_data->schema_type_id()].schema_type();
+    auto iter = info_map.find(score_data->corpus_id());
+    if (iter == info_map.end()) {
+      DocumentDebugInfoProto::CorpusInfo* entry = corpus_info.Add();
+      entry->set_namespace_(name_space);
+      entry->set_schema(schema);
+      iter = info_map.insert({score_data->corpus_id(), entry}).first;
+    }
+    iter->second->set_total_documents(iter->second->total_documents() + 1);
+    iter->second->set_total_token(iter->second->total_token() +
+                                  score_data->length_in_tokens());
+  }
+  return corpus_info;
+}
+
+libtextclassifier3::StatusOr<DocumentDebugInfoProto>
+DocumentStore::GetDebugInfo(int verbosity) const {
+  DocumentDebugInfoProto debug_info;
+  *debug_info.mutable_document_storage_info() = GetStorageInfo();
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
+  debug_info.set_crc(crc.Get());
+  if (verbosity > 0) {
+    ICING_ASSIGN_OR_RETURN(google::protobuf::RepeatedPtrField<
+                               DocumentDebugInfoProto::CorpusInfo>
+                               corpus_info,
+                           CollectCorpusInfo());
+    *debug_info.mutable_corpus_info() = std::move(corpus_info);
+  }
+  return debug_info;
 }
 
 }  // namespace lib
