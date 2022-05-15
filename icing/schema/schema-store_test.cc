@@ -57,6 +57,7 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
     StringIndexingConfig::TokenizerType::PLAIN;
 
 constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
 
 constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
     PropertyConfigProto::DataType::STRING;
@@ -676,6 +677,181 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
               IsOkAndHolds(EqualsSetSchemaResult(force_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with a repeated property and set that schema
+  SchemaTypeConfigBuilder contact_point_repeated_label =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("label")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point_repeated_label).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_contact_point_type_id,
+                             schema_store->GetSchemaTypeId("ContactPoint"));
+
+  // 2. Create a type that references the ContactPoint type and make a backwards
+  // incompatible change to ContactPoint
+  SchemaTypeConfigBuilder contact_point_optional_label =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("label")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto new_schema = SchemaBuilder()
+                               .AddType(contact_point_optional_label)
+                               .AddType(person)
+                               .Build();
+
+  // 3. SetSchema should fail with ignore_errors_and_delete_documents=false and
+  // the old schema should remain
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = false;
+  expected_result.schema_types_incompatible_by_name.insert("ContactPoint");
+  expected_result.schema_types_incompatible_by_id.insert(
+      old_contact_point_type_id);
+  expected_result.schema_types_new_by_name.insert("Person");
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(old_schema));
+
+  // 4. SetSchema should succeed with ignore_errors_and_delete_documents=true
+  // and the new schema should be set
+  expected_result.success = true;
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/true),
+      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with label that matches prefix and set that
+  // schema
+  SchemaTypeConfigBuilder contact_point_prefix_label =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("label")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point_prefix_label).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
+
+  // 2. Create a type that references the ContactPoint type and make a index
+  // backwards incompatible change to ContactPoint
+  SchemaTypeConfigBuilder contact_point_exact_label =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("label")
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REPEATED));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto new_schema = SchemaBuilder()
+                               .AddType(contact_point_exact_label)
+                               .AddType(person)
+                               .Build();
+
+  // SetSchema should succeed, and only ContactPoint should be in
+  // schema_types_index_incompatible_by_name.
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_index_incompatible_by_name.insert(
+      "ContactPoint");
+  expected_result.schema_types_new_by_name.insert("Person");
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with a optional property and set that schema
+  SchemaTypeConfigBuilder contact_point_optional_label =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("label")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point_optional_label).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
+
+  // 2. Create a type that references the ContactPoint type and make a backwards
+  // compatible change to ContactPoint
+  SchemaTypeConfigBuilder contact_point_repeated_label =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("label")
+                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REPEATED));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto new_schema = SchemaBuilder()
+                               .AddType(contact_point_repeated_label)
+                               .AddType(person)
+                               .Build();
+
+  // 3. SetSchema should succeed, and only ContactPoint should be in
+  // schema_types_changed_fully_compatible_by_name.
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_changed_fully_compatible_by_name.insert(
+      "ContactPoint");
+  expected_result.schema_types_new_by_name.insert("Person");
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
 }
 
 TEST_F(SchemaStoreTest, GetSchemaTypeId) {
