@@ -37,7 +37,7 @@
 //    //icing/query:query-processor_benchmark
 //
 //    $ blaze-bin/icing/query/query-processor_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 //
 // Run on an Android device:
 //    Make target //icing/tokenization:language-segmenter depend on
@@ -53,7 +53,7 @@
 //    $ adb push blaze-bin/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmark_filter=all
+//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmarks=all
 //    --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,

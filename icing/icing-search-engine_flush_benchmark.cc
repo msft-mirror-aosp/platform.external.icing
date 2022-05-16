@@ -48,7 +48,7 @@
 //    //icing:icing-search-engine_flush_benchmark
 //
 //    $ blaze-bin/icing/icing-search-engine_flush_benchmark
-//    --benchmark_filter=all --benchmark_memory_usage
+//    --benchmarks=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -59,7 +59,7 @@
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/icing-search-engine_flush_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 
 namespace icing {
 namespace lib {

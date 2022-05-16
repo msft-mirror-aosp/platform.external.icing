@@ -49,7 +49,7 @@
 //    //icing/scoring:score-and-rank_benchmark
 //
 //    $ blaze-bin/icing/scoring/score-and-rank_benchmark
-//    --benchmark_filter=all --benchmark_memory_usage
+//    --benchmarks=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -59,7 +59,7 @@
 //    $ adb push blaze-bin/icing/scoring/score-and-rank_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/score-and-rank_benchmark --benchmark_filter=all
+//    $ adb shell /data/local/tmp/score-and-rank_benchmark --benchmarks=all
 
 namespace icing {
 namespace lib {

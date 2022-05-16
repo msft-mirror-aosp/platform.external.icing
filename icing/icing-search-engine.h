@@ -403,11 +403,6 @@ class IcingSearchEngine {
   // that field will be set to -1.
   StorageInfoResultProto GetStorageInfo() ICING_LOCKS_EXCLUDED(mutex_);
 
-  // Get debug information for Icing.
-  // verbosity <= 0, simplest debug information
-  // verbosity > 0, more detailed debug information as indicated in debug.proto
-  DebugInfoResultProto GetDebugInfo(int verbosity) ICING_LOCKS_EXCLUDED(mutex_);
-
   // Clears all data from Icing and re-initializes. Clients DO NOT need to call
   // Initialize again.
   //
