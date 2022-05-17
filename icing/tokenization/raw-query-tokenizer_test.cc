@@ -70,6 +70,29 @@ TEST_F(RawQueryTokenizerTest, Simple) {
                                EqualsToken(Token::Type::REGULAR, "WORLD"))));
 }
 
+TEST_F(RawQueryTokenizerTest, Emoji) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
+
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("😊 Hello! Goodbye?"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "😊"),
+                               EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "Goodbye"))));
+
+  EXPECT_THAT(
+      raw_query_tokenizer->TokenizeAll("Hello😊 ! Goodbye?"),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "😊"),
+                               EqualsToken(Token::Type::REGULAR, "Goodbye"))));
+}
+
 TEST_F(RawQueryTokenizerTest, Parentheses) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -80,26 +103,35 @@ TEST_F(RawQueryTokenizerTest, Parentheses) {
       tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
                                               language_segmenter.get()));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("()"),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Token> query_tokens,
+                             raw_query_tokenizer->TokenizeAll("()"));
+  EXPECT_THAT(
+      query_tokens,
+      ElementsAre(EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, "")));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("( )"),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
+  ICING_ASSERT_OK_AND_ASSIGN(query_tokens,
+                             raw_query_tokenizer->TokenizeAll("( )"));
+  EXPECT_THAT(
+      query_tokens,
+      ElementsAre(EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, "")));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1 term2)"),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+  ICING_ASSERT_OK_AND_ASSIGN(query_tokens,
+                             raw_query_tokenizer->TokenizeAll("(term1 term2)"));
+  EXPECT_THAT(
+      query_tokens,
+      ElementsAre(EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
                   EqualsToken(Token::Type::REGULAR, "term1"),
                   EqualsToken(Token::Type::REGULAR, "term2"),
-                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, "")));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("((term1 term2) (term3 term4))"),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+  ICING_ASSERT_OK_AND_ASSIGN(
+      query_tokens,
+      raw_query_tokenizer->TokenizeAll("((term1 term2) (term3 term4))"));
+  EXPECT_THAT(
+      query_tokens,
+      ElementsAre(EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
                   EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
                   EqualsToken(Token::Type::REGULAR, "term1"),
                   EqualsToken(Token::Type::REGULAR, "term2"),
@@ -108,21 +140,24 @@ TEST_F(RawQueryTokenizerTest, Parentheses) {
                   EqualsToken(Token::Type::REGULAR, "term3"),
                   EqualsToken(Token::Type::REGULAR, "term4"),
                   EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, "")));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("term1(term2)"),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::REGULAR, "term1"),
+  ICING_ASSERT_OK_AND_ASSIGN(query_tokens,
+                             raw_query_tokenizer->TokenizeAll("term1(term2)"));
+  EXPECT_THAT(
+      query_tokens,
+      ElementsAre(EqualsToken(Token::Type::REGULAR, "term1"),
                   EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
                   EqualsToken(Token::Type::REGULAR, "term2"),
-                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""))));
+                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, "")));
 
-  EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)term2"),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
-                  EqualsToken(Token::Type::REGULAR, "term1"),
-                  EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
-                  EqualsToken(Token::Type::REGULAR, "term2"))));
+  ICING_ASSERT_OK_AND_ASSIGN(query_tokens,
+                             raw_query_tokenizer->TokenizeAll("(term1)term2"));
+  EXPECT_THAT(query_tokens,
+              ElementsAre(EqualsToken(Token::Type::QUERY_LEFT_PARENTHESES, ""),
+                          EqualsToken(Token::Type::REGULAR, "term1"),
+                          EqualsToken(Token::Type::QUERY_RIGHT_PARENTHESES, ""),
+                          EqualsToken(Token::Type::REGULAR, "term2")));
 
   EXPECT_THAT(raw_query_tokenizer->TokenizeAll("(term1)(term2)"),
               IsOkAndHolds(ElementsAre(
