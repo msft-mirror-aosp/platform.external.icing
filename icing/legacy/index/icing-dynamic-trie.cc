@@ -73,7 +73,6 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "icing/legacy/core/icing-packed-pod.h"
@@ -111,26 +110,6 @@ int GetValidNextsSize(IcingDynamicTrie::Next *next_array_start,
        ++valid_nexts_length) {
   }
   return valid_nexts_length;
-}
-
-// Get property id from filename.
-std::optional<uint32_t> GetPropertyIDFromFileName(const std::string &filename) {
-  size_t property_id_start_idx = filename.rfind('.');
-  if (property_id_start_idx == std::string::npos) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
-                                                      filename.c_str());
-    return std::nullopt;
-  }
-  ++property_id_start_idx;  // skip dot
-  char *end;
-  uint32_t property_id =
-      strtol(filename.c_str() + property_id_start_idx, &end, 10);  // NOLINT
-  if (!end || end != (filename.c_str() + filename.size())) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
-                                                      filename.c_str());
-    return std::nullopt;
-  }
-  return property_id;
 }
 }  // namespace
 
@@ -344,7 +323,7 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
 
   uint32_t value_size() const { return hdr().value_size(); }
 
-  void FillDirtyPageStats(LexiconDebugInfoProto *stats) const;
+  void FillDirtyPageStats(Stats *stats) const;
 
   void inc_num_keys() { hdr_.hdr.set_num_keys(hdr_.hdr.num_keys() + 1); }
 
@@ -983,13 +962,10 @@ uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::suffixes_left() const {
 }
 
 void IcingDynamicTrie::IcingDynamicTrieStorage::FillDirtyPageStats(
-    LexiconDebugInfoProto *stats) const {
-  stats->mutable_node_info()->set_dirty_pages(
-      array_storage_[NODE].num_dirty_pages());
-  stats->mutable_next_info()->set_dirty_pages(
-      array_storage_[NEXT].num_dirty_pages());
-  stats->mutable_suffix_info()->set_dirty_pages(
-      array_storage_[SUFFIX].num_dirty_pages());
+    Stats *stats) const {
+  stats->dirty_pages_nodes = array_storage_[NODE].num_dirty_pages();
+  stats->dirty_pages_nexts = array_storage_[NEXT].num_dirty_pages();
+  stats->dirty_pages_suffixes = array_storage_[SUFFIX].num_dirty_pages();
 }
 
 // Dumper.
@@ -1275,8 +1251,19 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
   }
   for (size_t i = 0; i < files.size(); i++) {
     // Decode property id from filename.
-    std::optional<uint32_t> property_id = GetPropertyIDFromFileName(files[i]);
-    if (!property_id.has_value()) {
+    size_t property_id_start_idx = files[i].rfind('.');
+    if (property_id_start_idx == std::string::npos) {
+      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
+                                                        files[i].c_str());
+      continue;
+    }
+    property_id_start_idx++;  // skip dot
+    char *end;
+    uint32_t property_id =
+        strtol(files[i].c_str() + property_id_start_idx, &end, 10);  // NOLINT
+    if (!end || end != (files[i].c_str() + files[i].size())) {
+      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
+                                                        files[i].c_str());
       continue;
     }
     std::unique_ptr<IcingFlashBitmap> bitmap = OpenAndInitBitmap(
@@ -1290,9 +1277,9 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
     }
     bitmap->Truncate(truncate_idx);
     if (property_id >= property_bitmaps_.size()) {
-      property_bitmaps_.resize(*property_id + 1);
+      property_bitmaps_.resize(property_id + 1);
     }
-    property_bitmaps_[*property_id] = std::move(bitmap);
+    property_bitmaps_[property_id] = std::move(bitmap);
   }
 
   deleted_bitmap_ = OpenAndInitBitmap(
@@ -1380,24 +1367,19 @@ uint32_t IcingDynamicTrie::size() const {
   return storage_->hdr().num_keys();
 }
 
-void IcingDynamicTrie::CollectStatsRecursive(const Node &node,
-                                             LexiconDebugInfoProto *stats,
+void IcingDynamicTrie::CollectStatsRecursive(const Node &node, Stats *stats,
                                              uint32_t depth) const {
-  LexiconDebugInfoProto::NodeInfo *node_info = stats->mutable_node_info();
-  LexiconDebugInfoProto::NextInfo *next_info = stats->mutable_next_info();
-  LexiconDebugInfoProto::SuffixInfo *suffix_info = stats->mutable_suffix_info();
   if (node.is_leaf()) {
-    node_info->set_num_leaves(node_info->num_leaves() + 1);
-    node_info->set_sum_depth(node_info->sum_depth() + depth);
-    node_info->set_max_depth(max(node_info->max_depth(), depth));
+    stats->num_leaves++;
+    stats->sum_depth += depth;
+    stats->max_depth = max(stats->max_depth, depth);
     const char *suffix = storage_->GetSuffix(node.next_index());
-    suffix_info->set_suffixes_used(suffix_info->suffixes_used() +
-                                   strlen(suffix) + 1 + value_size());
-    if (suffix[0] == '\0') {
-      suffix_info->set_num_null_suffixes(suffix_info->num_null_suffixes() + 1);
+    stats->suffixes_used += strlen(suffix) + 1 + value_size();
+    if (!suffix[0]) {
+      stats->null_suffixes++;
     }
   } else {
-    node_info->set_num_intermediates(node_info->num_intermediates() + 1);
+    stats->num_intermediates++;
     uint32_t i = 0;
     for (; i < (1U << node.log2_num_children()); i++) {
       const Next &next = *storage_->GetNext(node.next_index(), i);
@@ -1410,42 +1392,30 @@ void IcingDynamicTrie::CollectStatsRecursive(const Node &node,
     if (i == 0) {
       ICING_LOG(FATAL) << "No valid node in 'next' array";
     }
-    node_info->set_sum_children(node_info->sum_children() + i);
-    node_info->set_max_children(max(node_info->max_children(), i));
+    stats->sum_children += i;
+    stats->max_children = max(stats->max_children, i);
 
-    if (next_info->child_counts_size() > 0) {
-      next_info->set_child_counts(i - 1, next_info->child_counts(i - 1) + 1);
-    }
-    uint32_t wasted = (1 << node.log2_num_children()) - i;
-    next_info->set_wasted(node.log2_num_children(),
-                          next_info->wasted(node.log2_num_children()) + wasted);
-    next_info->set_total_wasted(next_info->total_wasted() + wasted);
+    stats->child_counts[i - 1]++;
+    stats->wasted[node.log2_num_children()] +=
+        (1 << node.log2_num_children()) - i;
+    stats->total_wasted += (1 << node.log2_num_children()) - i;
   }
 }
 
-void IcingDynamicTrie::CollectStats(LexiconDebugInfoProto *stats,
-                                    int verbosity) const {
+void IcingDynamicTrie::CollectStats(Stats *stats) const {
   if (!is_initialized()) {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
   }
 
-  LexiconDebugInfoProto::NodeInfo *node_info = stats->mutable_node_info();
-  LexiconDebugInfoProto::NextInfo *next_info = stats->mutable_next_info();
-  LexiconDebugInfoProto::SuffixInfo *suffix_info = stats->mutable_suffix_info();
+  memset(stats, 0, sizeof(*stats));
 
-  if (verbosity > 0) {
-    next_info->mutable_child_counts()->Resize(kMaxNextArraySize, 0);
-  }
-  next_info->mutable_wasted()->Resize(kNumNextAllocationBuckets, 0);
-  next_info->mutable_num_free()->Resize(kNumNextAllocationBuckets, 0);
-
-  stats->set_num_keys(storage_->hdr().num_keys());
-  node_info->set_num_nodes(storage_->hdr().num_nodes());
-  node_info->set_max_nodes(storage_->hdr().max_nodes());
-  next_info->set_num_nexts(storage_->hdr().num_nexts());
-  next_info->set_max_nexts(storage_->hdr().max_nexts());
-  suffix_info->set_suffixes_capacity(storage_->hdr().suffixes_size());
-  suffix_info->set_max_suffixes_capacity(storage_->hdr().max_suffixes_size());
+  stats->num_keys = storage_->hdr().num_keys();
+  stats->num_nodes = storage_->hdr().num_nodes();
+  stats->max_nodes = storage_->hdr().max_nodes();
+  stats->num_nexts = storage_->hdr().num_nexts();
+  stats->max_nexts = storage_->hdr().max_nexts();
+  stats->suffixes_size = storage_->hdr().suffixes_size();
+  stats->max_suffixes_size = storage_->hdr().max_suffixes_size();
 
   // Stats collected from traversing the trie.
   if (!storage_->empty()) {
@@ -1456,23 +1426,80 @@ void IcingDynamicTrie::CollectStats(LexiconDebugInfoProto *stats,
   for (int i = 0; i < kNumNextAllocationBuckets; i++) {
     for (uint32_t cur = storage_->hdr().free_lists(i); cur != kInvalidNextIndex;
          cur = storage_->GetNext(cur, 0)->next_index()) {
-      next_info->set_num_free(i, next_info->num_free(i) + 1);
+      stats->num_free[i]++;
     }
-    next_info->set_total_free(next_info->total_free() +
-                              next_info->num_free(i) * (1 << i));
+    stats->total_free += stats->num_free[i] * (1 << i);
   }
 
   // Dirty page counts.
   storage_->FillDirtyPageStats(stats);
+}
 
-  // Some helper calculations to provide better readability.
-  node_info->set_avg_children(math_util::SafeDivide(
-      node_info->sum_children(), node_info->num_intermediates()));
-  node_info->set_avg_depth(
-      math_util::SafeDivide(node_info->sum_depth(), node_info->num_leaves()));
-  next_info->set_total_frag(math_util::SafeDivide(
-      (next_info->total_free() + next_info->total_wasted()),
-      next_info->num_nexts()));
+std::string IcingDynamicTrie::Stats::DumpStats(int verbosity) const {
+  std::string ret;
+  IcingStringUtil::SStringAppendF(
+      &ret, 0,
+      "Keys %u "
+      "Nodes (%u/%u) %.3f%% "
+      "Nexts (%u/%u) %.3f%% "
+      "Suffixes (%u/%u) %.3f%%\n",
+      num_keys, num_nodes, max_nodes,
+      100. * math_util::SafeDivide(num_nodes, max_nodes), num_nexts, max_nexts,
+      100. * math_util::SafeDivide(num_nexts, max_nexts), suffixes_size,
+      max_suffixes_size,
+      100. * math_util::SafeDivide(suffixes_size, max_suffixes_size));
+
+  if (verbosity > 0) {
+    for (int i = 0; i < kNumNextAllocationBuckets; i++) {
+      if (num_free[i] > 0) {
+        IcingStringUtil::SStringAppendF(&ret, 0, "Freelist@%d: %u\n", 1 << i,
+                                        num_free[i]);
+      }
+    }
+    IcingStringUtil::SStringAppendF(
+        &ret, 0, "Freelist total: %u/%u %.3f%%\n", total_free, num_nexts,
+        100. * math_util::SafeDivide(total_free, num_nexts));
+
+    for (int i = 0; i < 256; i++) {
+      if (child_counts[i] > 0) {
+        IcingStringUtil::SStringAppendF(&ret, 0, "Child count@%d: %u\n", i + 1,
+                                        child_counts[i]);
+      }
+    }
+    for (int i = 0; i < kNumNextAllocationBuckets; i++) {
+      IcingStringUtil::SStringAppendF(&ret, 0, "Wasted@%d: %u\n", 1 << i,
+                                      wasted[i]);
+    }
+    IcingStringUtil::SStringAppendF(
+        &ret, 0,
+        "Wasted total: %u\n"
+        "Num intermediates %u num leaves %u "
+        "suffixes used %u null %u\n"
+        "avg and max children for intermediates: %.3f, %u\n"
+        "avg and max depth for leaves: %.3f, %u\n"
+        "Total next frag: %.3f%%\n",
+        total_wasted, num_intermediates, num_leaves, suffixes_used,
+        null_suffixes, 1. * sum_children / num_intermediates, max_children,
+        1. * sum_depth / num_leaves, max_depth,
+        100. * math_util::SafeDivide((total_free + total_wasted), num_nexts));
+  }
+  IcingStringUtil::SStringAppendF(
+      &ret, 0, "Memory usage: %zu/%zu bytes\n",
+      num_nodes * sizeof(Node) + num_nexts * sizeof(Next) + suffixes_size,
+      max_nodes * sizeof(Node) + max_nexts * sizeof(Next) + max_suffixes_size);
+
+  IcingStringUtil::SStringAppendF(
+      &ret, 0, "Dirty pages: nodes %u/%.0f nexts %u/%.0f suffixes %u/%.0f\n",
+      dirty_pages_nodes,
+      math_util::SafeDivide(num_nodes * sizeof(Node) + getpagesize() - 1,
+                            getpagesize()),
+      dirty_pages_nexts,
+      math_util::SafeDivide(num_nexts * sizeof(Next) + getpagesize() - 1,
+                            getpagesize()),
+      dirty_pages_suffixes,
+      math_util::SafeDivide(suffixes_size + getpagesize() - 1, getpagesize()));
+
+  return ret;
 }
 
 void IcingDynamicTrie::DumpTrie(std::ostream *pretty_print,
@@ -2248,42 +2275,29 @@ std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(const char *key,
   return prefix_lengths;
 }
 
-LexiconDebugInfoProto IcingDynamicTrie::GetDebugInfo(int verbosity) const {
-  LexiconDebugInfoProto stats;
-  CollectStats(&stats, verbosity);
+void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
+  Stats stats;
+  CollectStats(&stats);
+  out->append(stats.DumpStats(verbosity));
 
-  if (verbosity <= 0) {
-    return stats;
-  }
-
-  // Property files summary.
+  // Property files.
   vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
     ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
         "Could not get files at prefix %s", property_bitmaps_prefix_.c_str());
-    return stats;
+    return;
   }
-  LexiconDebugInfoProto::PropertyBitmapInfo *deleted_bitmap =
-      stats.add_property_bitmaps_info();
-  deleted_bitmap->set_property_id(-1);
-  deleted_bitmap->set_file_size(
-      filesystem_->GetFileSize(deleted_bitmap_filename_.c_str()));
   for (size_t i = 0; i < files.size(); i++) {
-    LexiconDebugInfoProto::PropertyBitmapInfo *info =
-        stats.add_property_bitmaps_info();
-    std::optional<uint32_t> property_id = GetPropertyIDFromFileName(files[i]);
-    if (!property_id.has_value()) {
-      continue;
-    }
-    info->set_property_id(*property_id);
-    info->set_file_size(filesystem_->GetFileSize(files[i].c_str()));
+    IcingStringUtil::SStringAppendF(
+        out, 1000, "Prop file %s size %" PRIu64 "\n",
+        filesystem_->GetBasename(files[i].c_str()).c_str(),
+        filesystem_->GetFileSize(files[i].c_str()));
   }
-  return stats;
-}
-
-void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
-  *out = GetDebugInfo(verbosity).DebugString();
+  IcingStringUtil::SStringAppendF(
+      out, 1000, "Deleted file %s size %" PRIu64 "\n",
+      filesystem_->GetBasename(deleted_bitmap_filename_.c_str()).c_str(),
+      filesystem_->GetFileSize(deleted_bitmap_filename_.c_str()));
 }
 
 double IcingDynamicTrie::min_free_fraction() const {

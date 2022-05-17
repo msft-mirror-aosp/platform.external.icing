@@ -47,7 +47,6 @@
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
-#include "icing/proto/debug.pb.h"
 #include "icing/util/i18n-utils.h"
 #include "unicode/utf8.h"
 
@@ -144,6 +143,58 @@ class IcingDynamicTrie : public IIcingStorage {
 
   static const uint32_t kNoCrc = 0;
 
+  struct Stats {
+    uint32_t num_keys;
+
+    // Node stats
+
+    uint32_t num_nodes;
+    uint32_t max_nodes;
+    // Count of intermediate nodes.
+    uint32_t num_intermediates;
+    // Total and maximum number of children of intermediate nodes.
+    uint32_t sum_children, max_children;
+
+    // Count of leaf nodes.
+    uint32_t num_leaves;
+    // Total and maximum depth of leaf nodes.
+    uint32_t sum_depth, max_depth;
+
+    // Next stats
+
+    uint32_t num_nexts;
+    uint32_t max_nexts;
+    // Count of next arrays by size.
+    uint32_t child_counts[kMaxNextArraySize];
+    // Wasted next array space per allocation bucket (in Nexts, not
+    // bytes).
+    uint32_t wasted[kNumNextAllocationBuckets];
+    // Sum of wasted array.
+    uint32_t total_wasted;
+
+    // Suffix stats
+
+    uint32_t suffixes_size;
+    uint32_t max_suffixes_size;
+    // Bytes actually used by suffixes.
+    uint32_t suffixes_used;
+    // Number of suffixes that are just empty strings.
+    uint32_t null_suffixes;
+
+    // Next free-list stats
+    uint32_t num_free[kNumNextAllocationBuckets];
+    // Total Next nodes free (weighted sum of the above).
+    uint32_t total_free;
+
+    // Dirty pages.
+    uint32_t dirty_pages_nodes;
+    uint32_t dirty_pages_nexts;
+    uint32_t dirty_pages_suffixes;
+
+    // TODO(b/222349894) Convert the string output to a protocol buffer instead.
+    std::string DumpStats(int verbosity) const;
+  };
+
   // Options when creating the trie. Maximums for the node/next/suffix
   // arrays must be specified in advance.
   struct Options {
@@ -230,7 +281,7 @@ class IcingDynamicTrie : public IIcingStorage {
   uint32_t size() const;
 
   // Collecting stats.
-  void CollectStats(LexiconDebugInfoProto *stats, int verbosity) const;
+  void CollectStats(Stats *stats) const;
 
   // Gets all of the contents of the trie for debugging purposes. Note: this
   // stores the entire set of terms in memory.
@@ -349,10 +400,6 @@ class IcingDynamicTrie : public IIcingStorage {
   // itself. If utf8 is true, does not cut key mid-utf8.
   std::vector<int> FindBranchingPrefixLengths(const char *key, bool utf8) const;
 
-  // Returns debug information for the dynamic trie.
-  // verbosity <= 0, simplest debug information
-  // verbosity > 0, more detailed debug information as indicated in debug.proto
-  LexiconDebugInfoProto GetDebugInfo(int verbosity) const;
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
   double min_free_fraction() const;
@@ -560,7 +607,7 @@ class IcingDynamicTrie : public IIcingStorage {
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
-  void CollectStatsRecursive(const Node &node, LexiconDebugInfoProto *stats,
+  void CollectStatsRecursive(const Node &node, Stats *stats,
                              uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.

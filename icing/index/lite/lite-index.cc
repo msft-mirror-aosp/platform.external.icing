@@ -399,7 +399,7 @@ IndexDebugInfoProto::LiteIndexDebugInfoProto LiteIndex::GetDebugInfo(
   res.set_last_added_document_id(header_->last_added_docid());
   res.set_searchable_end(header_->searchable_end());
   res.set_index_crc(ComputeChecksum().Get());
-  *res.mutable_lexicon_info() = lexicon_.GetDebugInfo(verbosity);
+  lexicon_.GetDebugInfo(verbosity, res.mutable_lexicon_info());
   return res;
 }
 

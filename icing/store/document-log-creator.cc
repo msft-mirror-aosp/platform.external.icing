@@ -18,6 +18,7 @@
 #include <string>
 #include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/logging.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/annotate.h"

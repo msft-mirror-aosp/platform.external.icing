@@ -1414,11 +1414,7 @@ TEST_F(IndexTest, GetDebugInfo) {
   EXPECT_FALSE(out0.main_index_info().has_flash_index_storage_info());
   EXPECT_THAT(out0.main_index_info().last_added_document_id(),
               Eq(kDocumentId1));
-  EXPECT_THAT(out0.main_index_info().lexicon_info().node_info().num_leaves(),
-              Eq(3));
   EXPECT_THAT(out0.lite_index_info().curr_size(), Eq(2));
-  EXPECT_THAT(out0.lite_index_info().lexicon_info().node_info().num_leaves(),
-              Eq(2));
   EXPECT_THAT(out0.lite_index_info().last_added_document_id(),
               Eq(kDocumentId2));
 
@@ -1435,18 +1431,15 @@ TEST_F(IndexTest, GetDebugInfo) {
 
   IndexDebugInfoProto out2 = index_->GetDebugInfo(/*verbosity=*/0);
   EXPECT_THAT(out2.lite_index_info().curr_size(), Eq(3));
-  EXPECT_THAT(out2.lite_index_info().lexicon_info().node_info().num_leaves(),
-              Eq(3));
   EXPECT_THAT(out2.lite_index_info().last_added_document_id(),
               Eq(kDocumentId3));
 
-  // Merge into the man index. Debug strings should change again.
+  // Merge into the man index. Debuug strings should change again.
   ICING_ASSERT_OK(index_->Merge());
 
   IndexDebugInfoProto out3 = index_->GetDebugInfo(/*verbosity=*/0);
   EXPECT_TRUE(out3.has_index_storage_info());
-  EXPECT_THAT(out3.main_index_info().lexicon_info().node_info().num_leaves(),
-              Eq(6));
+  EXPECT_THAT(out3.main_index_info().lexicon_info(), Not(IsEmpty()));
   EXPECT_THAT(out3.main_index_info().last_added_document_id(),
               Eq(kDocumentId3));
   EXPECT_THAT(out3.lite_index_info().curr_size(), Eq(0));
@@ -1455,8 +1448,7 @@ TEST_F(IndexTest, GetDebugInfo) {
               Eq(kInvalidDocumentId));
   EXPECT_THAT(out3.lite_index_info().searchable_end(), Eq(0));
   EXPECT_THAT(out3.lite_index_info().index_crc(), Gt(0));
-  EXPECT_THAT(out3.lite_index_info().lexicon_info().node_info().num_leaves(),
-              Eq(0));
+  EXPECT_THAT(out3.lite_index_info().lexicon_info(), Not(IsEmpty()));
 }
 
 TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {
