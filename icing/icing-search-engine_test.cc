@@ -8082,6 +8082,141 @@ TEST_F(IcingSearchEngineTest, CJKSnippetTest) {
   EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
 }
 
+TEST_F(IcingSearchEngineTest, InvalidToEmptyQueryTest) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // String:     "Luca Brasi sleeps with the 🐟🐟🐟."
+  //              ^    ^     ^      ^    ^   ^ ^  ^ ^
+  // UTF8 idx:    0    5     11     18   23 27 3135 39
+  // UTF16 idx:   0    5     11     18   23 27 2931 33
+  // Breaks into segments: "Luca", "Brasi", "sleeps", "with", "the", "🐟", "🐟"
+  // and "🐟".
+  constexpr std::string_view kSicilianMessage =
+      "Luca Brasi sleeps with the 🐟🐟🐟.";
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kSicilianMessage)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "Some other content.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // Search and request snippet matching but no windowing.
+  SearchSpecProto search_spec;
+  search_spec.set_query("?");
+  search_spec.set_term_match_type(MATCH_PREFIX);
+  ScoringSpecProto scoring_spec;
+  ResultSpecProto result_spec;
+
+  // Search and make sure that we got a single successful result
+  SearchResultProto search_results =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_results.status(), ProtoIsOk());
+  EXPECT_THAT(search_results.results(), SizeIs(2));
+
+  search_spec.set_query("。");
+  search_results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_results.status(), ProtoIsOk());
+  EXPECT_THAT(search_results.results(), SizeIs(2));
+
+  search_spec.set_query("-");
+  search_results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_results.status(), ProtoIsOk());
+  EXPECT_THAT(search_results.results(), SizeIs(2));
+
+  search_spec.set_query(":");
+  search_results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_results.status(), ProtoIsOk());
+  EXPECT_THAT(search_results.results(), SizeIs(2));
+
+  search_spec.set_query("OR");
+  search_results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_results.status(), ProtoIsOk());
+  EXPECT_THAT(search_results.results(), SizeIs(2));
+
+  search_spec.set_query(" ");
+  search_results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_results.status(), ProtoIsOk());
+  EXPECT_THAT(search_results.results(), SizeIs(2));
+}
+
+TEST_F(IcingSearchEngineTest, EmojiSnippetTest) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // String:     "Luca Brasi sleeps with the 🐟🐟🐟."
+  //              ^    ^     ^      ^    ^   ^ ^  ^ ^
+  // UTF8 idx:    0    5     11     18   23 27 3135 39
+  // UTF16 idx:   0    5     11     18   23 27 2931 33
+  // Breaks into segments: "Luca", "Brasi", "sleeps", "with", "the", "🐟", "🐟"
+  // and "🐟".
+  constexpr std::string_view kSicilianMessage =
+      "Luca Brasi sleeps with the 🐟🐟🐟.";
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kSicilianMessage)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "Some other content.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // Search and request snippet matching but no windowing.
+  SearchSpecProto search_spec;
+  search_spec.set_query("🐟");
+  search_spec.set_term_match_type(MATCH_PREFIX);
+
+  ResultSpecProto result_spec;
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(1);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(1);
+
+  // Search and make sure that we got a single successful result
+  SearchResultProto search_results = icing.Search(
+      search_spec, ScoringSpecProto::default_instance(), result_spec);
+  ASSERT_THAT(search_results.status(), ProtoIsOk());
+  ASSERT_THAT(search_results.results(), SizeIs(1));
+  const SearchResultProto::ResultProto* result = &search_results.results(0);
+  EXPECT_THAT(result->document().uri(), Eq("uri1"));
+
+  // Ensure that one and only one property was matched and it was "body"
+  ASSERT_THAT(result->snippet().entries(), SizeIs(1));
+  const SnippetProto::EntryProto* entry = &result->snippet().entries(0);
+  EXPECT_THAT(entry->property_name(), Eq("body"));
+
+  // Get the content for "subject" and see what the match is.
+  std::string_view content = GetString(&result->document(), "body");
+  ASSERT_THAT(content, Eq(kSicilianMessage));
+
+  // Ensure that there is one and only one match within "subject"
+  ASSERT_THAT(entry->snippet_matches(), SizeIs(1));
+  const SnippetMatchProto& match_proto = entry->snippet_matches(0);
+
+  EXPECT_THAT(match_proto.exact_match_byte_position(), Eq(27));
+  EXPECT_THAT(match_proto.exact_match_byte_length(), Eq(4));
+  std::string_view match =
+      content.substr(match_proto.exact_match_byte_position(),
+                     match_proto.exact_match_byte_length());
+  ASSERT_THAT(match, Eq("🐟"));
+
+  // Ensure that the utf-16 values are also as expected
+  EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(27));
+  EXPECT_THAT(match_proto.exact_match_utf16_length(), Eq(2));
+}
+
 TEST_F(IcingSearchEngineTest, PutDocumentIndexFailureDeletion) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
