@@ -50,6 +50,12 @@ int GetAndroidLogLevel(LogSeverity::Code severity) {
 void LowLevelLogging(LogSeverity::Code severity, const std::string& tag,
                      const std::string& message) {
   const int android_log_level = GetAndroidLogLevel(severity);
+#if __ANDROID_API__ >= 30
+  if (!__android_log_is_loggable(android_log_level, tag.c_str(),
+                                 /*default_prio=*/ANDROID_LOG_INFO)) {
+    return;
+  }
+#endif  // __ANDROID_API__ >= 30
   __android_log_write(android_log_level, tag.c_str(), message.c_str());
 }
 

@@ -27,7 +27,6 @@
 #include "gtest/gtest.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/proto/debug.pb.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -35,12 +34,7 @@ namespace lib {
 
 namespace {
 
-using ::testing::Each;
-using ::testing::ElementsAre;
-using ::testing::ElementsAreArray;
-using ::testing::Gt;
-using ::testing::IsEmpty;
-using ::testing::UnorderedElementsAre;
+using testing::ElementsAre;
 
 constexpr std::string_view kKeys[] = {
     "", "ab", "ac", "abd", "bac", "bb", "bacd", "abbb", "abcdefg",
@@ -62,8 +56,9 @@ class IcingDynamicTrieTest : public ::testing::Test {
 
   // Output trie stats to stderr.
   static void StatsDump(const IcingDynamicTrie& trie) {
-    DLOG(INFO) << "Stats:\n"
-               << trie.GetDebugInfo(/*verbosity=*/1).DebugString();
+    IcingDynamicTrie::Stats stats;
+    trie.CollectStats(&stats);
+    DLOG(INFO) << "Stats:\n" << stats.DumpStats(true);
   }
 
   static void AddToTrie(IcingDynamicTrie* trie, uint32_t num_keys) {
@@ -1136,190 +1131,6 @@ TEST_F(IcingDynamicTrieTest, BitmapsClosedWhenInitFails) {
   // Check that both the bitmap and the property files have been closed.
   ASSERT_FALSE(trie.deleted_bitmap_);
   ASSERT_EQ(0, trie.property_bitmaps_.size());
-}
-
-TEST_F(IcingDynamicTrieTest, GetDebugInfo) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  IcingDynamicTrie::Options option;
-  ASSERT_TRUE(trie.CreateIfNotExist(option));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t unused = 0;
-  ASSERT_TRUE(trie.Insert("", &unused));
-  uint32_t val_idx;
-  ASSERT_TRUE(trie.Insert("ab", &unused, &val_idx, false));
-  trie.SetProperty(val_idx, 0);
-  ASSERT_TRUE(trie.Insert("ac", &unused));
-  ASSERT_TRUE(trie.Insert("abd", &unused));
-  ASSERT_TRUE(trie.Insert("bac", &unused));
-  ASSERT_TRUE(trie.Insert("bb", &unused));
-  ASSERT_TRUE(trie.Insert("bacd", &unused));
-  ASSERT_TRUE(trie.Insert("abbb", &unused));
-  ASSERT_TRUE(trie.Insert("abcdefg", &unused));
-  StatsDump(trie);
-
-  LexiconDebugInfoProto info0 = trie.GetDebugInfo(/*verbosity=*/1);
-  EXPECT_EQ(info0.num_keys(), 9);
-  EXPECT_EQ(info0.node_info().num_nodes(), 15);
-  EXPECT_EQ(info0.node_info().max_nodes(), option.max_nodes);
-  EXPECT_EQ(info0.node_info().num_intermediates(), 6);
-  EXPECT_EQ(info0.node_info().sum_children(), 14);
-  EXPECT_EQ(info0.node_info().max_children(), 4);
-  EXPECT_EQ(info0.node_info().avg_children(), (float)14 / 6);
-  EXPECT_EQ(info0.node_info().num_leaves(), 9);
-  EXPECT_EQ(info0.node_info().sum_depth(), 25);
-  EXPECT_EQ(info0.node_info().max_depth(), 4);
-  EXPECT_EQ(info0.node_info().avg_depth(), (float)25 / 9);
-
-  EXPECT_EQ(info0.next_info().num_nexts(), 17);
-  EXPECT_EQ(info0.next_info().max_nexts(), option.max_nexts);
-  uint32_t exp_child_counts[IcingDynamicTrie::kMaxNextArraySize] = {1, 3, 1, 1};
-  EXPECT_THAT(info0.next_info().child_counts(),
-              ElementsAreArray(exp_child_counts));
-  EXPECT_THAT(info0.next_info().wasted(),
-              ElementsAre(0, 0, 1, 0, 0, 0, 0, 0, 0));
-  EXPECT_EQ(info0.next_info().total_wasted(), 1);
-  EXPECT_THAT(info0.next_info().num_free(),
-              ElementsAre(0, 1, 0, 0, 0, 0, 0, 0, 0));
-  EXPECT_EQ(info0.next_info().total_free(), 2);
-  EXPECT_EQ(info0.next_info().total_frag(), (float)(2 + 1) / 17);
-
-  EXPECT_THAT(info0.suffix_info().suffixes_capacity(), Gt(0));
-  EXPECT_EQ(info0.suffix_info().max_suffixes_capacity(),
-            option.max_suffixes_size);
-  EXPECT_THAT(info0.suffix_info().suffixes_used(), Gt(0));
-  EXPECT_EQ(info0.suffix_info().num_null_suffixes(), 7);
-
-  EXPECT_EQ(info0.node_info().dirty_pages(), 1);
-  EXPECT_EQ(info0.next_info().dirty_pages(), 1);
-  EXPECT_EQ(info0.suffix_info().dirty_pages(), 1);
-
-  std::vector<uint32_t> property_ids;
-  for (int i = 0; i < info0.property_bitmaps_info_size(); i++) {
-    property_ids.push_back(info0.property_bitmaps_info(i).property_id());
-  }
-  EXPECT_THAT(property_ids, UnorderedElementsAre(-1, 0));
-
-  LexiconDebugInfoProto info1 = trie.GetDebugInfo(/*verbosity=*/0);
-  EXPECT_THAT(info1.next_info().child_counts(), IsEmpty());
-  EXPECT_THAT(info1.property_bitmaps_info(), IsEmpty());
-}
-
-TEST_F(IcingDynamicTrieTest, GetDebugInfoForEmptyTrie) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  IcingDynamicTrie::Options option;
-  ASSERT_TRUE(trie.CreateIfNotExist(option));
-  ASSERT_TRUE(trie.Init());
-
-  LexiconDebugInfoProto info = trie.GetDebugInfo(/*verbosity=*/1);
-  EXPECT_EQ(info.num_keys(), 0);
-  EXPECT_EQ(info.node_info().num_nodes(), 0);
-  EXPECT_EQ(info.node_info().max_nodes(), option.max_nodes);
-  EXPECT_EQ(info.node_info().num_intermediates(), 0);
-  EXPECT_EQ(info.node_info().sum_children(), 0);
-  EXPECT_EQ(info.node_info().max_children(), 0);
-  EXPECT_EQ(info.node_info().num_leaves(), 0);
-  EXPECT_EQ(info.node_info().sum_depth(), 0);
-  EXPECT_EQ(info.node_info().max_depth(), 0);
-
-  EXPECT_EQ(info.next_info().num_nexts(), 0);
-  EXPECT_EQ(info.next_info().max_nexts(), option.max_nexts);
-  EXPECT_THAT(info.next_info().child_counts(), Each(0));
-  EXPECT_THAT(info.next_info().wasted(), Each(0));
-  EXPECT_EQ(info.next_info().total_wasted(), 0);
-  EXPECT_THAT(info.next_info().num_free(), Each(0));
-  EXPECT_EQ(info.next_info().total_free(), 0);
-
-  EXPECT_EQ(info.suffix_info().suffixes_capacity(), 0);
-  EXPECT_EQ(info.suffix_info().max_suffixes_capacity(),
-            option.max_suffixes_size);
-  EXPECT_EQ(info.suffix_info().suffixes_used(), 0);
-  EXPECT_EQ(info.suffix_info().num_null_suffixes(), 0);
-
-  EXPECT_EQ(info.node_info().dirty_pages(), 0);
-  EXPECT_EQ(info.next_info().dirty_pages(), 0);
-  EXPECT_EQ(info.suffix_info().dirty_pages(), 0);
-}
-
-TEST_F(IcingDynamicTrieTest, GetDebugInfoCorrectForWastedAndChildCounts) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t unused = 0;
-  ASSERT_TRUE(trie.Insert("", &unused));
-  ASSERT_TRUE(trie.Insert("ab", &unused));
-  PrintTrie(trie);
-  LexiconDebugInfoProto::NextInfo info =
-      trie.GetDebugInfo(/*verbosity=*/1).next_info();
-  // Root has 2 children "" and "ab", which are leaves. No wasted.
-  EXPECT_THAT(info.wasted(), Each(0));
-  uint32_t exp_child_counts1[IcingDynamicTrie::kMaxNextArraySize] = {0, 1};
-  EXPECT_THAT(info.child_counts(), ElementsAreArray(exp_child_counts1));
-
-  ASSERT_TRUE(trie.Insert("ac", &unused));
-  PrintTrie(trie);
-  info = trie.GetDebugInfo(/*verbosity=*/1).next_info();
-  // Root has 2 children "" and "a".
-  // "a" has 2 children "b" and "c".
-  // No wasted.
-  EXPECT_THAT(info.wasted(), Each(0));
-  uint32_t exp_child_counts2[IcingDynamicTrie::kMaxNextArraySize] = {0, 2};
-  EXPECT_THAT(info.child_counts(), ElementsAreArray(exp_child_counts2));
-
-  ASSERT_TRUE(trie.Insert("ad", &unused));
-  PrintTrie(trie);
-  info = trie.GetDebugInfo(/*verbosity=*/1).next_info();
-  // Root has 2 children "" and "a".
-  // "a" has 3 children "b", "c", and "d".
-  // 1 next wasted for "a", since 2^2 - 3 = 1
-  EXPECT_THAT(info.wasted(), ElementsAre(0, 0, 1, 0, 0, 0, 0, 0, 0));
-  uint32_t exp_child_counts3[IcingDynamicTrie::kMaxNextArraySize] = {0, 1, 1};
-  EXPECT_THAT(info.child_counts(), ElementsAreArray(exp_child_counts3));
-}
-
-TEST_F(IcingDynamicTrieTest, GetDebugInfoCorrectForFreeList) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t unused = 0;
-  ASSERT_TRUE(trie.Insert("", &unused));
-  ASSERT_TRUE(trie.Insert("ab", &unused));
-  ASSERT_TRUE(trie.Insert("ac", &unused));
-  // No next arrays are freed yet.
-  LexiconDebugInfoProto::NextInfo info =
-      trie.GetDebugInfo(/*verbosity=*/0).next_info();
-  EXPECT_THAT(info.num_free(), Each(0));
-  EXPECT_EQ(info.total_free(), 0);
-
-  ASSERT_TRUE(trie.Insert("ad", &unused));
-  info = trie.GetDebugInfo(/*verbosity=*/0).next_info();
-  // The next array of "a" with size 2 has been freed in order to expand to
-  // size 4.
-  EXPECT_THAT(info.num_free(), ElementsAre(0, 1, 0, 0, 0, 0, 0, 0, 0));
-  EXPECT_EQ(info.total_free(), 2);
-
-  ASSERT_TRUE(trie.Insert("ae", &unused));
-  info = trie.GetDebugInfo(/*verbosity=*/0).next_info();
-  // No change
-  EXPECT_THAT(info.num_free(), ElementsAre(0, 1, 0, 0, 0, 0, 0, 0, 0));
-  EXPECT_EQ(info.total_free(), 2);
-
-  ASSERT_TRUE(trie.Insert("af", &unused));
-  info = trie.GetDebugInfo(/*verbosity=*/0).next_info();
-  // The next array of "a" with size 4 has been freed in order to expand to
-  // size 8.
-  EXPECT_THAT(info.num_free(), ElementsAre(0, 1, 1, 0, 0, 0, 0, 0, 0));
-  EXPECT_EQ(info.total_free(), 2 + 4);
 }
 
 }  // namespace lib

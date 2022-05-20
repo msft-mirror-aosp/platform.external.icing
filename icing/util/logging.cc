@@ -39,10 +39,10 @@ const char *JumpToBasename(const char *file_name) {
   return file_name + last_token_start + 1;
 }
 
-// Calculate the logging level value based on priority and verbosity.
-constexpr uint32_t CalculateLoggingLevel(LogSeverity::Code priority,
+// Calculate the logging level value based on severity and verbosity.
+constexpr uint32_t CalculateLoggingLevel(LogSeverity::Code severity,
                                          uint16_t verbosity) {
-  uint32_t logging_level = static_cast<uint16_t>(priority);
+  uint32_t logging_level = static_cast<uint16_t>(severity);
   logging_level = (logging_level << 16) | verbosity;
   return logging_level;
 }
@@ -56,12 +56,12 @@ constexpr uint32_t CalculateLoggingLevel(LogSeverity::Code priority,
 #endif
 
 // The current global logging level for Icing, which controls which logs are
-// printed based on priority and verbosity.
+// printed based on severity and verbosity.
 //
 // This needs to be global so that it can be easily accessed from ICING_LOG and
 // ICING_VLOG macros spread throughout the entire code base.
 //
-// The first 16 bits represent the minimal log priority.
+// The first 16 bits represent the minimal log severity.
 // The last 16 bits represent the current verbosity.
 std::atomic<uint32_t> global_logging_level = DEFAULT_LOGGING_LEVEL;
 
@@ -88,17 +88,17 @@ bool ShouldLog(LogSeverity::Code severity, int16_t verbosity) {
   return true;
 }
 
-bool SetLoggingLevel(LogSeverity::Code priority, int16_t verbosity) {
+bool SetLoggingLevel(LogSeverity::Code severity, int16_t verbosity) {
   if (verbosity < 0) {
     return false;
   }
-  if (priority > LogSeverity::VERBOSE && verbosity > 0) {
+  if (severity > LogSeverity::VERBOSE && verbosity > 0) {
     return false;
   }
   // Using the relaxed order for better performance because we only need to
   // guarantee the atomicity for this specific statement, without the need to
   // worry about reordering.
-  global_logging_level.store(CalculateLoggingLevel(priority, verbosity),
+  global_logging_level.store(CalculateLoggingLevel(severity, verbosity),
                              std::memory_order_relaxed);
   return true;
 }
@@ -106,12 +106,18 @@ bool SetLoggingLevel(LogSeverity::Code priority, int16_t verbosity) {
 LogMessage::LogMessage(LogSeverity::Code severity, uint16_t verbosity,
                        std::string_view tag, const char *file_name,
                        int line_number)
-    : severity_(severity), verbosity_(verbosity), tag_(tag) {
-  stream_ << JumpToBasename(file_name) << ":" << line_number << ": ";
+    : severity_(severity),
+      verbosity_(verbosity),
+      tag_(tag),
+      should_log_(ShouldLog(severity_, verbosity_)),
+      stream_(should_log_) {
+  if (should_log_) {
+    stream_ << JumpToBasename(file_name) << ":" << line_number << ": ";
+  }
 }
 
 LogMessage::~LogMessage() {
-  if (ShouldLog(severity_, verbosity_)) {
+  if (should_log_) {
     LowLevelLogging(severity_, tag_, stream_.message);
   }
   if (severity_ == LogSeverity::FATAL) {

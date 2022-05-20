@@ -1822,12 +1822,12 @@ DocumentStore::CollectCorpusInfo() const {
 }
 
 libtextclassifier3::StatusOr<DocumentDebugInfoProto>
-DocumentStore::GetDebugInfo(int verbosity) const {
+DocumentStore::GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
   DocumentDebugInfoProto debug_info;
   *debug_info.mutable_document_storage_info() = GetStorageInfo();
   ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
   debug_info.set_crc(crc.Get());
-  if (verbosity > 0) {
+  if (verbosity == DebugInfoVerbosity::DETAILED) {
     ICING_ASSIGN_OR_RETURN(google::protobuf::RepeatedPtrField<
                                DocumentDebugInfoProto::CorpusInfo>
                                corpus_info,

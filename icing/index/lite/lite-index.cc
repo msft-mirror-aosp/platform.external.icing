@@ -391,15 +391,22 @@ bool LiteIndex::is_full() const {
           lexicon_.min_free_fraction() < (1.0 - kTrieFullFraction));
 }
 
-IndexDebugInfoProto::LiteIndexDebugInfoProto LiteIndex::GetDebugInfo(
-    int verbosity) {
-  IndexDebugInfoProto::LiteIndexDebugInfoProto res;
-  res.set_curr_size(header_->cur_size());
-  res.set_hit_buffer_size(options_.hit_buffer_size);
-  res.set_last_added_document_id(header_->last_added_docid());
-  res.set_searchable_end(header_->searchable_end());
-  res.set_index_crc(ComputeChecksum().Get());
-  *res.mutable_lexicon_info() = lexicon_.GetDebugInfo(verbosity);
+std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) {
+  std::string res;
+  std::string lexicon_info;
+  lexicon_.GetDebugInfo(verbosity, &lexicon_info);
+  IcingStringUtil::SStringAppendF(
+      &res, 0,
+      "curr_size: %u\n"
+      "hit_buffer_size: %u\n"
+      "last_added_document_id %u\n"
+      "searchable_end: %u\n"
+      "index_crc: %u\n"
+      "\n"
+      "lite_lexicon_info:\n%s\n",
+      header_->cur_size(), options_.hit_buffer_size,
+      header_->last_added_docid(), header_->searchable_end(),
+      ComputeChecksum().Get(), lexicon_info.c_str());
   return res;
 }
 

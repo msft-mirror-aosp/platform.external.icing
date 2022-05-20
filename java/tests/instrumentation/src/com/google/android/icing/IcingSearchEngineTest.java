@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
 import com.google.android.icing.proto.DebugInfoResultProto;
+import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
@@ -493,8 +494,29 @@ public final class IcingSearchEngineTest {
   public void testGetDebugInfo() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
-    DebugInfoResultProto debugInfoResultProto = icingSearchEngine.getDebugInfo(/*verbosity= */ 1);
-    assertStatusOk(debugInfoResultProto.getStatus());
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertThat(
+            icingSearchEngine
+                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.OK);
+
+    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
+    assertStatusOk(icingSearchEngine.put(emailDocument).getStatus());
+
+    DebugInfoResultProto debugInfoResultProtoBasic =
+        icingSearchEngine.getDebugInfo(DebugInfoVerbosity.Code.BASIC);
+    assertStatusOk(debugInfoResultProtoBasic.getStatus());
+    assertThat(debugInfoResultProtoBasic.getDebugInfo().getDocumentInfo().getCorpusInfoList())
+        .isEmpty(); // because verbosity=BASIC
+
+    DebugInfoResultProto debugInfoResultProtoDetailed =
+        icingSearchEngine.getDebugInfo(DebugInfoVerbosity.Code.DETAILED);
+    assertStatusOk(debugInfoResultProtoDetailed.getStatus());
+    assertThat(debugInfoResultProtoDetailed.getDebugInfo().getDocumentInfo().getCorpusInfoList())
+        .hasSize(1); // because verbosity=DETAILED
   }
 
   @Test

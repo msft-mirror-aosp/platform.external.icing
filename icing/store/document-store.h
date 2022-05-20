@@ -425,15 +425,15 @@ class DocumentStore {
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
 
   // Get debug information for the document store.
-  // verbosity <= 0, simplest debug information
-  // verbosity > 0, also return the total number of documents and tokens in each
-  // (namespace, schema type) pair.
+  // verbosity = BASIC, simplest debug information
+  // verbosity = DETAILED, also return the total number of documents and tokens
+  // in each (namespace, schema type) pair.
   //
   // Returns:
   //   DocumentDebugInfoProto on success
   //   INTERNAL_ERROR on IO errors, crc compute error
   libtextclassifier3::StatusOr<DocumentDebugInfoProto> GetDebugInfo(
-      int verbosity) const;
+      DebugInfoVerbosity::Code verbosity) const;
 
  private:
   // Use DocumentStore::Create() to instantiate.

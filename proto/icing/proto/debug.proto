@@ -37,83 +37,14 @@ message LogSeverity {
   }
 }
 
-// Next tag: 6
-message LexiconDebugInfoProto {
-  optional uint32 num_keys = 1;
-
-  // Next tag: 12
-  message NodeInfo {
-    optional uint32 num_nodes = 1;
-    optional uint32 max_nodes = 2;
-
-    // Count of intermediate nodes.
-    optional uint32 num_intermediates = 3;
-    // Total, maximum and average number of children of intermediate nodes.
-    optional uint32 sum_children = 4;
-    optional uint32 max_children = 5;
-    optional float avg_children = 6;  // sum_children / num_intermediates
-
-    // Count of leaf nodes.
-    optional uint32 num_leaves = 7;
-    // Total, maximum and average depth of leaf nodes.
-    optional uint32 sum_depth = 8;
-    optional uint32 max_depth = 9;
-    optional float avg_depth = 10;  // sum_depth / num_leaves;
-
-    optional uint32 dirty_pages = 11;
+message DebugInfoVerbosity {
+  enum Code {
+    // Simplest debug information.
+    BASIC = 0;
+    // More detailed debug information as indicated in the field documentation
+    // below.
+    DETAILED = 1;
   }
-  optional NodeInfo node_info = 2;
-
-  // Next tag: 10
-  message NextInfo {
-    optional uint32 num_nexts = 1;
-    optional uint32 max_nexts = 2;
-    // Count of next arrays by size. Need verbosity > 0.
-    // Index into child_counts is the number of children minus 1 and the value
-    // is the number of intermediate nodes that have that number of children.
-    repeated uint32 child_counts = 3
-        [packed = true];  // Array of size kMaxNextArraySize
-    // Wasted next array space per allocation bucket (in Nexts, not bytes).
-    // Index into wasted is log2(bucket_size).
-    // Ex. wasted[3] is the number of nexts wasted from all next arrays of size
-    // 2^3=8.
-    repeated uint32 wasted = 4
-        [packed = true];  // Array of size kNumNextAllocationBuckets
-    // Sum of wasted array.
-    optional uint32 total_wasted = 5;
-    // Next free-list stats
-    // Index into num_free is log2(bucket_size).
-    // Ex. num_free[3] is the number of free lists of size 2^3=8.
-    repeated uint32 num_free = 6
-        [packed = true];  // Array of size kNumNextAllocationBuckets
-    // Total Next nodes free (weighted sum of the above).
-    optional uint32 total_free = 7;
-    // A measure of the fragment of next arrays.
-    optional float total_frag = 8;  // (total_free + total_wasted) / num_nexts
-    optional uint32 dirty_pages = 9;
-  }
-  optional NextInfo next_info = 3;
-
-  // Next tag: 6
-  message SuffixInfo {
-    optional uint32 suffixes_capacity = 1;
-    optional uint32 max_suffixes_capacity = 2;
-    // Bytes actually used by suffixes.
-    optional uint32 suffixes_used = 3;
-    // Number of suffixes that are just empty strings.
-    optional uint32 num_null_suffixes = 4;
-    optional uint32 dirty_pages = 5;
-  }
-  optional SuffixInfo suffix_info = 4;
-
-  // Next tag: 3
-  message PropertyBitmapInfo {
-    // Property id. -1 represents deleted bitmap.
-    optional int32 property_id = 1;
-    optional uint32 file_size = 2;
-  }
-  // For verbosity > 0
-  repeated PropertyBitmapInfo property_bitmaps_info = 5;
 }
 
 // Next tag: 4
@@ -121,41 +52,29 @@ message IndexDebugInfoProto {
   // Storage information of the index.
   optional IndexStorageInfoProto index_storage_info = 1;
 
-  message MainIndexDebugInfoProto {
-    // Information about the main lexicon.
-    optional LexiconDebugInfoProto lexicon_info = 1;
+  // A formatted string containing the following information:
+  // lexicon_info: Information about the main lexicon
+  // last_added_document_id: Last added document id
+  // flash_index_storage_info: If verbosity = DETAILED, return information about
+  //                           the posting list storage
+  //
+  // No direct contents from user-provided documents will ever appear in this
+  // string.
+  optional string main_index_info = 2;
 
-    // Last added document id.
-    optional uint32 last_added_document_id = 2;
-
-    // If verbosity > 0, return information about the posting list storage.
-    // TODO(b/222349894) Convert the string output to a protocol buffer instead.
-    optional string flash_index_storage_info = 3;
-  }
-  optional MainIndexDebugInfoProto main_index_info = 2;
-
-  message LiteIndexDebugInfoProto {
-    // Current number of hits.
-    optional uint32 curr_size = 1;
-
-    // The maximum possible number of hits.
-    optional uint32 hit_buffer_size = 2;
-
-    // Last added document id.
-    optional uint32 last_added_document_id = 3;
-
-    // The first position in the hit buffer that is not sorted yet,
-    // or curr_size if all hits are sorted.
-    optional uint32 searchable_end = 4;
-
-    // The most recent checksum of the lite index, by calling
-    // LiteIndex::ComputeChecksum().
-    optional uint32 index_crc = 5;
-
-    // Information about the lite lexicon.
-    optional LexiconDebugInfoProto lexicon_info = 6;
-  }
-  optional LiteIndexDebugInfoProto lite_index_info = 3;
+  // A formatted string containing the following information:
+  // curr_size: Current number of hits
+  // hit_buffer_size: The maximum possible number of hits
+  // last_added_document_id: Last added document id
+  // searchable_end: The first position in the hit buffer that is not sorted
+  //                 yet, or curr_size if all hits are sorted
+  // index_crc: The most recent checksum of the lite index, by calling
+  //            LiteIndex::ComputeChecksum()
+  // lexicon_info: Information about the lite lexicon
+  //
+  // No direct contents from user-provided documents will ever appear in this
+  // string.
+  optional string lite_index_info = 3;
 }
 
 // Next tag: 4
@@ -174,8 +93,8 @@ message DocumentDebugInfoProto {
     optional uint32 total_token = 4;
   }
 
-  // If verbosity > 0, return the total number of documents and tokens in each
-  // (namespace, schema type) pair.
+  // If verbosity = DETAILED, return the total number of documents and tokens in
+  // each (namespace, schema type) pair.
   // Note that deleted and expired documents are skipped in the output.
   repeated CorpusInfo corpus_info = 3;
 }

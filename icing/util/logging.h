@@ -33,56 +33,70 @@ namespace lib {
 // The function will always return false when verbosity is negative.
 bool ShouldLog(LogSeverity::Code severity, int16_t verbosity = 0);
 
-// Set the minimal logging priority to be enabled, and the verbose level to see
+// Set the minimal logging severity to be enabled, and the verbose level to see
 // from the logs.
-// Return false if priority is set higher than VERBOSE but verbosity is not 0.
+// Return false if severity is set higher than VERBOSE but verbosity is not 0.
 // The function will always return false when verbosity is negative.
-bool SetLoggingLevel(LogSeverity::Code priority, int16_t verbosity = 0);
+bool SetLoggingLevel(LogSeverity::Code severity, int16_t verbosity = 0);
 
 // A tiny code footprint string stream for assembling log messages.
 struct LoggingStringStream {
+  explicit LoggingStringStream(bool should_log) : should_log_(should_log) {}
   LoggingStringStream& stream() { return *this; }
 
   std::string message;
+  const bool should_log_;
 };
 
 template <typename T>
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        const T& entry) {
-  stream.message.append(std::to_string(entry));
+  if (stream.should_log_) {
+    stream.message.append(std::to_string(entry));
+  }
   return stream;
 }
 
 template <typename T>
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        T* const entry) {
-  stream.message.append(
-      std::to_string(reinterpret_cast<const uint64_t>(entry)));
+  if (stream.should_log_) {
+    stream.message.append(
+        std::to_string(reinterpret_cast<const uint64_t>(entry)));
+  }
   return stream;
 }
 
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        const char* message) {
-  stream.message.append(message);
+  if (stream.should_log_) {
+    stream.message.append(message);
+  }
   return stream;
 }
 
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        const std::string& message) {
-  stream.message.append(message);
+  if (stream.should_log_) {
+    stream.message.append(message);
+  }
   return stream;
 }
 
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        std::string_view message) {
-  stream.message.append(message);
+  if (stream.should_log_) {
+    stream.message.append(message);
+  }
   return stream;
 }
 
 template <typename T1, typename T2>
 inline LoggingStringStream& operator<<(LoggingStringStream& stream,
                                        const std::pair<T1, T2>& entry) {
-  stream << "(" << entry.first << ", " << entry.second << ")";
+  if (stream.should_log_) {
+    stream << "(" << entry.first << ", " << entry.second << ")";
+  }
   return stream;
 }
 
@@ -110,6 +124,7 @@ class LogMessage {
   const LogSeverity::Code severity_;
   const uint16_t verbosity_;
   const std::string tag_;
+  const bool should_log_;
 
   // Stream that "prints" all info into a string (not to a file).  We construct
   // here the entire logging message and next print it in one operation.

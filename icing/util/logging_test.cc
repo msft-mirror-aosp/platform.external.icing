@@ -23,6 +23,8 @@ namespace icing {
 namespace lib {
 
 namespace {
+using ::testing::EndsWith;
+using ::testing::IsEmpty;
 
 TEST(LoggingTest, SetLoggingLevelWithInvalidArguments) {
   EXPECT_FALSE(SetLoggingLevel(LogSeverity::DBG, 1));
@@ -136,6 +138,19 @@ TEST(LoggingTest, FatalLoggingTest) {
   EXPECT_FALSE(ShouldLog(LogSeverity::WARNING));
   EXPECT_FALSE(ShouldLog(LogSeverity::ERROR));
   EXPECT_TRUE(ShouldLog(LogSeverity::FATAL));
+}
+
+TEST(LoggingTest, LoggingStreamTest) {
+  ASSERT_TRUE(SetLoggingLevel(LogSeverity::INFO));
+  // This one should be logged.
+  LoggingStringStream stream1 = (ICING_LOG(INFO) << "Hello"
+                                                 << "World!");
+  EXPECT_THAT(stream1.message, EndsWith("HelloWorld!"));
+
+  // This one should not be logged, thus empty.
+  LoggingStringStream stream2 = (ICING_LOG(DBG) << "Hello"
+                                                << "World!");
+  EXPECT_THAT(stream2.message, IsEmpty());
 }
 
 }  // namespace

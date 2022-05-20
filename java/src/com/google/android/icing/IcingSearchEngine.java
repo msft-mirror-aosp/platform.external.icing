@@ -17,6 +17,7 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.google.android.icing.proto.DebugInfoResultProto;
+import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
@@ -560,10 +561,10 @@ public class IcingSearchEngine implements Closeable {
   }
 
   @NonNull
-  public DebugInfoResultProto getDebugInfo(int verbosity) {
+  public DebugInfoResultProto getDebugInfo(DebugInfoVerbosity.Code verbosity) {
     throwIfClosed();
 
-    byte[] debugInfoResultProtoBytes = nativeGetDebugInfo(this, verbosity);
+    byte[] debugInfoResultProtoBytes = nativeGetDebugInfo(this, verbosity.getNumber());
     if (debugInfoResultProtoBytes == null) {
       Log.e(TAG, "Received null DebugInfoResultProto from native.");
       return DebugInfoResultProto.newBuilder()
@@ -611,12 +612,12 @@ public class IcingSearchEngine implements Closeable {
     return nativeShouldLog((short) severity.getNumber(), verbosity);
   }
 
-  public static boolean setLoggingLevel(LogSeverity.Code priority) {
-    return setLoggingLevel(priority, (short) 0);
+  public static boolean setLoggingLevel(LogSeverity.Code severity) {
+    return setLoggingLevel(severity, (short) 0);
   }
 
-  public static boolean setLoggingLevel(LogSeverity.Code priority, short verbosity) {
-    return nativeSetLoggingLevel((short) priority.getNumber(), verbosity);
+  public static boolean setLoggingLevel(LogSeverity.Code severity, short verbosity) {
+    return nativeSetLoggingLevel((short) severity.getNumber(), verbosity);
   }
 
   private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
@@ -682,5 +683,5 @@ public class IcingSearchEngine implements Closeable {
 
   private static native boolean nativeShouldLog(short severity, short verbosity);
 
-  private static native boolean nativeSetLoggingLevel(short priority, short verbosity);
+  private static native boolean nativeSetLoggingLevel(short severity, short verbosity);
 }

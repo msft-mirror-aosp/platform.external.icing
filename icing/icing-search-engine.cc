@@ -529,7 +529,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_);
+      performance_configuration_.max_num_total_hits, *document_store_,
+      clock_.get());
 
   return status;
 }
@@ -1374,7 +1375,8 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   return result;
 }
 
-DebugInfoResultProto IcingSearchEngine::GetDebugInfo(int verbosity) {
+DebugInfoResultProto IcingSearchEngine::GetDebugInfo(
+    DebugInfoVerbosity::Code verbosity) {
   DebugInfoResultProto debug_info;
   StatusProto* result_status = debug_info.mutable_status();
   absl_ports::shared_lock l(&mutex_);
@@ -1734,7 +1736,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
     }
     document_store_ = std::move(create_result_or.ValueOrDie().document_store);
     result_state_manager_ = std::make_unique<ResultStateManager>(
-        performance_configuration_.max_num_total_hits, *document_store_);
+        performance_configuration_.max_num_total_hits, *document_store_,
+        clock_.get());
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -1756,7 +1759,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
   }
   document_store_ = std::move(create_result_or.ValueOrDie().document_store);
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_);
+      performance_configuration_.max_num_total_hits, *document_store_,
+      clock_.get());
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(
