@@ -64,30 +64,26 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 
   // Advances to the next term. Returns false if it has reached the end.
   bool Advance() override {
-    while (true) {
-      // Prerequisite check
-      if (term_end_index_exclusive_ == UBRK_DONE) {
-        return false;
-      }
-
-      if (term_end_index_exclusive_ == 0) {
-        // First Advance() call
-        term_start_index_ = ubrk_first(break_iterator_);
-      } else {
-        term_start_index_ = term_end_index_exclusive_;
-      }
-      term_end_index_exclusive_ = ubrk_next(break_iterator_);
-
-      // Reached the end
-      if (term_end_index_exclusive_ == UBRK_DONE) {
-        MarkAsDone();
-        return false;
-      }
-
-      if (IsValidSegment()) {
-        return true;
-      }
+    // Prerequisite check
+    if (term_end_index_exclusive_ == UBRK_DONE) {
+      return false;
     }
+
+    if (term_end_index_exclusive_ == 0) {
+      // First Advance() call
+      term_start_index_ = ubrk_first(break_iterator_);
+    } else {
+      term_start_index_ = term_end_index_exclusive_;
+    }
+    term_end_index_exclusive_ = ubrk_next(break_iterator_);
+
+    // Reached the end
+    if (term_end_index_exclusive_ == UBRK_DONE) {
+      MarkAsDone();
+      return false;
+    }
+
+    return true;
   }
 
   // Returns the current term. It can be called only when Advance() returns
@@ -227,8 +223,7 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
       return absl_ports::AbortedError(
           "Could not retrieve valid utf8 character!");
     }
-    if (term_end_index_exclusive_ > offset_iterator_.utf8_index() ||
-        !IsValidSegment()) {
+    if (term_end_index_exclusive_ > offset_iterator_.utf8_index()) {
       return ResetToTermEndingBeforeUtf32(term_start_iterator.utf32_index());
     }
     return term_start_iterator.utf32_index();
@@ -293,24 +288,6 @@ class IcuLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
   void MarkAsDone() {
     term_end_index_exclusive_ = UBRK_DONE;
     term_start_index_ = 0;
-  }
-
-  bool IsValidSegment() const {
-    // Rule 1: all ASCII terms will be returned.
-    // We know it's a ASCII term by checking the first char.
-    if (i18n_utils::IsAscii(text_[term_start_index_])) {
-      return true;
-    }
-
-    UChar32 uchar32 = i18n_utils::GetUChar32At(text_.data(), text_.length(),
-                                               term_start_index_);
-    // Rule 2: for non-ASCII terms, only the alphanumeric terms are returned.
-    // We know it's an alphanumeric term by checking the first unicode
-    // character.
-    if (i18n_utils::IsAlphaNumeric(uchar32)) {
-      return true;
-    }
-    return false;
   }
 
   // The underlying class that does the segmentation, ubrk_close() must be
