@@ -40,15 +40,6 @@ class Tokenizer {
  public:
   virtual ~Tokenizer() = default;
 
-  enum Type {
-    // Index tokenizers
-    PLAIN,  // Used to tokenize plain text input
-    VERBATIM,  // Used to tokenize the input text in verbatim
-
-    // Query tokenizers
-    RAW_QUERY,  // Used to tokenize raw queries
-  };
-
   // An iterator helping to get tokens.
   // Example usage:
   //
