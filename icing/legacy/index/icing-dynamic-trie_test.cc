@@ -29,12 +29,12 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/testing/tmp-directory.h"
 
-using testing::ElementsAre;
-
 namespace icing {
 namespace lib {
 
 namespace {
+
+using testing::ElementsAre;
 
 constexpr std::string_view kKeys[] = {
     "", "ab", "ac", "abd", "bac", "bb", "bacd", "abbb", "abcdefg",

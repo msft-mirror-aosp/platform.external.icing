@@ -485,6 +485,35 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
   EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
 }
 
+TEST_F(DocumentStoreTest, DeleteNonexistentDocumentPrintableErrorMessage) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Validates that deleting something non-existing won't append anything to
+  // ground truth
+  int64_t document_log_size_before = filesystem_.GetFileSize(
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
+
+  libtextclassifier3::Status status =
+      document_store->Delete("android$contacts/", "661");
+  EXPECT_THAT(status, StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  for (char c : status.error_message()) {
+    EXPECT_THAT(std::isprint(c), IsTrue());
+  }
+
+  int64_t document_log_size_after = filesystem_.GetFileSize(
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
+}
+
 TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -3926,8 +3955,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
                                 .Build();
   ICING_ASSERT_OK(document_store->Put(document4, 2));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out1,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out1,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out1.crc(), Gt(0));
   EXPECT_THAT(out1.document_storage_info().num_alive_documents(), Eq(4));
   EXPECT_THAT(out1.document_storage_info().num_deleted_documents(), Eq(0));
@@ -3955,8 +3985,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
 
   // Delete document3.
   ICING_ASSERT_OK(document_store->Delete("namespace2", "email/3"));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out2,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out2,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out2.crc(), Gt(0));
   EXPECT_THAT(out2.crc(), Not(Eq(out1.crc())));
   EXPECT_THAT(out2.document_storage_info().num_alive_documents(), Eq(3));
@@ -3968,8 +3999,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
               UnorderedElementsAre(EqualsProto(info1), EqualsProto(info2),
                                    EqualsProto(info3)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out3,
-                             document_store->GetDebugInfo(/*verbosity=*/0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out3,
+      document_store->GetDebugInfo(DebugInfoVerbosity::BASIC));
   EXPECT_THAT(out3.corpus_info(), IsEmpty());
 }
 
@@ -3987,8 +4019,9 @@ TEST_F(DocumentStoreTest, GetDebugInfoWithoutSchema) {
                             schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out.crc(), Gt(0));
   EXPECT_THAT(out.document_storage_info().num_alive_documents(), Eq(0));
   EXPECT_THAT(out.document_storage_info().num_deleted_documents(), Eq(0));
@@ -4003,8 +4036,9 @@ TEST_F(DocumentStoreTest, GetDebugInfoForEmptyDocumentStore) {
                             schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out.crc(), Gt(0));
   EXPECT_THAT(out.document_storage_info().num_alive_documents(), Eq(0));
   EXPECT_THAT(out.document_storage_info().num_deleted_documents(), Eq(0));

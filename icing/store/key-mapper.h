@@ -26,6 +26,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/str_join.h"
 #include "icing/file/filesystem.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -39,7 +40,7 @@ namespace lib {
 // type.
 //
 // KeyMapper is thread-compatible
-template <typename T>
+template <typename T, typename Formatter = absl_ports::DefaultFormatter>
 class KeyMapper {
  public:
   // Returns an initialized instance of KeyMapper that can immediately handle
@@ -51,9 +52,9 @@ class KeyMapper {
   //            KeyMapper, then this existing data would be loaded. Otherwise,
   //            an empty KeyMapper would be created.
   // maximum_size_bytes : The maximum allowable size of the key mapper storage.
-  static libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<T>>> Create(
-      const Filesystem& filesystem, std::string_view base_dir,
-      int maximum_size_bytes);
+  static libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<T, Formatter>>>
+  Create(const Filesystem& filesystem, std::string_view base_dir,
+         int maximum_size_bytes);
 
   // Deletes all the files associated with the KeyMapper. Returns success or any
   // encountered IO errors
@@ -153,10 +154,11 @@ class KeyMapper {
                 "T must be trivially copyable");
 };
 
-template <typename T>
-libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<T>>>
-KeyMapper<T>::Create(const Filesystem& filesystem, std::string_view base_dir,
-                     int maximum_size_bytes) {
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<T, Formatter>>>
+KeyMapper<T, Formatter>::Create(const Filesystem& filesystem,
+                                std::string_view base_dir,
+                                int maximum_size_bytes) {
   // We create a subdirectory since the trie creates and stores multiple files.
   // This makes it easier to isolate the trie files away from other files that
   // could potentially be in the same base_dir, and makes it easier to delete.
@@ -166,14 +168,15 @@ KeyMapper<T>::Create(const Filesystem& filesystem, std::string_view base_dir,
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to create KeyMapper directory: ", key_mapper_dir));
   }
-  auto mapper = std::unique_ptr<KeyMapper<T>>(new KeyMapper<T>(key_mapper_dir));
+  auto mapper = std::unique_ptr<KeyMapper<T, Formatter>>(
+      new KeyMapper<T, Formatter>(key_mapper_dir));
   ICING_RETURN_IF_ERROR(mapper->Initialize(maximum_size_bytes));
   return mapper;
 }
 
-template <typename T>
-libtextclassifier3::Status KeyMapper<T>::Delete(const Filesystem& filesystem,
-                                                std::string_view base_dir) {
+template <typename T, typename Formatter>
+libtextclassifier3::Status KeyMapper<T, Formatter>::Delete(
+    const Filesystem& filesystem, std::string_view base_dir) {
   std::string key_mapper_dir = absl_ports::StrCat(base_dir, "/", kKeyMapperDir);
   if (!filesystem.DeleteDirectoryRecursively(key_mapper_dir.c_str())) {
     return absl_ports::InternalError(absl_ports::StrCat(
@@ -182,16 +185,17 @@ libtextclassifier3::Status KeyMapper<T>::Delete(const Filesystem& filesystem,
   return libtextclassifier3::Status::OK;
 }
 
-template <typename T>
-KeyMapper<T>::KeyMapper(std::string_view key_mapper_dir)
+template <typename T, typename Formatter>
+KeyMapper<T, Formatter>::KeyMapper(std::string_view key_mapper_dir)
     : file_prefix_(absl_ports::StrCat(key_mapper_dir, "/", kKeyMapperPrefix)),
       trie_(file_prefix_,
             IcingDynamicTrie::RuntimeOptions().set_storage_policy(
                 IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc),
             &icing_filesystem_) {}
 
-template <typename T>
-libtextclassifier3::Status KeyMapper<T>::Initialize(int maximum_size_bytes) {
+template <typename T, typename Formatter>
+libtextclassifier3::Status KeyMapper<T, Formatter>::Initialize(
+    int maximum_size_bytes) {
   IcingDynamicTrie::Options options;
   // Divide the max space between the three internal arrays: nodes, nexts and
   // suffixes. MaxNodes and MaxNexts are in units of their own data structures.
@@ -213,15 +217,16 @@ libtextclassifier3::Status KeyMapper<T>::Initialize(int maximum_size_bytes) {
   return libtextclassifier3::Status::OK;
 }
 
-template <typename T>
-libtextclassifier3::StatusOr<T> KeyMapper<T>::GetOrPut(std::string_view key,
-                                                       T next_value) {
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<T> KeyMapper<T, Formatter>::GetOrPut(
+    std::string_view key, T next_value) {
   std::string string_key(key);
   uint32_t value_index;
   if (!trie_.Insert(string_key.c_str(), &next_value, &value_index,
                     /*replace=*/false)) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Unable to insert key ", key, " into KeyMapper ", file_prefix_, "."));
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Unable to insert key ", Formatter()(string_key),
+                           " into KeyMapper ", file_prefix_, "."));
   }
   // This memory address could be unaligned since we're just grabbing the value
   // from somewhere in the trie's suffix array. The suffix array is filled with
@@ -236,34 +241,39 @@ libtextclassifier3::StatusOr<T> KeyMapper<T>::GetOrPut(std::string_view key,
   return aligned_value;
 }
 
-template <typename T>
-libtextclassifier3::Status KeyMapper<T>::Put(std::string_view key, T value) {
+template <typename T, typename Formatter>
+libtextclassifier3::Status KeyMapper<T, Formatter>::Put(std::string_view key,
+                                                        T value) {
   std::string string_key(key);
   if (!trie_.Insert(string_key.c_str(), &value)) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Unable to insert key ", key, " into KeyMapper ", file_prefix_, "."));
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Unable to insert key ", Formatter()(string_key),
+                           " into KeyMapper ", file_prefix_, "."));
   }
   return libtextclassifier3::Status::OK;
 }
 
-template <typename T>
-libtextclassifier3::StatusOr<T> KeyMapper<T>::Get(std::string_view key) const {
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<T> KeyMapper<T, Formatter>::Get(
+    std::string_view key) const {
   std::string string_key(key);
   T value;
   if (!trie_.Find(string_key.c_str(), &value)) {
-    return absl_ports::NotFoundError(absl_ports::StrCat(
-        "Key not found ", key, " in KeyMapper ", file_prefix_, "."));
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Key not found ", Formatter()(string_key),
+                           " in KeyMapper ", file_prefix_, "."));
   }
   return value;
 }
 
-template <typename T>
-bool KeyMapper<T>::Delete(std::string_view key) {
+template <typename T, typename Formatter>
+bool KeyMapper<T, Formatter>::Delete(std::string_view key) {
   return trie_.Delete(key);
 }
 
-template <typename T>
-std::unordered_map<T, std::string> KeyMapper<T>::GetValuesToKeys() const {
+template <typename T, typename Formatter>
+std::unordered_map<T, std::string> KeyMapper<T, Formatter>::GetValuesToKeys()
+    const {
   std::unordered_map<T, std::string> values_to_keys;
   for (IcingDynamicTrie::Iterator itr(trie_, /*prefix=*/""); itr.IsValid();
        itr.Advance()) {
@@ -277,8 +287,8 @@ std::unordered_map<T, std::string> KeyMapper<T>::GetValuesToKeys() const {
   return values_to_keys;
 }
 
-template <typename T>
-libtextclassifier3::Status KeyMapper<T>::PersistToDisk() {
+template <typename T, typename Formatter>
+libtextclassifier3::Status KeyMapper<T, Formatter>::PersistToDisk() {
   if (!trie_.Sync()) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to sync KeyMapper file: ", file_prefix_));
@@ -287,8 +297,9 @@ libtextclassifier3::Status KeyMapper<T>::PersistToDisk() {
   return libtextclassifier3::Status::OK;
 }
 
-template <typename T>
-libtextclassifier3::StatusOr<int64_t> KeyMapper<T>::GetDiskUsage() const {
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<int64_t> KeyMapper<T, Formatter>::GetDiskUsage()
+    const {
   int64_t size = trie_.GetDiskUsage();
   if (size == IcingFilesystem::kBadFileSize || size < 0) {
     return absl_ports::InternalError("Failed to get disk usage of key mapper");
@@ -296,8 +307,9 @@ libtextclassifier3::StatusOr<int64_t> KeyMapper<T>::GetDiskUsage() const {
   return size;
 }
 
-template <typename T>
-libtextclassifier3::StatusOr<int64_t> KeyMapper<T>::GetElementsSize() const {
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<int64_t> KeyMapper<T, Formatter>::GetElementsSize()
+    const {
   int64_t size = trie_.GetElementsSize();
   if (size == IcingFilesystem::kBadFileSize || size < 0) {
     return absl_ports::InternalError(
@@ -306,8 +318,8 @@ libtextclassifier3::StatusOr<int64_t> KeyMapper<T>::GetElementsSize() const {
   return size;
 }
 
-template <typename T>
-Crc32 KeyMapper<T>::ComputeChecksum() {
+template <typename T, typename Formatter>
+Crc32 KeyMapper<T, Formatter>::ComputeChecksum() {
   return Crc32(trie_.UpdateCrc());
 }
 

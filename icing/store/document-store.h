@@ -48,6 +48,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
 #include "icing/util/document-validator.h"
+#include "icing/util/fingerprint-util.h"
 
 namespace icing {
 namespace lib {
@@ -424,15 +425,15 @@ class DocumentStore {
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
 
   // Get debug information for the document store.
-  // verbosity <= 0, simplest debug information
-  // verbosity > 0, also return the total number of documents and tokens in each
-  // (namespace, schema type) pair.
+  // verbosity = BASIC, simplest debug information
+  // verbosity = DETAILED, also return the total number of documents and tokens
+  // in each (namespace, schema type) pair.
   //
   // Returns:
   //   DocumentDebugInfoProto on success
   //   INTERNAL_ERROR on IO errors, crc compute error
   libtextclassifier3::StatusOr<DocumentDebugInfoProto> GetDebugInfo(
-      int verbosity) const;
+      DebugInfoVerbosity::Code verbosity) const;
 
  private:
   // Use DocumentStore::Create() to instantiate.
@@ -455,7 +456,9 @@ class DocumentStore {
   std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log_;
 
   // Key (namespace + uri) to DocumentId mapping
-  std::unique_ptr<KeyMapper<DocumentId>> document_key_mapper_;
+  std::unique_ptr<
+      KeyMapper<DocumentId, fingerprint_util::FingerprintStringFormatter>>
+      document_key_mapper_;
 
   // DocumentId to file offset mapping
   std::unique_ptr<FileBackedVector<int64_t>> document_id_mapper_;
@@ -491,7 +494,9 @@ class DocumentStore {
   // unique id. A coprus is assigned an
   // id when the first document belonging to that corpus is added to the
   // DocumentStore. Corpus ids may be removed from the mapper during compaction.
-  std::unique_ptr<KeyMapper<CorpusId>> corpus_mapper_;
+  std::unique_ptr<
+      KeyMapper<CorpusId, fingerprint_util::FingerprintStringFormatter>>
+      corpus_mapper_;
 
   // A storage class that caches all usage scores. Usage scores are not
   // considered as ground truth. Usage scores are associated with document ids

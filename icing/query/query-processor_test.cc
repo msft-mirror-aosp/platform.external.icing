@@ -77,12 +77,14 @@ class QueryProcessorTest : public Test {
   QueryProcessorTest()
       : test_dir_(GetTestTempDir() + "/icing"),
         store_dir_(test_dir_ + "/store"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
         index_dir_(test_dir_ + "/index") {}
 
   void SetUp() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       // If we've specified using the reverse-JNI method for segmentation (i.e.
@@ -125,21 +127,23 @@ class QueryProcessorTest : public Test {
     schema_store_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
-
   Filesystem filesystem_;
   const std::string test_dir_;
   const std::string store_dir_;
-  std::unique_ptr<Index> index_;
-  std::unique_ptr<LanguageSegmenter> language_segmenter_;
-  std::unique_ptr<Normalizer> normalizer_;
-  std::unique_ptr<SchemaStore> schema_store_;
-  std::unique_ptr<DocumentStore> document_store_;
-  FakeClock fake_clock_;
-  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
+  const std::string schema_store_dir_;
 
  private:
   IcingFilesystem icing_filesystem_;
   const std::string index_dir_;
+
+ protected:
+  std::unique_ptr<Index> index_;
+  std::unique_ptr<LanguageSegmenter> language_segmenter_;
+  std::unique_ptr<Normalizer> normalizer_;
+  FakeClock fake_clock_;
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> document_store_;
 };
 
 TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
@@ -176,7 +180,7 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -227,7 +231,7 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -278,7 +282,7 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -354,7 +358,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -422,7 +426,7 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -490,7 +494,7 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -560,7 +564,7 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -635,7 +639,7 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -705,7 +709,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -781,7 +785,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -857,7 +861,7 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -946,7 +950,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1034,7 +1038,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1121,7 +1125,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1307,7 +1311,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1383,7 +1387,7 @@ TEST_F(QueryProcessorTest, TwoGroups) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1461,7 +1465,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1537,7 +1541,7 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1614,7 +1618,7 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1679,7 +1683,7 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1742,7 +1746,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1832,7 +1836,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1928,7 +1932,7 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2002,7 +2006,7 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2078,7 +2082,7 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2155,7 +2159,7 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2237,7 +2241,7 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2320,7 +2324,7 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2404,7 +2408,7 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2477,7 +2481,7 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2544,7 +2548,7 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2614,7 +2618,7 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2689,7 +2693,7 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   // Arbitrary value, just has to be less than the document's creation
@@ -2748,7 +2752,7 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       schema_store_,
-      SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   // Arbitrary value, just has to be greater than the document's creation
