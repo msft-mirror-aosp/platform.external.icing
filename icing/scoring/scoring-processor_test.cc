@@ -60,7 +60,7 @@ class ScoringProcessorTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
