@@ -586,8 +586,11 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
   }
 
   int64_t current_file_size = filesystem_->GetFileSize(file_path_.c_str());
-  int64_t least_file_size_needed = sizeof(Header) + num_elements * sizeof(T);
+  if (current_file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError("Unable to retrieve file size.");
+  }
 
+  int64_t least_file_size_needed = sizeof(Header) + num_elements * sizeof(T);
   if (least_file_size_needed <= current_file_size) {
     // Our underlying file can hold the target num_elements cause we've grown
     // before
