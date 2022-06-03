@@ -153,9 +153,12 @@ class IndexProcessorTest : public Test {
         normalizer_factory::Create(
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
+    std::string schema_store_dir = GetTestTempDir() + "/schema_store";
+    ASSERT_TRUE(
+        filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, GetTestTempDir(), &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
