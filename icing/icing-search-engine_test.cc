@@ -765,8 +765,7 @@ TEST_F(IcingSearchEngineTest, FailToWriteSchema) {
 
   auto mock_filesystem = std::make_unique<MockFilesystem>();
   // This fails FileBackedProto::Write()
-  ON_CALL(*mock_filesystem,
-          OpenForWrite(Eq(icing_options.base_dir() + "/schema_dir/schema.pb")))
+  ON_CALL(*mock_filesystem, OpenForWrite(HasSubstr("schema.pb")))
       .WillByDefault(Return(-1));
 
   TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
@@ -2993,13 +2992,17 @@ TEST_F(IcingSearchEngineTest, OptimizationFailureUninitializesIcing) {
   };
   ON_CALL(*mock_filesystem, CreateDirectoryRecursively)
       .WillByDefault(create_dir_lambda);
+
   auto swap_lambda = [&just_swapped_files](const char* first_dir,
                                            const char* second_dir) {
     just_swapped_files = true;
     return false;
   };
-  ON_CALL(*mock_filesystem, SwapFiles).WillByDefault(swap_lambda);
-  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  ON_CALL(*mock_filesystem, SwapFiles(HasSubstr("document_dir_optimize_tmp"),
+                                      HasSubstr("document_dir")))
+      .WillByDefault(swap_lambda);
+  TestIcingSearchEngine icing(options, std::move(mock_filesystem),
                               std::move(mock_filesystem),
                               std::make_unique<IcingFilesystem>(),
                               std::make_unique<FakeClock>(), GetTestJniCache());
@@ -3752,7 +3755,8 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFineIfOptimizationIsAborted) {
   // fails. This will fail IcingSearchEngine::OptimizeDocumentStore() and makes
   // it return ABORTED_ERROR.
   auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ON_CALL(*mock_filesystem, DeleteDirectoryRecursively)
+  ON_CALL(*mock_filesystem,
+          DeleteDirectoryRecursively(HasSubstr("_optimize_tmp")))
       .WillByDefault(Return(false));
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
@@ -3799,7 +3803,8 @@ TEST_F(IcingSearchEngineTest,
   // Creates a mock filesystem in which SwapFiles() always fails and deletes the
   // directories. This will fail IcingSearchEngine::OptimizeDocumentStore().
   auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ON_CALL(*mock_filesystem, SwapFiles)
+  ON_CALL(*mock_filesystem, SwapFiles(HasSubstr("document_dir_optimize_tmp"),
+                                      HasSubstr("document_dir")))
       .WillByDefault([this](const char* one, const char* two) {
         filesystem()->DeleteDirectoryRecursively(one);
         filesystem()->DeleteDirectoryRecursively(two);
@@ -3870,7 +3875,8 @@ TEST_F(IcingSearchEngineTest, OptimizationShouldRecoverIfDataFilesAreMissing) {
   // Creates a mock filesystem in which SwapFiles() always fails and empties the
   // directories. This will fail IcingSearchEngine::OptimizeDocumentStore().
   auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ON_CALL(*mock_filesystem, SwapFiles)
+  ON_CALL(*mock_filesystem, SwapFiles(HasSubstr("document_dir_optimize_tmp"),
+                                      HasSubstr("document_dir")))
       .WillByDefault([this](const char* one, const char* two) {
         filesystem()->DeleteDirectoryRecursively(one);
         filesystem()->CreateDirectoryRecursively(one);
