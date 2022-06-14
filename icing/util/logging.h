@@ -133,11 +133,11 @@ class LogMessage {
 
 #define ICING_VLOG(verbose_level)                                             \
   ::icing::lib::LogMessage(::icing::lib::LogSeverity::VERBOSE, verbose_level, \
-                           "icing", __FILE__, __LINE__)                       \
+                           "AppSearchIcing", __FILE__, __LINE__)                       \
       .stream()
 #define ICING_LOG(severity)                                              \
   ::icing::lib::LogMessage(::icing::lib::LogSeverity::severity,          \
-                           /*verbosity=*/0, "icing", __FILE__, __LINE__) \
+                           /*verbosity=*/0, "AppSearchIcing", __FILE__, __LINE__) \
       .stream()
 
 }  // namespace lib
