@@ -91,14 +91,6 @@ message StringIndexingConfig {
 
       // Tokenization for plain text.
       PLAIN = 1;
-
-      // Tokenizes text in verbatim. This means no normalization or segmentation
-      // is applied to string values that are tokenized using this type.
-      // Therefore, the output token is equivalent to the raw string text. For
-      // example, "Hello, world!" would be tokenized as "Hello, world!"
-      // preserving punctuation and capitalization, and not creating separate
-      // tokens between the space.
-      VERBATIM = 2;
     }
   }
   optional TokenizerType.Code tokenizer_type = 2;
@@ -205,7 +197,7 @@ message SchemaProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 8
+// Next tag: 4
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -229,21 +221,6 @@ message SetSchemaResultProto {
   // documents that fail validation against the new schema types would also be
   // deleted.
   repeated string incompatible_schema_types = 3;
-
-  // Schema types that did not exist in the previous schema and were added with
-  // the new schema type.
-  repeated string new_schema_types = 4;
-
-  // Schema types that were changed in a way that was backwards compatible and
-  // didn't invalidate the index.
-  repeated string fully_compatible_changed_schema_types = 5;
-
-  // Schema types that were changed in a way that was backwards compatible, but
-  // invalidated the index.
-  repeated string index_incompatible_changed_schema_types = 6;
-
-  // Overall time used for the function call.
-  optional int32 latency_ms = 7;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

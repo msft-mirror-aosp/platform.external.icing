@@ -21,13 +21,10 @@ namespace icing {
 namespace lib {
 
 struct Token {
-  enum class Type {
+  enum Type {
     // Common types
     REGULAR,  // A token without special meanings, the value of it will be
               // indexed or searched directly
-
-    VERBATIM,  // A token that should be indexed and searched without any
-               // modifications to the raw text
 
     // Types only used in raw query
     QUERY_OR,         // Indicates OR logic between its left and right tokens

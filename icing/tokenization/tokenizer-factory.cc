@@ -23,7 +23,6 @@
 #include "icing/tokenization/plain-tokenizer.h"
 #include "icing/tokenization/raw-query-tokenizer.h"
 #include "icing/tokenization/tokenizer.h"
-#include "icing/tokenization/verbatim-tokenizer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -39,8 +38,6 @@ CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
   switch (type) {
     case StringIndexingConfig::TokenizerType::PLAIN:
       return std::make_unique<PlainTokenizer>(lang_segmenter);
-    case StringIndexingConfig::TokenizerType::VERBATIM:
-      return std::make_unique<VerbatimTokenizer>();
     case StringIndexingConfig::TokenizerType::NONE:
       [[fallthrough]];
     default:

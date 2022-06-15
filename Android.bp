@@ -82,13 +82,14 @@ cc_library_shared {
         "libutf",
     ],
     shared_libs: [
-        "libicu",
+        "libandroidicu",
         "liblog",
-        "libprotobuf-cpp-lite",
+        // TODO(b/147509515): We only need the full version for GzipStream. If we can remove
+        // that dependency, then we can just use libprotobuf-cpp-lite
+        "libprotobuf-cpp-full",
         "libz",
     ],
     version_script: "icing/jni.lds",
-    min_sdk_version: "Tiramisu",
 }
 
 // TODO(cassiewang): Add build rules and a TEST_MAPPING for cc_tests

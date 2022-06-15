@@ -62,16 +62,15 @@
 
 #include "icing/legacy/index/icing-dynamic-trie.h"
 
+#include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
-#include <cerrno>
-#include <cinttypes>
-#include <cstdint>
-#include <cstring>
 #include <memory>
 #include <utility>
 
@@ -398,8 +397,6 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   // storage.
   IcingScopedFd array_fds_[NUM_ARRAY_TYPES];
   std::vector<IcingArrayStorage> array_storage_;
-
-  // Legacy file system. Switch to use the new Filesystem class instead.
   const IcingFilesystem *filesystem_;
 };
 
@@ -1367,12 +1364,10 @@ uint32_t IcingDynamicTrie::size() const {
   return storage_->hdr().num_keys();
 }
 
-void IcingDynamicTrie::CollectStatsRecursive(const Node &node, Stats *stats,
-                                             uint32_t depth) const {
+void IcingDynamicTrie::CollectStatsRecursive(const Node &node,
+                                             Stats *stats) const {
   if (node.is_leaf()) {
     stats->num_leaves++;
-    stats->sum_depth += depth;
-    stats->max_depth = max(stats->max_depth, depth);
     const char *suffix = storage_->GetSuffix(node.next_index());
     stats->suffixes_used += strlen(suffix) + 1 + value_size();
     if (!suffix[0]) {
@@ -1384,16 +1379,13 @@ void IcingDynamicTrie::CollectStatsRecursive(const Node &node, Stats *stats,
     for (; i < (1U << node.log2_num_children()); i++) {
       const Next &next = *storage_->GetNext(node.next_index(), i);
       if (next.node_index() == kInvalidNodeIndex) break;
-      CollectStatsRecursive(*storage_->GetNode(next.node_index()), stats,
-                            depth + 1);
+      CollectStatsRecursive(*storage_->GetNode(next.node_index()), stats);
     }
 
     // At least one valid node in each next array
     if (i == 0) {
       ICING_LOG(FATAL) << "No valid node in 'next' array";
     }
-    stats->sum_children += i;
-    stats->max_children = max(stats->max_children, i);
 
     stats->child_counts[i - 1]++;
     stats->wasted[node.log2_num_children()] +=
@@ -1475,12 +1467,9 @@ std::string IcingDynamicTrie::Stats::DumpStats(int verbosity) const {
         "Wasted total: %u\n"
         "Num intermediates %u num leaves %u "
         "suffixes used %u null %u\n"
-        "avg and max children for intermediates: %.3f, %u\n"
-        "avg and max depth for leaves: %.3f, %u\n"
         "Total next frag: %.3f%%\n",
         total_wasted, num_intermediates, num_leaves, suffixes_used,
-        null_suffixes, 1. * sum_children / num_intermediates, max_children,
-        1. * sum_depth / num_leaves, max_depth,
+        null_suffixes,
         100. * math_util::SafeDivide((total_free + total_wasted), num_nexts));
   }
   IcingStringUtil::SStringAppendF(
