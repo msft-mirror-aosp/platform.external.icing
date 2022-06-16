@@ -36,7 +36,7 @@
 #include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
-#include "icing/store/key-mapper.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -50,8 +50,9 @@ constexpr char kSchemaStoreHeaderFilename[] = "schema_store_header";
 constexpr char kSchemaFilename[] = "schema.pb";
 constexpr char kSchemaTypeMapperFilename[] = "schema_type_mapper";
 
-// A KeyMapper stores its data across 3 arrays internally. Giving each array
-// 128KiB for storage means the entire KeyMapper requires 384KiB.
+// A DynamicTrieKeyMapper stores its data across 3 arrays internally. Giving
+// each array 128KiB for storage means the entire DynamicTrieKeyMapper requires
+// 384KiB.
 constexpr int32_t kSchemaTypeMapperMaxSize = 3 * 128 * 1024;  // 384 KiB
 
 const std::string MakeHeaderFilename(const std::string& base_dir) {
@@ -223,9 +224,9 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
 
   ICING_ASSIGN_OR_RETURN(
       schema_type_mapper_,
-      KeyMapper<SchemaTypeId>::Create(*filesystem_,
-                                      MakeSchemaTypeMapperFilename(base_dir_),
-                                      kSchemaTypeMapperMaxSize));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(
+          *filesystem_, MakeSchemaTypeMapperFilename(base_dir_),
+          kSchemaTypeMapperMaxSize));
 
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   if (checksum.Get() != header.checksum) {
@@ -308,8 +309,9 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
   schema_type_mapper_.reset();
   // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
-  libtextclassifier3::Status status = KeyMapper<SchemaTypeId>::Delete(
-      *filesystem_, MakeSchemaTypeMapperFilename(base_dir_));
+  libtextclassifier3::Status status =
+      DynamicTrieKeyMapper<SchemaTypeId>::Delete(
+          *filesystem_, MakeSchemaTypeMapperFilename(base_dir_));
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete old schema_type mapper";
@@ -317,9 +319,9 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
   }
   ICING_ASSIGN_OR_RETURN(
       schema_type_mapper_,
-      KeyMapper<SchemaTypeId>::Create(*filesystem_,
-                                      MakeSchemaTypeMapperFilename(base_dir_),
-                                      kSchemaTypeMapperMaxSize));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(
+          *filesystem_, MakeSchemaTypeMapperFilename(base_dir_),
+          kSchemaTypeMapperMaxSize));
 
   return libtextclassifier3::Status::OK;
 }

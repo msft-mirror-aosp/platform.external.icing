@@ -16,6 +16,7 @@ package com.google.android.icing;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -620,6 +621,15 @@ public class IcingSearchEngine implements Closeable {
     return nativeSetLoggingLevel((short) severity.getNumber(), verbosity);
   }
 
+  @Nullable
+  public static String getLoggingTag() {
+    String tag = nativeGetLoggingTag();
+    if (tag == null) {
+      Log.e(TAG, "Received null logging tag from native.");
+    }
+    return tag;
+  }
+
   private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
 
   private static native void nativeDestroy(IcingSearchEngine instance);
@@ -684,4 +694,6 @@ public class IcingSearchEngine implements Closeable {
   private static native boolean nativeShouldLog(short severity, short verbosity);
 
   private static native boolean nativeSetLoggingLevel(short severity, short verbosity);
+
+  private static native String nativeGetLoggingTag();
 }
