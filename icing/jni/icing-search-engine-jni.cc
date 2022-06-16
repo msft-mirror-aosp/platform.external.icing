@@ -472,4 +472,10 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSetLoggingLevel(
   return icing::lib::SetLoggingLevel(
       static_cast<icing::lib::LogSeverity::Code>(severity), verbosity);
 }
+
+JNIEXPORT jstring JNICALL
+Java_com_google_android_icing_IcingSearchEngine_nativeGetLoggingTag(
+    JNIEnv* env, jclass clazz) {
+  return env->NewStringUTF(icing::lib::kIcingLoggingTag);
+}
 }  // extern "C"

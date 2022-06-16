@@ -775,6 +775,8 @@ public final class IcingSearchEngineTest {
     assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.VERBOSE, (short) 1)).isTrue();
     assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE, (short) 1)).isTrue();
     assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE, (short) 2)).isFalse();
+
+    assertThat(IcingSearchEngine.getLoggingTag()).isNotEmpty();
   }
 
   private static void assertStatusOk(StatusProto status) {

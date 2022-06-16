@@ -112,8 +112,7 @@ inline LoggingStringStream& operator<<(LoggingStringStream& stream,
 class LogMessage {
  public:
   LogMessage(LogSeverity::Code severity, uint16_t verbosity,
-             std::string_view tag, const char* file_name, int line_number)
-      __attribute__((noinline));
+             const char* file_name, int line_number) __attribute__((noinline));
 
   ~LogMessage() __attribute__((noinline));
 
@@ -123,7 +122,6 @@ class LogMessage {
  private:
   const LogSeverity::Code severity_;
   const uint16_t verbosity_;
-  const std::string tag_;
   const bool should_log_;
 
   // Stream that "prints" all info into a string (not to a file).  We construct
@@ -131,13 +129,15 @@ class LogMessage {
   LoggingStringStream stream_;
 };
 
+inline constexpr char kIcingLoggingTag[] = "AppSearchIcing";
+
 #define ICING_VLOG(verbose_level)                                             \
   ::icing::lib::LogMessage(::icing::lib::LogSeverity::VERBOSE, verbose_level, \
-                           "AppSearchIcing", __FILE__, __LINE__)                       \
+                           __FILE__, __LINE__)                                \
       .stream()
-#define ICING_LOG(severity)                                              \
-  ::icing::lib::LogMessage(::icing::lib::LogSeverity::severity,          \
-                           /*verbosity=*/0, "AppSearchIcing", __FILE__, __LINE__) \
+#define ICING_LOG(severity)                                     \
+  ::icing::lib::LogMessage(::icing::lib::LogSeverity::severity, \
+                           /*verbosity=*/0, __FILE__, __LINE__) \
       .stream()
 
 }  // namespace lib

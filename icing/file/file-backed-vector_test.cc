@@ -677,6 +677,27 @@ TEST_F(FileBackedVectorTest, RemapFailureStillValidInstance) {
   EXPECT_THAT(vector->Get(kResizingIndex / 2), IsOkAndHolds(Pointee(Eq(9))));
 }
 
+TEST_F(FileBackedVectorTest, BadFileSizeDuringGrowReturnsError) {
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          *mock_filesystem, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  // At first, the vector is empty and has no mapping established. The first Set
+  // call will cause a Grow.
+  // During Grow, we will attempt to check the underlying file size to see if
+  // growing is actually necessary. Return an error on the call to GetFileSize.
+  ON_CALL(*mock_filesystem, GetFileSize(A<const char*>()))
+      .WillByDefault(Return(Filesystem::kBadFileSize));
+
+  // We should fail gracefully and return an INTERNAL error to indicate that
+  // there was an issue retrieving the file size.
+  EXPECT_THAT(vector->Set(0, 7),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+}
+
 }  // namespace
 
 }  // namespace lib

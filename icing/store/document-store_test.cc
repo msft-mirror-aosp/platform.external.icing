@@ -358,23 +358,22 @@ TEST_F(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
                              doc_store->Put(DocumentProto(test_document2_)));
 
-  EXPECT_THAT(doc_store->DoesDocumentExist(document_id1), IsTrue());
-  EXPECT_THAT(doc_store->DoesDocumentExist(document_id2), IsTrue());
+  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(document_id1));
+  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(document_id2));
 
   DocumentId invalid_document_id_negative = -1;
-  EXPECT_THAT(doc_store->DoesDocumentExist(invalid_document_id_negative),
-              IsFalse());
+  EXPECT_FALSE(
+      doc_store->GetAliveDocumentFilterData(invalid_document_id_negative));
 
   DocumentId invalid_document_id_greater_than_max = kMaxDocumentId + 2;
-  EXPECT_THAT(
-      doc_store->DoesDocumentExist(invalid_document_id_greater_than_max),
-      IsFalse());
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      invalid_document_id_greater_than_max));
 
-  EXPECT_THAT(doc_store->DoesDocumentExist(kInvalidDocumentId), IsFalse());
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(kInvalidDocumentId));
 
   DocumentId invalid_document_id_out_of_range = document_id2 + 1;
-  EXPECT_THAT(doc_store->DoesDocumentExist(invalid_document_id_out_of_range),
-              IsFalse());
+  EXPECT_FALSE(
+      doc_store->GetAliveDocumentFilterData(invalid_document_id_out_of_range));
 }
 
 TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
@@ -1159,12 +1158,15 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(doc_store->Get(document_id2),
               IsOkAndHolds(EqualsProto(test_document2_)));
-
   // Checks derived filter cache
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
-              IsOkAndHolds(DocumentFilterData(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
+
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
@@ -1249,10 +1251,14 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
               IsOkAndHolds(EqualsProto(test_document2_)));
 
   // Checks derived filter cache
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
-              IsOkAndHolds(DocumentFilterData(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
+
   // Checks derived score cache - note that they aren't regenerated from
   // scratch.
   EXPECT_THAT(
@@ -1322,8 +1328,11 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
               IsOkAndHolds(EqualsProto(test_document2_)));
 
   // Checks derived filter cache
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
-              IsOkAndHolds(DocumentFilterData(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
@@ -1733,8 +1742,7 @@ TEST_F(DocumentStoreTest, NonexistentDocumentFilterDataNotFound) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  EXPECT_THAT(doc_store->GetDocumentFilterData(/*document_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(/*document_id=*/0));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
@@ -1748,17 +1756,17 @@ TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              doc_store->Put(test_document1_));
 
-  EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
-          /*namespace_id=*/0,
-          /*schema_type_id=*/0,
-          /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
+                  /*namespace_id=*/0,
+                  /*schema_type_id=*/0, document1_expiration_timestamp_)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   // Associated entry of the deleted document is removed.
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(document_id));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
@@ -1886,12 +1894,13 @@ TEST_F(DocumentStoreTest,
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
-
-  EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(/*namespace_id=*/0,
-                                      /*schema_type_id=*/0,
-                                      /*expiration_timestamp_ms=*/1100)));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+  EXPECT_THAT(doc_filter_data, Eq(DocumentFilterData(
+                                   /*namespace_id=*/0,
+                                   /*schema_type_id=*/0,
+                                   /*expiration_timestamp_ms=*/1100)));
 }
 
 TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
@@ -1911,9 +1920,13 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
 
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+
   EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
+      doc_filter_data,
+      Eq(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
@@ -1937,9 +1950,13 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
 
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+
   EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
+      doc_filter_data,
+      Eq(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
@@ -2137,9 +2154,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         email_document_id, document_store->Put(DocumentProto(email_document)));
     EXPECT_THAT(document_store->Get(email_document_id),
                 IsOkAndHolds(EqualsProto(email_document)));
-    ICING_ASSERT_OK_AND_ASSIGN(
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData email_data,
-        document_store->GetDocumentFilterData(email_document_id));
+        document_store->GetAliveDocumentFilterData(email_document_id));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
     email_expiration_timestamp = email_data.expiration_timestamp_ms();
@@ -2150,9 +2167,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         document_store->Put(DocumentProto(message_document)));
     EXPECT_THAT(document_store->Get(message_document_id),
                 IsOkAndHolds(EqualsProto(message_document)));
-    ICING_ASSERT_OK_AND_ASSIGN(
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData message_data,
-        document_store->GetDocumentFilterData(message_document_id));
+        document_store->GetAliveDocumentFilterData(message_document_id));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
@@ -2190,9 +2207,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   // "email" document is fine
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
@@ -2202,9 +2219,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   // "message" document has an invalid SchemaTypeId
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
@@ -2256,16 +2273,16 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
                              document_store->Put(email_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2289,12 +2306,14 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
   // Check that the FilterCache holds the new SchemaTypeIds
-  ICING_ASSERT_OK_AND_ASSIGN(
-      email_data, document_store->GetDocumentFilterData(email_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      email_data,
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      message_data, document_store->GetDocumentFilterData(message_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      message_data,
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2486,16 +2505,16 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
                              document_store->Put(email_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2521,12 +2540,14 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       schema_store.get(), set_schema_result));
 
   // Check that the FilterCache holds the new SchemaTypeIds
-  ICING_ASSERT_OK_AND_ASSIGN(
-      email_data, document_store->GetDocumentFilterData(email_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      email_data,
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      message_data, document_store->GetDocumentFilterData(message_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      message_data,
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -3408,8 +3429,9 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
             .SetTtlMs(document1_ttl_)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3449,8 +3471,9 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         std::move(create_result.document_store);
 
     // Ensure that the type id of the email document has been correctly updated.
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
     EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
@@ -3506,8 +3529,9 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
             .SetTtlMs(document1_ttl_)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3545,8 +3569,9 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         std::move(create_result.document_store);
 
     // Check that the type id of the email document has not been updated.
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 }

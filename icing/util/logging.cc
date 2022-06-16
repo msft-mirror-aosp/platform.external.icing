@@ -50,9 +50,7 @@ constexpr uint32_t CalculateLoggingLevel(LogSeverity::Code severity,
 #if defined(ICING_DEBUG_LOGGING)
 #define DEFAULT_LOGGING_LEVEL CalculateLoggingLevel(LogSeverity::VERBOSE, 1)
 #else
-// TODO(b/146903474) Audit our use of INFO and WARNING logs so that they are not
-// overused, and then change the default logging level here to INFO.
-#define DEFAULT_LOGGING_LEVEL CalculateLoggingLevel(LogSeverity::ERROR, 0)
+#define DEFAULT_LOGGING_LEVEL CalculateLoggingLevel(LogSeverity::INFO, 0)
 #endif
 
 // The current global logging level for Icing, which controls which logs are
@@ -104,11 +102,9 @@ bool SetLoggingLevel(LogSeverity::Code severity, int16_t verbosity) {
 }
 
 LogMessage::LogMessage(LogSeverity::Code severity, uint16_t verbosity,
-                       std::string_view tag, const char *file_name,
-                       int line_number)
+                       const char *file_name, int line_number)
     : severity_(severity),
       verbosity_(verbosity),
-      tag_(tag),
       should_log_(ShouldLog(severity_, verbosity_)),
       stream_(should_log_) {
   if (should_log_) {
@@ -118,7 +114,7 @@ LogMessage::LogMessage(LogSeverity::Code severity, uint16_t verbosity,
 
 LogMessage::~LogMessage() {
   if (should_log_) {
-    LowLevelLogging(severity_, tag_, stream_.message);
+    LowLevelLogging(severity_, kIcingLoggingTag, stream_.message);
   }
   if (severity_ == LogSeverity::FATAL) {
     std::terminate();  // Will print a stacktrace (stdout or logcat).
