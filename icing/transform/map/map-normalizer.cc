@@ -14,8 +14,7 @@
 
 #include "icing/transform/map/map-normalizer.h"
 
-#include <ctype.h>
-
+#include <cctype>
 #include <string>
 #include <string_view>
 #include <unordered_map>

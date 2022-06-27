@@ -40,13 +40,13 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include <google/protobuf/io/gzip_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/portable/zlib.h"
 #include "icing/util/crc32.h"
@@ -292,9 +292,6 @@ class FileBackedProtoLog {
   static_assert(kMaxProtoSize <= 0x00FFFFFF,
                 "kMaxProtoSize doesn't fit in 3 bytes");
 
-  // Level of compression, BEST_SPEED = 1, BEST_COMPRESSION = 9
-  static constexpr int kDeflateCompressionLevel = 3;
-
   // Chunks of the file to mmap at a time, so we don't mmap the entire file.
   // Only used on 32-bit devices
   static constexpr int kMmapChunkSize = 4 * 1024 * 1024;  // 4MiB
@@ -304,9 +301,6 @@ class FileBackedProtoLog {
   const std::string file_path_;
   std::unique_ptr<Header> header_;
 };
-
-template <typename ProtoT>
-constexpr uint8_t FileBackedProtoLog<ProtoT>::kProtoMagic;
 
 template <typename ProtoT>
 FileBackedProtoLog<ProtoT>::FileBackedProtoLog(const Filesystem* filesystem,
@@ -582,7 +576,7 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   // Deserialize proto
   ProtoT proto;
   if (header_->compress) {
-    google::protobuf::io::GzipInputStream decompress_stream(&proto_stream);
+    protobuf_ports::GzipInputStream decompress_stream(&proto_stream);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);
