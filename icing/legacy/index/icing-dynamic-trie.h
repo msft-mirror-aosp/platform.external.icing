@@ -400,6 +400,16 @@ class IcingDynamicTrie : public IIcingStorage {
   // itself. If utf8 is true, does not cut key mid-utf8.
   std::vector<int> FindBranchingPrefixLengths(const char *key, bool utf8) const;
 
+  // Check if key is a branching term.
+  //
+  // key is a branching term, if and only if there exists terms s1 and s2 in the
+  // trie such that key is the maximum common prefix of s1 and s2, but s1 and s2
+  // are not prefixes of each other.
+  //
+  // The function assumes that key is already present in the trie. Otherwise,
+  // false will be returned.
+  bool IsBranchingTerm(const char *key) const;
+
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
   double min_free_fraction() const;
@@ -612,8 +622,11 @@ class IcingDynamicTrie : public IIcingStorage {
 
   // Helpers for Find and Insert.
   const Next *GetNextByChar(const Node *node, uint8_t key_char) const;
-  const Next *LowerBound(const Next *start, const Next *end,
-                         uint8_t key_char) const;
+  const Next *LowerBound(const Next *start, const Next *end, uint8_t key_char,
+                         uint32_t node_index = 0) const;
+  // Returns the number of valid nexts in the array.
+  int GetValidNextsSize(IcingDynamicTrie::Next *next_array_start,
+                        int next_array_length) const;
   void FindBestNode(const char *key, uint32_t *best_node_index, int *key_offset,
                     bool prefix, bool utf8 = false) const;
 
