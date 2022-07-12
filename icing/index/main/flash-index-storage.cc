@@ -503,7 +503,8 @@ void FlashIndexStorage::FlushInMemoryFreeList() {
   }
 }
 
-void FlashIndexStorage::GetDebugInfo(int verbosity, std::string* out) const {
+void FlashIndexStorage::GetDebugInfo(DebugInfoVerbosity::Code verbosity,
+                                     std::string* out) const {
   // Dump and check integrity of the index block free lists.
   out->append("Free lists:\n");
   for (size_t i = 0; i < header_block_->header()->num_index_block_infos; ++i) {
