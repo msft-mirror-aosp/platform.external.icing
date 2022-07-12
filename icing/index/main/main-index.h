@@ -183,11 +183,10 @@ class MainIndex {
       IndexStorageInfoProto storage_info) const;
 
   // Returns debug information for the main index in out.
-  // verbosity <= 0, simplest debug information - just the lexicon
-  // verbosity > 0, more detailed debug information including raw postings
-  //                lists.
-  IndexDebugInfoProto::MainIndexDebugInfoProto GetDebugInfo(
-      int verbosity) const;
+  // verbosity = BASIC, simplest debug information - just the lexicon
+  // verbosity = DETAILED, more detailed debug information including raw
+  // postings lists.
+  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity) const;
 
  private:
   libtextclassifier3::Status Init(const std::string& index_directory,
