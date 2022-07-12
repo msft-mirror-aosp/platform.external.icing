@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
@@ -607,21 +608,28 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
   return libtextclassifier3::Status::OK;
 }
 
-IndexDebugInfoProto::MainIndexDebugInfoProto MainIndex::GetDebugInfo(
-    int verbosity) const {
-  IndexDebugInfoProto::MainIndexDebugInfoProto res;
+std::string MainIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
+  std::string res;
 
   // Lexicon.
-  main_lexicon_->GetDebugInfo(verbosity, res.mutable_lexicon_info());
+  std::string lexicon_info;
+  main_lexicon_->GetDebugInfo(verbosity, &lexicon_info);
 
-  res.set_last_added_document_id(last_added_document_id());
+  IcingStringUtil::SStringAppendF(&res, 0,
+                                  "last_added_document_id: %u\n"
+                                  "\n"
+                                  "main_lexicon_info:\n%s\n",
+                                  last_added_document_id(),
+                                  lexicon_info.c_str());
 
-  if (verbosity <= 0) {
+  if (verbosity == DebugInfoVerbosity::BASIC) {
     return res;
   }
 
-  flash_index_storage_->GetDebugInfo(verbosity,
-                                     res.mutable_flash_index_storage_info());
+  std::string flash_index_storage_info;
+  flash_index_storage_->GetDebugInfo(verbosity, &flash_index_storage_info);
+  IcingStringUtil::SStringAppendF(&res, 0, "flash_index_storage_info:\n%s\n",
+                                  flash_index_storage_info.c_str());
   return res;
 }
 
