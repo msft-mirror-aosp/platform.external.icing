@@ -15,19 +15,19 @@
 #include <string_view>
 #include <vector>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/icing/portable/platform.h"
-#include "third_party/icing/proto/schema_proto_portable.pb.h"
-#include "third_party/icing/testing/common-matchers.h"
-#include "third_party/icing/testing/icu-data-file-helper.h"
-#include "third_party/icing/testing/jni-test-helpers.h"
-#include "third_party/icing/testing/test-data.h"
-#include "third_party/icing/tokenization/language-segmenter-factory.h"
-#include "third_party/icing/tokenization/language-segmenter.h"
-#include "third_party/icing/tokenization/tokenizer-factory.h"
-#include "third_party/icing/tokenization/tokenizer.h"
-#include "third_party/icu/include/unicode/uloc.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "icing/portable/platform.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
+#include "icing/testing/jni-test-helpers.h"
+#include "icing/testing/test-data.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/tokenizer-factory.h"
+#include "icing/tokenization/tokenizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -43,9 +43,9 @@ class CombinedTokenizerTest : public ::testing::Test {
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
-          // File generated via icu_data_file rule in //third_party/icing/BUILD.
+          // File generated via icu_data_file rule in //icing/BUILD.
           icu_data_file_helper::SetUpICUDataFile(
-              GetTestFilePath("third_party/icing/icu.dat")));
+              GetTestFilePath("icing/icu.dat")));
     }
     jni_cache_ = GetTestJniCache();
 
