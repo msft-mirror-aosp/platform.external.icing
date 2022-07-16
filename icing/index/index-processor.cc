@@ -67,6 +67,11 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
   uint32_t num_tokens = 0;
   libtextclassifier3::Status status;
   for (const TokenizedSection& section : tokenized_document.sections()) {
+    if (section.metadata.tokenizer ==
+        StringIndexingConfig::TokenizerType::NONE) {
+      ICING_LOG(WARNING)
+          << "Unexpected TokenizerType::NONE found when indexing document.";
+    }
     // TODO(b/152934343): pass real namespace ids in
     Index::Editor editor =
         index_->Edit(document_id, section.metadata.id,
@@ -82,8 +87,6 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
           status = editor.BufferTerm(token.data());
           break;
         case StringIndexingConfig::TokenizerType::NONE:
-          ICING_LOG(WARNING)
-              << "Unexpected TokenizerType::NONE found when indexing document.";
           [[fallthrough]];
         case StringIndexingConfig::TokenizerType::PLAIN:
           std::string normalized_term = normalizer_.NormalizeTerm(token);
