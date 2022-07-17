@@ -46,7 +46,7 @@
 //    //icing/store:document-store_benchmark
 //
 //    $ blaze-bin/icing/store/document-store_benchmark
-//    --benchmarks=all --benchmark_memory_usage
+//    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -57,7 +57,7 @@
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/document-store_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 
 namespace icing {
 namespace lib {
@@ -164,7 +164,8 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
     // Check random document ids to see if they exist. Hopefully to simulate
     // page faulting in different sections of our mmapped derived files.
     int document_id = dist(random);
-    benchmark::DoNotOptimize(document_store->DoesDocumentExist(document_id));
+    benchmark::DoNotOptimize(
+        document_store->GetAliveDocumentFilterData(document_id));
   }
 }
 BENCHMARK(BM_DoesDocumentExistBenchmark);
