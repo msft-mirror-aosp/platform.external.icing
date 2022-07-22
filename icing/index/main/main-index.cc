@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <string>
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
@@ -133,18 +134,10 @@ libtextclassifier3::StatusOr<int64_t> MainIndex::GetElementsSize() const {
 
 IndexStorageInfoProto MainIndex::GetStorageInfo(
     IndexStorageInfoProto storage_info) const {
-  int64_t lexicon_elt_size = main_lexicon_->GetElementsSize();
-  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
-    storage_info.set_main_index_lexicon_size(lexicon_elt_size);
-  } else {
-    storage_info.set_main_index_lexicon_size(-1);
-  }
-  int64_t index_elt_size = flash_index_storage_->GetElementsSize();
-  if (lexicon_elt_size != IcingFilesystem::kBadFileSize) {
-    storage_info.set_main_index_storage_size(index_elt_size);
-  } else {
-    storage_info.set_main_index_storage_size(-1);
-  }
+  storage_info.set_main_index_lexicon_size(
+      IcingFilesystem::SanitizeFileSize(main_lexicon_->GetElementsSize()));
+  storage_info.set_main_index_storage_size(
+      Filesystem::SanitizeFileSize(flash_index_storage_->GetElementsSize()));
   storage_info.set_main_index_block_size(flash_index_storage_->block_size());
   storage_info.set_num_blocks(flash_index_storage_->num_blocks());
   storage_info.set_min_free_fraction(flash_index_storage_->min_free_fraction());
@@ -186,7 +179,7 @@ MainIndex::GetAccessorForPrefixTerm(const std::string& prefix) {
   if (!exact && !hits_in_prefix_section.HasProperty(main_itr.GetValueIndex())) {
     // Found it, but it doesn't have prefix hits. Exit early. No need to
     // retrieve the posting list because there's nothing there for us.
-    return libtextclassifier3::Status::OK;
+    return absl_ports::NotFoundError("The term doesn't have any prefix hits.");
   }
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
   memcpy(&posting_list_id, main_itr.GetValue(), sizeof(posting_list_id));
@@ -217,35 +210,45 @@ bool IsTermInNamespaces(
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             const std::vector<NamespaceId>& namespace_ids) {
+                             TermMatchType::Code term_match_type,
+                             const NamespaceChecker* namespace_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
-  // A property reader to help check if a term has some property.
-  IcingDynamicTrie::PropertyReadersAll property_reader(*main_lexicon_);
-
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
-    uint32_t term_value_index = term_iterator.GetValueIndex();
+    int count = 0;
+    DocumentId last_document_id = kInvalidDocumentId;
 
-    // Skips the terms that don't exist in the given namespaces. We won't skip
-    // any terms if namespace_ids is empty.
-    if (!IsTermInNamespaces(property_reader, term_value_index, namespace_ids)) {
-      term_iterator.Advance();
-      continue;
-    }
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
     memcpy(&posting_list_id, term_iterator.GetValue(), sizeof(posting_list_id));
-    // Getting the actual hit count would require reading the entire posting
-    // list chain. We take an approximation to avoid all of those IO ops.
-    // Because we are not reading the posting lists, it is impossible to
-    // differentiate between single max-size posting lists and chains of
-    // max-size posting lists. We assume that the impact on scoring is not
-    // significant.
-    int approx_hit_count = IndexBlock::ApproximateFullPostingListHitsForBlock(
-        flash_index_storage_->block_size(),
-        posting_list_id.posting_list_index_bits());
-    term_metadata_list.emplace_back(term_iterator.GetKey(), approx_hit_count);
+    ICING_ASSIGN_OR_RETURN(PostingListAccessor pl_accessor,
+                           PostingListAccessor::CreateFromExisting(
+                               flash_index_storage_.get(), posting_list_id));
+    ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
+                           pl_accessor.GetNextHitsBatch());
+    for (const Hit& hit : hits) {
+      DocumentId document_id = hit.document_id();
+      if (document_id != last_document_id) {
+        last_document_id = document_id;
+        if (term_match_type == TermMatchType::EXACT_ONLY &&
+            hit.is_prefix_hit()) {
+          continue;
+        }
+        if (!namespace_checker->BelongsToTargetNamespaces(document_id)) {
+          // The document is removed or expired or not belongs to target
+          // namespaces.
+          continue;
+        }
+        // TODO(b/152934343) Add search type in SuggestionSpec to ask user to
+        // input search type, prefix or exact. And make different score strategy
+        // base on that.
+        ++count;
+      }
+    }
+    if (count > 0) {
+      term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), count));
+    }
 
     term_iterator.Advance();
   }
@@ -605,16 +608,29 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
   return libtextclassifier3::Status::OK;
 }
 
-void MainIndex::GetDebugInfo(int verbosity, std::string* out) const {
-  // Lexicon.
-  out->append("Main Lexicon stats:\n");
-  main_lexicon_->GetDebugInfo(verbosity, out);
+std::string MainIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
+  std::string res;
 
-  if (verbosity <= 0) {
-    return;
+  // Lexicon.
+  std::string lexicon_info;
+  main_lexicon_->GetDebugInfo(verbosity, &lexicon_info);
+
+  IcingStringUtil::SStringAppendF(&res, 0,
+                                  "last_added_document_id: %u\n"
+                                  "\n"
+                                  "main_lexicon_info:\n%s\n",
+                                  last_added_document_id(),
+                                  lexicon_info.c_str());
+
+  if (verbosity == DebugInfoVerbosity::BASIC) {
+    return res;
   }
 
-  flash_index_storage_->GetDebugInfo(verbosity, out);
+  std::string flash_index_storage_info;
+  flash_index_storage_->GetDebugInfo(verbosity, &flash_index_storage_info);
+  IcingStringUtil::SStringAppendF(&res, 0, "flash_index_storage_info:\n%s\n",
+                                  flash_index_storage_info.c_str());
+  return res;
 }
 
 }  // namespace lib
