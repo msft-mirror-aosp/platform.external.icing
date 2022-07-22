@@ -35,30 +35,29 @@ DocHitInfoIteratorNot::DocHitInfoIteratorNot(
           DocHitInfoIteratorAllDocumentId(document_id_limit)) {}
 
 libtextclassifier3::Status DocHitInfoIteratorNot::Advance() {
-  if (!all_document_id_iterator_.Advance().ok()) {
-    doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+  while (all_document_id_iterator_.Advance().ok()) {
+    if (all_document_id_iterator_.doc_hit_info().document_id() <
+        to_be_excluded_->doc_hit_info().document_id()) {
+      // Since DocumentIds are returned from DocHitInfoIterators in decreasing
+      // order, we have passed the last NOT result if we're smaller than its
+      // DocumentId. Advance the NOT result if so.
+      to_be_excluded_->Advance().IgnoreError();
+    }
+
+    if (all_document_id_iterator_.doc_hit_info().document_id() ==
+        to_be_excluded_->doc_hit_info().document_id()) {
+      // This is a NOT result, skip and Advance to the next result.
+      continue;
+    }
+
+    // No errors, we've found a valid result
+    doc_hit_info_ = all_document_id_iterator_.doc_hit_info();
+    return libtextclassifier3::Status::OK;
   }
 
-  if (all_document_id_iterator_.doc_hit_info().document_id() <
-      to_be_excluded_->doc_hit_info().document_id()) {
-    // Since DocumentIds are returned from DocHitInfoIterators in decreasing
-    // order, we have passed the last NOT result if we're smaller than its
-    // DocumentId. Advance the NOT result if so.
-    to_be_excluded_->Advance().IgnoreError();
-  }
-
-  if (all_document_id_iterator_.doc_hit_info().document_id() ==
-      to_be_excluded_->doc_hit_info().document_id()) {
-    // This is a NOT result, skip and Advance to the next result.
-    return Advance();
-  }
-
-  // No errors, we've found a valid result
-  doc_hit_info_ = all_document_id_iterator_.doc_hit_info();
-
-  return libtextclassifier3::Status::OK;
+  // Didn't find a hit, return with error
+  doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+  return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
 }
 
 int32_t DocHitInfoIteratorNot::GetNumBlocksInspected() const {

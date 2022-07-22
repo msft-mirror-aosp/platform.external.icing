@@ -14,7 +14,12 @@
 
 cmake_minimum_required(VERSION 3.10.2)
 
+project(icing)
+
 add_definitions("-DICING_REVERSE_JNI_SEGMENTATION=1")
+set(VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/icing/jni.lds")
+set(CMAKE_SHARED_LINKER_FLAGS
+    "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -Wl,--version-script=${VERSION_SCRIPT}")
 
 set(
     Protobuf_PREBUILTS_DIR
@@ -45,7 +50,7 @@ add_subdirectory("${Protobuf_SOURCE_DIR}/cmake" ${Protobuf_TARGET_BINARY_DIR})
 # Compile libandroidicu
 set(ICU_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../icu/libandroidicu")
 set(ICU_TARGET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/icu-target")
-add_subdirectory(${ICU_SOURCE_DIR} ${ICU_TARGET_BINARY_DIR})
+add_subdirectory("${ICU_SOURCE_DIR}/static_shim" ${ICU_TARGET_BINARY_DIR})
 
 # Glob Icing proto sources. Results look like this: icing/proto/document.proto
 file(
@@ -55,7 +60,10 @@ file(
     "*.proto")
 message(STATUS "Icing_PROTO_FILES=${Icing_PROTO_FILES}")
 
+
 # Run protoc on Icing_PROTO_FILES to generate pb.cc and pb.h files
+# The DEPENDS section of add_custom_command could trigger a remake if any proto
+# source file has been updated.
 file(MAKE_DIRECTORY ${Icing_PROTO_GEN_DIR})
 foreach(FILE ${Icing_PROTO_FILES})
     # Find the name of the proto file without the .proto extension
@@ -68,10 +76,10 @@ foreach(FILE ${Icing_PROTO_FILES})
           "${Icing_PROTO_GEN_DIR}/${FILE_NOEXT}.pb.h"
         COMMAND ${Protobuf_PROTOC_PATH}
           --proto_path "${CMAKE_CURRENT_SOURCE_DIR}/proto"
-          --cpp_out ${Icing_PROTO_GEN_DIR}
+          --cpp_out "lite:${Icing_PROTO_GEN_DIR}"
           ${FILE}
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        DEPENDS ${Protobuf_PROTOC_PATH}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/proto/${FILE}
     )
 endforeach()
 message(STATUS "Icing_PROTO_SOURCES=${Icing_PROTO_SOURCES}")
@@ -89,6 +97,11 @@ file(
     # Glob expressions
     icing/*.cc icing/*.h
 )
+
+# TODO(b/170611579): When supporting cmake v3.12 or higher, use CONFIGURE_DEPENDS
+# in the glob and remove this section.
+include(synced_AOSP_CL_number.txt)
+
 # Exclude the same types of files as Android.bp. See the comments there.
 list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/.*[^a-zA-Z0-9]test[^a-zA-Z0-9].*$")
 list(FILTER Icing_CC_SOURCES EXCLUDE REGEX "^icing/.*_benchmark\.cc$")
@@ -116,4 +129,4 @@ target_include_directories(icing PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(icing PRIVATE ${Icing_PROTO_GEN_DIR})
 target_include_directories(icing PRIVATE "${Protobuf_SOURCE_DIR}/src")
 target_include_directories(icing PRIVATE "${ICU_SOURCE_DIR}/include")
-target_link_libraries(icing protobuf::libprotobuf libandroidicu log)
+target_link_libraries(icing protobuf::libprotobuf-lite libandroidicu log z)
