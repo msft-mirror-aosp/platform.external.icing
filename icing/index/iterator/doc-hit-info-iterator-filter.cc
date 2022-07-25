@@ -66,25 +66,19 @@ DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
 
 libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
   while (delegate_->Advance().ok()) {
-    if (!document_store_.DoesDocumentExist(
-            delegate_->doc_hit_info().document_id())) {
-      // Document doesn't exist, keep searching. This handles deletions and
-      // expired documents.
-      continue;
-    }
-
     // Try to get the DocumentFilterData
-    auto document_filter_data_or = document_store_.GetDocumentFilterData(
-        delegate_->doc_hit_info().document_id());
-    if (!document_filter_data_or.ok()) {
+    auto document_filter_data_optional =
+        document_store_.GetAliveDocumentFilterData(
+            delegate_->doc_hit_info().document_id());
+    if (!document_filter_data_optional) {
       // Didn't find the DocumentFilterData in the filter cache. This could be
-      // because the DocumentId isn't valid or the filter cache is in some
-      // invalid state. This is bad, but not the query's responsibility to fix,
-      // so just skip this result for now.
+      // because the Document doesn't exist or the DocumentId isn't valid or the
+      // filter cache is in some invalid state. This is bad, but not the query's
+      // responsibility to fix, so just skip this result for now.
       continue;
     }
     // We should be guaranteed that this exists now.
-    DocumentFilterData data = std::move(document_filter_data_or).ValueOrDie();
+    DocumentFilterData data = document_filter_data_optional.value();
 
     if (!options_.namespaces.empty() &&
         target_namespace_ids_.count(data.namespace_id()) == 0) {
