@@ -127,22 +127,23 @@ class QueryProcessorTest : public Test {
     schema_store_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
-
   Filesystem filesystem_;
   const std::string test_dir_;
   const std::string store_dir_;
   const std::string schema_store_dir_;
-  std::unique_ptr<Index> index_;
-  std::unique_ptr<LanguageSegmenter> language_segmenter_;
-  std::unique_ptr<Normalizer> normalizer_;
-  std::unique_ptr<SchemaStore> schema_store_;
-  std::unique_ptr<DocumentStore> document_store_;
-  FakeClock fake_clock_;
-  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
 
  private:
   IcingFilesystem icing_filesystem_;
   const std::string index_dir_;
+
+ protected:
+  std::unique_ptr<Index> index_;
+  std::unique_ptr<LanguageSegmenter> language_segmenter_;
+  std::unique_ptr<Normalizer> normalizer_;
+  FakeClock fake_clock_;
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> document_store_;
 };
 
 TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
