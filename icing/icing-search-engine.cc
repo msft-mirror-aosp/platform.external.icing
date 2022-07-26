@@ -529,7 +529,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_);
+      performance_configuration_.max_num_total_hits, *document_store_,
+      clock_.get());
 
   return status;
 }
@@ -1374,6 +1375,46 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   return result;
 }
 
+DebugInfoResultProto IcingSearchEngine::GetDebugInfo(
+    DebugInfoVerbosity::Code verbosity) {
+  DebugInfoResultProto debug_info;
+  StatusProto* result_status = debug_info.mutable_status();
+  absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    debug_info.mutable_status()->set_code(StatusProto::FAILED_PRECONDITION);
+    debug_info.mutable_status()->set_message(
+        "IcingSearchEngine has not been initialized!");
+    return debug_info;
+  }
+
+  // Index
+  *debug_info.mutable_debug_info()->mutable_index_info() =
+      index_->GetDebugInfo(verbosity);
+
+  // Document Store
+  libtextclassifier3::StatusOr<DocumentDebugInfoProto> document_debug_info =
+      document_store_->GetDebugInfo(verbosity);
+  if (!document_debug_info.ok()) {
+    TransformStatus(document_debug_info.status(), result_status);
+    return debug_info;
+  }
+  *debug_info.mutable_debug_info()->mutable_document_info() =
+      std::move(document_debug_info).ValueOrDie();
+
+  // Schema Store
+  libtextclassifier3::StatusOr<SchemaDebugInfoProto> schema_debug_info =
+      schema_store_->GetDebugInfo();
+  if (!schema_debug_info.ok()) {
+    TransformStatus(schema_debug_info.status(), result_status);
+    return debug_info;
+  }
+  *debug_info.mutable_debug_info()->mutable_schema_info() =
+      std::move(schema_debug_info).ValueOrDie();
+
+  result_status->set_code(StatusProto::OK);
+  return debug_info;
+}
+
 libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
     PersistType::Code persist_type) {
   if (persist_type == PersistType::LITE) {
@@ -1695,7 +1736,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
     }
     document_store_ = std::move(create_result_or.ValueOrDie().document_store);
     result_state_manager_ = std::make_unique<ResultStateManager>(
-        performance_configuration_.max_num_total_hits, *document_store_);
+        performance_configuration_.max_num_total_hits, *document_store_,
+        clock_.get());
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -1717,7 +1759,8 @@ libtextclassifier3::Status IcingSearchEngine::OptimizeDocumentStore(
   }
   document_store_ = std::move(create_result_or.ValueOrDie().document_store);
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_);
+      performance_configuration_.max_num_total_hits, *document_store_,
+      clock_.get());
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(
