@@ -125,10 +125,10 @@ class DocumentValidatorTest : public ::testing::Test {
   }
 
   std::string schema_dir_;
-  std::unique_ptr<DocumentValidator> document_validator_;
-  std::unique_ptr<SchemaStore> schema_store_;
   Filesystem filesystem_;
   FakeClock fake_clock_;
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentValidator> document_validator_;
 };
 
 TEST_F(DocumentValidatorTest, ValidateSimpleSchemasOk) {
