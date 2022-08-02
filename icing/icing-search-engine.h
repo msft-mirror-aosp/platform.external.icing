@@ -280,8 +280,9 @@ class IcingSearchEngine {
   //   NOT_FOUND if the query doesn't match any documents
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
-  DeleteByQueryResultProto DeleteByQuery(const SearchSpecProto& search_spec)
-      ICING_LOCKS_EXCLUDED(mutex_);
+  DeleteByQueryResultProto DeleteByQuery(
+      const SearchSpecProto& search_spec,
+      bool return_deleted_document_info = false) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves, scores, ranks, and returns the results according to the specs.
   // Results can be empty. If there're multiple pages of results,
@@ -401,6 +402,10 @@ class IcingSearchEngine {
   // If an IO error occurs while trying to calculate the value for a field, then
   // that field will be set to -1.
   StorageInfoResultProto GetStorageInfo() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Get debug information for Icing.
+  DebugInfoResultProto GetDebugInfo(DebugInfoVerbosity::Code verbosity)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Clears all data from Icing and re-initializes. Clients DO NOT need to call
   // Initialize again.
