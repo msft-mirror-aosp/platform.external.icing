@@ -26,6 +26,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result-state.h"
 #include "icing/result/result-state.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -34,11 +35,16 @@ namespace lib {
 // SearchResultProto.next_page_token.
 inline constexpr uint64_t kInvalidNextPageToken = 0;
 
+// 1 hr as the default ttl for a ResultState after being pushed into
+// token_queue_.
+inline constexpr int64_t kDefaultResultStateTtlInMs = 1LL * 60 * 60 * 1000;
+
 // Used to store and manage ResultState.
 class ResultStateManager {
  public:
   explicit ResultStateManager(int max_total_hits,
-                              const DocumentStore& document_store);
+                              const DocumentStore& document_store,
+                              const Clock* clock);
 
   ResultStateManager(const ResultStateManager&) = delete;
   ResultStateManager& operator=(const ResultStateManager&) = delete;
@@ -75,6 +81,12 @@ class ResultStateManager {
   // Invalidates all result states / tokens currently in ResultStateManager.
   void InvalidateAllResultStates() ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Invalidates expired result states / tokens currently in ResultStateManager
+  // that were created before current_time - result_state_ttl.
+  void InvalidateExpiredResultStates(
+      int64_t result_state_ttl = kDefaultResultStateTtlInMs)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
  private:
   absl_ports::shared_mutex mutex_;
 
@@ -94,8 +106,9 @@ class ResultStateManager {
   std::unordered_map<uint64_t, ResultState> result_state_map_
       ICING_GUARDED_BY(mutex_);
 
-  // A queue used to track the insertion order of tokens
-  std::queue<uint64_t> token_queue_ ICING_GUARDED_BY(mutex_);
+  // A queue used to track the insertion order of tokens with pushed timestamps.
+  std::queue<std::pair<uint64_t, int64_t>> token_queue_
+      ICING_GUARDED_BY(mutex_);
 
   // A set to temporarily store the invalidated tokens before they're finally
   // removed from token_queue_. We store the invalidated tokens to ensure the
@@ -104,6 +117,8 @@ class ResultStateManager {
 
   // A random 64-bit number generator
   std::mt19937_64 random_generator_ ICING_GUARDED_BY(mutex_);
+
+  const Clock& clock_;  // Does not own.
 
   // Puts a new result state into the internal storage and returns a next-page
   // token associated with it. The token is guaranteed to be unique among all
@@ -126,11 +141,17 @@ class ResultStateManager {
   void InternalInvalidateResultState(uint64_t token)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Internal method to invalidates all result states / tokens currently in
+  // Internal method to invalidate all result states / tokens currently in
   // ResultStateManager. We need this separate method so that other public
   // methods don't need to call InvalidateAllResultStates(). Public methods
   // calling each other may cause deadlock issues.
   void InternalInvalidateAllResultStates()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Internal method to invalidate and remove expired result states / tokens
+  // currently in ResultStateManager that were created before
+  // current_time - result_state_ttl.
+  void InternalInvalidateExpiredResultStates(int64_t result_state_ttl)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 
