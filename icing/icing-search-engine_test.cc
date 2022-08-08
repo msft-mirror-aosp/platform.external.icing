@@ -3003,7 +3003,6 @@ TEST_F(IcingSearchEngineTest, OptimizationFailureUninitializesIcing) {
                                       HasSubstr("document_dir")))
       .WillByDefault(swap_lambda);
   TestIcingSearchEngine icing(options, std::move(mock_filesystem),
-                              std::move(mock_filesystem),
                               std::make_unique<IcingFilesystem>(),
                               std::make_unique<FakeClock>(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -8678,6 +8677,81 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NonPositiveNumToReturn) {
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoVerbosityBasicSucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Create a document.
+  DocumentProto document = CreateMessageDocument("namespace", "email");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  DebugInfoResultProto result = icing.GetDebugInfo(DebugInfoVerbosity::BASIC);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+
+  // Some sanity checks
+  DebugInfoProto debug_info = result.debug_info();
+  EXPECT_THAT(
+      debug_info.document_info().document_storage_info().num_alive_documents(),
+      Eq(1));
+  EXPECT_THAT(debug_info.document_info().corpus_info(),
+              IsEmpty());  // because verbosity=BASIC
+  EXPECT_THAT(debug_info.schema_info().crc(), Gt(0));
+}
+
+TEST_F(IcingSearchEngineTest,
+       GetDebugInfoVerbosityDetailedSucceedsWithCorpusInfo) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Create 4 documents.
+  DocumentProto document1 = CreateMessageDocument("namespace1", "email/1");
+  DocumentProto document2 = CreateMessageDocument("namespace1", "email/2");
+  DocumentProto document3 = CreateMessageDocument("namespace2", "email/3");
+  DocumentProto document4 = CreateMessageDocument("namespace2", "email/4");
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+
+  DebugInfoResultProto result =
+      icing.GetDebugInfo(DebugInfoVerbosity::DETAILED);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+
+  // Some sanity checks
+  DebugInfoProto debug_info = result.debug_info();
+  EXPECT_THAT(
+      debug_info.document_info().document_storage_info().num_alive_documents(),
+      Eq(4));
+  EXPECT_THAT(debug_info.document_info().corpus_info(), SizeIs(2));
+  EXPECT_THAT(debug_info.schema_info().crc(), Gt(0));
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoUninitialized) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  DebugInfoResultProto result =
+      icing.GetDebugInfo(DebugInfoVerbosity::DETAILED);
+  EXPECT_THAT(result.status(), ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoNoSchemaNoDocumentsSucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  DebugInfoResultProto result =
+      icing.GetDebugInfo(DebugInfoVerbosity::DETAILED);
+  ASSERT_THAT(result.status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest, GetDebugInfoWithSchemaNoDocumentsSucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  DebugInfoResultProto result =
+      icing.GetDebugInfo(DebugInfoVerbosity::DETAILED);
+  ASSERT_THAT(result.status(), ProtoIsOk());
 }
 
 #ifndef ICING_JNI_TEST
