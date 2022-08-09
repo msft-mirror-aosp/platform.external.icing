@@ -21,6 +21,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 
@@ -52,11 +53,13 @@ ScoredDocumentHit CreateScoredHit(DocumentId document_id) {
 class ResultStateManagerTest : public testing::Test {
  protected:
   void SetUp() override {
+    clock_ = std::make_unique<FakeClock>();
+
     schema_store_base_dir_ = GetTestTempDir() + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_base_dir_.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_base_dir_, &clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_base_dir_,
+                                           clock_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
     ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
@@ -65,7 +68,7 @@ class ResultStateManagerTest : public testing::Test {
     filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, doc_store_base_dir_, &clock_,
+        DocumentStore::Create(&filesystem_, doc_store_base_dir_, clock_.get(),
                               schema_store_.get()));
     document_store_ = std::move(result.document_store);
   }
@@ -73,6 +76,7 @@ class ResultStateManagerTest : public testing::Test {
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(doc_store_base_dir_.c_str());
     filesystem_.DeleteDirectoryRecursively(schema_store_base_dir_.c_str());
+    clock_.reset();
   }
 
   ResultState CreateResultState(
@@ -92,13 +96,16 @@ class ResultStateManagerTest : public testing::Test {
     return ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1);
   }
 
+  FakeClock* clock() { return clock_.get(); }
+  const FakeClock* clock() const { return clock_.get(); }
+
   const DocumentStore& document_store() const { return *document_store_; }
 
  private:
   Filesystem filesystem_;
+  std::unique_ptr<FakeClock> clock_;
   std::string doc_store_base_dir_;
   std::string schema_store_base_dir_;
-  Clock clock_;
   std::unique_ptr<DocumentStore> document_store_;
   std::unique_ptr<SchemaStore> schema_store_;
 };
@@ -111,7 +118,8 @@ TEST_F(ResultStateManagerTest, ShouldRankAndPaginateOnePage) {
                         /*num_per_page=*/10);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
@@ -136,7 +144,8 @@ TEST_F(ResultStateManagerTest, ShouldRankAndPaginateMultiplePages) {
                         /*num_per_page=*/2);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
 
   // First page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -173,7 +182,8 @@ TEST_F(ResultStateManagerTest, EmptyStateShouldReturnError) {
   ResultState empty_result_state = CreateResultState({}, /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
   EXPECT_THAT(
       result_state_manager.RankAndPaginate(std::move(empty_result_state)),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -192,7 +202,8 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
                         /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -230,7 +241,8 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
                         /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -251,6 +263,50 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
+TEST_F(ResultStateManagerTest, ShouldInvalidateOldTokens) {
+  ResultState result_state1 =
+      CreateResultState({AddScoredDocument(/*document_id=*/0),
+                         AddScoredDocument(/*document_id=*/1),
+                         AddScoredDocument(/*document_id=*/2)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({AddScoredDocument(/*document_id=*/3),
+                         AddScoredDocument(/*document_id=*/4),
+                         AddScoredDocument(/*document_id=*/5)},
+                        /*num_per_page=*/1);
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
+  // Set time as 1s and add state 1.
+  clock()->SetSystemTimeMilliseconds(1000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  // Set time as 1hr2s and add state 2.
+  clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 2000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+
+  // Invalidates expired states with default ttl (1 hr). This should only
+  // invalidate state 1.
+  result_state_manager.InvalidateExpiredResultStates();
+
+  // page_result_state1.next_page_token() shouldn't be found
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // page_result_state2.next_page_token() should be found
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state2,
+      result_state_manager.GetNextPage(page_result_state2.next_page_token));
+  EXPECT_THAT(page_result_state2.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredHit(
+                  /*document_id=*/4))));
+}
+
 TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
   ResultState result_state1 =
       CreateResultState({AddScoredDocument(/*document_id=*/0),
@@ -266,7 +322,7 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
                         /*num_per_page=*/1);
 
   ResultStateManager result_state_manager(/*max_total_hits=*/2,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -317,7 +373,7 @@ TEST_F(ResultStateManagerTest,
   // Each result state has a page size of 1 and a result set of 2 hits. So each
   // result will take up one hit of our three hit budget.
   ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -390,7 +446,7 @@ TEST_F(ResultStateManagerTest,
   // Each result state has a page size of 1 and a result set of 2 hits. So each
   // result will take up one hit of our three hit budget.
   ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -463,6 +519,99 @@ TEST_F(ResultStateManagerTest,
                   /*document_id=*/10))));
 }
 
+TEST_F(ResultStateManagerTest,
+       InvalidatedOldResultStatesShouldDecreaseCurrentHitsCount) {
+  ResultState result_state1 =
+      CreateResultState({AddScoredDocument(/*document_id=*/0),
+                         AddScoredDocument(/*document_id=*/1),
+                         AddScoredDocument(/*document_id=*/2),
+                         AddScoredDocument(/*document_id=*/3)},
+                        /*num_per_page=*/1);
+  ResultState result_state2 =
+      CreateResultState({AddScoredDocument(/*document_id=*/4),
+                         AddScoredDocument(/*document_id=*/5)},
+                        /*num_per_page=*/1);
+  ResultState result_state3 =
+      CreateResultState({AddScoredDocument(/*document_id=*/6),
+                         AddScoredDocument(/*document_id=*/7)},
+                        /*num_per_page=*/1);
+  ResultState result_state4 =
+      CreateResultState({AddScoredDocument(/*document_id=*/8),
+                         AddScoredDocument(/*document_id=*/9)},
+                        /*num_per_page=*/1);
+
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from RankAndPaginate).
+  // So state 1 ~ state 4 will take up 6 hits in total.
+  ResultStateManager result_state_manager(/*max_total_hits=*/6,
+                                          document_store(), clock());
+  // Set time as 1000ms and add state 1.
+  clock()->SetSystemTimeMilliseconds(1000);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state1,
+      result_state_manager.RankAndPaginate(std::move(result_state1)));
+  // Set time as 1001ms and add state 2.
+  clock()->SetSystemTimeMilliseconds(1001);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state2,
+      result_state_manager.RankAndPaginate(std::move(result_state2)));
+  // Set time as 1002ms and add state 3.
+  clock()->SetSystemTimeMilliseconds(1002);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state3,
+      result_state_manager.RankAndPaginate(std::move(result_state3)));
+  // Set time as 1003ms and add state 4.
+  clock()->SetSystemTimeMilliseconds(1003);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state4,
+      result_state_manager.RankAndPaginate(std::move(result_state4)));
+
+  // Set time as kDefaultResultStateTtlInMs + 1001ms and invalidate expired
+  // states with default ttl (1 hr). This should invalidate state 1 and state 2.
+  clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1001);
+  result_state_manager.InvalidateExpiredResultStates();
+
+  // page_result_state1.next_page_token() shouldn't be found
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state1.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  // page_result_state2.next_page_token() shouldn't be found
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(page_result_state2.next_page_token),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // If invalidating state 1 and state 2 correctly decremented the current hit
+  // count by 4 (to 2), then adding state 5 should still be within our budget
+  // and no other result states should be evicted.
+  ResultState result_state5 =
+      CreateResultState({AddScoredDocument(/*document_id=*/10),
+                         AddScoredDocument(/*document_id=*/11),
+                         AddScoredDocument(/*document_id=*/12),
+                         AddScoredDocument(/*document_id=*/13),
+                         AddScoredDocument(/*document_id=*/14)},
+                        /*num_per_page=*/1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultState page_result_state5,
+      result_state_manager.RankAndPaginate(std::move(result_state5)));
+
+  // page_result_state3.next_page_token() should be found since there is no
+  // eviction.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state3,
+      result_state_manager.GetNextPage(page_result_state3.next_page_token));
+  EXPECT_THAT(page_result_state3.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredHit(
+                  /*document_id=*/6))));
+  // page_result_state4.next_page_token() should be found since there is no
+  // eviction.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_state4,
+      result_state_manager.GetNextPage(page_result_state4.next_page_token));
+  EXPECT_THAT(page_result_state4.scored_document_hits,
+              ElementsAre(EqualsScoredDocumentHit(CreateScoredHit(
+                  /*document_id=*/8))));
+}
+
 TEST_F(
     ResultStateManagerTest,
     InvalidatedResultStateShouldDecreaseCurrentHitsCountByExactStateHitCount) {
@@ -484,7 +633,7 @@ TEST_F(
   // Each result state has a page size of 1 and a result set of 2 hits. So each
   // result will take up one hit of our three hit budget.
   ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -571,7 +720,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
   // Each result state has a page size of 1 and a result set of 2 hits. So each
   // result will take up one hit of our three hit budget.
   ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -648,7 +797,7 @@ TEST_F(ResultStateManagerTest,
   // Each result state has a page size of 1 and a result set of 2 hits. So each
   // result will take up one hit of our three hit budget.
   ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -736,7 +885,7 @@ TEST_F(ResultStateManagerTest,
   // won't be cached (since it is returned immediately from RankAndPaginate).
   // Each result state has a page size of 1. So 3 hits will remain cached.
   ResultStateManager result_state_manager(/*max_total_hits=*/4,
-                                          document_store());
+                                          document_store(), clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state1,
       result_state_manager.RankAndPaginate(std::move(result_state1)));
@@ -807,7 +956,7 @@ TEST_F(ResultStateManagerTest,
 TEST_F(ResultStateManagerTest,
        AddingResultStateShouldEvictOverBudgetResultState) {
   ResultStateManager result_state_manager(/*max_total_hits=*/4,
-                                          document_store());
+                                          document_store(), clock());
   // Add a result state that is larger than the entire budget. The entire result
   // state will still be cached
   ResultState result_state1 =
@@ -849,7 +998,7 @@ TEST_F(ResultStateManagerTest, ShouldGetSnippetContext) {
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/1);
   result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
-  result_spec.mutable_snippet_spec()->set_max_window_bytes(5);
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
 
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
@@ -864,7 +1013,8 @@ TEST_F(ResultStateManagerTest, ShouldGetSnippetContext) {
       document_store());
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
@@ -884,7 +1034,7 @@ TEST_F(ResultStateManagerTest, ShouldGetDefaultSnippetContext) {
   // 0 indicates no snippeting
   result_spec.mutable_snippet_spec()->set_num_to_snippet(0);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(0);
-  result_spec.mutable_snippet_spec()->set_max_window_bytes(0);
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(0);
 
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
@@ -899,7 +1049,8 @@ TEST_F(ResultStateManagerTest, ShouldGetDefaultSnippetContext) {
       document_store());
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultState page_result_state,
       result_state_manager.RankAndPaginate(std::move(original_result_state)));
@@ -924,7 +1075,8 @@ TEST_F(ResultStateManagerTest, ShouldGetCorrectNumPreviouslyReturned) {
                         /*num_per_page=*/2);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
+      clock());
 
   // First page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -970,7 +1122,7 @@ TEST_F(ResultStateManagerTest, ShouldStoreAllHits) {
       /*num_per_page=*/2);
 
   ResultStateManager result_state_manager(/*max_total_hits=*/4,
-                                          document_store());
+                                          document_store(), clock());
 
   // The 5 input scored document hits will not be truncated. The first page of
   // two hits will be returned immediately and the other three hits will fit

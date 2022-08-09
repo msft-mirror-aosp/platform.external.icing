@@ -124,6 +124,8 @@ class PortableFileBackedProtoLog {
    public:
     static constexpr int32_t kMagic = 0xf4c6f67a;
 
+    // We should go directly from 0 to 2 the next time we have to change the
+    // format.
     static constexpr int32_t kFileFormatVersion = 0;
 
     uint32_t CalculateHeaderChecksum() const {
@@ -282,7 +284,7 @@ class PortableFileBackedProtoLog {
     // before updating our checksum.
     bool recalculated_checksum = false;
 
-    bool has_data_loss() {
+    bool has_data_loss() const {
       return data_loss == DataLoss::PARTIAL || data_loss == DataLoss::COMPLETE;
     }
   };
@@ -376,8 +378,7 @@ class PortableFileBackedProtoLog {
   // }
   class Iterator {
    public:
-    Iterator(const Filesystem& filesystem, const std::string& file_path,
-             int64_t initial_offset);
+    Iterator(const Filesystem& filesystem, int fd, int64_t initial_offset);
 
     // Advances to the position of next proto whether it has been erased or not.
     //
@@ -393,11 +394,12 @@ class PortableFileBackedProtoLog {
    private:
     static constexpr int64_t kInvalidOffset = -1;
     // Used to read proto metadata
-    MemoryMappedFile mmapped_file_;
     // Offset of first proto
+    const Filesystem* const filesystem_;
     int64_t initial_offset_;
     int64_t current_offset_;
     int64_t file_size_;
+    int fd_;
   };
 
   // Returns an iterator of current proto log. The caller needs to keep the
@@ -513,7 +515,7 @@ class PortableFileBackedProtoLog {
       const Filesystem* filesystem, const std::string& file_path,
       Crc32 initial_crc, int64_t start, int64_t end);
 
-  // Reads out the metadata of a proto located at file_offset from the file.
+  // Reads out the metadata of a proto located at file_offset from the fd.
   // Metadata will be returned in host byte order endianness.
   //
   // Returns:
@@ -521,7 +523,8 @@ class PortableFileBackedProtoLog {
   //   OUT_OF_RANGE_ERROR if file_offset exceeds file_size
   //   INTERNAL_ERROR if the metadata is invalid or any IO errors happen
   static libtextclassifier3::StatusOr<int32_t> ReadProtoMetadata(
-      MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size);
+      const Filesystem* const filesystem, int fd, int64_t file_offset,
+      int64_t file_size);
 
   // Writes metadata of a proto to the fd. Takes in a host byte order endianness
   // metadata and converts it into a portable metadata before writing.
@@ -937,35 +940,37 @@ template <typename ProtoT>
 libtextclassifier3::StatusOr<ProtoT>
 PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   int64_t file_size = filesystem_->GetFileSize(fd_.get());
-  MemoryMappedFile mmapped_file(*filesystem_, file_path_,
-                                MemoryMappedFile::Strategy::READ_ONLY);
-  if (file_offset >= file_size) {
-    // file_size points to the next byte to write at, so subtract one to get
-    // the inclusive, actual size of file.
+  // Read out the metadata
+  if (file_size == Filesystem::kBadFileSize) {
+    return absl_ports::OutOfRangeError("Unable to correctly read size.");
+  }
+  ICING_ASSIGN_OR_RETURN(
+      int32_t metadata,
+      ReadProtoMetadata(filesystem_, fd_.get(), file_offset, file_size));
+
+  // Copy out however many bytes it says the proto is
+  int stored_size = GetProtoSize(metadata);
+  file_offset += sizeof(metadata);
+
+  // Read the compressed proto out.
+  if (file_offset + stored_size > file_size) {
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Trying to read from a location, %lld, "
                                       "out of range of the file size, %lld",
                                       static_cast<long long>(file_offset),
                                       static_cast<long long>(file_size - 1)));
   }
+  auto buf = std::make_unique<char[]>(stored_size);
+  if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+    return absl_ports::InternalError("");
+  }
 
-  // Read out the metadata
-  ICING_ASSIGN_OR_RETURN(
-      int32_t metadata,
-      ReadProtoMetadata(&mmapped_file, file_offset, file_size));
-
-  // Copy out however many bytes it says the proto is
-  int stored_size = GetProtoSize(metadata);
-
-  ICING_RETURN_IF_ERROR(
-      mmapped_file.Remap(file_offset + sizeof(metadata), stored_size));
-
-  if (IsEmptyBuffer(mmapped_file.region(), mmapped_file.region_size())) {
+  if (IsEmptyBuffer(buf.get(), stored_size)) {
     return absl_ports::NotFoundError("The proto data has been erased.");
   }
 
-  google::protobuf::io::ArrayInputStream proto_stream(
-      mmapped_file.mutable_region(), stored_size);
+  google::protobuf::io::ArrayInputStream proto_stream(buf.get(),
+                                                          stored_size);
 
   // Deserialize proto
   ProtoT proto;
@@ -983,33 +988,29 @@ template <typename ProtoT>
 libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     int64_t file_offset) {
   int64_t file_size = filesystem_->GetFileSize(fd_.get());
-  if (file_offset >= file_size) {
-    // file_size points to the next byte to write at, so subtract one to get
-    // the inclusive, actual size of file.
-    return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-        "Trying to erase data at a location, %lld, "
-        "out of range of the file size, %lld",
-        static_cast<long long>(file_offset),
-        static_cast<long long>(file_size - 1)));
+  if (file_size == Filesystem::kBadFileSize) {
+    return absl_ports::OutOfRangeError("Unable to correctly read size.");
   }
 
-  MemoryMappedFile mmapped_file(
-      *filesystem_, file_path_,
-      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
-
-  // Read out the metadata
   ICING_ASSIGN_OR_RETURN(
       int32_t metadata,
-      ReadProtoMetadata(&mmapped_file, file_offset, file_size));
-
-  ICING_RETURN_IF_ERROR(mmapped_file.Remap(file_offset + sizeof(metadata),
-                                           GetProtoSize(metadata)));
+      ReadProtoMetadata(filesystem_, fd_.get(), file_offset, file_size));
+  // Copy out however many bytes it says the proto is
+  int stored_size = GetProtoSize(metadata);
+  file_offset += sizeof(metadata);
+  if (file_offset + stored_size > file_size) {
+    return absl_ports::OutOfRangeError(
+        IcingStringUtil::StringPrintf("Trying to read from a location, %lld, "
+                                      "out of range of the file size, %lld",
+                                      static_cast<long long>(file_offset),
+                                      static_cast<long long>(file_size - 1)));
+  }
+  auto buf = std::make_unique<char[]>(stored_size);
 
   // We need to update the crc checksum if the erased area is before the
   // rewind position.
   int32_t new_crc;
-  int64_t erased_proto_offset = file_offset + sizeof(metadata);
-  if (erased_proto_offset < header_->GetRewindOffset()) {
+  if (file_offset < header_->GetRewindOffset()) {
     // Set to "dirty" before we start writing anything.
     header_->SetDirtyFlag(true);
     header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
@@ -1022,24 +1023,30 @@ libtextclassifier3::Status PortableFileBackedProtoLog<ProtoT>::EraseProto(
     // We need to calculate [original string xor 0s].
     // The xored string is the same as the original string because 0 xor 0 =
     // 0, 1 xor 0 = 1.
-    const std::string_view xored_str(mmapped_file.region(),
-                                     mmapped_file.region_size());
+    // Read the compressed proto out.
+    if (!filesystem_->PRead(fd_.get(), buf.get(), stored_size, file_offset)) {
+      return absl_ports::InternalError("");
+    }
+    const std::string_view xored_str(buf.get(), stored_size);
 
     Crc32 crc(header_->GetLogChecksum());
     ICING_ASSIGN_OR_RETURN(
-        new_crc, crc.UpdateWithXor(
-                     xored_str,
-                     /*full_data_size=*/header_->GetRewindOffset() -
-                         kHeaderReservedBytes,
-                     /*position=*/erased_proto_offset - kHeaderReservedBytes));
+        new_crc,
+        crc.UpdateWithXor(xored_str,
+                          /*full_data_size=*/header_->GetRewindOffset() -
+                              kHeaderReservedBytes,
+                          /*position=*/file_offset - kHeaderReservedBytes));
   }
 
   // Clear the region.
-  memset(mmapped_file.mutable_region(), '\0', mmapped_file.region_size());
+  memset(buf.get(), '\0', stored_size);
+  if (!filesystem_->PWrite(fd_.get(), file_offset, buf.get(), stored_size)) {
+    return absl_ports::InternalError("");
+  }
 
   // If we cleared something in our checksummed area, we should update our
   // checksum and reset our dirty bit.
-  if (erased_proto_offset < header_->GetRewindOffset()) {
+  if (file_offset < header_->GetRewindOffset()) {
     header_->SetDirtyFlag(false);
     header_->SetLogChecksum(new_crc);
     header_->SetHeaderChecksum(header_->CalculateHeaderChecksum());
@@ -1077,13 +1084,12 @@ PortableFileBackedProtoLog<ProtoT>::GetElementsFileSize() const {
 
 template <typename ProtoT>
 PortableFileBackedProtoLog<ProtoT>::Iterator::Iterator(
-    const Filesystem& filesystem, const std::string& file_path,
-    int64_t initial_offset)
-    : mmapped_file_(filesystem, file_path,
-                    MemoryMappedFile::Strategy::READ_ONLY),
+    const Filesystem& filesystem, int fd, int64_t initial_offset)
+    : filesystem_(&filesystem),
       initial_offset_(initial_offset),
       current_offset_(kInvalidOffset),
-      file_size_(filesystem.GetFileSize(file_path.c_str())) {
+      fd_(fd) {
+  file_size_ = filesystem_->GetFileSize(fd_);
   if (file_size_ == Filesystem::kBadFileSize) {
     // Fails all Advance() calls
     file_size_ = 0;
@@ -1100,7 +1106,7 @@ PortableFileBackedProtoLog<ProtoT>::Iterator::Advance() {
     // Jumps to the next proto position
     ICING_ASSIGN_OR_RETURN(
         int32_t metadata,
-        ReadProtoMetadata(&mmapped_file_, current_offset_, file_size_));
+        ReadProtoMetadata(filesystem_, fd_, current_offset_, file_size_));
     current_offset_ += sizeof(metadata) + GetProtoSize(metadata);
   }
 
@@ -1122,14 +1128,15 @@ int64_t PortableFileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
 template <typename ProtoT>
 typename PortableFileBackedProtoLog<ProtoT>::Iterator
 PortableFileBackedProtoLog<ProtoT>::GetIterator() {
-  return Iterator(*filesystem_, file_path_,
+  return Iterator(*filesystem_, fd_.get(),
                   /*initial_offset=*/kHeaderReservedBytes);
 }
 
 template <typename ProtoT>
 libtextclassifier3::StatusOr<int32_t>
 PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
-    MemoryMappedFile* mmapped_file, int64_t file_offset, int64_t file_size) {
+    const Filesystem* const filesystem, int fd, int64_t file_offset,
+    int64_t file_size) {
   // Checks file_offset
   if (file_offset >= file_size) {
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
@@ -1147,9 +1154,9 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
         static_cast<long long>(file_size)));
   }
 
-  // Reads metadata
-  ICING_RETURN_IF_ERROR(mmapped_file->Remap(file_offset, metadata_size));
-  memcpy(&portable_metadata, mmapped_file->region(), metadata_size);
+  if (!filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset)) {
+    return absl_ports::InternalError("");
+  }
 
   // Need to switch it back to host order endianness after reading from disk.
   int32_t host_order_metadata = GNetworkToHostL(portable_metadata);
