@@ -240,9 +240,9 @@ class LiteIndex {
   const IcingDynamicTrie& lexicon() const { return lexicon_; }
 
   // Returns debug information for the index in out.
-  // verbosity <= 0, simplest debug information - size of lexicon, hit buffer
-  // verbosity > 0, more detailed debug information from the lexicon.
-  IndexDebugInfoProto::LiteIndexDebugInfoProto GetDebugInfo(int verbosity);
+  // verbosity = BASIC, simplest debug information - size of lexicon, hit buffer
+  // verbosity = DETAILED, more detailed debug information from the lexicon.
+  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity);
 
   // Returns the byte size of all the elements held in the index. This excludes
   // the size of any internal metadata of the index, e.g. the index's header.
