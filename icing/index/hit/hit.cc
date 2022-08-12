@@ -97,6 +97,11 @@ bool Hit::is_in_prefix_section() const {
   return bit_util::BitfieldGet(value(), kInPrefixSection, 1);
 }
 
+Hit Hit::TranslateHit(Hit old_hit, DocumentId new_document_id) {
+  return Hit(old_hit.section_id(), new_document_id, old_hit.term_frequency(),
+             old_hit.is_in_prefix_section(), old_hit.is_prefix_hit());
+}
+
 bool Hit::EqualsDocumentIdAndSectionId::operator()(const Hit& hit1,
                                                    const Hit& hit2) const {
   return (hit1.value() >> kNumFlags) == (hit2.value() >> kNumFlags);

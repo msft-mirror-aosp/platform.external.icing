@@ -30,12 +30,13 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/lite/lite-index-header.h"
+#include "icing/index/lite/lite-index-options.h"
 #include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/term-id-codec.h"
 #include "icing/legacy/index/icing-array-storage.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-lite-index-header.h"
-#include "icing/legacy/index/icing-lite-index-options.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
@@ -53,7 +54,7 @@ namespace lib {
 class LiteIndex {
  public:
   // An entry in the hit buffer.
-  using Options = IcingLiteIndexOptions;
+  using Options = LiteIndexOptions;
 
   // Updates checksum of subcomponents.
   ~LiteIndex();
@@ -260,6 +261,16 @@ class LiteIndex {
   IndexStorageInfoProto GetStorageInfo(
       IndexStorageInfoProto storage_info) const;
 
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const TermIdCodec* term_id_codec);
+
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
 
@@ -278,6 +289,9 @@ class LiteIndex {
 
   // Sets the computed checksum in the header
   void UpdateChecksum();
+
+  // Sort hits stored in the index.
+  void SortHits();
 
   // Returns the position of the first element with term_id, or the size of the
   // hit buffer if term_id is not present.
@@ -301,7 +315,7 @@ class LiteIndex {
   IcingMMapper header_mmap_;
 
   // Wrapper around the mmapped header that contains stats on the lite index.
-  std::unique_ptr<IcingLiteIndex_Header> header_;
+  std::unique_ptr<LiteIndex_Header> header_;
 
   // Options used to initialize the LiteIndex.
   const Options options_;

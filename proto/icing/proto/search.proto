@@ -65,7 +65,7 @@ message SearchSpecProto {
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 6
+// Next tag: 7
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -133,6 +133,15 @@ message ResultSpecProto {
   // ["ns0doc0", "ns0doc1", "ns1doc0", "ns3doc0", "ns3doc1", "ns2doc1",
   //  "ns3doc2"].
   repeated ResultGrouping result_groupings = 5;
+
+  // The threshold of total bytes of all documents to cutoff, in order to limit
+  // # of bytes in a single page.
+  // Note that it doesn't guarantee the result # of bytes will be smaller, equal
+  // to, or larger than the threshold. Instead, it is just a threshold to
+  // cutoff, and only guarantees total bytes of search results will exceed the
+  // threshold by less than the size of the final search result.
+  optional int32 num_total_bytes_per_page_threshold = 6
+      [default = 2147483647];  // INT_MAX
 }
 
 // The representation of a single match within a DocumentProto property.
