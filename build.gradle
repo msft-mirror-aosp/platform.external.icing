@@ -42,13 +42,13 @@ android {
     sourceSets {
         main {
             java.srcDir 'java/src/'
-            manifest.srcFile 'AndroidManifest.xml'
             proto.srcDir 'proto/'
         }
         // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
         //  inside appsearch:appsearch.
         //androidTest.java.srcDir 'java/tests/instrumentation/'
     }
+    namespace "com.google.android.icing"
 }
 
 dependencies {
