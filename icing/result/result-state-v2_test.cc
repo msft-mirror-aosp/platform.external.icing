@@ -122,6 +122,49 @@ class ResultStateV2Test : public ::testing::Test {
   std::atomic<int> num_total_hits_;
 };
 
+TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  result_spec.set_num_total_bytes_per_page_threshold(4096);
+
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::vector<ScoredDocumentHit>(),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      document_store());
+
+  absl_ports::shared_lock l(&result_state.mutex);
+
+  EXPECT_THAT(result_state.num_returned, Eq(0));
+  EXPECT_THAT(result_state.num_per_page(), Eq(result_spec.num_per_page()));
+  EXPECT_THAT(result_state.num_total_bytes_per_page_threshold(),
+              Eq(result_spec.num_total_bytes_per_page_threshold()));
+}
+
+TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
+  ResultSpecProto default_result_spec = ResultSpecProto::default_instance();
+  ASSERT_THAT(default_result_spec.num_per_page(), Eq(10));
+  ASSERT_THAT(default_result_spec.num_total_bytes_per_page_threshold(),
+              Eq(std::numeric_limits<int32_t>::max()));
+
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::vector<ScoredDocumentHit>(),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), default_result_spec,
+      document_store());
+
+  absl_ports::shared_lock l(&result_state.mutex);
+
+  EXPECT_THAT(result_state.num_returned, Eq(0));
+  EXPECT_THAT(result_state.num_per_page(),
+              Eq(default_result_spec.num_per_page()));
+  EXPECT_THAT(result_state.num_total_bytes_per_page_threshold(),
+              Eq(default_result_spec.num_total_bytes_per_page_threshold()));
+}
+
 TEST_F(ResultStateV2Test, ShouldReturnSnippetContextAccordingToSpecs) {
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
   result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
