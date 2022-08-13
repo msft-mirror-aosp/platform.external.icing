@@ -263,9 +263,9 @@ void TransformStatus(const libtextclassifier3::Status& internal_status,
     case libtextclassifier3::StatusCode::UNAUTHENTICATED:
       // Other internal status codes aren't supported externally yet. If it
       // should be supported, add another switch-case above.
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Internal status code %d not supported in the external API",
-          internal_status.error_code());
+      ICING_LOG(ERROR) << "Internal status code "
+                       << internal_status.error_code()
+                       << " not supported in the external API";
       code = StatusProto::UNKNOWN;
       break;
   }
