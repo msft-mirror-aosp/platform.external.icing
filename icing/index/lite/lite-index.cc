@@ -197,8 +197,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     }
   }
 
-  ICING_VLOG(2) << IcingStringUtil::StringPrintf("Lite index init ok in %.3fms",
-                                                 timer.Elapsed() * 1000);
+  ICING_VLOG(2) << "Lite index init ok in " << timer.Elapsed() * 1000 << "ms";
   return status;
 
 error:
@@ -230,8 +229,7 @@ Crc32 LiteIndex::ComputeChecksum() {
   Crc32 all_crc(header_->CalculateHeaderCrc());
   all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
                                   sizeof(dependent_crcs)));
-  ICING_VLOG(2) << IcingStringUtil::StringPrintf(
-      "Lite index crc computed in %.3fms", timer.Elapsed() * 1000);
+  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000 << "ms";
 
   return all_crc;
 }
@@ -245,9 +243,7 @@ libtextclassifier3::Status LiteIndex::Reset() {
   hit_buffer_.Clear();
   header_->Reset();
   UpdateChecksum();
-
-  ICING_VLOG(2) << IcingStringUtil::StringPrintf("Lite index clear in %.3fms",
-                                                 timer.Elapsed() * 1000);
+  ICING_VLOG(2) << "Lite index clear in " << timer.Elapsed() * 1000 << "ms";
   return libtextclassifier3::Status::OK;
 }
 
@@ -457,9 +453,8 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
       std::inplace_merge(array_start, array_start + header_->searchable_end(),
                          array_start + header_->cur_size());
     }
-    ICING_VLOG(2) << IcingStringUtil::StringPrintf(
-        "Lite index sort and merge %u into %u in %.3fms", sort_len,
-        header_->searchable_end(), timer.Elapsed() * 1000);
+    ICING_VLOG(2) << "Lite index sort and merge " << sort_len << " into "
+        << header_->searchable_end() << " in " << timer.Elapsed() * 1000 << "ms";
 
     // Now the entire array is sorted.
     header_->set_searchable_end(header_->cur_size());
