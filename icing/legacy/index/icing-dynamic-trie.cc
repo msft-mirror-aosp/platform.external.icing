@@ -460,8 +460,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
     if (i == 0) {
       // Header.
       if (file_size != IcingMMapper::system_page_size()) {
-        ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-            "Trie hdr wrong size: %" PRIu64, file_size);
+        ICING_LOG(ERROR) << "Trie hdr wrong size: " << file_size;
         goto failed;
       }
 
@@ -522,8 +521,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
                                    sizeof(char), hdr_.hdr.suffixes_size(),
                                    hdr_.hdr.max_suffixes_size(),
                                    &crcs_->array_crcs[SUFFIX], init_crcs)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Trie mmap suffix failed");
+    ICING_LOG(ERROR) << "Trie mmap suffix failed";
     goto failed;
   }
 
@@ -671,8 +669,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
   }
 
   if (!WriteHeader()) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Flushing trie header failed: %s", strerror(errno));
+    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
     success = false;
   }
 
@@ -686,8 +683,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
   }
 
   if (total_flushed > 0) {
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf("Flushing %u pages of trie",
-                                                   total_flushed);
+    ICING_VLOG(1) << "Flushing " << total_flushed << " pages of trie";
   }
 
   return success;
@@ -817,8 +813,7 @@ uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrc() {
 uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrcInternal(
     bool write_hdr) {
   if (write_hdr && !WriteHeader()) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Flushing trie header failed: %s", strerror(errno));
+    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
   }
 
   crcs_->header_crc = GetHeaderCrc();
@@ -912,8 +907,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::SerializeToArray(
 bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::Verify() {
   // Check version.
   if (hdr.version() != kCurVersion) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Trie version %u mismatch", hdr.version());
+    ICING_LOG(ERROR) << "Trie version " << hdr.version() << " mismatch";
     return false;
   }
 
@@ -1155,9 +1149,8 @@ bool IcingDynamicTrie::Sync() {
 
   Warm();
 
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-      "Syncing dynamic trie %s took %.3fms", filename_base_.c_str(),
-      timer.Elapsed() * 1000.);
+  ICING_VLOG(1) << "Syncing dynamic trie " << filename_base_.c_str()
+      << " took " << timer.Elapsed() * 1000 << "ms";
 
   return success;
 }
@@ -1207,8 +1200,7 @@ std::unique_ptr<IcingFlashBitmap> IcingDynamicTrie::OpenAndInitBitmap(
     const IcingFilesystem *filesystem) {
   auto bitmap = std::make_unique<IcingFlashBitmap>(filename, filesystem);
   if (!bitmap->Init() || (verify && !bitmap->Verify())) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Init of %s failed",
-                                                      filename.c_str());
+    ICING_LOG(ERROR) << "Init of " << filename.c_str() << " failed";
     return nullptr;
   }
   return bitmap;
@@ -1238,16 +1230,14 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
   vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Could not get files at prefix %s", property_bitmaps_prefix_.c_str());
+    ICING_LOG(ERROR) << "Could not get files at prefix " << property_bitmaps_prefix_;
     goto failed;
   }
   for (size_t i = 0; i < files.size(); i++) {
     // Decode property id from filename.
     size_t property_id_start_idx = files[i].rfind('.');
     if (property_id_start_idx == std::string::npos) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
-                                                        files[i].c_str());
+      ICING_LOG(ERROR) << "Malformed filename " << files[i];
       continue;
     }
     property_id_start_idx++;  // skip dot
@@ -1255,8 +1245,7 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
     uint32_t property_id =
         strtol(files[i].c_str() + property_id_start_idx, &end, 10);  // NOLINT
     if (!end || end != (files[i].c_str() + files[i].size())) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
-                                                        files[i].c_str());
+      ICING_LOG(ERROR) << "Malformed filename " << files[i];
       continue;
     }
     std::unique_ptr<IcingFlashBitmap> bitmap = OpenAndInitBitmap(
@@ -1264,8 +1253,7 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
         runtime_options_.storage_policy == RuntimeOptions::kMapSharedWithCrc,
         filesystem_);
     if (!bitmap) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Open prop bitmap failed: %s", files[i].c_str());
+      ICING_LOG(ERROR) << "Open prop bitmap failed: " << files[i];
       goto failed;
     }
     bitmap->Truncate(truncate_idx);
@@ -2320,8 +2308,7 @@ void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
   vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Could not get files at prefix %s", property_bitmaps_prefix_.c_str());
+    ICING_LOG(ERROR) << "Could not get files at prefix " << property_bitmaps_prefix_;
     return;
   }
   for (size_t i = 0; i < files.size(); i++) {
@@ -2393,8 +2380,7 @@ IcingFlashBitmap *IcingDynamicTrie::OpenOrCreatePropertyBitmap(
   }
 
   if (property_id > kMaxPropertyId) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Property id %u out of range", property_id);
+    ICING_LOG(ERROR) << "Property id " << property_id << " out of range";
     return nullptr;
   }
 
@@ -2567,8 +2553,7 @@ bool IcingDynamicTrie::ClearPropertyForAllValues(uint32_t property_id) {
 
   PropertyReadersAll readers(*this);
   if (!readers.Exists(property_id)) {
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-        "Properties for id %u don't exist", property_id);
+    ICING_VLOG(1) << "Properties for id " << property_id << " don't exist";
     return true;
   }
 

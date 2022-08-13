@@ -490,8 +490,7 @@ libtextclassifier3::Status MainIndex::AddHits(
   }
 
   // Now copy remaining backfills.
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf("Remaining backfills %zu",
-                                                 backfill_map.size());
+  ICING_VLOG(1) << "Remaining backfills " << backfill_map.size();
   for (auto other_tvi_main_tvi_pair : backfill_map) {
     PostingListIdentifier backfill_posting_list_id =
         PostingListIdentifier::kInvalid;
@@ -524,9 +523,9 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   std::unique_ptr<PostingListAccessor> pl_accessor;
   if (posting_list_id.is_valid()) {
     if (posting_list_id.block_index() >= flash_index_storage_->num_blocks()) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Index dropped hits. Invalid block index %u >= %u",
-          posting_list_id.block_index(), flash_index_storage_->num_blocks());
+      ICING_LOG(ERROR) << "Index dropped hits. Invalid block index "
+                       << posting_list_id.block_index() << " >= "
+                       << flash_index_storage_->num_blocks();
       // TODO(b/159918304) : Consider revising the checksumming strategy in the
       // main index. Providing some mechanism to check for corruption - either
       // during initialization or some later time would allow us to avoid
