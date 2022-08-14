@@ -77,6 +77,9 @@ class Hit {
   bool is_prefix_hit() const;
   bool is_in_prefix_section() const;
 
+  // Creates a new hit based on old_hit but with new_document_id set.
+  static Hit TranslateHit(Hit old_hit, DocumentId new_document_id);
+
   bool operator<(const Hit& h2) const { return value() < h2.value(); }
   bool operator==(const Hit& h2) const { return value() == h2.value(); }
 

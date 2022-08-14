@@ -56,6 +56,7 @@ using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::DoDefault;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::Return;
@@ -633,6 +634,179 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // unchanged when destructing it.
   result_state1.reset();
   EXPECT_THAT(num_total_hits_, Eq(0));
+}
+
+TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  result_spec.set_num_total_bytes_per_page_threshold(result1.ByteSizeLong());
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+
+  // First page. Only result1 should be returned, since its byte size meets
+  // num_total_bytes_per_page_threshold and ResultRetriever should terminate
+  // early even though # of results is still below num_per_page.
+  auto [page_result1, has_more_results1] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // Has more results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page, result2.
+  auto [page_result2, has_more_results2] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
+}
+
+TEST_F(ResultRetrieverV2Test,
+       ShouldReturnSingleLargeResultAboveNumTotalBytesPerPageThreshold) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  int threshold = 1;
+  ASSERT_THAT(result1.ByteSizeLong(), Gt(threshold));
+
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  result_spec.set_num_total_bytes_per_page_threshold(threshold);
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+
+  // First page. Should return single result1 even though its byte size exceeds
+  // num_total_bytes_per_page_threshold.
+  auto [page_result1, has_more_results1] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // Has more results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page, result2.
+  auto [page_result2, has_more_results2] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
+}
+
+TEST_F(ResultRetrieverV2Test,
+       ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  int threshold = result1.ByteSizeLong() + 1;
+  ASSERT_THAT(result1.ByteSizeLong() + result2.ByteSizeLong(), Gt(threshold));
+
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  result_spec.set_num_total_bytes_per_page_threshold(threshold);
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+
+  // After retrieving result1, total bytes are still below the threshold and #
+  // of results is still below num_per_page, so ResultRetriever should continue
+  // the retrieval process and thus include result2 into this page, even though
+  // finally total bytes of result1 + result2 exceed the threshold.
+  auto [page_result, has_more_results] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result.results,
+              ElementsAre(EqualsProto(result1), EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results);
 }
 
 }  // namespace
