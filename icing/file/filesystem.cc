@@ -368,11 +368,9 @@ int64_t Filesystem::GetFileSize(const char* filename) const {
   struct stat st;
   if (stat(filename, &st) < 0) {
     if (errno == ENOENT) {
-      ICING_VLOG(1) << "Unable to stat file " << filename << ": "
-                    << strerror(errno);
+      ICING_VLOG(1) << "Unable to stat file " << filename << ": " << strerror(errno);
     } else {
-      ICING_LOG(WARNING) << "Unable to stat file " << filename << ": "
-                         << strerror(errno);
+      ICING_LOG(WARNING) << "Unable to stat file " << filename << ": " << strerror(errno);
     }
     return kBadFileSize;
   }
@@ -595,8 +593,7 @@ bool Filesystem::DataSync(int fd) const {
 
 bool Filesystem::RenameFile(const char* old_name, const char* new_name) const {
   if (rename(old_name, new_name) < 0) {
-    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to "
-                     << new_name << ": " << strerror(errno);
+    ICING_LOG(ERROR) << "Unable to rename file " << old_name << " to " << new_name << ": " << strerror(errno);
     return false;
   }
   return true;
