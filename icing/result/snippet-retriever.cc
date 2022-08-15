@@ -80,6 +80,20 @@ inline std::string AddIndexToPath(int values_size, int index,
 // is applied based on the Token's type.
 std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
   switch (token.type) {
+    case Token::Type::RFC822_NAME:
+      [[fallthrough]];
+    case Token::Type::RFC822_COMMENT:
+      [[fallthrough]];
+    case Token::Type::RFC822_LOCAL_ADDRESS:
+      [[fallthrough]];
+    case Token::Type::RFC822_ADDRESS:
+      [[fallthrough]];
+    case Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL:
+      [[fallthrough]];
+    case Token::Type::RFC822_ADDRESS_COMPONENT_HOST:
+      [[fallthrough]];
+    case Token::Type::RFC822_TOKEN:
+      [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.NormalizeTerm(token.text);
     case Token::Type::VERBATIM:
@@ -125,6 +139,20 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
     case Token::Type::QUERY_OR:
       [[fallthrough]];
     case Token::Type::QUERY_PROPERTY:
+      [[fallthrough]];
+    case Token::Type::RFC822_NAME:
+      [[fallthrough]];
+    case Token::Type::RFC822_COMMENT:
+      [[fallthrough]];
+    case Token::Type::RFC822_LOCAL_ADDRESS:
+      [[fallthrough]];
+    case Token::Type::RFC822_ADDRESS:
+      [[fallthrough]];
+    case Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL:
+      [[fallthrough]];
+    case Token::Type::RFC822_ADDRESS_COMPONENT_HOST:
+      [[fallthrough]];
+    case Token::Type::RFC822_TOKEN:
       [[fallthrough]];
     case Token::Type::INVALID:
       ICING_LOG(WARNING)
