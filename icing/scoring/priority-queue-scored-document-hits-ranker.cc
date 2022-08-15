@@ -23,11 +23,9 @@ namespace icing {
 namespace lib {
 
 PriorityQueueScoredDocumentHitsRanker::PriorityQueueScoredDocumentHitsRanker(
-    const std::vector<ScoredDocumentHit>& scored_document_hits,
-    bool is_descending)
+    std::vector<ScoredDocumentHit>&& scored_document_hits, bool is_descending)
     : comparator_(/*is_ascending=*/!is_descending),
-      scored_document_hits_pq_(scored_document_hits.begin(),
-                               scored_document_hits.end(), comparator_) {}
+      scored_document_hits_pq_(comparator_, std::move(scored_document_hits)) {}
 
 ScoredDocumentHit PriorityQueueScoredDocumentHitsRanker::PopNext() {
   ScoredDocumentHit ret = scored_document_hits_pq_.top();
