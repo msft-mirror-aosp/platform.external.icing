@@ -78,6 +78,11 @@ class ResultStateV2 {
     return num_per_page_;
   }
 
+  int32_t num_total_bytes_per_page_threshold() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return num_total_bytes_per_page_threshold_;
+  }
+
   absl_ports::shared_mutex mutex;
 
   // When evaluating the next top K hits from scored_document_hits_ranker, some
@@ -113,8 +118,16 @@ class ResultStateV2 {
   // Number of results to return in each page.
   int num_per_page_ ICING_GUARDED_BY(mutex);
 
-  // Pointer to a global counter to sum up the size of
-  // scored_document_hits_ranker in all ResultStates.
+  // The threshold of total bytes of all documents to cutoff, in order to limit
+  // # of bytes in a single page.
+  // Note that it doesn't guarantee the result # of bytes will be smaller, equal
+  // to, or larger than the threshold. Instead, it is just a threshold to
+  // cutoff, and only guarantees total bytes of search results won't exceed the
+  // threshold too much.
+  int32_t num_total_bytes_per_page_threshold_ ICING_GUARDED_BY(mutex);
+
+  // Pointer to a global counter to sum up the size of scored_document_hits in
+  // all ResultStates.
   // Does not own.
   std::atomic<int>* num_total_hits_ ICING_GUARDED_BY(mutex);
 };

@@ -133,9 +133,7 @@ bool FlashIndexStorage::CreateHeader() {
        posting_list_bytes /= 2) {
     uint32_t aligned_posting_list_bytes =
         (posting_list_bytes / sizeof(Hit) * sizeof(Hit));
-    ICING_VLOG(1) << "Block size "
-                  << header_block_->header()->num_index_block_infos << ": "
-                  << aligned_posting_list_bytes;
+    ICING_VLOG(1) << "Block size " << header_block_->header()->num_index_block_infos << ": " << aligned_posting_list_bytes;
 
     // Initialize free list to empty.
     HeaderBlock::Header::IndexBlockInfo* block_info =
@@ -169,16 +167,12 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
     return false;
   }
   if (file_size % read_header.header()->block_size != 0) {
-    ICING_LOG(ERROR) << "Index size " << file_size
-                     << " not a multiple of block size "
-                     << read_header.header()->block_size;
+    ICING_LOG(ERROR) << "Index size " << file_size << " not a multiple of block size " << read_header.header()->block_size;
     return false;
   }
 
   if (file_size < static_cast<int64_t>(read_header.header()->block_size)) {
-    ICING_LOG(ERROR) << "Index size " << file_size
-                     << " shorter than block size "
-                     << read_header.header()->block_size;
+    ICING_LOG(ERROR) << "Index size " << file_size << " shorter than block size " << read_header.header()->block_size;
     return false;
   }
 
