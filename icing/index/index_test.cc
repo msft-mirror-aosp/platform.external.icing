@@ -14,6 +14,7 @@
 
 #include "icing/index/index.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -41,12 +42,14 @@
 #include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
 
 namespace {
 
+using ::testing::ContainerEq;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Ge;
@@ -58,6 +61,8 @@ using ::testing::NiceMock;
 using ::testing::Not;
 using ::testing::Return;
 using ::testing::SizeIs;
+using ::testing::StrEq;
+using ::testing::StrNe;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
 
@@ -76,10 +81,27 @@ class IndexTest : public Test {
     icing_filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
   }
 
-  std::unique_ptr<Index> index_;
-  std::string index_dir_;
-  IcingFilesystem icing_filesystem_;
+  std::vector<DocHitInfo> GetHits(
+      std::unique_ptr<DocHitInfoIterator> iterator) {
+    std::vector<DocHitInfo> infos;
+    while (iterator->Advance().ok()) {
+      infos.push_back(iterator->doc_hit_info());
+    }
+    return infos;
+  }
+
+  libtextclassifier3::StatusOr<std::vector<DocHitInfo>> GetHits(
+      std::string term, TermMatchType::Code match_type) {
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<DocHitInfoIterator> itr,
+        index_->GetIterator(term, kSectionIdMaskAll, match_type));
+    return GetHits(std::move(itr));
+  }
+
   Filesystem filesystem_;
+  IcingFilesystem icing_filesystem_;
+  std::string index_dir_;
+  std::unique_ptr<Index> index_;
 };
 
 constexpr DocumentId kDocumentId0 = 0;
@@ -93,14 +115,6 @@ constexpr DocumentId kDocumentId7 = 7;
 constexpr DocumentId kDocumentId8 = 8;
 constexpr SectionId kSectionId2 = 2;
 constexpr SectionId kSectionId3 = 3;
-
-std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
-  std::vector<DocHitInfo> infos;
-  while (iterator->Advance().ok()) {
-    infos.push_back(iterator->doc_hit_info());
-  }
-  return infos;
-}
 
 MATCHER_P2(EqualsDocHitInfo, document_id, sections, "") {
   const DocHitInfo& actual = arg;
@@ -246,6 +260,66 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMerge) {
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
 }
 
+TEST_F(IndexTest, SingleHitSingleTermIndexAfterOptimize) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  index_->set_last_added_document_id(kDocumentId2);
+
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId2, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
+
+  // Mapping to a different docid will translate the hit
+  ICING_ASSERT_OK(index_->Optimize(
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
+
+  // Mapping to kInvalidDocumentId will remove the hit.
+  ICING_ASSERT_OK(
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
+}
+
+TEST_F(IndexTest, SingleHitSingleTermIndexAfterMergeAndOptimize) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  index_->set_last_added_document_id(kDocumentId2);
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId2, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
+
+  // Mapping to a different docid will translate the hit
+  ICING_ASSERT_OK(index_->Optimize(
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
+
+  // Mapping to kInvalidDocumentId will remove the hit.
+  ICING_ASSERT_OK(
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
+}
+
 TEST_F(IndexTest, SingleHitMultiTermIndex) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
@@ -276,6 +350,112 @@ TEST_F(IndexTest, SingleHitMultiTermIndexAfterMerge) {
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   kDocumentId0, std::vector<SectionId>{kSectionId2})));
+}
+
+TEST_F(IndexTest, MultiHitMultiTermIndexAfterOptimize) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  index_->set_last_added_document_id(kDocumentId2);
+
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  EXPECT_THAT(
+      GetHits("foo", TermMatchType::EXACT_ONLY),
+      IsOkAndHolds(ElementsAre(
+          EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0,
+                           std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
+
+  // Delete document id 1, and document id 2 is translated to 1.
+  ICING_ASSERT_OK(
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1}));
+  EXPECT_THAT(
+      GetHits("foo", TermMatchType::EXACT_ONLY),
+      IsOkAndHolds(ElementsAre(
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0,
+                           std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
+
+  // Delete all the rest documents.
+  ICING_ASSERT_OK(index_->Optimize(
+      /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
+}
+
+TEST_F(IndexTest, MultiHitMultiTermIndexAfterMergeAndOptimize) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId2, kSectionId3, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  index_->set_last_added_document_id(kDocumentId2);
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  EXPECT_THAT(
+      GetHits("foo", TermMatchType::EXACT_ONLY),
+      IsOkAndHolds(ElementsAre(
+          EqualsDocHitInfo(kDocumentId2, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0,
+                           std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  kDocumentId1, std::vector<SectionId>{kSectionId2}))));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId2);
+
+  // Delete document id 1, and document id 2 is translated to 1.
+  ICING_ASSERT_OK(
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1}));
+  EXPECT_THAT(
+      GetHits("foo", TermMatchType::EXACT_ONLY),
+      IsOkAndHolds(ElementsAre(
+          EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId3}),
+          EqualsDocHitInfo(kDocumentId0,
+                           std::vector<SectionId>{kSectionId2}))));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId1);
+
+  // Delete all the rest documents.
+  ICING_ASSERT_OK(index_->Optimize(
+      /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId}));
+  EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
 }
 
 TEST_F(IndexTest, NoHitMultiTermIndex) {
@@ -802,6 +982,114 @@ TEST_F(IndexTest, FullIndexMerge) {
                                     TermMatchType::PREFIX));
   EXPECT_THAT(last_itr->Advance(), IsOk());
   EXPECT_THAT(last_itr->doc_hit_info().document_id(), Eq(document_id + 1));
+}
+
+TEST_F(IndexTest, OptimizeShouldWorkForEmptyIndex) {
+  // Optimize an empty index should succeed, but have no effects.
+  ICING_ASSERT_OK(index_->Optimize(std::vector<DocumentId>()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("", kSectionIdMaskAll, TermMatchType::PREFIX));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+}
+
+TEST_F(IndexTest, IndexOptimize) {
+  std::string prefix = "prefix";
+  std::default_random_engine random;
+  std::vector<std::string> query_terms;
+  // Add 1024 hits to main index, and 1024 hits to lite index.
+  for (int i = 0; i < 2048; ++i) {
+    if (i == 1024) {
+      ICING_ASSERT_OK(index_->Merge());
+    }
+    // Generate a unique term for document i.
+    query_terms.push_back(prefix + RandomString("abcdefg", 5, &random) +
+                          std::to_string(i));
+    TermMatchType::Code term_match_type = TermMatchType::PREFIX;
+    SectionId section_id = i % 5;
+    if (section_id == 2) {
+      // Make section 2 an exact section.
+      term_match_type = TermMatchType::EXACT_ONLY;
+    }
+    Index::Editor edit = index_->Edit(/*document_id=*/i, section_id,
+                                      term_match_type, /*namespace_id=*/0);
+    ICING_ASSERT_OK(edit.BufferTerm(query_terms.at(i).c_str()));
+    ICING_ASSERT_OK(edit.IndexAllBufferedTerms());
+    index_->set_last_added_document_id(i);
+  }
+
+  // Delete one document for every three documents.
+  DocumentId document_id = 0;
+  DocumentId new_last_added_document_id = kInvalidDocumentId;
+  std::vector<DocumentId> document_id_old_to_new;
+  for (int i = 0; i < 2048; ++i) {
+    if (i % 3 == 0) {
+      document_id_old_to_new.push_back(kInvalidDocumentId);
+    } else {
+      new_last_added_document_id = document_id++;
+      document_id_old_to_new.push_back(new_last_added_document_id);
+    }
+  }
+
+  std::vector<DocHitInfo> exp_prefix_hits;
+  for (int i = 0; i < 2048; ++i) {
+    if (document_id_old_to_new[i] == kInvalidDocumentId) {
+      continue;
+    }
+    if (i % 5 == 2) {
+      // Section 2 is an exact section, so we should not see any hits in
+      // prefix search.
+      continue;
+    }
+    exp_prefix_hits.push_back(DocHitInfo(document_id_old_to_new[i]));
+    exp_prefix_hits.back().UpdateSection(/*section_id=*/i % 5,
+                                         /*hit_term_frequency=*/1);
+  }
+  std::reverse(exp_prefix_hits.begin(), exp_prefix_hits.end());
+
+  // Check that optimize is correct
+  ICING_ASSERT_OK(index_->Optimize(document_id_old_to_new));
+  EXPECT_EQ(index_->last_added_document_id(), new_last_added_document_id);
+  // Check prefix search.
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocHitInfo> hits,
+                             GetHits(prefix, TermMatchType::PREFIX));
+  EXPECT_THAT(hits, ContainerEq(exp_prefix_hits));
+  // Check exact search.
+  for (int i = 0; i < 2048; ++i) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        hits, GetHits(query_terms[i], TermMatchType::EXACT_ONLY));
+    if (document_id_old_to_new[i] == kInvalidDocumentId) {
+      EXPECT_THAT(hits, IsEmpty());
+    } else {
+      EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfo(
+                            document_id_old_to_new[i],
+                            std::vector<SectionId>{(SectionId)(i % 5)})));
+    }
+  }
+
+  // Check that optimize does not block merge.
+  ICING_ASSERT_OK(index_->Merge());
+  EXPECT_EQ(index_->last_added_document_id(), new_last_added_document_id);
+  // Check prefix search.
+  ICING_ASSERT_OK_AND_ASSIGN(hits, GetHits(prefix, TermMatchType::PREFIX));
+  EXPECT_THAT(hits, ContainerEq(exp_prefix_hits));
+  // Check exact search.
+  for (int i = 0; i < 2048; ++i) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        hits, GetHits(query_terms[i], TermMatchType::EXACT_ONLY));
+    if (document_id_old_to_new[i] == kInvalidDocumentId) {
+      EXPECT_THAT(hits, IsEmpty());
+    } else {
+      EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfo(
+                            document_id_old_to_new[i],
+                            std::vector<SectionId>{(SectionId)(i % 5)})));
+    }
+  }
 }
 
 TEST_F(IndexTest, IndexCreateIOFailure) {
@@ -1410,17 +1698,19 @@ TEST_F(IndexTest, GetDebugInfo) {
   ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  IndexDebugInfoProto out0 = index_->GetDebugInfo(/*verbosity=*/0);
-  EXPECT_FALSE(out0.main_index_info().has_flash_index_storage_info());
-  EXPECT_THAT(out0.main_index_info().last_added_document_id(),
-              Eq(kDocumentId1));
-  EXPECT_THAT(out0.lite_index_info().curr_size(), Eq(2));
-  EXPECT_THAT(out0.lite_index_info().last_added_document_id(),
-              Eq(kDocumentId2));
+  IndexDebugInfoProto out0 = index_->GetDebugInfo(DebugInfoVerbosity::BASIC);
+  ICING_LOG(DBG) << "main_index_info:\n" << out0.main_index_info();
+  ICING_LOG(DBG) << "lite_index_info:\n" << out0.lite_index_info();
+  EXPECT_THAT(out0.main_index_info(), Not(IsEmpty()));
+  EXPECT_THAT(out0.lite_index_info(), Not(IsEmpty()));
 
-  IndexDebugInfoProto out1 = index_->GetDebugInfo(/*verbosity=*/1);
-  EXPECT_THAT(out1.main_index_info().flash_index_storage_info(),
-              Not(IsEmpty()));
+  IndexDebugInfoProto out1 = index_->GetDebugInfo(DebugInfoVerbosity::DETAILED);
+  ICING_LOG(DBG) << "main_index_info:\n" << out1.main_index_info();
+  ICING_LOG(DBG) << "lite_index_info:\n" << out1.lite_index_info();
+  EXPECT_THAT(out1.main_index_info(),
+              SizeIs(Gt(out0.main_index_info().size())));
+  EXPECT_THAT(out1.lite_index_info(),
+              SizeIs(Gt(out0.lite_index_info().size())));
 
   // Add one more doc to the lite index. Debug strings should change.
   edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
@@ -1429,26 +1719,25 @@ TEST_F(IndexTest, GetDebugInfo) {
   ASSERT_THAT(edit.BufferTerm("far"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  IndexDebugInfoProto out2 = index_->GetDebugInfo(/*verbosity=*/0);
-  EXPECT_THAT(out2.lite_index_info().curr_size(), Eq(3));
-  EXPECT_THAT(out2.lite_index_info().last_added_document_id(),
-              Eq(kDocumentId3));
+  IndexDebugInfoProto out2 = index_->GetDebugInfo(DebugInfoVerbosity::BASIC);
+  ICING_LOG(DBG) << "main_index_info:\n" << out2.main_index_info();
+  ICING_LOG(DBG) << "lite_index_info:\n" << out2.lite_index_info();
+  EXPECT_THAT(out2.main_index_info(), Not(IsEmpty()));
+  EXPECT_THAT(out2.lite_index_info(), Not(IsEmpty()));
+  EXPECT_THAT(out2.main_index_info(), StrEq(out0.main_index_info()));
+  EXPECT_THAT(out2.lite_index_info(), StrNe(out0.lite_index_info()));
 
-  // Merge into the man index. Debuug strings should change again.
+  // Merge into the man index. Debug strings should change again.
   ICING_ASSERT_OK(index_->Merge());
 
-  IndexDebugInfoProto out3 = index_->GetDebugInfo(/*verbosity=*/0);
+  IndexDebugInfoProto out3 = index_->GetDebugInfo(DebugInfoVerbosity::BASIC);
   EXPECT_TRUE(out3.has_index_storage_info());
-  EXPECT_THAT(out3.main_index_info().lexicon_info(), Not(IsEmpty()));
-  EXPECT_THAT(out3.main_index_info().last_added_document_id(),
-              Eq(kDocumentId3));
-  EXPECT_THAT(out3.lite_index_info().curr_size(), Eq(0));
-  EXPECT_THAT(out3.lite_index_info().hit_buffer_size(), Gt(0));
-  EXPECT_THAT(out3.lite_index_info().last_added_document_id(),
-              Eq(kInvalidDocumentId));
-  EXPECT_THAT(out3.lite_index_info().searchable_end(), Eq(0));
-  EXPECT_THAT(out3.lite_index_info().index_crc(), Gt(0));
-  EXPECT_THAT(out3.lite_index_info().lexicon_info(), Not(IsEmpty()));
+  ICING_LOG(DBG) << "main_index_info:\n" << out3.main_index_info();
+  ICING_LOG(DBG) << "lite_index_info:\n" << out3.lite_index_info();
+  EXPECT_THAT(out3.main_index_info(), Not(IsEmpty()));
+  EXPECT_THAT(out3.lite_index_info(), Not(IsEmpty()));
+  EXPECT_THAT(out3.main_index_info(), StrNe(out2.main_index_info()));
+  EXPECT_THAT(out3.lite_index_info(), StrNe(out2.lite_index_info()));
 }
 
 TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {
