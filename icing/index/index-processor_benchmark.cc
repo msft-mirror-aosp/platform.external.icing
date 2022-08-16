@@ -16,7 +16,6 @@
 #include "gmock/gmock.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -24,6 +23,7 @@
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -39,7 +39,7 @@
 //    //icing/index:index-processor_benchmark
 //
 //    $ blaze-bin/icing/index/index-processor_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 //
 // Run on an Android device:
 //    Make target //icing/tokenization:language-segmenter depend on
@@ -55,7 +55,7 @@
 //    $ adb push blaze-bin/icing/index/index-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/index-processor_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/index-processor_benchmark --benchmark_filter=all
 //    --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
