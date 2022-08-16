@@ -116,8 +116,9 @@ message PropertyWeight {
   // specified, the property weight is discarded.
   optional string path = 1;
 
-  // Property weight, valid values are positive. Zero and negative weights are
-  // invalid and will result in an error. By default, a property is given a raw,
-  // pre-normalized weight of 1.0.
+  // Property weight, valid values are positive and zero. Setting a zero
+  // property weight will remove scoring contribution for a query term match in
+  // the property. Negative weights are invalid and will result in an error.
+  // By default, a property is given a raw, pre-normalized weight of 1.0.
   optional double weight = 2;
 }
