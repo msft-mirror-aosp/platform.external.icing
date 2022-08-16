@@ -82,8 +82,7 @@ bool IcingFlashBitmap::Verify() const {
   }
   Accessor accessor(mmapper_.get());
   if (accessor.header()->magic != kMagic) {
-    ICING_LOG(ERROR) << "Flash bitmap " << filename_
-                     << " has incorrect magic header";
+    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect magic header";
     return false;
   }
   if (accessor.header()->version != kCurVersion) {
@@ -97,8 +96,7 @@ bool IcingFlashBitmap::Verify() const {
   uint32_t crc =
       IcingStringUtil::UpdateCrc32(0, accessor.data(), accessor.data_size());
   if (accessor.header()->crc != crc) {
-    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect CRC32 "
-                     << accessor.header()->crc << " " << crc;
+    ICING_LOG(ERROR) << "Flash bitmap " << filename_ << " has incorrect CRC32 " << accessor.header()->crc << " " << crc;
     return false;
   }
   return true;
@@ -261,8 +259,7 @@ uint32_t IcingFlashBitmap::UpdateCrc() const {
 bool IcingFlashBitmap::Grow(size_t new_file_size) {
   IcingScopedFd fd(filesystem_->OpenForWrite(filename_.c_str()));
   if (!filesystem_->Grow(fd.get(), new_file_size)) {
-    ICING_LOG(ERROR) << "Grow " << filename_ << " to new size " << new_file_size
-                     << " failed";
+    ICING_LOG(ERROR) << "Grow " << filename_ << " to new size " << new_file_size << " failed";
     return false;
   }
   if (!mmapper_->Remap(fd.get(), 0, new_file_size)) {

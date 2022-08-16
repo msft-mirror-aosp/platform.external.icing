@@ -17,6 +17,7 @@ package com.google.android.icing;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
+import com.google.android.icing.IcingSearchEngine;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -60,7 +61,6 @@ import com.google.android.icing.proto.SuggestionSpecProto.SuggestionScoringSpecP
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
-import com.google.android.icing.IcingSearchEngine;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
