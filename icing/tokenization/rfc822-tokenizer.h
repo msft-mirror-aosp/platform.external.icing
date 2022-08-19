@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Google LLC
+// Copyright (C) 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,21 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_ABSL_PORTS_STATUS_IMPORTS_H_
-#define ICING_ABSL_PORTS_STATUS_IMPORTS_H_
+#ifndef ICING_TOKENIZATION_RFC822_TOKENIZER_H_
+#define ICING_TOKENIZATION_RFC822_TOKENIZER_H_
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
+#include <vector>
+
+#include "icing/tokenization/tokenizer.h"
 
 namespace icing {
 namespace lib {
-namespace absl_ports {
 
-// TODO(b/144458732) Delete this file once visibility on TC3 Status has been
-// granted to the sample app.
-using Status = libtextclassifier3::Status;
+class Rfc822Tokenizer : public Tokenizer {
+ public:
+  libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>> Tokenize(
+      std::string_view text) const override;
 
-}  // namespace absl_ports
+  libtextclassifier3::StatusOr<std::vector<Token>> TokenizeAll(
+      std::string_view text) const override;
+
+};
+
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_ABSL_PORTS_STATUS_IMPORTS_H_
+#endif  // ICING_TOKENIZATION_RFC822_TOKENIZER_H_

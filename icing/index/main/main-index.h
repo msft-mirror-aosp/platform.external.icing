@@ -27,7 +27,9 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/store/namespace-checker.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/status-macros.h"
 
@@ -71,17 +73,17 @@ class MainIndex {
   // Finds terms with the given prefix in the given namespaces. If
   // 'namespace_ids' is empty, returns results from all the namespaces. The
   // input prefix must be normalized, otherwise inaccurate results may be
-  // returned. Results are not sorted specifically and are in lexigraphical
-  // order. Number of results are no more than 'num_to_return'.
-  //
-  // The hit count returned with each TermMetadata is an approximation based of
-  // posting list size.
+  // returned. If term_match_type is EXACT, only exact hit will be counted and
+  // it is PREFIX, both prefix and exact hits will be counted. Results are not
+  // sorted specifically and are in lexigraphical order. Number of results are
+  // no more than 'num_to_return'.
   //
   // Returns:
   //   A list of TermMetadata on success
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
+      const std::string& prefix, TermMatchType::Code term_match_type,
+      const NamespaceChecker* namespace_checker);
 
   struct LexiconMergeOutputs {
     // Maps from main_lexicon tvi for new branching point to the main_lexicon
@@ -181,15 +183,25 @@ class MainIndex {
       IndexStorageInfoProto storage_info) const;
 
   // Returns debug information for the main index in out.
-  // verbosity <= 0, simplest debug information - just the lexicon
-  // verbosity > 0, more detailed debug information including raw postings
-  //                lists.
-  void GetDebugInfo(int verbosity, std::string* out) const;
+  // verbosity = BASIC, simplest debug information - just the lexicon
+  // verbosity = DETAILED, more detailed debug information including raw
+  // postings lists.
+  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity) const;
+
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new);
 
  private:
-  libtextclassifier3::Status Init(const std::string& index_directory,
-                                  const Filesystem* filesystem,
-                                  const IcingFilesystem* icing_filesystem);
+  MainIndex(const std::string& index_directory, const Filesystem* filesystem,
+            const IcingFilesystem* icing_filesystem);
+
+  libtextclassifier3::Status Init();
 
   // Helpers for merging the lexicon
   // Add all 'backfill' branch points. Backfill branch points are prefix
@@ -285,6 +297,27 @@ class MainIndex {
       PostingListIdentifier backfill_posting_list_id,
       PostingListAccessor* hit_accum);
 
+  // Transfer hits from old_pl_accessor to new_index for term.
+  //
+  // Returns:
+  //   largest document id added to the translated posting list, on success
+  //   INTERNAL_ERROR on IO error
+  static libtextclassifier3::StatusOr<DocumentId> TransferAndAddHits(
+      const std::vector<DocumentId>& document_id_old_to_new, const char* term,
+      PostingListAccessor& old_pl_accessor, MainIndex* new_index);
+
+  // Transfer hits from the current main index to new_index.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status TransferIndex(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      MainIndex* new_index);
+
+  std::string base_dir_;
+  const Filesystem* filesystem_;
+  const IcingFilesystem* icing_filesystem_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
 };
