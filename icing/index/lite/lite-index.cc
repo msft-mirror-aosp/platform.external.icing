@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -33,13 +34,13 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/lite/lite-index-header.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
 #include "icing/legacy/index/icing-array-storage.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-lite-index-header.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -60,7 +61,7 @@ std::string MakeHitBufferFilename(const std::string& filename_base) {
   return filename_base + "hb";
 }
 
-size_t header_size() { return sizeof(IcingLiteIndex_HeaderImpl::HeaderData); }
+size_t header_size() { return sizeof(LiteIndex_HeaderImpl::HeaderData); }
 
 }  // namespace
 
@@ -156,8 +157,8 @@ libtextclassifier3::Status LiteIndex::Initialize() {
 
     // Set up header.
     header_mmap_.Remap(hit_buffer_fd_.get(), 0, header_size());
-    header_ = std::make_unique<IcingLiteIndex_HeaderImpl>(
-        reinterpret_cast<IcingLiteIndex_HeaderImpl::HeaderData*>(
+    header_ = std::make_unique<LiteIndex_HeaderImpl>(
+        reinterpret_cast<LiteIndex_HeaderImpl::HeaderData*>(
             header_mmap_.address()));
     header_->Reset();
 
@@ -171,8 +172,8 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     UpdateChecksum();
   } else {
     header_mmap_.Remap(hit_buffer_fd_.get(), 0, header_size());
-    header_ = std::make_unique<IcingLiteIndex_HeaderImpl>(
-        reinterpret_cast<IcingLiteIndex_HeaderImpl::HeaderData*>(
+    header_ = std::make_unique<LiteIndex_HeaderImpl>(
+        reinterpret_cast<LiteIndex_HeaderImpl::HeaderData*>(
             header_mmap_.address()));
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
@@ -197,8 +198,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     }
   }
 
-  ICING_VLOG(2) << IcingStringUtil::StringPrintf("Lite index init ok in %.3fms",
-                                                 timer.Elapsed() * 1000);
+  ICING_VLOG(2) << "Lite index init ok in " << timer.Elapsed() * 1000 << "ms";
   return status;
 
 error:
@@ -230,8 +230,7 @@ Crc32 LiteIndex::ComputeChecksum() {
   Crc32 all_crc(header_->CalculateHeaderCrc());
   all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
                                   sizeof(dependent_crcs)));
-  ICING_VLOG(2) << IcingStringUtil::StringPrintf(
-      "Lite index crc computed in %.3fms", timer.Elapsed() * 1000);
+  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000 << "ms";
 
   return all_crc;
 }
@@ -246,8 +245,7 @@ libtextclassifier3::Status LiteIndex::Reset() {
   header_->Reset();
   UpdateChecksum();
 
-  ICING_VLOG(2) << IcingStringUtil::StringPrintf("Lite index clear in %.3fms",
-                                                 timer.Elapsed() * 1000);
+  ICING_VLOG(2) << "Lite index clear in " << timer.Elapsed() * 1000 << "ms";
   return libtextclassifier3::Status::OK;
 }
 
@@ -336,9 +334,12 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
 
 int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
                           bool only_from_prefix_sections,
+                          const NamespaceChecker* namespace_checker,
                           std::vector<DocHitInfo>* hits_out) {
   int count = 0;
   DocumentId last_document_id = kInvalidDocumentId;
+  // Record whether the last document belongs to the given namespaces.
+  bool last_document_in_namespace = false;
   for (uint32_t idx = Seek(term_id); idx < header_->cur_size(); idx++) {
     TermIdHitPair term_id_hit_pair(
         hit_buffer_.array_cast<TermIdHitPair>()[idx]);
@@ -355,22 +356,31 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
     }
     DocumentId document_id = hit.document_id();
     if (document_id != last_document_id) {
+      last_document_id = document_id;
+      last_document_in_namespace =
+          namespace_checker == nullptr ||
+          namespace_checker->BelongsToTargetNamespaces(document_id);
+      if (!last_document_in_namespace) {
+        // The document is removed or expired or not belongs to target
+        // namespaces.
+        continue;
+      }
       ++count;
       if (hits_out != nullptr) {
         hits_out->push_back(DocHitInfo(document_id));
       }
-      last_document_id = document_id;
     }
-    if (hits_out != nullptr) {
+    if (hits_out != nullptr && last_document_in_namespace) {
       hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
     }
   }
   return count;
 }
 
-int LiteIndex::CountHits(uint32_t term_id) {
+libtextclassifier3::StatusOr<int> LiteIndex::CountHits(
+    uint32_t term_id, const NamespaceChecker* namespace_checker) {
   return AppendHits(term_id, kSectionIdMaskAll,
-                    /*only_from_prefix_sections=*/false,
+                    /*only_from_prefix_sections=*/false, namespace_checker,
                     /*hits_out=*/nullptr);
 }
 
@@ -379,15 +389,23 @@ bool LiteIndex::is_full() const {
           lexicon_.min_free_fraction() < (1.0 - kTrieFullFraction));
 }
 
-void LiteIndex::GetDebugInfo(int verbosity, std::string* out) const {
-  absl_ports::StrAppend(
-      out, IcingStringUtil::StringPrintf("Lite Index\nHit buffer %u/%u\n",
-                                         header_->cur_size(),
-                                         options_.hit_buffer_size));
-
-  // Lexicon.
-  out->append("Lexicon stats:\n");
-  lexicon_.GetDebugInfo(verbosity, out);
+std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) {
+  std::string res;
+  std::string lexicon_info;
+  lexicon_.GetDebugInfo(verbosity, &lexicon_info);
+  IcingStringUtil::SStringAppendF(
+      &res, 0,
+      "curr_size: %u\n"
+      "hit_buffer_size: %u\n"
+      "last_added_document_id %u\n"
+      "searchable_end: %u\n"
+      "index_crc: %u\n"
+      "\n"
+      "lite_lexicon_info:\n%s\n",
+      header_->cur_size(), options_.hit_buffer_size,
+      header_->last_added_docid(), header_->searchable_end(),
+      ComputeChecksum().Get(), lexicon_info.c_str());
+  return res;
 }
 
 libtextclassifier3::StatusOr<int64_t> LiteIndex::GetElementsSize() const {
@@ -408,12 +426,8 @@ IndexStorageInfoProto LiteIndex::GetStorageInfo(
     IndexStorageInfoProto storage_info) const {
   int64_t header_and_hit_buffer_file_size =
       filesystem_->GetFileSize(hit_buffer_fd_.get());
-  if (header_and_hit_buffer_file_size != Filesystem::kBadFileSize) {
-    storage_info.set_lite_index_hit_buffer_size(
-        header_and_hit_buffer_file_size);
-  } else {
-    storage_info.set_lite_index_hit_buffer_size(-1);
-  }
+  storage_info.set_lite_index_hit_buffer_size(
+      IcingFilesystem::SanitizeFileSize(header_and_hit_buffer_file_size));
   int64_t lexicon_disk_usage = lexicon_.GetElementsSize();
   if (lexicon_disk_usage != Filesystem::kBadFileSize) {
     storage_info.set_lite_index_lexicon_size(lexicon_disk_usage);
@@ -423,34 +437,38 @@ IndexStorageInfoProto LiteIndex::GetStorageInfo(
   return storage_info;
 }
 
-uint32_t LiteIndex::Seek(uint32_t term_id) {
+void LiteIndex::SortHits() {
   // Make searchable by sorting by hit buffer.
   uint32_t sort_len = header_->cur_size() - header_->searchable_end();
-  if (sort_len > 0) {
-    IcingTimer timer;
-
-    auto* array_start =
-        hit_buffer_.GetMutableMem<TermIdHitPair::Value>(0, header_->cur_size());
-    TermIdHitPair::Value* sort_start = array_start + header_->searchable_end();
-    std::sort(sort_start, array_start + header_->cur_size());
-
-    // Now merge with previous region. Since the previous region is already
-    // sorted and deduplicated, optimize the merge by skipping everything less
-    // than the new region's smallest value.
-    if (header_->searchable_end() > 0) {
-      std::inplace_merge(array_start, array_start + header_->searchable_end(),
-                         array_start + header_->cur_size());
-    }
-    ICING_VLOG(2) << IcingStringUtil::StringPrintf(
-        "Lite index sort and merge %u into %u in %.3fms", sort_len,
-        header_->searchable_end(), timer.Elapsed() * 1000);
-
-    // Now the entire array is sorted.
-    header_->set_searchable_end(header_->cur_size());
-
-    // Update crc in-line.
-    UpdateChecksum();
+  if (sort_len <= 0) {
+    return;
   }
+  IcingTimer timer;
+
+  auto* array_start =
+      hit_buffer_.GetMutableMem<TermIdHitPair::Value>(0, header_->cur_size());
+  TermIdHitPair::Value* sort_start = array_start + header_->searchable_end();
+  std::sort(sort_start, array_start + header_->cur_size());
+
+  // Now merge with previous region. Since the previous region is already
+  // sorted and deduplicated, optimize the merge by skipping everything less
+  // than the new region's smallest value.
+  if (header_->searchable_end() > 0) {
+    std::inplace_merge(array_start, array_start + header_->searchable_end(),
+                       array_start + header_->cur_size());
+  }
+  ICING_VLOG(2) << "Lite index sort and merge " << sort_len << " into "
+      << header_->searchable_end() << " in " << timer.Elapsed() * 1000 << "ms";
+
+  // Now the entire array is sorted.
+  header_->set_searchable_end(header_->cur_size());
+
+  // Update crc in-line.
+  UpdateChecksum();
+}
+
+uint32_t LiteIndex::Seek(uint32_t term_id) {
+  SortHits();
 
   // Binary search for our term_id.  Make sure we get the first
   // element.  Using kBeginSortValue ensures this for the hit value.
@@ -462,6 +480,87 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
   const TermIdHitPair::Value* ptr = std::lower_bound(
       array, array + header_->cur_size(), term_id_hit_pair.value());
   return ptr - array;
+}
+
+libtextclassifier3::Status LiteIndex::Optimize(
+    const std::vector<DocumentId>& document_id_old_to_new,
+    const TermIdCodec* term_id_codec) {
+  if (header_->cur_size() == 0) {
+    return libtextclassifier3::Status::OK;
+  }
+  // Sort the hits so that hits with the same term id will be grouped together,
+  // which helps later to determine which terms will be unused after compaction.
+  SortHits();
+  uint32_t new_size = 0;
+  // The largest document id after translating hits.
+  DocumentId largest_document_id = kInvalidDocumentId;
+  uint32_t curr_term_id = 0;
+  uint32_t curr_tvi = 0;
+  std::unordered_set<uint32_t> tvi_to_delete;
+  for (uint32_t idx = 0; idx < header_->cur_size(); ++idx) {
+    TermIdHitPair term_id_hit_pair(
+        hit_buffer_.array_cast<TermIdHitPair>()[idx]);
+    if (idx == 0 || term_id_hit_pair.term_id() != curr_term_id) {
+      curr_term_id = term_id_hit_pair.term_id();
+      ICING_ASSIGN_OR_RETURN(TermIdCodec::DecodedTermInfo term_info,
+                             term_id_codec->DecodeTermInfo(curr_term_id));
+      curr_tvi = term_info.tvi;
+      // Mark the property of the current term as not having hits in prefix
+      // section. The property will be set below if there are any valid hits
+      // from a prefix section.
+      lexicon_.ClearProperty(curr_tvi, GetHasHitsInPrefixSectionPropertyId());
+      // Add curr_tvi to tvi_to_delete. It will be removed from tvi_to_delete
+      // below if there are any valid hits pointing to that termid.
+      tvi_to_delete.insert(curr_tvi);
+    }
+    DocumentId new_document_id =
+        document_id_old_to_new[term_id_hit_pair.hit().document_id()];
+    if (new_document_id == kInvalidDocumentId) {
+      continue;
+    }
+    if (largest_document_id == kInvalidDocumentId ||
+        new_document_id > largest_document_id) {
+      largest_document_id = new_document_id;
+    }
+    if (term_id_hit_pair.hit().is_in_prefix_section()) {
+      lexicon_.SetProperty(curr_tvi, GetHasHitsInPrefixSectionPropertyId());
+    }
+    tvi_to_delete.erase(curr_tvi);
+    TermIdHitPair new_term_id_hit_pair(
+        term_id_hit_pair.term_id(),
+        Hit::TranslateHit(term_id_hit_pair.hit(), new_document_id));
+    // Rewriting the hit_buffer in place.
+    // new_size is weakly less than idx so we are okay to overwrite the entry at
+    // new_size, and valp should never be nullptr since it is within the already
+    // allocated region of hit_buffer_.
+    TermIdHitPair::Value* valp =
+        hit_buffer_.GetMutableMem<TermIdHitPair::Value>(new_size++, 1);
+    *valp = new_term_id_hit_pair.value();
+  }
+  header_->set_cur_size(new_size);
+  header_->set_searchable_end(new_size);
+  header_->set_last_added_docid(largest_document_id);
+
+  // Delete unused terms.
+  std::unordered_set<std::string> terms_to_delete;
+  for (IcingDynamicTrie::Iterator term_iter(lexicon_, /*prefix=*/"");
+       term_iter.IsValid(); term_iter.Advance()) {
+    if (tvi_to_delete.find(term_iter.GetValueIndex()) != tvi_to_delete.end()) {
+      terms_to_delete.insert(term_iter.GetKey());
+    }
+  }
+  for (const std::string& term : terms_to_delete) {
+    // Mark "term" as deleted. This won't actually free space in the lexicon. It
+    // will simply make it impossible to Find "term" in subsequent calls (which
+    // saves an unnecessary search through the hit buffer). This is acceptable
+    // because the free space will eventually be reclaimed the next time that
+    // the lite index is merged with the main index.
+    if (!lexicon_.Delete(term)) {
+      return absl_ports::InternalError(
+          "Could not delete invalid terms in lite lexicon during compaction.");
+    }
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 }  // namespace lib

@@ -32,10 +32,12 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/namespace-checker.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
 
@@ -138,13 +140,18 @@ class Index {
   }
 
   // Returns debug information for the index in out.
-  // verbosity <= 0, simplest debug information - just the lexicons and lite
-  //                 index.
-  // verbosity > 0, more detailed debug information including raw postings
-  //                lists.
-  void GetDebugInfo(int verbosity, std::string* out) const {
-    lite_index_->GetDebugInfo(verbosity, out);
-    main_index_->GetDebugInfo(verbosity, out);
+  // verbosity = BASIC, simplest debug information - just the lexicons and lite
+  //                    index.
+  // verbosity = DETAILED, more detailed debug information including raw
+  //                       postings lists.
+  IndexDebugInfoProto GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
+    IndexDebugInfoProto debug_info;
+    *debug_info.mutable_index_storage_info() = GetStorageInfo();
+    *debug_info.mutable_lite_index_info() =
+        lite_index_->GetDebugInfo(verbosity);
+    *debug_info.mutable_main_index_info() =
+        main_index_->GetDebugInfo(verbosity);
+    return debug_info;
   }
 
   // Returns the byte size of the all the elements held in the index. This
@@ -181,17 +188,17 @@ class Index {
       TermMatchType::Code term_match_type);
 
   // Finds terms with the given prefix in the given namespaces. If
-  // 'namespace_ids' is empty, returns results from all the namespaces. The
-  // input prefix must be normalized, otherwise inaccurate results may be
-  // returned. Results are not sorted specifically and are in their original
-  // order. Number of results are no more than 'num_to_return'.
+  // 'namespace_ids' is empty, returns results from all the namespaces. Results
+  // are sorted in decreasing order of hit count. Number of results are no more
+  // than 'num_to_return'.
   //
   // Returns:
   //   A list of TermMetadata on success
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids,
-      int num_to_return);
+      const std::string& prefix, int num_to_return,
+      TermMatchType::Code term_match_type,
+      const NamespaceChecker* namespace_checker);
 
   // A class that can be used to add hits to the index.
   //
@@ -256,6 +263,15 @@ class Index {
     return lite_index_->Reset();
   }
 
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new);
+
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
         std::unique_ptr<LiteIndex> lite_index,
@@ -267,7 +283,7 @@ class Index {
         filesystem_(filesystem) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
-      const std::string& prefix, const std::vector<NamespaceId>& namespace_ids);
+      const std::string& prefix, const NamespaceChecker* namespace_checker);
 
   std::unique_ptr<LiteIndex> lite_index_;
   std::unique_ptr<MainIndex> main_index_;
