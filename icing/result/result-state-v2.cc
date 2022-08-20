@@ -52,6 +52,8 @@ ResultStateV2::ResultStateV2(
       snippet_context_(CreateSnippetContext(std::move(query_terms), search_spec,
                                             result_spec)),
       num_per_page_(result_spec.num_per_page()),
+      num_total_bytes_per_page_threshold_(
+          result_spec.num_total_bytes_per_page_threshold()),
       num_total_hits_(nullptr) {
   for (const TypePropertyMask& type_field_mask :
        result_spec.type_property_masks()) {
