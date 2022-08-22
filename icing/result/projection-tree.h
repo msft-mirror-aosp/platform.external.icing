@@ -18,7 +18,6 @@
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
 
 namespace icing {
@@ -31,13 +30,22 @@ class ProjectionTree {
   struct Node {
     explicit Node(std::string_view name = "") : name(name) {}
 
+    // TODO: change string_view to string
     std::string_view name;
     std::vector<Node> children;
+
+    bool operator==(const Node& other) const {
+      return name == other.name && children == other.children;
+    }
   };
 
   explicit ProjectionTree(const TypePropertyMask& type_field_mask);
 
   const Node& root() const { return root_; }
+
+  bool operator==(const ProjectionTree& other) const {
+    return root_ == other.root_;
+  }
 
  private:
   // Add a child node with property_name to current_children and returns a

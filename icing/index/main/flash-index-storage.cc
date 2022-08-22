@@ -133,9 +133,7 @@ bool FlashIndexStorage::CreateHeader() {
        posting_list_bytes /= 2) {
     uint32_t aligned_posting_list_bytes =
         (posting_list_bytes / sizeof(Hit) * sizeof(Hit));
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-        "Block size %u: %u", header_block_->header()->num_index_block_infos,
-        aligned_posting_list_bytes);
+    ICING_VLOG(1) << "Block size " << header_block_->header()->num_index_block_infos << ": " << aligned_posting_list_bytes;
 
     // Initialize free list to empty.
     HeaderBlock::Header::IndexBlockInfo* block_info =
@@ -169,23 +167,18 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
     return false;
   }
   if (file_size % read_header.header()->block_size != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Index size %" PRIu64 " not a multiple of block size %u", file_size,
-        read_header.header()->block_size);
+    ICING_LOG(ERROR) << "Index size " << file_size << " not a multiple of block size " << read_header.header()->block_size;
     return false;
   }
 
   if (file_size < static_cast<int64_t>(read_header.header()->block_size)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Index size %" PRIu64 " shorter than block size %u", file_size,
-        read_header.header()->block_size);
+    ICING_LOG(ERROR) << "Index size " << file_size << " shorter than block size " << read_header.header()->block_size;
     return false;
   }
 
   if (read_header.header()->block_size % getpagesize() != 0) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Block size %u is not a multiple of page size %d",
-        read_header.header()->block_size, getpagesize());
+    ICING_LOG(ERROR) << "Block size " << read_header.header()->block_size
+        << " is not a multiple of page size " << getpagesize();
     return false;
   }
   num_blocks_ = file_size / read_header.header()->block_size;
@@ -215,11 +208,10 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
     int posting_list_bytes =
         header_block_->header()->index_block_infos[i].posting_list_bytes;
     if (posting_list_bytes % sizeof(Hit) != 0) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Posting list size misaligned, index %u, size %u, hit %zu, "
-          "file_size %" PRIu64,
-          i, header_block_->header()->index_block_infos[i].posting_list_bytes,
-          sizeof(Hit), file_size);
+      ICING_LOG(ERROR) << "Posting list size misaligned, index " << i
+          << ", size "
+          << header_block_->header()->index_block_infos[i].posting_list_bytes
+          << ", hit " << sizeof(Hit) << ", file_size " << file_size;
       return false;
     }
   }
@@ -229,8 +221,7 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
 bool FlashIndexStorage::PersistToDisk() {
   // First, write header.
   if (!header_block_->Write(block_fd_.get())) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Write index header failed: %s", strerror(errno));
+    ICING_LOG(ERROR) << "Write index header failed: " << strerror(errno);
     return false;
   }
 
@@ -456,8 +447,7 @@ void FlashIndexStorage::FreePostingList(PostingListHolder holder) {
 
 int FlashIndexStorage::GrowIndex() {
   if (num_blocks_ >= kMaxBlockIndex) {
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf("Reached max block index %u",
-                                                   kMaxBlockIndex);
+    ICING_VLOG(1) << "Reached max block index " << kMaxBlockIndex;
     return kInvalidBlockIndex;
   }
 
@@ -465,8 +455,7 @@ int FlashIndexStorage::GrowIndex() {
   if (!filesystem_->Grow(
           block_fd_.get(),
           static_cast<uint64_t>(num_blocks_ + 1) * block_size())) {
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-        "Error growing index file: %s", strerror(errno));
+    ICING_VLOG(1) << "Error growing index file: " << strerror(errno);
     return kInvalidBlockIndex;
   }
 
@@ -503,7 +492,8 @@ void FlashIndexStorage::FlushInMemoryFreeList() {
   }
 }
 
-void FlashIndexStorage::GetDebugInfo(int verbosity, std::string* out) const {
+void FlashIndexStorage::GetDebugInfo(DebugInfoVerbosity::Code verbosity,
+                                     std::string* out) const {
   // Dump and check integrity of the index block free lists.
   out->append("Free lists:\n");
   for (size_t i = 0; i < header_block_->header()->num_index_block_infos; ++i) {
