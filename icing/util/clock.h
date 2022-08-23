@@ -16,6 +16,7 @@
 #define ICING_UTIL_CLOCK_H_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 namespace icing {
@@ -67,6 +68,32 @@ class Clock {
   // Returns a timer used to calculate the elapsed time. The timer starts when
   // the method returns.
   virtual std::unique_ptr<Timer> GetNewTimer() const;
+};
+
+// A convenient RAII timer class that receives a callback. Upon destruction, the
+// callback will be called with the elapsed milliseconds or nanoseconds passed
+// as a parameter, depending on which Unit was passed in the constructor.
+class ScopedTimer {
+ public:
+  enum class Unit { kMillisecond, kNanosecond };
+
+  ScopedTimer(std::unique_ptr<Timer> timer,
+              std::function<void(int64_t)> callback,
+              Unit unit = Unit::kMillisecond)
+      : timer_(std::move(timer)), callback_(std::move(callback)), unit_(unit) {}
+
+  ~ScopedTimer() {
+    if (unit_ == Unit::kMillisecond) {
+      callback_(timer_->GetElapsedMilliseconds());
+    } else {
+      callback_(timer_->GetElapsedNanoseconds());
+    }
+  }
+
+ private:
+  std::unique_ptr<Timer> timer_;
+  std::function<void(int64_t)> callback_;
+  Unit unit_;
 };
 
 }  // namespace lib
