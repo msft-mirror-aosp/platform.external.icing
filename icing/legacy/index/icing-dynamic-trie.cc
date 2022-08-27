@@ -460,8 +460,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
     if (i == 0) {
       // Header.
       if (file_size != IcingMMapper::system_page_size()) {
-        ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-            "Trie hdr wrong size: %" PRIu64, file_size);
+        ICING_LOG(ERROR) << "Trie hdr wrong size: " << file_size;
         goto failed;
       }
 
@@ -522,8 +521,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
                                    sizeof(char), hdr_.hdr.suffixes_size(),
                                    hdr_.hdr.max_suffixes_size(),
                                    &crcs_->array_crcs[SUFFIX], init_crcs)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Trie mmap suffix failed");
+    ICING_LOG(ERROR) << "Trie mmap suffix failed";
     goto failed;
   }
 
@@ -671,8 +669,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
   }
 
   if (!WriteHeader()) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Flushing trie header failed: %s", strerror(errno));
+    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
     success = false;
   }
 
@@ -686,8 +683,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
   }
 
   if (total_flushed > 0) {
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf("Flushing %u pages of trie",
-                                                   total_flushed);
+    ICING_VLOG(1) << "Flushing " << total_flushed << " pages of trie";
   }
 
   return success;
@@ -817,8 +813,7 @@ uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrc() {
 uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrcInternal(
     bool write_hdr) {
   if (write_hdr && !WriteHeader()) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Flushing trie header failed: %s", strerror(errno));
+    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
   }
 
   crcs_->header_crc = GetHeaderCrc();
@@ -912,8 +907,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::SerializeToArray(
 bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::Verify() {
   // Check version.
   if (hdr.version() != kCurVersion) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Trie version %u mismatch", hdr.version());
+    ICING_LOG(ERROR) << "Trie version " << hdr.version() << " mismatch";
     return false;
   }
 
@@ -1155,9 +1149,8 @@ bool IcingDynamicTrie::Sync() {
 
   Warm();
 
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-      "Syncing dynamic trie %s took %.3fms", filename_base_.c_str(),
-      timer.Elapsed() * 1000.);
+  ICING_VLOG(1) << "Syncing dynamic trie " << filename_base_.c_str()
+      << " took " << timer.Elapsed() * 1000 << "ms";
 
   return success;
 }
@@ -1207,8 +1200,7 @@ std::unique_ptr<IcingFlashBitmap> IcingDynamicTrie::OpenAndInitBitmap(
     const IcingFilesystem *filesystem) {
   auto bitmap = std::make_unique<IcingFlashBitmap>(filename, filesystem);
   if (!bitmap->Init() || (verify && !bitmap->Verify())) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Init of %s failed",
-                                                      filename.c_str());
+    ICING_LOG(ERROR) << "Init of " << filename.c_str() << " failed";
     return nullptr;
   }
   return bitmap;
@@ -1238,16 +1230,14 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
   vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Could not get files at prefix %s", property_bitmaps_prefix_.c_str());
+    ICING_LOG(ERROR) << "Could not get files at prefix " << property_bitmaps_prefix_;
     goto failed;
   }
   for (size_t i = 0; i < files.size(); i++) {
     // Decode property id from filename.
     size_t property_id_start_idx = files[i].rfind('.');
     if (property_id_start_idx == std::string::npos) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
-                                                        files[i].c_str());
+      ICING_LOG(ERROR) << "Malformed filename " << files[i];
       continue;
     }
     property_id_start_idx++;  // skip dot
@@ -1255,8 +1245,7 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
     uint32_t property_id =
         strtol(files[i].c_str() + property_id_start_idx, &end, 10);  // NOLINT
     if (!end || end != (files[i].c_str() + files[i].size())) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("Malformed filename %s",
-                                                        files[i].c_str());
+      ICING_LOG(ERROR) << "Malformed filename " << files[i];
       continue;
     }
     std::unique_ptr<IcingFlashBitmap> bitmap = OpenAndInitBitmap(
@@ -1264,8 +1253,7 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
         runtime_options_.storage_policy == RuntimeOptions::kMapSharedWithCrc,
         filesystem_);
     if (!bitmap) {
-      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-          "Open prop bitmap failed: %s", files[i].c_str());
+      ICING_LOG(ERROR) << "Open prop bitmap failed: " << files[i];
       goto failed;
     }
     bitmap->Truncate(truncate_idx);
@@ -1795,11 +1783,12 @@ bool IcingDynamicTrie::Find(const char *key, void *value,
 }
 
 IcingDynamicTrie::Iterator::Iterator(const IcingDynamicTrie &trie,
-                                     const char *prefix)
+                                     const char *prefix, bool reverse)
     : cur_key_(prefix),
       cur_suffix_(nullptr),
       cur_suffix_len_(0),
       single_leaf_match_(false),
+      reverse_(reverse),
       trie_(trie) {
   if (!trie.is_initialized()) {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
@@ -1808,19 +1797,29 @@ IcingDynamicTrie::Iterator::Iterator(const IcingDynamicTrie &trie,
   Reset();
 }
 
-void IcingDynamicTrie::Iterator::LeftBranchToLeaf(uint32_t node_index) {
+void IcingDynamicTrie::Iterator::BranchToLeaf(uint32_t node_index,
+                                              BranchType branch_type) {
   // Go down the trie, following the left-most child until we hit a
   // leaf. Push to stack and cur_key nodes and chars as we go.
-  for (; !trie_.storage_->GetNode(node_index)->is_leaf();
-       node_index =
-           trie_.storage_
-               ->GetNext(trie_.storage_->GetNode(node_index)->next_index(), 0)
-               ->node_index()) {
-    branch_stack_.push_back(Branch(node_index));
-    cur_key_.push_back(
-        trie_.storage_
-            ->GetNext(trie_.storage_->GetNode(node_index)->next_index(), 0)
-            ->val());
+  // When reverse_ is true, the method will follow the right-most child.
+  const Node *node = trie_.storage_->GetNode(node_index);
+  while (!node->is_leaf()) {
+    const Next *next_start = trie_.storage_->GetNext(node->next_index(), 0);
+    int child_idx;
+    if (branch_type == BranchType::kRightMost) {
+      uint32_t next_array_size = 1u << node->log2_num_children();
+      child_idx = trie_.GetValidNextsSize(next_start, next_array_size) - 1;
+    } else {
+      // node isn't a leaf. So it must have >0 children.
+      // 0 is the left-most child.
+      child_idx = 0;
+    }
+    const Next &child_next = next_start[child_idx];
+    branch_stack_.push_back(Branch(node_index, child_idx));
+    cur_key_.push_back(child_next.val());
+
+    node_index = child_next.node_index();
+    node = trie_.storage_->GetNode(node_index);
   }
 
   // We're at a leaf.
@@ -1856,7 +1855,7 @@ void IcingDynamicTrie::Iterator::Reset() {
   // Two cases/states:
   //
   // - Found an intermediate node. If we matched all of prefix
-  //   (cur_key_), LeftBranchToLeaf.
+  //   (cur_key_), BranchToLeaf.
   //
   // - Found a leaf node, which is the ONLY matching key for this
   //   prefix. Check that suffix matches the prefix. Then we set
@@ -1879,7 +1878,9 @@ void IcingDynamicTrie::Iterator::Reset() {
     cur_suffix_len_ = strlen(cur_suffix_);
     single_leaf_match_ = true;
   } else if (static_cast<size_t>(key_offset) == cur_key_.size()) {
-    LeftBranchToLeaf(node_index);
+    BranchType branch_type =
+        (reverse_) ? BranchType::kRightMost : BranchType::kLeftMost;
+    BranchToLeaf(node_index, branch_type);
   }
 }
 
@@ -1906,19 +1907,25 @@ bool IcingDynamicTrie::Iterator::Advance() {
   while (!branch_stack_.empty()) {
     Branch *branch = &branch_stack_.back();
     const Node *node = trie_.storage_->GetNode(branch->node_idx);
-    branch->child_idx++;
-    if (branch->child_idx < (1 << node->log2_num_children()) &&
-        trie_.storage_->GetNext(node->next_index(), branch->child_idx)
-                ->node_index() != kInvalidNodeIndex) {
-      // Successfully incremented to the next child. Update the char
-      // value at this depth.
-      cur_key_[cur_key_.size() - 1] =
-          trie_.storage_->GetNext(node->next_index(), branch->child_idx)->val();
-      // We successfully found a sub-trie to explore.
-      LeftBranchToLeaf(
-          trie_.storage_->GetNext(node->next_index(), branch->child_idx)
-              ->node_index());
-      return true;
+    if (reverse_) {
+      branch->child_idx--;
+    } else {
+      branch->child_idx++;
+    }
+    if (branch->child_idx >= 0 &&
+        branch->child_idx < (1 << node->log2_num_children())) {
+      const Next *child_next =
+          trie_.storage_->GetNext(node->next_index(), branch->child_idx);
+      if (child_next->node_index() != kInvalidNodeIndex) {
+        // Successfully incremented to the next child. Update the char
+        // value at this depth.
+        cur_key_[cur_key_.size() - 1] = child_next->val();
+        // We successfully found a sub-trie to explore.
+        BranchType branch_type =
+            (reverse_) ? BranchType::kRightMost : BranchType::kLeftMost;
+        BranchToLeaf(child_next->node_index(), branch_type);
+        return true;
+      }
     }
     branch_stack_.pop_back();
     cur_key_.resize(cur_key_.size() - 1);
@@ -2108,7 +2115,8 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::GetNextByChar(
 }
 
 int IcingDynamicTrie::GetValidNextsSize(
-    IcingDynamicTrie::Next *next_array_start, int next_array_length) const {
+    const IcingDynamicTrie::Next *next_array_start,
+    int next_array_length) const {
   // Only searching for key char 0xff is not sufficient, as 0xff can be a valid
   // character. We must also specify kInvalidNodeIndex as the target node index
   // when searching the next array.
@@ -2295,15 +2303,16 @@ bool IcingDynamicTrie::IsBranchingTerm(const char *key) const {
     return false;
   }
 
-  // key is not present in the trie.
+  // There is no intermediate node for key in the trie.
   if (key[key_offset] != '\0') {
     return false;
   }
 
   // Found key as an intermediate node, but key is not a valid term stored in
-  // the trie.
+  // the trie. In this case, we need at least two children for key to be a
+  // branching term.
   if (GetNextByChar(cur_node, '\0') == nullptr) {
-    return false;
+    return cur_node->log2_num_children() >= 1;
   }
 
   // The intermediate node for key must have more than two children for key to
@@ -2320,8 +2329,7 @@ void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
   vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Could not get files at prefix %s", property_bitmaps_prefix_.c_str());
+    ICING_LOG(ERROR) << "Could not get files at prefix " << property_bitmaps_prefix_;
     return;
   }
   for (size_t i = 0; i < files.size(); i++) {
@@ -2393,8 +2401,7 @@ IcingFlashBitmap *IcingDynamicTrie::OpenOrCreatePropertyBitmap(
   }
 
   if (property_id > kMaxPropertyId) {
-    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
-        "Property id %u out of range", property_id);
+    ICING_LOG(ERROR) << "Property id " << property_id << " out of range";
     return nullptr;
   }
 
@@ -2567,8 +2574,7 @@ bool IcingDynamicTrie::ClearPropertyForAllValues(uint32_t property_id) {
 
   PropertyReadersAll readers(*this);
   if (!readers.Exists(property_id)) {
-    ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-        "Properties for id %u don't exist", property_id);
+    ICING_VLOG(1) << "Properties for id " << property_id << " don't exist";
     return true;
   }
 

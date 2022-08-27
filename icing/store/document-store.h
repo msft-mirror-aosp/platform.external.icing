@@ -388,10 +388,10 @@ class DocumentStore {
   // method based on device usage.
   //
   // Returns:
-  //   OK on success
+  //   A vector that maps from old document id to new document id on success
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status OptimizeInto(
+  libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeInto(
       const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
       OptimizeStatsProto* stats = nullptr);
 
