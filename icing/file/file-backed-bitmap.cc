@@ -269,8 +269,7 @@ libtextclassifier3::Status FileBackedBitmap::GrowTo(int new_num_bits) {
     return status;
   }
 
-  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
-      "Grew file %s to new size %zd", file_path_.c_str(), new_file_size);
+  ICING_VLOG(1) << "Grew file " << file_path_ << " to new size " << new_file_size;
   mutable_header()->state = Header::ChecksumState::kStale;
   return libtextclassifier3::Status::OK;
 }
