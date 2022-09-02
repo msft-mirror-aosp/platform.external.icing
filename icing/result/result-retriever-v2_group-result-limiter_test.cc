@@ -185,6 +185,142 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 }
 
 TEST_F(ResultRetrieverV2GroupResultLimiterTest,
+       ResultGroupingHasEmptyFirstPage) {
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace", "uri/1")
+                                .SetSchema("Document")
+                                .SetScore(1)
+                                .SetCreationTimestampMs(1000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(document1));
+
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "uri/2")
+                                .SetSchema("Document")
+                                .SetScore(2)
+                                .SetCreationTimestampMs(1000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(document2));
+
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, document2.score())};
+
+  // Create a ResultSpec that limits "namespace" to 0 results.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/1);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  result_grouping->set_max_results(0);
+  result_grouping->add_namespaces("namespace");
+
+  // Creates a ResultState with 2 ScoredDocumentHits.
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::move(scored_document_hits), /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // First page: empty page
+  auto [page_result, has_more_results] =
+      result_retriever->RetrieveNextPage(result_state);
+  ASSERT_THAT(page_result.results, IsEmpty());
+  EXPECT_FALSE(has_more_results);
+}
+
+TEST_F(ResultRetrieverV2GroupResultLimiterTest,
+       ResultGroupingHasEmptyLastPage) {
+  // Creates 4 documents and ensures the relationship in terms of document
+  // score is: document1 < document2 < document3 < document4
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace", "uri/1")
+                                .SetSchema("Document")
+                                .SetScore(1)
+                                .SetCreationTimestampMs(1000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(document1));
+
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "uri/2")
+                                .SetSchema("Document")
+                                .SetScore(2)
+                                .SetCreationTimestampMs(1000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(document2));
+
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace", "uri/3")
+                                .SetSchema("Document")
+                                .SetScore(3)
+                                .SetCreationTimestampMs(1000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
+                             document_store_->Put(document3));
+
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("namespace", "uri/4")
+                                .SetSchema("Document")
+                                .SetScore(4)
+                                .SetCreationTimestampMs(1000)
+                                .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
+                             document_store_->Put(document4));
+
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, document1.score()),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, document2.score()),
+      ScoredDocumentHit(document_id3, kSectionIdMaskNone, document3.score()),
+      ScoredDocumentHit(document_id4, kSectionIdMaskNone, document4.score())};
+
+  // Create a ResultSpec that limits "namespace" to 2 results.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  result_grouping->set_max_results(2);
+  result_grouping->add_namespaces("namespace");
+
+  // Creates a ResultState with 4 ScoredDocumentHits.
+  ResultStateV2 result_state(
+      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::move(scored_document_hits), /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // First page: document4 and document3 should be returned.
+  auto [page_result1, has_more_results1] =
+      result_retriever->RetrieveNextPage(result_state);
+  ASSERT_THAT(page_result1.results, SizeIs(2));
+  EXPECT_THAT(page_result1.results.at(0).document(), EqualsProto(document4));
+  EXPECT_THAT(page_result1.results.at(1).document(), EqualsProto(document3));
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page: although there are valid document hits in result state, all of
+  // them will be filtered out by group result limiter, so we should get an
+  // empty page.
+  auto [page_result2, has_more_results2] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result2.results, SizeIs(0));
+  EXPECT_FALSE(has_more_results2);
+}
+
+TEST_F(ResultRetrieverV2GroupResultLimiterTest,
        ResultGroupingDoesNotLimitOtherNamespaceResults) {
   // Creates 4 documents and ensures the relationship in terms of document
   // score is: document1 < document2 < document3 < document4

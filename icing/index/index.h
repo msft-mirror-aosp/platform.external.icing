@@ -263,6 +263,15 @@ class Index {
     return lite_index_->Reset();
   }
 
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new);
+
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
         std::unique_ptr<LiteIndex> lite_index,

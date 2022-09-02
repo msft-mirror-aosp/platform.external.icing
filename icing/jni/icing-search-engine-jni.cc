@@ -17,12 +17,11 @@
 #include <string>
 #include <utility>
 
+#include <google/protobuf/message_lite.h>
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/jni/scoped-primitive-array-critical.h"
 #include "icing/jni/scoped-utf-chars.h"
-#include <google/protobuf/message_lite.h>
-#include "icing/absl_ports/status_imports.h"
-#include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/optimize.pb.h"
