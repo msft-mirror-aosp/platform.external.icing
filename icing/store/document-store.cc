@@ -1489,8 +1489,11 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
       // Update the SchemaTypeId for this entry
       ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                              schema_store_->GetSchemaTypeId(document.schema()));
-      filter_cache_->mutable_array()[document_id].set_schema_type_id(
-          schema_type_id);
+      ICING_ASSIGN_OR_RETURN(
+          typename FileBackedVector<DocumentFilterData>::MutableView
+              doc_filter_data_view,
+          filter_cache_->GetMutable(document_id));
+      doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
     } else {
       // Document is no longer valid with the new SchemaStore. Mark as
       // deleted
@@ -1550,8 +1553,11 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
         ICING_ASSIGN_OR_RETURN(
             SchemaTypeId schema_type_id,
             schema_store_->GetSchemaTypeId(document.schema()));
-        filter_cache_->mutable_array()[document_id].set_schema_type_id(
-            schema_type_id);
+        ICING_ASSIGN_OR_RETURN(
+            typename FileBackedVector<DocumentFilterData>::MutableView
+                doc_filter_data_view,
+            filter_cache_->GetMutable(document_id));
+        doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
       }
       if (revalidate_document) {
         delete_document = !document_validator_.Validate(document).ok();
@@ -1576,9 +1582,10 @@ libtextclassifier3::Status DocumentStore::Optimize() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocumentStore::OptimizeInto(
-    const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
-    OptimizeStatsProto* stats) {
+libtextclassifier3::StatusOr<std::vector<DocumentId>>
+DocumentStore::OptimizeInto(const std::string& new_directory,
+                            const LanguageSegmenter* lang_segmenter,
+                            OptimizeStatsProto* stats) {
   // Validates directory
   if (new_directory == base_dir_) {
     return absl_ports::InvalidArgumentError(
@@ -1596,6 +1603,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   int num_deleted = 0;
   int num_expired = 0;
   UsageStore::UsageScores default_usage;
+  std::vector<DocumentId> document_id_old_to_new(size, kInvalidDocumentId);
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
@@ -1641,6 +1649,8 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
       return new_document_id_or.status();
     }
 
+    document_id_old_to_new[document_id] = new_document_id_or.ValueOrDie();
+
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
                            usage_store_->GetUsageScores(document_id));
@@ -1659,7 +1669,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     stats->set_num_expired_documents(num_expired);
   }
   ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk(PersistType::FULL));
-  return libtextclassifier3::Status::OK;
+  return document_id_old_to_new;
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeInfo>
