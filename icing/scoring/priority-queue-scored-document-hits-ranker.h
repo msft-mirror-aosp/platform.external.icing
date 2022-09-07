@@ -29,7 +29,7 @@ namespace lib {
 class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
  public:
   explicit PriorityQueueScoredDocumentHitsRanker(
-      const std::vector<ScoredDocumentHit>& scored_document_hits,
+      std::vector<ScoredDocumentHit>&& scored_document_hits,
       bool is_descending = true);
 
   ~PriorityQueueScoredDocumentHitsRanker() override = default;

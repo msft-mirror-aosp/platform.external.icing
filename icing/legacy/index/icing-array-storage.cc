@@ -65,15 +65,13 @@ bool IcingArrayStorage::Init(int fd, size_t fd_offset, bool map_shared,
     return false;
   }
   if (file_size < fd_offset) {
-    ICING_LOG(ERROR) << "Array storage file size " << file_size
-                     << " less than offset " << fd_offset;
+    ICING_LOG(ERROR) << "Array storage file size " << file_size << " less than offset " << fd_offset;
     return false;
   }
 
   uint32_t capacity_num_elts = (file_size - fd_offset) / elt_size;
   if (capacity_num_elts < num_elts) {
-    ICING_LOG(ERROR) << "Array storage num elts " << num_elts
-                     << " > capacity num elts " << capacity_num_elts;
+    ICING_LOG(ERROR) << "Array storage num elts " << num_elts << " > capacity num elts " << capacity_num_elts;
     return false;
   }
 
@@ -106,8 +104,7 @@ bool IcingArrayStorage::Init(int fd, size_t fd_offset, bool map_shared,
     if (init_crc) {
       *crc_ptr_ = crc;
     } else if (crc != *crc_ptr_) {
-      ICING_LOG(ERROR) << "Array storage bad crc " << crc << " vs "
-                       << *crc_ptr_;
+      ICING_LOG(ERROR) << "Array storage bad crc " << crc << " vs " << *crc_ptr_;
       goto failed;
     }
   }
@@ -338,8 +335,7 @@ uint32_t IcingArrayStorage::Sync() {
         if (pwrite(fd_, array() + dirty_start, dirty_end - dirty_start,
                    fd_offset_ + dirty_start) !=
             static_cast<ssize_t>(dirty_end - dirty_start)) {
-          ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", "
-                           << dirty_end << ")";
+          ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", " << dirty_end << ")";
         }
         in_dirty = false;
       } else if (!in_dirty && is_dirty) {
@@ -358,8 +354,7 @@ uint32_t IcingArrayStorage::Sync() {
       if (pwrite(fd_, array() + dirty_start, dirty_end - dirty_start,
                  fd_offset_ + dirty_start) !=
           static_cast<ssize_t>(dirty_end - dirty_start)) {
-        ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", "
-                         << dirty_end << ")";
+        ICING_LOG(ERROR) << "Flushing pages failed (" << dirty_start << ", " << dirty_end << ")";
       }
     }
 
@@ -374,9 +369,7 @@ uint32_t IcingArrayStorage::Sync() {
     }
 
     if (num_flushed > 0) {
-      ICING_VLOG(1) << "Flushing " << num_flushed << "/" << dirty_pages_size
-                    << " " << num_contiguous << " contiguous pages in "
-                    << timer.Elapsed() * 1000 << "ms.";
+      ICING_VLOG(1) << "Flushing " << num_flushed << "/" << dirty_pages_size << " " << num_contiguous << " contiguous pages in " << timer.Elapsed() * 1000 << "ms.";
     }
 
     return num_flushed;

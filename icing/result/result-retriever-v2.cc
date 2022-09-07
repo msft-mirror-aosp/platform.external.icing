@@ -110,6 +110,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
 
   // Retrieve info
   std::vector<SearchResultProto::ResultProto> results;
+  int32_t num_total_bytes = 0;
   while (results.size() < result_state.num_per_page() &&
          !result_state.scored_document_hits_ranker->empty()) {
     ScoredDocumentHit next_best_document_hit =
@@ -154,7 +155,17 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     // Add the document, itself.
     *result.mutable_document() = std::move(document);
     result.set_score(next_best_document_hit.score());
+    size_t result_bytes = result.ByteSizeLong();
     results.push_back(std::move(result));
+
+    // Check if num_total_bytes + result_bytes reaches or exceeds
+    // num_total_bytes_per_page_threshold. Use subtraction to avoid integer
+    // overflow.
+    if (result_bytes >=
+        result_state.num_total_bytes_per_page_threshold() - num_total_bytes) {
+      break;
+    }
+    num_total_bytes += result_bytes;
   }
 
   // Update numbers in ResultState
