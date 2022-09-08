@@ -32,6 +32,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -246,6 +247,20 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
   return infos;
 }
 
+std::vector<DocHitInfoTermFrequencyPair> GetHitsWithTermFrequency(
+    std::unique_ptr<DocHitInfoIterator> iterator) {
+  std::vector<DocHitInfoTermFrequencyPair> infos;
+  while (iterator->Advance().ok()) {
+    std::vector<TermMatchInfo> matched_terms_stats;
+    iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+    for (const TermMatchInfo& term_match_info : matched_terms_stats) {
+      infos.push_back(DocHitInfoTermFrequencyPair(
+          iterator->doc_hit_info(), term_match_info.term_frequencies));
+    }
+  }
+  return infos;
+}
+
 TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(IndexProcessor::Create(/*normalizer=*/nullptr, index_.get(),
                                      &fake_clock_),
@@ -308,7 +323,8 @@ TEST_F(IndexProcessorTest, OneDoc) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("hello", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kExactSectionId, 1}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
@@ -360,7 +376,8 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("world", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap1{
       {kPrefixedSectionId, 2}};
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap2{
@@ -373,7 +390,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("world", 1U << kPrefixedSectionId,
                                TermMatchType::EXACT_ONLY));
-  hits = GetHits(std::move(itr));
+  hits = GetHitsWithTermFrequency(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
@@ -382,7 +399,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(itr,
                              index_->GetIterator("coffee", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  hits = GetHits(std::move(itr));
+  hits = GetHitsWithTermFrequency(std::move(itr));
   expectedMap = {{kExactSectionId, Hit::kMaxTermFrequency}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId1, expectedMap)));
@@ -838,7 +855,8 @@ TEST_F(IndexProcessorTest, ExactVerbatimProperty) {
       std::unique_ptr<DocHitInfoIterator> itr,
       index_->GetIterator("Hello, world!", kSectionIdMaskAll,
                           TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kExactVerbatimSectionId, 1}};
 
@@ -869,7 +887,8 @@ TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("Hello, w", kSectionIdMaskAll,
                                                  TermMatchType::PREFIX));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kPrefixedVerbatimSectionId, 1}};
 

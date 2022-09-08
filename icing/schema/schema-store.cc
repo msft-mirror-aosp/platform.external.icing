@@ -563,7 +563,7 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
       continue;
     }
     total_sections += sections_list_or.ValueOrDie()->size();
-    if (sections_list_or.ValueOrDie()->size() == kMaxSectionId + 1) {
+    if (sections_list_or.ValueOrDie()->size() == kTotalNumSections) {
       ++num_types_sections_exhausted;
     }
   }

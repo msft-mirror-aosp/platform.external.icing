@@ -61,7 +61,7 @@ PostingListAccessor::GetNextHitsBatch() {
       return std::vector<Hit>();
     }
     return absl_ports::FailedPreconditionError(
-        "Cannot retrieve hits from a PostingListAccessor that was not creaated "
+        "Cannot retrieve hits from a PostingListAccessor that was not created "
         "from a preexisting posting list.");
   }
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> batch,
