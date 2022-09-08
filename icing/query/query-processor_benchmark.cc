@@ -155,7 +155,10 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -290,7 +293,10 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -410,7 +416,10 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -530,7 +539,10 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   for (auto _ : state) {
     QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
