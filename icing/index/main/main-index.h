@@ -190,6 +190,9 @@ class MainIndex {
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
   //
+  // This method will update the last_added_docid of the index to the largest
+  // document id that still appears in the index after compaction.
+  //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
