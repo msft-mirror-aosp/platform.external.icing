@@ -101,9 +101,15 @@ namespace {
 constexpr uint32_t kInvalidNodeIndex = (1U << 24) - 1;
 constexpr uint32_t kInvalidNextIndex = ~0U;
 
-void ResetMutableNext(IcingDynamicTrie::Next &mutable_next) {
-  mutable_next.set_val(0xff);
-  mutable_next.set_node_index(kInvalidNodeIndex);
+// Returns the number of valid nexts in the array.
+int GetValidNextsSize(IcingDynamicTrie::Next *next_array_start,
+                      int next_array_length) {
+  int valid_nexts_length = 0;
+  for (; valid_nexts_length < next_array_length &&
+         next_array_start[valid_nexts_length].node_index() != kInvalidNodeIndex;
+       ++valid_nexts_length) {
+  }
+  return valid_nexts_length;
 }
 }  // namespace
 
@@ -763,7 +769,8 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
 
   // Fill with char 0xff so we are sorted properly.
   for (int i = 0; i < aligned_size; i++) {
-    ResetMutableNext(ret[i]);
+    ret[i].set_val(0xff);
+    ret[i].set_node_index(kInvalidNodeIndex);
   }
   return ret;
 }
@@ -1543,7 +1550,9 @@ bool IcingDynamicTrie::ResetNext(uint32_t next_index) {
   if (mutable_next == nullptr) {
     return false;
   }
-  ResetMutableNext(*mutable_next);
+
+  mutable_next->set_val(0);
+  mutable_next->set_node_index(kInvalidNodeIndex);
   return true;
 }
 
@@ -1561,7 +1570,7 @@ bool IcingDynamicTrie::SortNextArray(const Node *node) {
     return false;
   }
 
-  std::sort(next_array_start, next_array_start + next_array_buffer_size);
+  std::sort(next_array_start, next_array_start + next_array_buffer_size - 1);
   return true;
 }
 
@@ -2107,33 +2116,22 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::GetNextByChar(
   return found;
 }
 
-int IcingDynamicTrie::GetValidNextsSize(
-    IcingDynamicTrie::Next *next_array_start, int next_array_length) const {
-  // Only searching for key char 0xff is not sufficient, as 0xff can be a valid
-  // character. We must also specify kInvalidNodeIndex as the target node index
-  // when searching the next array.
-  return LowerBound(next_array_start, next_array_start + next_array_length,
-                    /*key_char=*/0xff, /*node_index=*/kInvalidNodeIndex) -
-         next_array_start;
-}
-
 const IcingDynamicTrie::Next *IcingDynamicTrie::LowerBound(
-    const Next *start, const Next *end, uint8_t key_char,
-    uint32_t node_index) const {
+    const Next *start, const Next *end, uint8_t key_char) const {
   // Above this value will use binary search instead of linear
   // search. 16 was chosen from running some benchmarks with
   // different values.
   static const uint32_t kBinarySearchCutoff = 16;
 
-  Next key_next(key_char, node_index);
   if (end - start >= kBinarySearchCutoff) {
     // Binary search.
+    Next key_next(key_char, 0);
     return lower_bound(start, end, key_next);
   } else {
     // Linear search.
     const Next *found;
     for (found = start; found < end; found++) {
-      if (!(*found < key_next)) {
+      if (found->val() >= key_char) {
         // Should have gotten match.
         break;
       }
@@ -2275,40 +2273,6 @@ std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(const char *key,
     ++cur_key;
   }
   return prefix_lengths;
-}
-
-bool IcingDynamicTrie::IsBranchingTerm(const char *key) const {
-  if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
-  }
-
-  if (storage_->empty()) {
-    return false;
-  }
-
-  uint32_t best_node_index;
-  int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true);
-  const Node *cur_node = storage_->GetNode(best_node_index);
-
-  if (cur_node->is_leaf()) {
-    return false;
-  }
-
-  // key is not present in the trie.
-  if (key[key_offset] != '\0') {
-    return false;
-  }
-
-  // Found key as an intermediate node, but key is not a valid term stored in
-  // the trie.
-  if (GetNextByChar(cur_node, '\0') == nullptr) {
-    return false;
-  }
-
-  // The intermediate node for key must have more than two children for key to
-  // be a branching term, one of which represents the leaf node for key itself.
-  return cur_node->log2_num_children() > 1;
 }
 
 void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
@@ -2536,26 +2500,7 @@ bool IcingDynamicTrie::Delete(const std::string_view key) {
   for (uint32_t next_index : nexts_to_reset) {
     ResetNext(next_index);
   }
-
-  if (last_multichild_node != nullptr) {
-    SortNextArray(last_multichild_node);
-    uint32_t next_array_buffer_size =
-        1u << last_multichild_node->log2_num_children();
-    Next *next_array_start = this->storage_->GetMutableNextArray(
-        last_multichild_node->next_index(), next_array_buffer_size);
-    uint32_t num_children =
-        GetValidNextsSize(next_array_start, next_array_buffer_size);
-    // Shrink the next array if we can.
-    if (num_children == next_array_buffer_size / 2) {
-      Node *mutable_node = storage_->GetMutableNode(
-          storage_->GetNodeIndex(last_multichild_node));
-      mutable_node->set_log2_num_children(mutable_node->log2_num_children() -
-                                          1);
-      // Add the unused second half of the next array to the free list.
-      storage_->FreeNextArray(next_array_start + next_array_buffer_size / 2,
-                              mutable_node->log2_num_children());
-    }
-  }
+  SortNextArray(last_multichild_node);
 
   return true;
 }

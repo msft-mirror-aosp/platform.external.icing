@@ -20,7 +20,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/hash/farmhash.h"
@@ -28,17 +27,14 @@
 #include "gtest/gtest.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
-#include "icing/util/logging.h"
+
+using testing::ElementsAre;
 
 namespace icing {
 namespace lib {
 
 namespace {
-
-using testing::ContainerEq;
-using testing::ElementsAre;
 
 constexpr std::string_view kKeys[] = {
     "", "ab", "ac", "abd", "bac", "bb", "bacd", "abbb", "abcdefg",
@@ -966,102 +962,6 @@ TEST_F(IcingDynamicTrieTest, DeletingNonExistingKeyShouldReturnTrue) {
   EXPECT_TRUE(trie.Find("bed", &value));
 }
 
-TEST_F(IcingDynamicTrieTest, DeletionResortsFullNextArray) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-  // 'f' -> [ 'a', 'j', 'o', 'u' ]
-  ASSERT_TRUE(trie.Insert("foul", &value));
-  ASSERT_TRUE(trie.Insert("far", &value));
-  ASSERT_TRUE(trie.Insert("fudge", &value));
-  ASSERT_TRUE(trie.Insert("fjord", &value));
-
-  // Delete the third child
-  EXPECT_TRUE(trie.Delete("foul"));
-
-  std::vector<std::string> remaining;
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.push_back(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ElementsAre("far", "fjord", "fudge"));
-}
-
-TEST_F(IcingDynamicTrieTest, DeletionResortsPartiallyFilledNextArray) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-  // 'f' -> [ 'a', 'o', 'u', 0xFF ]
-  ASSERT_TRUE(trie.Insert("foul", &value));
-  ASSERT_TRUE(trie.Insert("far", &value));
-  ASSERT_TRUE(trie.Insert("fudge", &value));
-
-  // Delete the second child
-  EXPECT_TRUE(trie.Delete("foul"));
-
-  std::vector<std::string> remaining;
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.push_back(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ElementsAre("far", "fudge"));
-}
-
-TEST_F(IcingDynamicTrieTest, DeletionLoadTest) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  std::default_random_engine random;
-  ICING_LOG(ERROR) << "Seed: " << std::default_random_engine::default_seed;
-  std::vector<std::string> terms;
-  uint32_t value;
-  // Randomly generate 2048 terms.
-  for (int i = 0; i < 2048; ++i) {
-    terms.push_back(RandomString("abcdefg", 5, &random));
-    ASSERT_TRUE(trie.Insert(terms.back().c_str(), &value));
-  }
-
-  // Randomly delete 1024 terms.
-  std::unordered_set<std::string> exp_remaining(terms.begin(), terms.end());
-  std::shuffle(terms.begin(), terms.end(), random);
-  for (int i = 0; i < 1024; ++i) {
-    exp_remaining.erase(terms[i]);
-    ASSERT_TRUE(trie.Delete(terms[i].c_str()));
-  }
-
-  // Check that the iterator still works, and the remaining terms are correct.
-  std::unordered_set<std::string> remaining;
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.insert(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ContainerEq(exp_remaining));
-
-  // Check that we can still insert terms after delete.
-  for (int i = 0; i < 2048; ++i) {
-    std::string term = RandomString("abcdefg", 5, &random);
-    ASSERT_TRUE(trie.Insert(term.c_str(), &value));
-    exp_remaining.insert(term);
-  }
-  remaining.clear();
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.insert(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ContainerEq(exp_remaining));
-}
-
 }  // namespace
 
 // The tests below are accessing private methods and fields of IcingDynamicTrie
@@ -1231,125 +1131,6 @@ TEST_F(IcingDynamicTrieTest, BitmapsClosedWhenInitFails) {
   // Check that both the bitmap and the property files have been closed.
   ASSERT_FALSE(trie.deleted_bitmap_);
   ASSERT_EQ(0, trie.property_bitmaps_.size());
-}
-
-TEST_F(IcingDynamicTrieTest, IsBranchingTerm) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-
-  ASSERT_TRUE(trie.Insert("", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-
-  ASSERT_TRUE(trie.Insert("ab", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-
-  ASSERT_TRUE(trie.Insert("ac", &value));
-  // "" is a prefix of "ab" and "ac", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-
-  ASSERT_TRUE(trie.Insert("ba", &value));
-  // "" now branches to "ba"
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-
-  ASSERT_TRUE(trie.Insert("a", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  // "a" branches to "ab" and "ac"
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-
-  ASSERT_TRUE(trie.Insert("abc", &value));
-  ASSERT_TRUE(trie.Insert("acd", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" is a prefix of "abc", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  // "ac" is a prefix of "acd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-
-  ASSERT_TRUE(trie.Insert("abcd", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" is a prefix of "abc" and "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  // "abc" is a prefix of "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
-
-  ASSERT_TRUE(trie.Insert("abd", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" branches to "abc" and "abd"
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abd"));
-}
-
-TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForNonExistingTerms) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-
-  ASSERT_TRUE(trie.Insert("aa", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-
-  ASSERT_TRUE(trie.Insert("", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-
-  ASSERT_TRUE(trie.Insert("ab", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-
-  ASSERT_TRUE(trie.Insert("ac", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-
-  ASSERT_TRUE(trie.Insert("ad", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-
-  ASSERT_TRUE(trie.Insert("abcd", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abce", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abcf", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abc_suffix", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_s"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_su"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_suffi"));
 }
 
 }  // namespace lib

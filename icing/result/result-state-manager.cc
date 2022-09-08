@@ -23,13 +23,11 @@ namespace icing {
 namespace lib {
 
 ResultStateManager::ResultStateManager(int max_total_hits,
-                                       const DocumentStore& document_store,
-                                       const Clock* clock)
+                                       const DocumentStore& document_store)
     : document_store_(document_store),
       max_total_hits_(max_total_hits),
       num_total_hits_(0),
-      random_generator_(GetSteadyTimeNanoseconds()),
-      clock_(*clock) {}
+      random_generator_(GetSteadyTimeNanoseconds()) {}
 
 libtextclassifier3::StatusOr<PageResultState>
 ResultStateManager::RankAndPaginate(ResultState result_state) {
@@ -77,8 +75,7 @@ uint64_t ResultStateManager::Add(ResultState result_state) {
   num_total_hits_ += result_state.num_remaining();
   result_state_map_.emplace(new_token, std::move(result_state));
   // Tracks the insertion order
-  token_queue_.push(
-      std::make_pair(new_token, clock_.GetSystemTimeMilliseconds()));
+  token_queue_.push(new_token);
 
   return new_token;
 }
@@ -137,16 +134,10 @@ void ResultStateManager::InvalidateAllResultStates() {
   InternalInvalidateAllResultStates();
 }
 
-void ResultStateManager::InvalidateExpiredResultStates(
-    int64_t result_state_ttl) {
-  absl_ports::unique_lock l(&mutex_);
-  InternalInvalidateExpiredResultStates(result_state_ttl);
-}
-
 void ResultStateManager::InternalInvalidateAllResultStates() {
   result_state_map_.clear();
   invalidated_token_set_.clear();
-  token_queue_ = std::queue<std::pair<uint64_t, int64_t>>();
+  token_queue_ = std::queue<uint64_t>();
   num_total_hits_ = 0;
 }
 
@@ -179,16 +170,16 @@ void ResultStateManager::RemoveStatesIfNeeded(const ResultState& result_state) {
 
   // 2. Remove any tokens that were previously invalidated.
   while (!token_queue_.empty() &&
-         invalidated_token_set_.find(token_queue_.front().first) !=
+         invalidated_token_set_.find(token_queue_.front()) !=
              invalidated_token_set_.end()) {
-    invalidated_token_set_.erase(token_queue_.front().first);
+    invalidated_token_set_.erase(token_queue_.front());
     token_queue_.pop();
   }
 
   // 3. If we're over budget, remove states from oldest to newest until we fit
   // into our budget.
   while (result_state.num_remaining() + num_total_hits_ > max_total_hits_) {
-    InternalInvalidateResultState(token_queue_.front().first);
+    InternalInvalidateResultState(token_queue_.front());
     token_queue_.pop();
   }
   invalidated_token_set_.clear();
@@ -204,25 +195,6 @@ void ResultStateManager::InternalInvalidateResultState(uint64_t token) {
     num_total_hits_ -= itr->second.num_remaining();
     result_state_map_.erase(itr);
     invalidated_token_set_.insert(token);
-  }
-}
-
-void ResultStateManager::InternalInvalidateExpiredResultStates(
-    int64_t result_state_ttl) {
-  int64_t current_time = clock_.GetSystemTimeMilliseconds();
-  while (!token_queue_.empty() &&
-         current_time - token_queue_.front().second >= result_state_ttl) {
-    auto itr = result_state_map_.find(token_queue_.front().first);
-    if (itr != result_state_map_.end()) {
-      num_total_hits_ -= itr->second.num_remaining();
-      result_state_map_.erase(itr);
-    } else {
-      // Since result_state_map_ and invalidated_token_set_ are mutually
-      // exclusive, we remove the token from invalidated_token_set_ only if it
-      // isn't present in result_state_map_.
-      invalidated_token_set_.erase(token_queue_.front().first);
-    }
-    token_queue_.pop();
   }
 }
 

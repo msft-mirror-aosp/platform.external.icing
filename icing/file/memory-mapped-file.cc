@@ -73,6 +73,8 @@ libtextclassifier3::Status MemoryMappedFile::Remap(size_t file_offset,
   if (mmap_size == 0) {
     // First unmap any previously mmapped region.
     Unmap();
+
+    // Nothing more to do.
     return libtextclassifier3::Status::OK;
   }
 
@@ -120,7 +122,6 @@ libtextclassifier3::Status MemoryMappedFile::Remap(size_t file_offset,
                            mmap_flags, fd.get(), aligned_offset);
 
   if (mmap_result == MAP_FAILED) {
-    mmap_result = nullptr;
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to mmap region due to error: ", strerror(errno)));
   }

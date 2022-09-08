@@ -41,7 +41,6 @@
 #include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/crc32.h"
-#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -59,8 +58,6 @@ using ::testing::NiceMock;
 using ::testing::Not;
 using ::testing::Return;
 using ::testing::SizeIs;
-using ::testing::StrEq;
-using ::testing::StrNe;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
 
@@ -79,10 +76,10 @@ class IndexTest : public Test {
     icing_filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
   }
 
-  Filesystem filesystem_;
-  IcingFilesystem icing_filesystem_;
-  std::string index_dir_;
   std::unique_ptr<Index> index_;
+  std::string index_dir_;
+  IcingFilesystem icing_filesystem_;
+  Filesystem filesystem_;
 };
 
 constexpr DocumentId kDocumentId0 = 0;
@@ -1413,19 +1410,17 @@ TEST_F(IndexTest, GetDebugInfo) {
   ASSERT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  IndexDebugInfoProto out0 = index_->GetDebugInfo(DebugInfoVerbosity::BASIC);
-  ICING_LOG(DBG) << "main_index_info:\n" << out0.main_index_info();
-  ICING_LOG(DBG) << "lite_index_info:\n" << out0.lite_index_info();
-  EXPECT_THAT(out0.main_index_info(), Not(IsEmpty()));
-  EXPECT_THAT(out0.lite_index_info(), Not(IsEmpty()));
+  IndexDebugInfoProto out0 = index_->GetDebugInfo(/*verbosity=*/0);
+  EXPECT_FALSE(out0.main_index_info().has_flash_index_storage_info());
+  EXPECT_THAT(out0.main_index_info().last_added_document_id(),
+              Eq(kDocumentId1));
+  EXPECT_THAT(out0.lite_index_info().curr_size(), Eq(2));
+  EXPECT_THAT(out0.lite_index_info().last_added_document_id(),
+              Eq(kDocumentId2));
 
-  IndexDebugInfoProto out1 = index_->GetDebugInfo(DebugInfoVerbosity::DETAILED);
-  ICING_LOG(DBG) << "main_index_info:\n" << out1.main_index_info();
-  ICING_LOG(DBG) << "lite_index_info:\n" << out1.lite_index_info();
-  EXPECT_THAT(out1.main_index_info(),
-              SizeIs(Gt(out0.main_index_info().size())));
-  EXPECT_THAT(out1.lite_index_info(),
-              SizeIs(Gt(out0.lite_index_info().size())));
+  IndexDebugInfoProto out1 = index_->GetDebugInfo(/*verbosity=*/1);
+  EXPECT_THAT(out1.main_index_info().flash_index_storage_info(),
+              Not(IsEmpty()));
 
   // Add one more doc to the lite index. Debug strings should change.
   edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
@@ -1434,25 +1429,26 @@ TEST_F(IndexTest, GetDebugInfo) {
   ASSERT_THAT(edit.BufferTerm("far"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  IndexDebugInfoProto out2 = index_->GetDebugInfo(DebugInfoVerbosity::BASIC);
-  ICING_LOG(DBG) << "main_index_info:\n" << out2.main_index_info();
-  ICING_LOG(DBG) << "lite_index_info:\n" << out2.lite_index_info();
-  EXPECT_THAT(out2.main_index_info(), Not(IsEmpty()));
-  EXPECT_THAT(out2.lite_index_info(), Not(IsEmpty()));
-  EXPECT_THAT(out2.main_index_info(), StrEq(out0.main_index_info()));
-  EXPECT_THAT(out2.lite_index_info(), StrNe(out0.lite_index_info()));
+  IndexDebugInfoProto out2 = index_->GetDebugInfo(/*verbosity=*/0);
+  EXPECT_THAT(out2.lite_index_info().curr_size(), Eq(3));
+  EXPECT_THAT(out2.lite_index_info().last_added_document_id(),
+              Eq(kDocumentId3));
 
-  // Merge into the man index. Debug strings should change again.
+  // Merge into the man index. Debuug strings should change again.
   ICING_ASSERT_OK(index_->Merge());
 
-  IndexDebugInfoProto out3 = index_->GetDebugInfo(DebugInfoVerbosity::BASIC);
+  IndexDebugInfoProto out3 = index_->GetDebugInfo(/*verbosity=*/0);
   EXPECT_TRUE(out3.has_index_storage_info());
-  ICING_LOG(DBG) << "main_index_info:\n" << out3.main_index_info();
-  ICING_LOG(DBG) << "lite_index_info:\n" << out3.lite_index_info();
-  EXPECT_THAT(out3.main_index_info(), Not(IsEmpty()));
-  EXPECT_THAT(out3.lite_index_info(), Not(IsEmpty()));
-  EXPECT_THAT(out3.main_index_info(), StrNe(out2.main_index_info()));
-  EXPECT_THAT(out3.lite_index_info(), StrNe(out2.lite_index_info()));
+  EXPECT_THAT(out3.main_index_info().lexicon_info(), Not(IsEmpty()));
+  EXPECT_THAT(out3.main_index_info().last_added_document_id(),
+              Eq(kDocumentId3));
+  EXPECT_THAT(out3.lite_index_info().curr_size(), Eq(0));
+  EXPECT_THAT(out3.lite_index_info().hit_buffer_size(), Gt(0));
+  EXPECT_THAT(out3.lite_index_info().last_added_document_id(),
+              Eq(kInvalidDocumentId));
+  EXPECT_THAT(out3.lite_index_info().searchable_end(), Eq(0));
+  EXPECT_THAT(out3.lite_index_info().index_crc(), Gt(0));
+  EXPECT_THAT(out3.lite_index_info().lexicon_info(), Not(IsEmpty()));
 }
 
 TEST_F(IndexTest, BackfillingMultipleTermsSucceeds) {

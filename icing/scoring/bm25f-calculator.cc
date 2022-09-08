@@ -233,9 +233,8 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
 }
 
 SchemaTypeId Bm25fCalculator::GetSchemaTypeId(DocumentId document_id) const {
-  auto filter_data_optional =
-      document_store_->GetAliveDocumentFilterData(document_id);
-  if (!filter_data_optional) {
+  auto filter_data_or = document_store_->GetDocumentFilterData(document_id);
+  if (!filter_data_or.ok()) {
     // This should never happen. The only failure case for
     // GetDocumentFilterData is if the document_id is outside of the range of
     // allocated document_ids, which shouldn't be possible since we're getting
@@ -244,7 +243,8 @@ SchemaTypeId Bm25fCalculator::GetSchemaTypeId(DocumentId document_id) const {
         "No document filter data for document [%d]", document_id);
     return kInvalidSchemaTypeId;
   }
-  return filter_data_optional.value().schema_type_id();
+  DocumentFilterData data = filter_data_or.ValueOrDie();
+  return data.schema_type_id();
 }
 
 }  // namespace lib

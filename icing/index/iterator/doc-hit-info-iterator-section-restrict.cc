@@ -51,15 +51,15 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
     SectionIdMask section_id_mask =
         delegate_->doc_hit_info().hit_section_ids_mask();
 
-    auto data_optional =
-        document_store_.GetAliveDocumentFilterData(document_id);
-    if (!data_optional) {
+    auto data_or = document_store_.GetDocumentFilterData(document_id);
+    if (!data_or.ok()) {
       // Ran into some error retrieving information on this hit, skip
       continue;
     }
 
     // Guaranteed that the DocumentFilterData exists at this point
-    SchemaTypeId schema_type_id = data_optional.value().schema_type_id();
+    DocumentFilterData data = std::move(data_or).ValueOrDie();
+    SchemaTypeId schema_type_id = data.schema_type_id();
 
     // A hit can be in multiple sections at once, need to check that at least
     // one of the confirmed section ids match the name of the target section

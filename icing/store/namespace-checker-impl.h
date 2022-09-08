@@ -32,18 +32,14 @@ class NamespaceCheckerImpl : public NamespaceChecker {
         target_namespace_ids_(std::move(target_namespace_ids)) {}
 
   bool BelongsToTargetNamespaces(DocumentId document_id) const override {
-    auto document_filter_data_optional_ =
-        document_store_.GetAliveDocumentFilterData(document_id);
-    if (!document_filter_data_optional_) {
-      // The document doesn't exist.
-      return false;
-    }
     if (target_namespace_ids_.empty()) {
       return true;
     }
-    DocumentFilterData document_filter_data =
-        document_filter_data_optional_.value();
-    return target_namespace_ids_.count(document_filter_data.namespace_id()) > 0;
+    auto document_filter_data_or_ =
+        document_store_.GetDocumentFilterData(document_id);
+    return document_filter_data_or_.ok() &&
+        target_namespace_ids_.count(
+            document_filter_data_or_.ValueOrDie().namespace_id())> 0;
   }
   const DocumentStore& document_store_;
   std::unordered_set<NamespaceId> target_namespace_ids_;

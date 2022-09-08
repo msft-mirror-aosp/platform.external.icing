@@ -140,11 +140,11 @@ class Index {
   }
 
   // Returns debug information for the index in out.
-  // verbosity = BASIC, simplest debug information - just the lexicons and lite
-  //                    index.
-  // verbosity = DETAILED, more detailed debug information including raw
-  //                       postings lists.
-  IndexDebugInfoProto GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
+  // verbosity <= 0, simplest debug information - just the lexicons and lite
+  //                 index.
+  // verbosity > 0, more detailed debug information including raw postings
+  //                lists.
+  IndexDebugInfoProto GetDebugInfo(int verbosity) const {
     IndexDebugInfoProto debug_info;
     *debug_info.mutable_index_storage_info() = GetStorageInfo();
     *debug_info.mutable_lite_index_info() =

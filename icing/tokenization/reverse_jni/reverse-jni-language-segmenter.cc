@@ -74,7 +74,6 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
       MarkAsDone();
       return false;
     }
-
     return true;
   }
 

@@ -23,16 +23,16 @@
 #include <string_view>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/file/mock-filesystem.h"
-#include "icing/testing/common-matchers.h"
-#include "icing/testing/tmp-directory.h"
-#include "icing/util/crc32.h"
-#include "icing/util/logging.h"
+#include "knowledge/cerebra/sense/text_classifier/lib3/utils/base/status.h"
+#include "testing/base/public/gmock.h"
+#include "testing/base/public/gunit.h"
+#include "third_party/icing/file/filesystem.h"
+#include "third_party/icing/file/memory-mapped-file.h"
+#include "third_party/icing/file/mock-filesystem.h"
+#include "third_party/icing/testing/common-matchers.h"
+#include "third_party/icing/testing/tmp-directory.h"
+#include "third_party/icing/util/crc32.h"
+#include "third_party/icing/util/logging.h"
 
 using ::testing::Eq;
 using ::testing::IsTrue;
@@ -662,7 +662,7 @@ TEST_F(FileBackedVectorTest, RemapFailureStillValidInstance) {
   // 2. The next Set call should cause a resize and a remap. Make that remap
   // fail.
   int num_calls = 0;
-  auto open_lambda = [this, &num_calls](const char* file_name) {
+  auto open_lambda = [this, &num_calls](const char* file_name){
     if (++num_calls == 2) {
       return -1;
     }

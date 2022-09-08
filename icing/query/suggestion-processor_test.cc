@@ -99,18 +99,16 @@ class SuggestionProcessorTest : public Test {
   Filesystem filesystem_;
   const std::string test_dir_;
   const std::string store_dir_;
+  std::unique_ptr<Index> index_;
+  std::unique_ptr<LanguageSegmenter> language_segmenter_;
+  std::unique_ptr<Normalizer> normalizer_;
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
+  FakeClock fake_clock_;
 
  private:
   IcingFilesystem icing_filesystem_;
   const std::string index_dir_;
-
- protected:
-  std::unique_ptr<Index> index_;
-  std::unique_ptr<LanguageSegmenter> language_segmenter_;
-  std::unique_ptr<Normalizer> normalizer_;
-  FakeClock fake_clock_;
-  std::unique_ptr<SchemaStore> schema_store_;
-  std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
 };
 
 constexpr DocumentId kDocumentId0 = 0;

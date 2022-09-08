@@ -423,6 +423,7 @@ TEST_P(ReverseJniLanguageSegmenterTest, CJKT) {
   // Khmer
   EXPECT_THAT(language_segmenter->GetAllTerms("ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"),
               IsOkAndHolds(ElementsAre("ញុំ", "ដើរទៅ", "ធ្វើការ", "រាល់ថ្ងៃ", "។")));
+
   // Thai
   EXPECT_THAT(
       language_segmenter->GetAllTerms("ฉันเดินไปทำงานทุกวัน"),

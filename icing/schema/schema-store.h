@@ -130,7 +130,7 @@ class SchemaStore {
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, InitializeStatsProto* initialize_stats = nullptr);
-
+  
   SchemaStore(SchemaStore&&) = default;
   SchemaStore& operator=(SchemaStore&&) = default;
 
@@ -281,6 +281,7 @@ class SchemaStore {
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, SchemaProto schema);
+
 
   // Use SchemaStore::Create instead.
   explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,

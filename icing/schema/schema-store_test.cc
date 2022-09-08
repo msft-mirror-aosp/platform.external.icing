@@ -18,7 +18,6 @@
 #include <string>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
@@ -36,6 +35,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -73,8 +73,8 @@ constexpr PropertyConfigProto::DataType::Code TYPE_DOUBLE =
 class SchemaStoreTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    test_dir_ = GetTestTempDir() + "/icing";
-    schema_store_dir_ = test_dir_ + "/schema_store";
+    temp_dir_ = GetTestTempDir() + "/icing";
+    schema_store_dir_ = temp_dir_ + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
     schema_ =
@@ -93,24 +93,24 @@ class SchemaStoreTest : public ::testing::Test {
     // schema_store_dir_. IOW, ensure that all temporary directories have been
     // properly cleaned up.
     std::vector<std::string> sub_dirs;
-    ASSERT_TRUE(filesystem_.ListDirectory(test_dir_.c_str(), &sub_dirs));
+    ASSERT_TRUE(filesystem_.ListDirectory(temp_dir_.c_str(), &sub_dirs));
     ASSERT_THAT(sub_dirs, ElementsAre("schema_store"));
 
     // Finally, clean everything up.
-    ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
+    ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(temp_dir_.c_str()));
   }
 
   Filesystem filesystem_;
-  std::string test_dir_;
+  std::string temp_dir_;
   std::string schema_store_dir_;
   SchemaProto schema_;
   FakeClock fake_clock_;
 };
 
 TEST_F(SchemaStoreTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(SchemaStore::Create(/*filesystem=*/nullptr, schema_store_dir_,
-                                  &fake_clock_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      SchemaStore::Create(/*filesystem=*/nullptr, schema_store_dir_, &fake_clock_),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
@@ -215,17 +215,15 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
           .AddType(SchemaTypeConfigBuilder().SetType("corrupted"))
           .Build();
 
-  const std::string schema_file =
-      absl_ports::StrCat(schema_store_dir_, "/schema.pb");
+  const std::string schema_file = absl_ports::StrCat(schema_store_dir_, "/schema.pb");
   const std::string serialized_schema = corrupt_schema.SerializeAsString();
 
   filesystem_.Write(schema_file.c_str(), serialized_schema.data(),
                     serialized_schema.size());
 
   // If ground truth was corrupted, we won't know what to do
-  EXPECT_THAT(
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
-      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
@@ -352,9 +350,8 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   schema_store.reset();
-  EXPECT_THAT(
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
-      IsOk());
+  EXPECT_THAT(SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
+              IsOk());
 }
 
 TEST_F(SchemaStoreTest, MultipleCreateOk) {
@@ -386,8 +383,7 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
 
   schema_store.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      schema_store, SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
   // Verify that our in-memory structures are ok
   EXPECT_THAT(schema_store->GetSchemaTypeConfig("email"),
@@ -1021,8 +1017,7 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
   schema_store.reset();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      schema_store, SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(checksum));
 }
 
@@ -1087,8 +1082,7 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
 
   // And we get the same schema back on reinitialization
   ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      schema_store, SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
 }

@@ -460,10 +460,6 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   ICING_ASSERT_OK(statusor.status());                         \
   lhs = std::move(statusor).ValueOrDie()
 
-#define ICING_ASSERT_HAS_VALUE_AND_ASSIGN(lhs, rexpr) \
-  ASSERT_TRUE(rexpr);                                 \
-  lhs = rexpr.value()
-
 }  // namespace lib
 }  // namespace icing
 
