@@ -263,13 +263,16 @@ class LiteIndex {
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
   //
+  // This method also sets the last_added_docid of the index to
+  // new_last_added_document_id.
+  //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
   //                               invalid state and should be cleared.
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
-      const TermIdCodec* term_id_codec);
+      const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id);
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
