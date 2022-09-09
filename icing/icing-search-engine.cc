@@ -1259,7 +1259,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     optimize_stats->set_index_restoration_mode(
         OptimizeStatsProto::INDEX_TRANSLATION);
     libtextclassifier3::Status index_optimize_status =
-        index_->Optimize(document_id_old_to_new_or.ValueOrDie());
+        index_->Optimize(document_id_old_to_new_or.ValueOrDie(),
+                         document_store_->last_added_document_id());
     if (!index_optimize_status.ok()) {
       ICING_LOG(WARNING) << "Failed to optimize index. Error: "
                          << index_optimize_status.error_message();
