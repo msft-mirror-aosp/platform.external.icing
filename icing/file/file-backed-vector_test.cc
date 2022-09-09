@@ -36,6 +36,7 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 
+using ::testing::DoDefault;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsTrue;
@@ -281,6 +282,65 @@ TEST_F(FileBackedVectorTest, Get) {
   EXPECT_THAT(vector->Get(3),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   EXPECT_THAT(vector->Get(-1),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST_F(FileBackedVectorTest, SetWithoutGrowing) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<char>> vector,
+      FileBackedVector<char>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+
+  std::string original = "abcde";
+  Insert(vector.get(), /*idx=*/0, original);
+  ASSERT_THAT(vector->num_elements(), Eq(original.length()));
+  ASSERT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/5), Eq(original));
+
+  ICING_EXPECT_OK(vector->Set(/*idx=*/1, /*len=*/3, 'z'));
+  EXPECT_THAT(vector->num_elements(), Eq(5));
+  EXPECT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/5), Eq("azzze"));
+}
+
+TEST_F(FileBackedVectorTest, SetWithGrowing) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<char>> vector,
+      FileBackedVector<char>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  EXPECT_THAT(vector->ComputeChecksum(), IsOkAndHolds(Crc32(0)));
+
+  std::string original = "abcde";
+  Insert(vector.get(), /*idx=*/0, original);
+  ASSERT_THAT(vector->num_elements(), Eq(original.length()));
+  ASSERT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/5), Eq(original));
+
+  ICING_EXPECT_OK(vector->Set(/*idx=*/3, /*len=*/4, 'z'));
+  EXPECT_THAT(vector->num_elements(), Eq(7));
+  EXPECT_THAT(Get(vector.get(), /*idx=*/0, /*expected_len=*/7), Eq("abczzzz"));
+}
+
+TEST_F(FileBackedVectorTest, SetInvalidArguments) {
+  // Create a vector and add some data.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<char>> vector,
+      FileBackedVector<char>::Create(
+          filesystem_, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  EXPECT_THAT(vector->Set(/*idx=*/0, /*len=*/-1, 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Set(/*idx=*/0, /*len=*/0, 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Set(/*idx=*/-1, /*len=*/2, 'z'),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+  EXPECT_THAT(vector->Set(/*idx=*/100,
+                          /*len=*/std::numeric_limits<int32_t>::max(), 'z'),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
@@ -1223,6 +1283,40 @@ TEST_F(FileBackedVectorTest, BadFileSizeDuringGrowReturnsError) {
   // there was an issue retrieving the file size.
   EXPECT_THAT(vector->Set(0, 7),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+}
+
+TEST_F(FileBackedVectorTest, PWriteFailsInTheSecondRound) {
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<int>> vector,
+      FileBackedVector<int>::Create(
+          *mock_filesystem, file_path_,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+  // At first, the vector is empty and has no mapping established. The first Set
+  // call will cause a Grow.
+  // During Grow, we call PWrite for several rounds to grow the file. Mock
+  // PWrite to succeed in the first round, fail in the second round, and succeed
+  // in the rest rounds.
+
+  // This unit test checks if we check file size and Remap properly. If the
+  // first PWrite succeeds but the second PWrite fails, then the file size has
+  // been grown, but there will be no Remap for the MemoryMappedFile. Then,
+  // the next several Append() won't require file growth since the file size has
+  // been grown, but it causes memory error because we haven't remapped.
+  EXPECT_CALL(*mock_filesystem,
+              PWrite(A<int>(), A<off_t>(), A<const void*>(), A<size_t>()))
+      .WillOnce(DoDefault())
+      .WillOnce(Return(false))
+      .WillRepeatedly(DoDefault());
+
+  EXPECT_THAT(vector->Append(7),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  EXPECT_THAT(vector->Get(/*idx=*/0),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  EXPECT_THAT(vector->Append(7), IsOk());
+  EXPECT_THAT(vector->Get(/*idx=*/0), IsOkAndHolds(Pointee(Eq(7))));
 }
 
 }  // namespace

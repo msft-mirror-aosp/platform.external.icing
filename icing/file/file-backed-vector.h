@@ -261,8 +261,19 @@ class FileBackedVector {
   //
   // Returns:
   //   OUT_OF_RANGE_ERROR if idx < 0 or idx > kMaxIndex or file cannot be grown
-  //                      idx size
+  //                      to fit idx + 1 elements
   libtextclassifier3::Status Set(int32_t idx, const T& value);
+
+  // Set [idx, idx + len) to a single value.
+  //
+  // May grow the underlying file and mmapped region as needed to fit the new
+  // value. If it does grow, then any pointers/references to previous values
+  // returned from Get/GetMutable/Allocate may be invalidated.
+  //
+  // Returns:
+  //   OUT_OF_RANGE_ERROR if idx < 0 or idx + len > kMaxNumElements or file
+  //                      cannot be grown to fit idx + len elements
+  libtextclassifier3::Status Set(int32_t idx, int32_t len, const T& value);
 
   // Appends the value to the end of the vector.
   //
@@ -369,8 +380,8 @@ class FileBackedVector {
     // It handles SetDirty properly for the file-backed-vector when modifying
     // elements.
     //
-    // REQUIRES: arr is valid && arr_len >= 0 && idx + arr_len <= size(),
-    //           otherwise the behavior is undefined.
+    // REQUIRES: arr is valid && arr_len >= 0 && idx >= 0 && idx + arr_len <=
+    //           size(), otherwise the behavior is undefined.
     void SetArray(int32_t idx, const T* arr, int32_t arr_len) {
       for (int32_t i = 0; i < arr_len; ++i) {
         SetDirty(idx + i);
@@ -433,10 +444,11 @@ class FileBackedVector {
   static constexpr int32_t kMaxIndex = kMaxNumElements - 1;
 
   // Can only be created through the factory ::Create function
-  FileBackedVector(const Filesystem& filesystem, const std::string& file_path,
-                   std::unique_ptr<Header> header,
-                   std::unique_ptr<MemoryMappedFile> mmapped_file,
-                   int32_t max_file_size);
+  explicit FileBackedVector(const Filesystem& filesystem,
+                            const std::string& file_path,
+                            std::unique_ptr<Header> header,
+                            std::unique_ptr<MemoryMappedFile> mmapped_file,
+                            int32_t max_file_size);
 
   // Initialize a new FileBackedVector, and create the file.
   static libtextclassifier3::StatusOr<std::unique_ptr<FileBackedVector<T>>>
@@ -765,30 +777,44 @@ FileBackedVector<T>::GetMutable(int32_t idx, int32_t len) {
 template <typename T>
 libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx,
                                                     const T& value) {
+  return Set(idx, 1, value);
+}
+
+template <typename T>
+libtextclassifier3::Status FileBackedVector<T>::Set(int32_t idx, int32_t len,
+                                                    const T& value) {
   if (idx < 0) {
     return absl_ports::OutOfRangeError(
         IcingStringUtil::StringPrintf("Index, %d, was less than 0", idx));
   }
 
-  if (idx > kMaxIndex) {
-    return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-        "Index, %d, was greater than max index allowed, %d", idx, kMaxIndex));
+  if (len <= 0) {
+    return absl_ports::OutOfRangeError("Invalid set length");
   }
 
-  ICING_RETURN_IF_ERROR(GrowIfNecessary(idx + 1));
-
-  if (idx + 1 > header_->num_elements) {
-    header_->num_elements = idx + 1;
+  if (idx > kMaxNumElements - len) {
+    return absl_ports::OutOfRangeError(
+        IcingStringUtil::StringPrintf("Length %d (with index %d), was too long "
+                                      "for max num elements allowed, %d",
+                                      len, idx, kMaxNumElements));
   }
 
-  if (mutable_array()[idx] == value) {
-    // No need to update
-    return libtextclassifier3::Status::OK;
+  ICING_RETURN_IF_ERROR(GrowIfNecessary(idx + len));
+
+  if (idx + len > header_->num_elements) {
+    header_->num_elements = idx + len;
   }
 
-  SetDirty(idx);
+  for (int32_t i = 0; i < len; ++i) {
+    if (array()[idx + i] == value) {
+      // No need to update
+      continue;
+    }
 
-  mutable_array()[idx] = value;
+    SetDirty(idx + i);
+    mutable_array()[idx + i] = value;
+  }
+
   return libtextclassifier3::Status::OK;
 }
 
@@ -835,19 +861,16 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
         num_elements, max_file_size_ - Header::kHeaderSize));
   }
 
-  int64_t current_file_size = filesystem_->GetFileSize(file_path_.c_str());
-  if (current_file_size == Filesystem::kBadFileSize) {
-    return absl_ports::InternalError("Unable to retrieve file size.");
-  }
-
-  int32_t least_file_size_needed =
-      Header::kHeaderSize + num_elements * kElementTypeSize;  // Won't overflow
-  if (least_file_size_needed <= current_file_size) {
-    // Our underlying file can hold the target num_elements cause we've grown
+  int32_t least_element_file_size_needed =
+      num_elements * kElementTypeSize;  // Won't overflow
+  if (least_element_file_size_needed <= mmapped_file_->region_size()) {
+    // Our mmapped region can hold the target num_elements cause we've grown
     // before
     return libtextclassifier3::Status::OK;
   }
 
+  int32_t least_file_size_needed =
+      Header::kHeaderSize + least_element_file_size_needed;
   // Otherwise, we need to grow. Grow to kGrowElements boundary.
   // Note that we need to use int64_t here, since int32_t might overflow after
   // round up.
@@ -856,6 +879,12 @@ libtextclassifier3::Status FileBackedVector<T>::GrowIfNecessary(
       int64_t{FileBackedVector<T>::kGrowElements} * kElementTypeSize);
   least_file_size_needed =
       std::min(round_up_file_size_needed, int64_t{max_file_size_});
+
+  // Get the actual file size here.
+  int64_t current_file_size = filesystem_->GetFileSize(file_path_.c_str());
+  if (current_file_size == Filesystem::kBadFileSize) {
+    return absl_ports::InternalError("Unable to retrieve file size.");
+  }
 
   // We use PWrite here rather than Grow because Grow doesn't actually allocate
   // an underlying disk block. This can lead to problems with mmap because mmap

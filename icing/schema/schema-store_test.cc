@@ -1099,36 +1099,24 @@ TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
   // Create a schema with two types: one simple type and one type that uses all
-  // 16 sections.
+  // 64 sections.
   PropertyConfigProto prop =
       PropertyConfigBuilder()
           .SetName("subject")
           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
           .SetCardinality(CARDINALITY_OPTIONAL)
           .Build();
+  SchemaTypeConfigBuilder full_sections_type_builder =
+      SchemaTypeConfigBuilder().SetType("fullSectionsType");
+  for (int i = 0; i < 64; ++i) {
+    full_sections_type_builder.AddProperty(
+        PropertyConfigBuilder(prop).SetName("prop" + std::to_string(i)));
+  }
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder(prop)))
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("fullSectionsType")
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop0"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop2"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop3"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop4"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop5"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop7"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop8"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop9"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop10"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop11"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop12"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop13"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop14"))
-                  .AddProperty(PropertyConfigBuilder(prop).SetName("prop15")))
+          .AddType(full_sections_type_builder)
           .Build();
 
   SchemaStore::SetSchemaResult result;
@@ -1141,7 +1129,7 @@ TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
   SchemaStoreStorageInfoProto storage_info = schema_store->GetStorageInfo();
   EXPECT_THAT(storage_info.schema_store_size(), Ge(0));
   EXPECT_THAT(storage_info.num_schema_types(), Eq(2));
-  EXPECT_THAT(storage_info.num_total_sections(), Eq(17));
+  EXPECT_THAT(storage_info.num_total_sections(), Eq(65));
   EXPECT_THAT(storage_info.num_schema_types_sections_exhausted(), Eq(1));
 }
 

@@ -102,10 +102,6 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_NONE =
     StringIndexingConfig::TokenizerType::NONE;
 
-#ifndef ICING_JNI_TEST
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-#endif  // !ICING_JNI_TEST
-
 constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
 constexpr TermMatchType::Code MATCH_NONE = TermMatchType::UNKNOWN;
 
@@ -2312,6 +2308,8 @@ TEST_F(IcingSearchEngineTest, SearchReturnsOneResult) {
   EXPECT_THAT(search_result_proto.query_stats().ranking_latency_ms(), Eq(1000));
   EXPECT_THAT(search_result_proto.query_stats().document_retrieval_latency_ms(),
               Eq(1000));
+  EXPECT_THAT(search_result_proto.query_stats().lock_acquisition_latency_ms(),
+              Eq(1000));
 
   // The token is a random number so we don't verify it.
   expected_search_result_proto.set_next_page_token(
@@ -2470,6 +2468,8 @@ TEST_F(IcingSearchEngineTest, SearchShouldReturnEmpty) {
   EXPECT_THAT(search_result_proto.query_stats().ranking_latency_ms(), Eq(0));
   EXPECT_THAT(search_result_proto.query_stats().document_retrieval_latency_ms(),
               Eq(0));
+  EXPECT_THAT(search_result_proto.query_stats().lock_acquisition_latency_ms(),
+              Eq(1000));
 
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
@@ -3001,6 +3001,54 @@ TEST_F(IcingSearchEngineTest, GetAndPutShouldWorkAfterOptimization) {
       EqualsProto(expected_get_result_proto));
 
   EXPECT_THAT(icing.Put(document5).status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest,
+       GetAndPutShouldWorkAfterOptimizationWithEmptyDocuments) {
+  DocumentProto empty_document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto empty_document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto empty_document3 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.Put(empty_document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(empty_document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete("namespace", "uri2").status(), ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Validates that Get() and Put() are good right after Optimize()
+  *expected_get_result_proto.mutable_document() = empty_document1;
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .status()
+          .code(),
+      Eq(StatusProto::NOT_FOUND));
+  EXPECT_THAT(icing.Put(empty_document3).status(), ProtoIsOk());
 }
 
 TEST_F(IcingSearchEngineTest, DeleteShouldWorkAfterOptimization) {
@@ -6316,30 +6364,64 @@ TEST_F(IcingSearchEngineTest, SnippetSectionRestrict) {
           .Build();
   ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
 
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
-  search_spec.set_query("body:Zür");
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "MDI zurich trip")
+          .AddStringProperty("body", "Let's travel to zurich")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
 
-  ResultSpecProto result_spec;
-  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(64);
-  result_spec.mutable_snippet_spec()->set_num_matches_per_property(10);
-  result_spec.mutable_snippet_spec()->set_num_to_snippet(10);
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("body:Zür");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+  result_spec->set_num_per_page(1);
+  result_spec->mutable_snippet_spec()->set_max_window_utf32_length(64);
+  result_spec->mutable_snippet_spec()->set_num_matches_per_property(10);
+  result_spec->mutable_snippet_spec()->set_num_to_snippet(10);
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
 
   SearchResultProto results =
-      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   ASSERT_THAT(results.results(), SizeIs(1));
 
-  const DocumentProto& result_document = results.results(0).document();
-  const SnippetProto& result_snippet = results.results(0).snippet();
-  EXPECT_THAT(result_document, EqualsProto(document_one));
-  EXPECT_THAT(result_snippet.entries(), SizeIs(1));
-  EXPECT_THAT(result_snippet.entries(0).property_name(), Eq("body"));
-  std::string_view content =
-      GetString(&result_document, result_snippet.entries(0).property_name());
-  EXPECT_THAT(GetWindows(content, result_snippet.entries(0)),
+  const DocumentProto& result_document_two = results.results(0).document();
+  const SnippetProto& result_snippet_two = results.results(0).snippet();
+  EXPECT_THAT(result_document_two, EqualsProto(document_two));
+  EXPECT_THAT(result_snippet_two.entries(), SizeIs(1));
+  EXPECT_THAT(result_snippet_two.entries(0).property_name(), Eq("body"));
+  std::string_view content = GetString(
+      &result_document_two, result_snippet_two.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_two.entries(0)),
+              ElementsAre("Let's travel to zurich"));
+  EXPECT_THAT(GetMatches(content, result_snippet_two.entries(0)),
+              ElementsAre("zurich"));
+
+  search_spec.reset();
+  scoring_spec.reset();
+  result_spec.reset();
+
+  results = icing.GetNextPage(results.next_page_token());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(1));
+
+  const DocumentProto& result_document_one = results.results(0).document();
+  const SnippetProto& result_snippet_one = results.results(0).snippet();
+  EXPECT_THAT(result_document_one, EqualsProto(document_one));
+  EXPECT_THAT(result_snippet_one.entries(), SizeIs(1));
+  EXPECT_THAT(result_snippet_one.entries(0).property_name(), Eq("body"));
+  content = GetString(&result_document_one,
+                      result_snippet_one.entries(0).property_name());
+  EXPECT_THAT(GetWindows(content, result_snippet_one.entries(0)),
               ElementsAre("MDI zurich Team Meeting"));
-  EXPECT_THAT(GetMatches(content, result_snippet.entries(0)),
+  EXPECT_THAT(GetMatches(content, result_snippet_one.entries(0)),
               ElementsAre("zurich"));
 }
 
@@ -7763,25 +7845,30 @@ TEST_F(IcingSearchEngineTest, SearchWithProjectionMultipleFieldPaths) {
 
   // 2. Issue a query that will match those documents and request only
   // 'sender.name' and 'subject' properties.
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
-  search_spec.set_query("hello");
+  // Create all of search_spec, result_spec and scoring_spec as objects with
+  // scope that will end before the call to GetNextPage to ensure that the
+  // implementation isn't relying on references to any of them.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
 
-  ResultSpecProto result_spec;
+  auto result_spec = std::make_unique<ResultSpecProto>();
   // Retrieve only one result at a time to make sure that projection works when
   // retrieving all pages.
-  result_spec.set_num_per_page(1);
-  TypePropertyMask* email_field_mask = result_spec.add_type_property_masks();
+  result_spec->set_num_per_page(1);
+  TypePropertyMask* email_field_mask = result_spec->add_type_property_masks();
   email_field_mask->set_schema_type("Email");
   email_field_mask->add_paths("sender.name");
   email_field_mask->add_paths("subject");
 
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
   SearchResultProto results =
-      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(1));
 
-  // 3. Verify that the returned results only contain the 'sender.name'
+  // 3. Verify that the first returned result only contains the 'sender.name'
   // property.
   DocumentProto projected_document_two =
       DocumentBuilder()
@@ -7799,6 +7886,14 @@ TEST_F(IcingSearchEngineTest, SearchWithProjectionMultipleFieldPaths) {
   EXPECT_THAT(results.results(0).document(),
               EqualsProto(projected_document_two));
 
+  // 4. Now, delete all of the specs used in the search. GetNextPage should have
+  // no problem because it shouldn't be keeping any references to them.
+  search_spec.reset();
+  result_spec.reset();
+  scoring_spec.reset();
+
+  // 5. Verify that the second returned result only contains the 'sender.name'
+  // property.
   results = icing.GetNextPage(results.next_page_token());
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(1));
@@ -7882,6 +7977,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
   exp_stats.set_scoring_latency_ms(5);
   exp_stats.set_ranking_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Second page, 2 result with 1 snippet
@@ -7897,6 +7993,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
   exp_stats.set_num_results_with_snippets(1);
   exp_stats.set_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 1 result with 0 snippets
@@ -7912,6 +8009,7 @@ TEST_F(IcingSearchEngineTest, QueryStatsProtoTest) {
   exp_stats.set_num_results_with_snippets(0);
   exp_stats.set_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
 
@@ -8860,170 +8958,219 @@ TEST_F(IcingSearchEngineTest, GetDebugInfoWithSchemaNoDocumentsSucceeds) {
   ASSERT_THAT(result.status(), ProtoIsOk());
 }
 
-#ifndef ICING_JNI_TEST
-// We skip this test case when we're running in a jni_test since the data files
-// will be stored in the android-instrumented storage location, rather than the
-// normal cc_library runfiles directory. To get that storage location, it's
-// recommended to use the TestStorage APIs which handles different API
-// levels/absolute vs relative/etc differences. Since that's only accessible on
-// the java-side, and I haven't figured out a way to pass that directory path to
-// this native side yet, we're just going to disable this. The functionality is
-// already well-tested across 4 different emulated OS's so we're not losing much
-// test coverage here.
-TEST_F(IcingSearchEngineTest, MigrateToPortableFileBackedProtoLog) {
-  // Copy the testdata files into our IcingSearchEngine directory
-  std::string dir_without_portable_log;
-  if (IsAndroidX86()) {
-    dir_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
-        "icing_search_engine_android_x86");
-  } else if (IsAndroidArm()) {
-    dir_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
-        "icing_search_engine_android_arm");
-  } else if (IsIosPlatform()) {
-    dir_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
-        "icing_search_engine_ios");
-  } else {
-    dir_without_portable_log = GetTestFilePath(
-        "icing/testdata/not_portable_log/"
-        "icing_search_engine_linux");
-  }
-
-  // Create dst directory that we'll initialize the IcingSearchEngine over.
-  std::string base_dir = GetTestBaseDir() + "_migrate";
-  ASSERT_THAT(filesystem()->DeleteDirectoryRecursively(base_dir.c_str()), true);
-  ASSERT_THAT(filesystem()->CreateDirectoryRecursively(base_dir.c_str()), true);
-
-  ASSERT_TRUE(filesystem()->CopyDirectory(dir_without_portable_log.c_str(),
-                                          base_dir.c_str(),
-                                          /*recursive=*/true));
-
-  IcingSearchEngineOptions icing_options;
-  icing_options.set_base_dir(base_dir);
-
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
-  InitializeResultProto init_result = icing.Initialize();
-  EXPECT_THAT(init_result.status(), ProtoIsOk());
-  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
-              Eq(InitializeStatsProto::NO_DATA_LOSS));
-  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT));
-  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::NONE));
-
-  // Set up schema, this is the one used to validate documents in the testdata
-  // files. Do not change unless you're also updating the testdata files.
+TEST_F(IcingSearchEngineTest, IcingShouldWorkFor64Sections) {
+  // Create a schema with 64 sections
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("email")
+                       // Person has 4 sections.
+                       .SetType("Person")
                        .AddProperty(
                            PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetName("firstName")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
                                .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(
                            PropertyConfigBuilder()
+                               .SetName("lastName")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("emailAddress")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("phoneNumber")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       // Email has 16 sections.
+                       .SetType("Email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
                                .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("date")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("time")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("sender")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("receiver")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("cc")
+                               .SetDataTypeDocument(
+                                   "Person", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       // EmailCollection has 64 sections.
+                       .SetType("EmailCollection")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("email1")
+                               .SetDataTypeDocument(
+                                   "Email", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("email2")
+                               .SetDataTypeDocument(
+                                   "Email", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("email3")
+                               .SetDataTypeDocument(
+                                   "Email", /*index_nested_properties=*/true)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("email4")
+                               .SetDataTypeDocument(
+                                   "Email", /*index_nested_properties=*/true)
                                .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
-  // Make sure our schema is still the same as we expect. If not, there's
-  // definitely no way we're getting the documents back that we expect.
-  GetSchemaResultProto expected_get_schema_result_proto;
-  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_get_schema_result_proto.mutable_schema() = schema;
-  ASSERT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first1")
+          .AddStringProperty("lastName", "last1")
+          .AddStringProperty("emailAddress", "email1@gmail.com")
+          .AddStringProperty("phoneNumber", "000-000-001")
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first2")
+          .AddStringProperty("lastName", "last2")
+          .AddStringProperty("emailAddress", "email2@gmail.com")
+          .AddStringProperty("phoneNumber", "000-000-002")
+          .Build();
+  DocumentProto person3 =
+      DocumentBuilder()
+          .SetKey("namespace", "person3")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first3")
+          .AddStringProperty("lastName", "last3")
+          .AddStringProperty("emailAddress", "email3@gmail.com")
+          .AddStringProperty("phoneNumber", "000-000-003")
+          .Build();
+  DocumentProto email1 = DocumentBuilder()
+                             .SetKey("namespace", "email1")
+                             .SetSchema("Email")
+                             .AddStringProperty("body", "test body")
+                             .AddStringProperty("subject", "test subject")
+                             .AddStringProperty("date", "2022-08-01")
+                             .AddStringProperty("time", "1:00 PM")
+                             .AddDocumentProperty("sender", person1)
+                             .AddDocumentProperty("receiver", person2)
+                             .AddDocumentProperty("cc", person3)
+                             .Build();
+  DocumentProto email2 = DocumentBuilder()
+                             .SetKey("namespace", "email2")
+                             .SetSchema("Email")
+                             .AddStringProperty("body", "test body")
+                             .AddStringProperty("subject", "test subject")
+                             .AddStringProperty("date", "2022-08-02")
+                             .AddStringProperty("time", "2:00 PM")
+                             .AddDocumentProperty("sender", person2)
+                             .AddDocumentProperty("receiver", person1)
+                             .AddDocumentProperty("cc", person3)
+                             .Build();
+  DocumentProto email3 = DocumentBuilder()
+                             .SetKey("namespace", "email3")
+                             .SetSchema("Email")
+                             .AddStringProperty("body", "test body")
+                             .AddStringProperty("subject", "test subject")
+                             .AddStringProperty("date", "2022-08-03")
+                             .AddStringProperty("time", "3:00 PM")
+                             .AddDocumentProperty("sender", person3)
+                             .AddDocumentProperty("receiver", person1)
+                             .AddDocumentProperty("cc", person2)
+                             .Build();
+  DocumentProto email4 = DocumentBuilder()
+                             .SetKey("namespace", "email4")
+                             .SetSchema("Email")
+                             .AddStringProperty("body", "test body")
+                             .AddStringProperty("subject", "test subject")
+                             .AddStringProperty("date", "2022-08-04")
+                             .AddStringProperty("time", "4:00 PM")
+                             .AddDocumentProperty("sender", person3)
+                             .AddDocumentProperty("receiver", person2)
+                             .AddDocumentProperty("cc", person1)
+                             .Build();
+  DocumentProto email_collection =
+      DocumentBuilder()
+          .SetKey("namespace", "email_collection")
+          .SetSchema("EmailCollection")
+          .AddDocumentProperty("email1", email1)
+          .AddDocumentProperty("email2", email2)
+          .AddDocumentProperty("email3", email3)
+          .AddDocumentProperty("email4", email4)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
 
-  // These are the documents that are stored in the testdata files. Do not
-  // change unless you're also updating the testdata files.
-  DocumentProto document1 = DocumentBuilder()
-                                .SetKey("namespace1", "uri1")
-                                .SetSchema("email")
-                                .SetCreationTimestampMs(10)
-                                .AddStringProperty("subject", "foo")
-                                .AddStringProperty("body", "bar")
-                                .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email_collection).status(), ProtoIsOk());
 
-  DocumentProto document2 = DocumentBuilder()
-                                .SetKey("namespace1", "uri2")
-                                .SetSchema("email")
-                                .SetCreationTimestampMs(20)
-                                .SetScore(321)
-                                .AddStringProperty("body", "baz bat")
-                                .Build();
+  const std::vector<std::string> query_terms = {
+      "first1", "last2",   "email3@gmail.com", "000-000-001",
+      "body",   "subject", "2022-08-02",       "3\\:00"};
+  SearchResultProto expected_document;
+  expected_document.mutable_status()->set_code(StatusProto::OK);
+  *expected_document.mutable_results()->Add()->mutable_document() =
+      email_collection;
+  for (const std::string& query_term : query_terms) {
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::PREFIX);
+    search_spec.set_query(query_term);
+    SearchResultProto actual_results =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(actual_results,
+                EqualsSearchResultIgnoreStatsAndScores(expected_document));
+  }
 
-  DocumentProto document3 = DocumentBuilder()
-                                .SetKey("namespace2", "uri1")
-                                .SetSchema("email")
-                                .SetCreationTimestampMs(30)
-                                .SetScore(123)
-                                .AddStringProperty("subject", "phoo")
-                                .Build();
-
-  // Document 1 and 3 were put normally, and document 2 was deleted in our
-  // testdata files.
-  EXPECT_THAT(icing
-                  .Get(document1.namespace_(), document1.uri(),
-                       GetResultSpecProto::default_instance())
-                  .document(),
-              EqualsProto(document1));
-  EXPECT_THAT(icing
-                  .Get(document2.namespace_(), document2.uri(),
-                       GetResultSpecProto::default_instance())
-                  .status(),
-              ProtoStatusIs(StatusProto::NOT_FOUND));
-  EXPECT_THAT(icing
-                  .Get(document3.namespace_(), document3.uri(),
-                       GetResultSpecProto::default_instance())
-                  .document(),
-              EqualsProto(document3));
-
-  // Searching for "foo" should get us document1.
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::PREFIX);
   search_spec.set_query("foo");
-
-  SearchResultProto expected_document1;
-  expected_document1.mutable_status()->set_code(StatusProto::OK);
-  *expected_document1.mutable_results()->Add()->mutable_document() = document1;
-
+  SearchResultProto expected_no_documents;
+  expected_no_documents.mutable_status()->set_code(StatusProto::OK);
   SearchResultProto actual_results =
       icing.Search(search_spec, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
-              EqualsSearchResultIgnoreStatsAndScores(expected_document1));
-
-  // Searching for "baz" would've gotten us document2, except it got deleted.
-  // Make sure that it's cleared from our index too.
-  search_spec.set_query("baz");
-
-  SearchResultProto expected_no_documents;
-  expected_no_documents.mutable_status()->set_code(StatusProto::OK);
-
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
-
-  // Searching for "phoo" should get us document3.
-  search_spec.set_query("phoo");
-
-  SearchResultProto expected_document3;
-  expected_document3.mutable_status()->set_code(StatusProto::OK);
-  *expected_document3.mutable_results()->Add()->mutable_document() = document3;
-
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results,
-              EqualsSearchResultIgnoreStatsAndScores(expected_document3));
 }
-#endif  // !ICING_JNI_TEST
 
 }  // namespace
 }  // namespace lib

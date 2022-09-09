@@ -102,6 +102,8 @@ class ResultStateManager {
   // Invalidates all result states / tokens currently in ResultStateManager.
   void InvalidateAllResultStates() ICING_LOCKS_EXCLUDED(mutex_);
 
+  int num_total_hits() const { return num_total_hits_; }
+
  private:
   absl_ports::shared_mutex mutex_;
 

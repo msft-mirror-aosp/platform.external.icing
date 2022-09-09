@@ -69,7 +69,7 @@ struct ParserStateFrame {
 
   // If the last independent token was a property/section filter, then we need
   // to save the section name so we can create a section filter iterator.
-  std::string_view section_restrict = "";
+  std::string section_restrict;
 };
 
 // Combines any OR and AND iterators together into one iterator.
@@ -145,8 +145,11 @@ DocHitInfoIteratorFilter::Options QueryProcessor::getFilterOptions(
 }
 
 libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
-  ICING_ASSIGN_OR_RETURN(QueryResults results, ParseRawQuery(search_spec));
+QueryProcessor::ParseSearch(
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
+  ICING_ASSIGN_OR_RETURN(QueryResults results,
+                         ParseRawQuery(search_spec, ranking_strategy));
 
   DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
@@ -157,7 +160,9 @@ QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
 
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto
 libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
+QueryProcessor::ParseRawQuery(
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
   DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
 
   // Tokenize the incoming raw query
@@ -220,7 +225,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
               "Encountered empty stack of ParserStateFrames");
         }
 
-        frames.top().section_restrict = token.text;
+        frames.top().section_restrict = std::string(token.text);
         break;
       }
       case Token::Type::REGULAR: {
@@ -257,8 +262,11 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
 
         ICING_ASSIGN_OR_RETURN(
             result_iterator,
-            index_.GetIterator(normalized_text, kSectionIdMaskAll,
-                               search_spec.term_match_type()));
+            index_.GetIterator(
+                normalized_text, kSectionIdMaskAll,
+                search_spec.term_match_type(),
+                /*need_hit_term_frequency=*/ranking_strategy ==
+                    ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
         // Add term iterator and terms to match if this is not a negation term.
         // WARNING: setting query terms at this point is not compatible with
@@ -268,14 +276,19 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
         if (!frames.top().saw_exclude) {
           ICING_ASSIGN_OR_RETURN(
               std::unique_ptr<DocHitInfoIterator> term_iterator,
-              index_.GetIterator(normalized_text, kSectionIdMaskAll,
-                                 search_spec.term_match_type()));
+              index_.GetIterator(
+                  normalized_text, kSectionIdMaskAll,
+                  search_spec.term_match_type(),
+                  /*need_hit_term_frequency=*/ranking_strategy ==
+                      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
-          results.query_term_iterators[normalized_text] =
-              std::make_unique<DocHitInfoIteratorFilter>(
-                  std::move(term_iterator), &document_store_, &schema_store_,
-                  options);
-
+          if (ranking_strategy ==
+              ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE) {
+            results.query_term_iterators[normalized_text] =
+                std::make_unique<DocHitInfoIteratorFilter>(
+                    std::move(term_iterator), &document_store_, &schema_store_,
+                    options);
+          }
           results.query_terms[frames.top().section_restrict].insert(
               std::move(normalized_text));
         }
@@ -330,7 +343,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
         // the section restrict
         result_iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
             std::move(result_iterator), &document_store_, &schema_store_,
-            frames.top().section_restrict);
+            std::move(frames.top().section_restrict));
 
         frames.top().section_restrict = "";
       }

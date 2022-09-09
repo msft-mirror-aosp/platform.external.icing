@@ -26,7 +26,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 5
+// Next tag: 6
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -61,6 +61,10 @@ message SearchSpecProto {
   // applies to the entire 'query'. To issue different queries for different
   // schema types, separate Search()'s will need to be made.
   repeated string schema_type_filters = 4;
+
+  // Timestamp taken just before sending proto across the JNI boundary from java
+  // to native side.
+  optional int64 java_to_native_start_timestamp_ms = 5;
 }
 
 // Client-supplied specifications on what to include/how to format the search
