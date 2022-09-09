@@ -265,11 +265,13 @@ IndexStorageInfoProto Index::GetStorageInfo() const {
 }
 
 libtextclassifier3::Status Index::Optimize(
-    const std::vector<DocumentId>& document_id_old_to_new) {
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) {
   if (main_index_->last_added_document_id() != kInvalidDocumentId) {
     ICING_RETURN_IF_ERROR(main_index_->Optimize(document_id_old_to_new));
   }
-  return lite_index_->Optimize(document_id_old_to_new, term_id_codec_.get());
+  return lite_index_->Optimize(document_id_old_to_new, term_id_codec_.get(),
+                               new_last_added_document_id);
 }
 
 libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {

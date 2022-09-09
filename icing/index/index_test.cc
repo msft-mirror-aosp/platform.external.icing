@@ -267,7 +267,8 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterOptimize) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   index_->set_last_added_document_id(kDocumentId2);
 
-  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
+                                   /*new_last_added_document_id=*/2));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
                   kDocumentId2, std::vector<SectionId>{kSectionId2}))));
@@ -275,7 +276,8 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterOptimize) {
 
   // Mapping to a different docid will translate the hit
   ICING_ASSERT_OK(index_->Optimize(
-      /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1}));
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1},
+      /*new_last_added_document_id=*/1));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
                   kDocumentId1, std::vector<SectionId>{kSectionId2}))));
@@ -283,10 +285,11 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterOptimize) {
 
   // Mapping to kInvalidDocumentId will remove the hit.
   ICING_ASSERT_OK(
-      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId}));
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId},
+                       /*new_last_added_document_id=*/0));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
+  EXPECT_EQ(index_->last_added_document_id(), kDocumentId0);
 }
 
 TEST_F(IndexTest, SingleHitSingleTermIndexAfterMergeAndOptimize) {
@@ -298,7 +301,8 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMergeAndOptimize) {
 
   ICING_ASSERT_OK(index_->Merge());
 
-  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
+                                   /*new_last_added_document_id=*/2));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
                   kDocumentId2, std::vector<SectionId>{kSectionId2}))));
@@ -306,7 +310,8 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMergeAndOptimize) {
 
   // Mapping to a different docid will translate the hit
   ICING_ASSERT_OK(index_->Optimize(
-      /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1}));
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId, kDocumentId1},
+      /*new_last_added_document_id=*/1));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
                   kDocumentId1, std::vector<SectionId>{kSectionId2}))));
@@ -314,10 +319,11 @@ TEST_F(IndexTest, SingleHitSingleTermIndexAfterMergeAndOptimize) {
 
   // Mapping to kInvalidDocumentId will remove the hit.
   ICING_ASSERT_OK(
-      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId}));
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId},
+                       /*new_last_added_document_id=*/0));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
+  EXPECT_EQ(index_->last_added_document_id(), 0);
 }
 
 TEST_F(IndexTest, SingleHitMultiTermIndex) {
@@ -369,7 +375,8 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterOptimize) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   index_->set_last_added_document_id(kDocumentId2);
 
-  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
+                                   /*new_last_added_document_id=*/2));
   EXPECT_THAT(
       GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
@@ -383,7 +390,8 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterOptimize) {
 
   // Delete document id 1, and document id 2 is translated to 1.
   ICING_ASSERT_OK(
-      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1}));
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
+                       /*new_last_added_document_id=*/1));
   EXPECT_THAT(
       GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
@@ -396,7 +404,8 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterOptimize) {
 
   // Delete all the rest documents.
   ICING_ASSERT_OK(index_->Optimize(
-      /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId}));
+      /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId},
+      /*new_last_added_document_id=*/kInvalidDocumentId));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
@@ -423,7 +432,8 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMergeAndOptimize) {
 
   ICING_ASSERT_OK(index_->Merge());
 
-  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2}));
+  ICING_ASSERT_OK(index_->Optimize(/*document_id_old_to_new=*/{0, 1, 2},
+                                   /*new_last_added_document_id=*/2));
   EXPECT_THAT(
       GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
@@ -437,7 +447,8 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMergeAndOptimize) {
 
   // Delete document id 1, and document id 2 is translated to 1.
   ICING_ASSERT_OK(
-      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1}));
+      index_->Optimize(/*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
+                       /*new_last_added_document_id=*/1));
   EXPECT_THAT(
       GetHits("foo", TermMatchType::EXACT_ONLY),
       IsOkAndHolds(ElementsAre(
@@ -450,7 +461,8 @@ TEST_F(IndexTest, MultiHitMultiTermIndexAfterMergeAndOptimize) {
 
   // Delete all the rest documents.
   ICING_ASSERT_OK(index_->Optimize(
-      /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId}));
+      /*document_id_old_to_new=*/{kInvalidDocumentId, kInvalidDocumentId},
+      /*new_last_added_document_id=*/kInvalidDocumentId));
   EXPECT_THAT(GetHits("foo", TermMatchType::EXACT_ONLY),
               IsOkAndHolds(IsEmpty()));
   EXPECT_THAT(GetHits("bar", TermMatchType::EXACT_ONLY),
@@ -986,7 +998,10 @@ TEST_F(IndexTest, FullIndexMerge) {
 
 TEST_F(IndexTest, OptimizeShouldWorkForEmptyIndex) {
   // Optimize an empty index should succeed, but have no effects.
-  ICING_ASSERT_OK(index_->Optimize(std::vector<DocumentId>()));
+  ICING_ASSERT_OK(
+      index_->Optimize(std::vector<DocumentId>(),
+                       /*new_last_added_document_id=*/kInvalidDocumentId));
+  EXPECT_EQ(index_->last_added_document_id(), kInvalidDocumentId);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DocHitInfoIterator> itr,
@@ -1053,7 +1068,8 @@ TEST_F(IndexTest, IndexOptimize) {
   std::reverse(exp_prefix_hits.begin(), exp_prefix_hits.end());
 
   // Check that optimize is correct
-  ICING_ASSERT_OK(index_->Optimize(document_id_old_to_new));
+  ICING_ASSERT_OK(
+      index_->Optimize(document_id_old_to_new, new_last_added_document_id));
   EXPECT_EQ(index_->last_added_document_id(), new_last_added_document_id);
   // Check prefix search.
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocHitInfo> hits,
