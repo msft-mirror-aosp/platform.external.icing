@@ -3003,6 +3003,54 @@ TEST_F(IcingSearchEngineTest, GetAndPutShouldWorkAfterOptimization) {
   EXPECT_THAT(icing.Put(document5).status(), ProtoIsOk());
 }
 
+TEST_F(IcingSearchEngineTest,
+       GetAndPutShouldWorkAfterOptimizationWithEmptyDocuments) {
+  DocumentProto empty_document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto empty_document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto empty_document3 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.Put(empty_document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(empty_document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete("namespace", "uri2").status(), ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Validates that Get() and Put() are good right after Optimize()
+  *expected_get_result_proto.mutable_document() = empty_document1;
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .status()
+          .code(),
+      Eq(StatusProto::NOT_FOUND));
+  EXPECT_THAT(icing.Put(empty_document3).status(), ProtoIsOk());
+}
+
 TEST_F(IcingSearchEngineTest, DeleteShouldWorkAfterOptimization) {
   DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
   DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
