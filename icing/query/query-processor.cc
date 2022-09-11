@@ -46,7 +46,6 @@
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -105,31 +104,27 @@ QueryProcessor::Create(Index* index,
                        const LanguageSegmenter* language_segmenter,
                        const Normalizer* normalizer,
                        const DocumentStore* document_store,
-                       const SchemaStore* schema_store, const Clock* clock) {
+                       const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
-  ICING_RETURN_ERROR_IF_NULL(clock);
 
-  return std::unique_ptr<QueryProcessor>(
-      new QueryProcessor(index, language_segmenter, normalizer, document_store,
-                         schema_store, clock));
+  return std::unique_ptr<QueryProcessor>(new QueryProcessor(
+      index, language_segmenter, normalizer, document_store, schema_store));
 }
 
 QueryProcessor::QueryProcessor(Index* index,
                                const LanguageSegmenter* language_segmenter,
                                const Normalizer* normalizer,
                                const DocumentStore* document_store,
-                               const SchemaStore* schema_store,
-                               const Clock* clock)
+                               const SchemaStore* schema_store)
     : index_(*index),
       language_segmenter_(*language_segmenter),
       normalizer_(*normalizer),
       document_store_(*document_store),
-      schema_store_(*schema_store),
-      clock_(*clock) {}
+      schema_store_(*schema_store) {}
 
 DocHitInfoIteratorFilter::Options QueryProcessor::getFilterOptions(
     const SearchSpecProto& search_spec) {
@@ -156,7 +151,7 @@ QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
   DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
-      &clock_, options);
+      options);
   return results;
 }
 
@@ -187,7 +182,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
     const Token& token = tokens.at(i);
     std::unique_ptr<DocHitInfoIterator> result_iterator;
 
-    // TODO(cassiewang): Handle negation tokens
+    // TODO(b/202076890): Handle negation tokens
     switch (token.type) {
       case Token::Type::QUERY_LEFT_PARENTHESES: {
         frames.emplace(ParserStateFrame());
@@ -279,7 +274,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
           results.query_term_iterators[normalized_text] =
               std::make_unique<DocHitInfoIteratorFilter>(
                   std::move(term_iterator), &document_store_, &schema_store_,
-                  &clock_, options);
+                  options);
 
           results.query_terms[frames.top().section_restrict].insert(
               std::move(normalized_text));
