@@ -30,7 +30,6 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -49,6 +48,7 @@
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
@@ -90,6 +90,8 @@ constexpr std::string_view kRepeatedProperty = "repeated";
 constexpr std::string_view kSubProperty = "submessage";
 constexpr std::string_view kNestedType = "NestedType";
 constexpr std::string_view kNestedProperty = "nested";
+constexpr std::string_view kExactVerbatimProperty = "verbatimExact";
+constexpr std::string_view kPrefixedVerbatimProperty = "verbatimPrefixed";
 
 constexpr DocumentId kDocumentId0 = 0;
 constexpr DocumentId kDocumentId1 = 1;
@@ -98,6 +100,8 @@ constexpr SectionId kExactSectionId = 0;
 constexpr SectionId kPrefixedSectionId = 1;
 constexpr SectionId kRepeatedSectionId = 2;
 constexpr SectionId kNestedSectionId = 3;
+constexpr SectionId kExactVerbatimSectionId = 4;
+constexpr SectionId kPrefixedVerbatimSectionId = 5;
 
 using Cardinality = PropertyConfigProto::Cardinality;
 using DataType = PropertyConfigProto::DataType;
@@ -106,21 +110,23 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Test;
 
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
-constexpr PropertyConfigProto_DataType_Code TYPE_BYTES =
-    PropertyConfigProto_DataType_Code_BYTES;
+constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
+    PropertyConfigProto::DataType::STRING;
+constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
+    PropertyConfigProto::DataType::BYTES;
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
-    PropertyConfigProto_Cardinality_Code_REPEATED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
+    PropertyConfigProto::Cardinality::REPEATED;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
+    StringIndexingConfig::TokenizerType::VERBATIM;
 
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
-constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
 
 class IndexProcessorTest : public Test {
  protected:
@@ -147,9 +153,12 @@ class IndexProcessorTest : public Test {
         normalizer_factory::Create(
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
+    std::string schema_store_dir = GetTestTempDir() + "/schema_store";
+    ASSERT_TRUE(
+        filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, GetTestTempDir(), &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -177,6 +186,16 @@ class IndexProcessorTest : public Test {
                         PropertyConfigBuilder()
                             .SetName(kRepeatedProperty)
                             .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kExactVerbatimProperty)
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_VERBATIM)
+                            .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPrefixedVerbatimProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_VERBATIM)
                             .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(
                         PropertyConfigBuilder()
@@ -795,6 +814,95 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
               IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
+}
+
+TEST_F(IndexProcessorTest, ExactVerbatimProperty) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kExactVerbatimProperty),
+                             "Hello, world!")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 1);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("Hello, world!", kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+      {kExactVerbatimSectionId, 1}};
+
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expectedMap)));
+}
+
+TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPrefixedVerbatimProperty),
+                             "Hello, world!")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 1);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // We expect to match the document we indexed as "Hello, w" is a prefix
+  // of "Hello, world!"
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("Hello, w", kSectionIdMaskAll,
+                                                 TermMatchType::PREFIX));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
+      {kPrefixedVerbatimSectionId, 1}};
+
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expectedMap)));
+}
+
+TEST_F(IndexProcessorTest, VerbatimPropertyDoesntMatchSubToken) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPrefixedVerbatimProperty),
+                             "Hello, world!")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 1);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("world", kSectionIdMaskAll, TermMatchType::PREFIX));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+
+  // We should not have hits for term "world" as the index processor should
+  // create a sole token "Hello, world! for the document.
+  EXPECT_THAT(hits, IsEmpty());
 }
 
 }  // namespace
