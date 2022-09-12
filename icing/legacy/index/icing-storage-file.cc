@@ -80,8 +80,7 @@ bool IcingStorageFile::Sync() {
     ICING_LOG(ERROR) << "Post-sync " << filename_ << " failed";
     return false;
   }
-  ICING_VLOG(1) << "Syncing " << filename_ << " took " << timer.Elapsed() * 1000
-                << "ms";
+  ICING_VLOG(1) << "Syncing " << filename_ << " took " << timer.Elapsed() * 1000 << "ms";
   return true;
 }
 
