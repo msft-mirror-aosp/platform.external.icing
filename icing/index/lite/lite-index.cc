@@ -484,7 +484,8 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
 
 libtextclassifier3::Status LiteIndex::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
-    const TermIdCodec* term_id_codec) {
+    const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id) {
+  header_->set_last_added_docid(new_last_added_document_id);
   if (header_->cur_size() == 0) {
     return libtextclassifier3::Status::OK;
   }
@@ -492,8 +493,6 @@ libtextclassifier3::Status LiteIndex::Optimize(
   // which helps later to determine which terms will be unused after compaction.
   SortHits();
   uint32_t new_size = 0;
-  // The largest document id after translating hits.
-  DocumentId largest_document_id = kInvalidDocumentId;
   uint32_t curr_term_id = 0;
   uint32_t curr_tvi = 0;
   std::unordered_set<uint32_t> tvi_to_delete;
@@ -518,10 +517,6 @@ libtextclassifier3::Status LiteIndex::Optimize(
     if (new_document_id == kInvalidDocumentId) {
       continue;
     }
-    if (largest_document_id == kInvalidDocumentId ||
-        new_document_id > largest_document_id) {
-      largest_document_id = new_document_id;
-    }
     if (term_id_hit_pair.hit().is_in_prefix_section()) {
       lexicon_.SetProperty(curr_tvi, GetHasHitsInPrefixSectionPropertyId());
     }
@@ -539,7 +534,6 @@ libtextclassifier3::Status LiteIndex::Optimize(
   }
   header_->set_cur_size(new_size);
   header_->set_searchable_end(new_size);
-  header_->set_last_added_docid(largest_document_id);
 
   // Delete unused terms.
   std::unordered_set<std::string> terms_to_delete;
