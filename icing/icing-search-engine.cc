@@ -1113,7 +1113,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
-  auto query_results_or = query_processor->ParseSearch(search_spec);
+  auto query_results_or = query_processor->ParseSearch(
+      search_spec, ScoringSpecProto::RankingStrategy::NONE);
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -1259,7 +1260,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     optimize_stats->set_index_restoration_mode(
         OptimizeStatsProto::INDEX_TRANSLATION);
     libtextclassifier3::Status index_optimize_status =
-        index_->Optimize(document_id_old_to_new_or.ValueOrDie());
+        index_->Optimize(document_id_old_to_new_or.ValueOrDie(),
+                         document_store_->last_added_document_id());
     if (!index_optimize_status.ok()) {
       ICING_LOG(WARNING) << "Failed to optimize index. Error: "
                          << index_optimize_status.error_message();
@@ -1487,19 +1489,21 @@ SearchResultProto IcingSearchEngine::Search(
     const ResultSpecProto& result_spec) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
-  // TODO(b/146008613) Explore ideas to make this function read-only.
-  absl_ports::unique_lock l(&mutex_);
-  if (!initialized_) {
-    result_status->set_code(StatusProto::FAILED_PRECONDITION);
-    result_status->set_message("IcingSearchEngine has not been initialized!");
-    return result_proto;
-  }
 
   QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   query_stats->set_query_length(search_spec.query().length());
   ScopedTimer overall_timer(clock_->GetNewTimer(), [query_stats](int64_t t) {
     query_stats->set_latency_ms(t);
   });
+  // TODO(b/146008613) Explore ideas to make this function read-only.
+  absl_ports::unique_lock l(&mutex_);
+  query_stats->set_lock_acquisition_latency_ms(
+      overall_timer.timer().GetElapsedMilliseconds());
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   libtextclassifier3::Status status = ValidateResultSpec(result_spec);
   if (!status.ok()) {
@@ -1534,7 +1538,8 @@ SearchResultProto IcingSearchEngine::Search(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
-  auto query_results_or = query_processor->ParseSearch(search_spec);
+  auto query_results_or =
+      query_processor->ParseSearch(search_spec, scoring_spec.rank_by());
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     query_stats->set_parse_query_latency_ms(
@@ -1643,19 +1648,20 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
+  QueryStatsProto* query_stats = result_proto.mutable_query_stats();
+  query_stats->set_is_first_page(false);
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
   // ResultStateManager has its own writer lock, so here we only need a reader
   // lock for other components.
   absl_ports::shared_lock l(&mutex_);
+  query_stats->set_lock_acquisition_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
     return result_proto;
   }
 
-  QueryStatsProto* query_stats = result_proto.mutable_query_stats();
-  query_stats->set_is_first_page(false);
-
-  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
   auto result_retriever_or =
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get());

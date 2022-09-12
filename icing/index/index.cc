@@ -183,21 +183,24 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
-                   TermMatchType::Code term_match_type) {
+                   TermMatchType::Code term_match_type,
+                   bool need_hit_term_frequency) {
   std::unique_ptr<DocHitInfoIterator> lite_itr;
   std::unique_ptr<DocHitInfoIterator> main_itr;
   switch (term_match_type) {
     case TermMatchType::EXACT_ONLY:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLiteExact>(
-          term_id_codec_.get(), lite_index_.get(), term, section_id_mask);
+          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
+          need_hit_term_frequency);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainExact>(
-          main_index_.get(), term, section_id_mask);
+          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
       break;
     case TermMatchType::PREFIX:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLitePrefix>(
-          term_id_codec_.get(), lite_index_.get(), term, section_id_mask);
+          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
+          need_hit_term_frequency);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-          main_index_.get(), term, section_id_mask);
+          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
       break;
     default:
       return absl_ports::InvalidArgumentError(
@@ -265,11 +268,13 @@ IndexStorageInfoProto Index::GetStorageInfo() const {
 }
 
 libtextclassifier3::Status Index::Optimize(
-    const std::vector<DocumentId>& document_id_old_to_new) {
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) {
   if (main_index_->last_added_document_id() != kInvalidDocumentId) {
     ICING_RETURN_IF_ERROR(main_index_->Optimize(document_id_old_to_new));
   }
-  return lite_index_->Optimize(document_id_old_to_new, term_id_codec_.get());
+  return lite_index_->Optimize(document_id_old_to_new, term_id_codec_.get(),
+                               new_last_added_document_id);
 }
 
 libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {

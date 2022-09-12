@@ -185,7 +185,7 @@ class Index {
   //   INVALID_ARGUMENT if given an invalid term_match_type
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
       const std::string& term, SectionIdMask section_id_mask,
-      TermMatchType::Code term_match_type);
+      TermMatchType::Code term_match_type, bool need_hit_term_frequency = true);
 
   // Finds terms with the given prefix in the given namespaces. If
   // 'namespace_ids' is empty, returns results from all the namespaces. Results
@@ -264,13 +264,16 @@ class Index {
   }
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
+  // new_last_added_document_id will be used to update the last added document
+  // id in the lite index.
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
   //                               invalid state and should be cleared.
   libtextclassifier3::Status Optimize(
-      const std::vector<DocumentId>& document_id_old_to_new);
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id);
 
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,

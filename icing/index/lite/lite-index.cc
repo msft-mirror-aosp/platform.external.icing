@@ -230,7 +230,8 @@ Crc32 LiteIndex::ComputeChecksum() {
   Crc32 all_crc(header_->CalculateHeaderCrc());
   all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
                                   sizeof(dependent_crcs)));
-  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000 << "ms";
+  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000
+                << "ms";
 
   return all_crc;
 }
@@ -332,10 +333,11 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
   return tvi;
 }
 
-int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
-                          bool only_from_prefix_sections,
-                          const NamespaceChecker* namespace_checker,
-                          std::vector<DocHitInfo>* hits_out) {
+int LiteIndex::AppendHits(
+    uint32_t term_id, SectionIdMask section_id_mask,
+    bool only_from_prefix_sections, const NamespaceChecker* namespace_checker,
+    std::vector<DocHitInfo>* hits_out,
+    std::vector<Hit::TermFrequencyArray>* term_frequency_out) {
   int count = 0;
   DocumentId last_document_id = kInvalidDocumentId;
   // Record whether the last document belongs to the given namespaces.
@@ -347,7 +349,7 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
 
     const Hit& hit = term_id_hit_pair.hit();
     // Check sections.
-    if (((1u << hit.section_id()) & section_id_mask) == 0) {
+    if (((UINT64_C(1) << hit.section_id()) & section_id_mask) == 0) {
       continue;
     }
     // Check prefix section only.
@@ -368,10 +370,16 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
       ++count;
       if (hits_out != nullptr) {
         hits_out->push_back(DocHitInfo(document_id));
+        if (term_frequency_out != nullptr) {
+          term_frequency_out->push_back(Hit::TermFrequencyArray());
+        }
       }
     }
     if (hits_out != nullptr && last_document_in_namespace) {
-      hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
+      hits_out->back().UpdateSection(hit.section_id());
+      if (term_frequency_out != nullptr) {
+        term_frequency_out->back()[hit.section_id()] = hit.term_frequency();
+      }
     }
   }
   return count;
@@ -458,7 +466,8 @@ void LiteIndex::SortHits() {
                        array_start + header_->cur_size());
   }
   ICING_VLOG(2) << "Lite index sort and merge " << sort_len << " into "
-      << header_->searchable_end() << " in " << timer.Elapsed() * 1000 << "ms";
+                << header_->searchable_end() << " in " << timer.Elapsed() * 1000
+                << "ms";
 
   // Now the entire array is sorted.
   header_->set_searchable_end(header_->cur_size());
@@ -484,7 +493,8 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
 
 libtextclassifier3::Status LiteIndex::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
-    const TermIdCodec* term_id_codec) {
+    const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id) {
+  header_->set_last_added_docid(new_last_added_document_id);
   if (header_->cur_size() == 0) {
     return libtextclassifier3::Status::OK;
   }
@@ -492,8 +502,6 @@ libtextclassifier3::Status LiteIndex::Optimize(
   // which helps later to determine which terms will be unused after compaction.
   SortHits();
   uint32_t new_size = 0;
-  // The largest document id after translating hits.
-  DocumentId largest_document_id = kInvalidDocumentId;
   uint32_t curr_term_id = 0;
   uint32_t curr_tvi = 0;
   std::unordered_set<uint32_t> tvi_to_delete;
@@ -518,10 +526,6 @@ libtextclassifier3::Status LiteIndex::Optimize(
     if (new_document_id == kInvalidDocumentId) {
       continue;
     }
-    if (largest_document_id == kInvalidDocumentId ||
-        new_document_id > largest_document_id) {
-      largest_document_id = new_document_id;
-    }
     if (term_id_hit_pair.hit().is_in_prefix_section()) {
       lexicon_.SetProperty(curr_tvi, GetHasHitsInPrefixSectionPropertyId());
     }
@@ -539,7 +543,6 @@ libtextclassifier3::Status LiteIndex::Optimize(
   }
   header_->set_cur_size(new_size);
   header_->set_searchable_end(new_size);
-  header_->set_last_added_docid(largest_document_id);
 
   // Delete unused terms.
   std::unordered_set<std::string> terms_to_delete;
