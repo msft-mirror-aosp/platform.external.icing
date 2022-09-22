@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/destructible-directory.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/proto/document.pb.h"
@@ -35,7 +36,7 @@
 #include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
-#include "icing/store/key-mapper.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -49,8 +50,9 @@ constexpr char kSchemaStoreHeaderFilename[] = "schema_store_header";
 constexpr char kSchemaFilename[] = "schema.pb";
 constexpr char kSchemaTypeMapperFilename[] = "schema_type_mapper";
 
-// A KeyMapper stores its data across 3 arrays internally. Giving each array
-// 128KiB for storage means the entire KeyMapper requires 384KiB.
+// A DynamicTrieKeyMapper stores its data across 3 arrays internally. Giving
+// each array 128KiB for storage means the entire DynamicTrieKeyMapper requires
+// 384KiB.
 constexpr int32_t kSchemaTypeMapperMaxSize = 3 * 128 * 1024;  // 384 KiB
 
 const std::string MakeHeaderFilename(const std::string& base_dir) {
@@ -108,25 +110,58 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
 
+  if (!filesystem->DirectoryExists(base_dir.c_str())) {
+    return absl_ports::FailedPreconditionError(
+        "Schema store base directory does not exist!");
+  }
   std::unique_ptr<SchemaStore> schema_store = std::unique_ptr<SchemaStore>(
       new SchemaStore(filesystem, base_dir, clock));
   ICING_RETURN_IF_ERROR(schema_store->Initialize(initialize_stats));
   return schema_store;
 }
 
+libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, SchemaProto schema) {
+  ICING_RETURN_ERROR_IF_NULL(filesystem);
+  ICING_RETURN_ERROR_IF_NULL(clock);
+
+  if (!filesystem->DirectoryExists(base_dir.c_str())) {
+    return absl_ports::FailedPreconditionError(
+        "Schema store base directory does not exist!");
+  }
+  std::unique_ptr<SchemaStore> schema_store = std::unique_ptr<SchemaStore>(
+      new SchemaStore(filesystem, base_dir, clock));
+  ICING_RETURN_IF_ERROR(schema_store->Initialize(std::move(schema)));
+  return schema_store;
+}
+
 SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
                          const Clock* clock)
-    : filesystem_(*filesystem),
+    : filesystem_(filesystem),
       base_dir_(std::move(base_dir)),
-      clock_(*clock),
-      schema_file_(*filesystem, MakeSchemaFilename(base_dir_)) {}
+      clock_(clock),
+      schema_file_(std::make_unique<FileBackedProto<SchemaProto>>(
+          *filesystem, MakeSchemaFilename(base_dir_))) {}
 
 SchemaStore::~SchemaStore() {
-  if (has_schema_successfully_set_) {
+  if (has_schema_successfully_set_ && schema_file_ != nullptr &&
+      schema_type_mapper_ != nullptr && section_manager_ != nullptr) {
     if (!PersistToDisk().ok()) {
       ICING_LOG(ERROR) << "Error persisting to disk in SchemaStore destructor";
     }
   }
+}
+
+libtextclassifier3::Status SchemaStore::Initialize(SchemaProto new_schema) {
+  if (!absl_ports::IsNotFound(GetSchema().status())) {
+    return absl_ports::FailedPreconditionError(
+        "Incorrectly tried to initialize schema store with a new schema, when "
+        "one is already set!");
+  }
+  ICING_RETURN_IF_ERROR(schema_file_->Write(
+      std::make_unique<SchemaProto>(std::move(new_schema))));
+  return InitializeInternal(/*initialize_stats=*/nullptr);
 }
 
 libtextclassifier3::Status SchemaStore::Initialize(
@@ -139,13 +174,16 @@ libtextclassifier3::Status SchemaStore::Initialize(
     // Real error when trying to read the existing schema
     return schema_proto_or.status();
   }
-  has_schema_successfully_set_ = true;
+  return InitializeInternal(initialize_stats);
+}
 
+libtextclassifier3::Status SchemaStore::InitializeInternal(
+    InitializeStatsProto* initialize_stats) {
   if (!InitializeDerivedFiles().ok()) {
     ICING_VLOG(3)
         << "Couldn't find derived files or failed to initialize them, "
            "regenerating derived files for SchemaStore.";
-    std::unique_ptr<Timer> regenerate_timer = clock_.GetNewTimer();
+    std::unique_ptr<Timer> regenerate_timer = clock_->GetNewTimer();
     if (initialize_stats != nullptr) {
       initialize_stats->set_schema_store_recovery_cause(
           InitializeStatsProto::IO_ERROR);
@@ -160,6 +198,7 @@ libtextclassifier3::Status SchemaStore::Initialize(
   if (initialize_stats != nullptr) {
     initialize_stats->set_num_schema_types(type_config_map_.size());
   }
+  has_schema_successfully_set_ = true;
 
   return libtextclassifier3::Status::OK;
 }
@@ -172,8 +211,8 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
   }
 
   SchemaStore::Header header;
-  if (!filesystem_.Read(MakeHeaderFilename(base_dir_).c_str(), &header,
-                        sizeof(header))) {
+  if (!filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
+                         sizeof(header))) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
@@ -185,9 +224,9 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
 
   ICING_ASSIGN_OR_RETURN(
       schema_type_mapper_,
-      KeyMapper<SchemaTypeId>::Create(filesystem_,
-                                      MakeSchemaTypeMapperFilename(base_dir_),
-                                      kSchemaTypeMapperMaxSize));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(
+          *filesystem_, MakeSchemaTypeMapperFilename(base_dir_),
+          kSchemaTypeMapperMaxSize));
 
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
   if (checksum.Get() != header.checksum) {
@@ -236,12 +275,12 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles() {
 }
 
 bool SchemaStore::HeaderExists() {
-  if (!filesystem_.FileExists(MakeHeaderFilename(base_dir_).c_str())) {
+  if (!filesystem_->FileExists(MakeHeaderFilename(base_dir_).c_str())) {
     return false;
   }
 
   int64_t file_size =
-      filesystem_.GetFileSize(MakeHeaderFilename(base_dir_).c_str());
+      filesystem_->GetFileSize(MakeHeaderFilename(base_dir_).c_str());
 
   // If it's been truncated to size 0 before, we consider it to be a new file
   return file_size != 0 && file_size != Filesystem::kBadFileSize;
@@ -254,11 +293,11 @@ libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
   header.checksum = checksum.Get();
 
   ScopedFd scoped_fd(
-      filesystem_.OpenForWrite(MakeHeaderFilename(base_dir_).c_str()));
+      filesystem_->OpenForWrite(MakeHeaderFilename(base_dir_).c_str()));
   // This should overwrite the header.
   if (!scoped_fd.is_valid() ||
-      !filesystem_.Write(scoped_fd.get(), &header, sizeof(header)) ||
-      !filesystem_.DataSync(scoped_fd.get())) {
+      !filesystem_->Write(scoped_fd.get(), &header, sizeof(header)) ||
+      !filesystem_->DataSync(scoped_fd.get())) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Failed to write SchemaStore header: ", MakeHeaderFilename(base_dir_)));
   }
@@ -268,10 +307,11 @@ libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
 libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   schema_type_mapper_.reset();
-  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
-  libtextclassifier3::Status status = KeyMapper<SchemaTypeId>::Delete(
-      filesystem_, MakeSchemaTypeMapperFilename(base_dir_));
+  libtextclassifier3::Status status =
+      DynamicTrieKeyMapper<SchemaTypeId>::Delete(
+          *filesystem_, MakeSchemaTypeMapperFilename(base_dir_));
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
                      << "Failed to delete old schema_type mapper";
@@ -279,25 +319,25 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
   }
   ICING_ASSIGN_OR_RETURN(
       schema_type_mapper_,
-      KeyMapper<SchemaTypeId>::Create(filesystem_,
-                                      MakeSchemaTypeMapperFilename(base_dir_),
-                                      kSchemaTypeMapperMaxSize));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(
+          *filesystem_, MakeSchemaTypeMapperFilename(base_dir_),
+          kSchemaTypeMapperMaxSize));
 
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
-  Crc32 total_checksum;
-  if (!has_schema_successfully_set_) {
-    // Nothing to checksum
-    return total_checksum;
+  auto schema_proto_or = GetSchema();
+  if (absl_ports::IsNotFound(schema_proto_or.status())) {
+    return Crc32();
   }
-  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
+  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, schema_proto_or);
   Crc32 schema_checksum;
   schema_checksum.Append(schema_proto->SerializeAsString());
 
   Crc32 schema_type_mapper_checksum = schema_type_mapper_->ComputeChecksum();
 
+  Crc32 total_checksum;
   total_checksum.Append(std::to_string(schema_checksum.Get()));
   total_checksum.Append(std::to_string(schema_type_mapper_checksum.Get()));
 
@@ -306,7 +346,7 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
 
 libtextclassifier3::StatusOr<const SchemaProto*> SchemaStore::GetSchema()
     const {
-  return schema_file_.Read();
+  return schema_file_->Read();
 }
 
 // TODO(cassiewang): Consider removing this definition of SetSchema if it's not
@@ -393,15 +433,61 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
   result.success = result.success || ignore_errors_and_delete_documents;
 
   if (result.success) {
-    // Write the schema (and potentially overwrite a previous schema)
-    ICING_RETURN_IF_ERROR(
-        schema_file_.Write(std::make_unique<SchemaProto>(new_schema)));
+    ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(new_schema)));
     has_schema_successfully_set_ = true;
-
-    ICING_RETURN_IF_ERROR(RegenerateDerivedFiles());
   }
 
   return result;
+}
+
+libtextclassifier3::Status SchemaStore::ApplySchemaChange(
+    SchemaProto new_schema) {
+  // We need to ensure that we either 1) successfully set the schema and
+  // update all derived data structures or 2) fail and leave the schema store
+  // unchanged.
+  // So, first, we create an empty temporary directory to build a new schema
+  // store in.
+  std::string temp_schema_store_dir_path = base_dir_ + "_temp";
+  if (!filesystem_->DeleteDirectoryRecursively(
+          temp_schema_store_dir_path.c_str())) {
+    ICING_LOG(ERROR) << "Recursively deleting "
+                     << temp_schema_store_dir_path.c_str();
+    return absl_ports::InternalError(
+        "Unable to delete temp directory to prepare to build new schema "
+        "store.");
+  }
+
+  DestructibleDirectory temp_schema_store_dir(
+      filesystem_, std::move(temp_schema_store_dir_path));
+  if (!temp_schema_store_dir.is_valid()) {
+    return absl_ports::InternalError(
+        "Unable to create temp directory to build new schema store.");
+  }
+
+  // Then we create our new schema store with the new schema.
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<SchemaStore> new_schema_store,
+      SchemaStore::Create(filesystem_, temp_schema_store_dir.dir(), clock_,
+                          std::move(new_schema)));
+
+  // Then we swap the new schema file + new derived files with the old files.
+  if (!filesystem_->SwapFiles(base_dir_.c_str(),
+                              temp_schema_store_dir.dir().c_str())) {
+    return absl_ports::InternalError(
+        "Unable to apply new schema due to failed swap!");
+  }
+
+  std::string old_base_dir = std::move(base_dir_);
+  *this = std::move(*new_schema_store);
+
+  // After the std::move, the filepaths saved in this instance and in the
+  // schema_file_ instance will still be the one from temp_schema_store_dir
+  // even though they now point to files that are within old_base_dir.
+  // Manually set them to the correct paths.
+  base_dir_ = std::move(old_base_dir);
+  schema_file_->SetSwappedFilepath(MakeSchemaFilename(base_dir_));
+
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
@@ -463,12 +549,9 @@ libtextclassifier3::Status SchemaStore::PersistToDisk() {
 
 SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
   SchemaStoreStorageInfoProto storage_info;
-  int64_t directory_size = filesystem_.GetDiskUsage(base_dir_.c_str());
-  if (directory_size != Filesystem::kBadFileSize) {
-    storage_info.set_schema_store_size(directory_size);
-  } else {
-    storage_info.set_schema_store_size(-1);
-  }
+  int64_t directory_size = filesystem_->GetDiskUsage(base_dir_.c_str());
+  storage_info.set_schema_store_size(
+      Filesystem::SanitizeFileSize(directory_size));
   ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema(), storage_info);
   storage_info.set_num_schema_types(schema->types_size());
   int total_sections = 0;
@@ -480,7 +563,7 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
       continue;
     }
     total_sections += sections_list_or.ValueOrDie()->size();
-    if (sections_list_or.ValueOrDie()->size() == kMaxSectionId + 1) {
+    if (sections_list_or.ValueOrDie()->size() == kTotalNumSections) {
       ++num_types_sections_exhausted;
     }
   }
@@ -494,6 +577,18 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
 libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
 SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
   return section_manager_->GetMetadataList(schema_type);
+}
+
+libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
+    const {
+  SchemaDebugInfoProto debug_info;
+  if (has_schema_successfully_set_) {
+    ICING_ASSIGN_OR_RETURN(const SchemaProto* schema, GetSchema());
+    *debug_info.mutable_schema() = *schema;
+  }
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
+  debug_info.set_crc(crc.Get());
+  return debug_info;
 }
 
 }  // namespace lib

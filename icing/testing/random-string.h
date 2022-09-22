@@ -15,6 +15,7 @@
 #ifndef ICING_TESTING_RANDOM_STRING_H_
 #define ICING_TESTING_RANDOM_STRING_H_
 
+#include <algorithm>
 #include <random>
 #include <string>
 

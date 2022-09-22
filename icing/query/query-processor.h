@@ -56,11 +56,17 @@ class QueryProcessor {
     // Hit iterators for the text terms in the query. These query_term_iterators
     // are completely separate from the iterators that make the iterator tree
     // beginning with root_iterator.
+    // This will only be populated when ranking_strategy == RELEVANCE_SCORE.
     std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
         query_term_iterators;
   };
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
+  //
+  // When ranking_strategy == RELEVANCE_SCORE, the root_iterator and the
+  // query_term_iterators returned will keep term frequency information
+  // internally, so that term frequency stats will be collected when calling
+  // PopulateMatchedTermsStats to the iterators.
   //
   // Returns:
   //   On success,
@@ -69,7 +75,8 @@ class QueryProcessor {
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<QueryResults> ParseSearch(
-      const SearchSpecProto& search_spec);
+      const SearchSpecProto& search_spec,
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy);
 
  private:
   explicit QueryProcessor(Index* index,
@@ -88,7 +95,8 @@ class QueryProcessor {
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<QueryResults> ParseRawQuery(
-      const SearchSpecProto& search_spec);
+      const SearchSpecProto& search_spec,
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy);
 
   // Return the options for the DocHitInfoIteratorFilter based on the
   // search_spec.
