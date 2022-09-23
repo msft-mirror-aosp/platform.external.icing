@@ -140,11 +140,11 @@ class Index {
   }
 
   // Returns debug information for the index in out.
-  // verbosity <= 0, simplest debug information - just the lexicons and lite
-  //                 index.
-  // verbosity > 0, more detailed debug information including raw postings
-  //                lists.
-  IndexDebugInfoProto GetDebugInfo(int verbosity) const {
+  // verbosity = BASIC, simplest debug information - just the lexicons and lite
+  //                    index.
+  // verbosity = DETAILED, more detailed debug information including raw
+  //                       postings lists.
+  IndexDebugInfoProto GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
     IndexDebugInfoProto debug_info;
     *debug_info.mutable_index_storage_info() = GetStorageInfo();
     *debug_info.mutable_lite_index_info() =
@@ -262,6 +262,18 @@ class Index {
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
     return lite_index_->Reset();
   }
+
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  // new_last_added_document_id will be used to update the last added document
+  // id in the lite index.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id);
 
  private:
   Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,

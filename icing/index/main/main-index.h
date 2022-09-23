@@ -183,16 +183,28 @@ class MainIndex {
       IndexStorageInfoProto storage_info) const;
 
   // Returns debug information for the main index in out.
-  // verbosity <= 0, simplest debug information - just the lexicon
-  // verbosity > 0, more detailed debug information including raw postings
-  //                lists.
-  IndexDebugInfoProto::MainIndexDebugInfoProto GetDebugInfo(
-      int verbosity) const;
+  // verbosity = BASIC, simplest debug information - just the lexicon
+  // verbosity = DETAILED, more detailed debug information including raw
+  // postings lists.
+  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity) const;
+
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  //
+  // This method will update the last_added_docid of the index to the largest
+  // document id that still appears in the index after compaction.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //                               invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new);
 
  private:
-  libtextclassifier3::Status Init(const std::string& index_directory,
-                                  const Filesystem* filesystem,
-                                  const IcingFilesystem* icing_filesystem);
+  MainIndex(const std::string& index_directory, const Filesystem* filesystem,
+            const IcingFilesystem* icing_filesystem);
+
+  libtextclassifier3::Status Init();
 
   // Helpers for merging the lexicon
   // Add all 'backfill' branch points. Backfill branch points are prefix
@@ -288,6 +300,27 @@ class MainIndex {
       PostingListIdentifier backfill_posting_list_id,
       PostingListAccessor* hit_accum);
 
+  // Transfer hits from old_pl_accessor to new_index for term.
+  //
+  // Returns:
+  //   largest document id added to the translated posting list, on success
+  //   INTERNAL_ERROR on IO error
+  static libtextclassifier3::StatusOr<DocumentId> TransferAndAddHits(
+      const std::vector<DocumentId>& document_id_old_to_new, const char* term,
+      PostingListAccessor& old_pl_accessor, MainIndex* new_index);
+
+  // Transfer hits from the current main index to new_index.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status TransferIndex(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      MainIndex* new_index);
+
+  std::string base_dir_;
+  const Filesystem* filesystem_;
+  const IcingFilesystem* icing_filesystem_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
 };
