@@ -59,6 +59,7 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
@@ -358,23 +359,22 @@ TEST_F(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
                              doc_store->Put(DocumentProto(test_document2_)));
 
-  EXPECT_THAT(doc_store->DoesDocumentExist(document_id1), IsTrue());
-  EXPECT_THAT(doc_store->DoesDocumentExist(document_id2), IsTrue());
+  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(document_id1));
+  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(document_id2));
 
   DocumentId invalid_document_id_negative = -1;
-  EXPECT_THAT(doc_store->DoesDocumentExist(invalid_document_id_negative),
-              IsFalse());
+  EXPECT_FALSE(
+      doc_store->GetAliveDocumentFilterData(invalid_document_id_negative));
 
   DocumentId invalid_document_id_greater_than_max = kMaxDocumentId + 2;
-  EXPECT_THAT(
-      doc_store->DoesDocumentExist(invalid_document_id_greater_than_max),
-      IsFalse());
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      invalid_document_id_greater_than_max));
 
-  EXPECT_THAT(doc_store->DoesDocumentExist(kInvalidDocumentId), IsFalse());
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(kInvalidDocumentId));
 
   DocumentId invalid_document_id_out_of_range = document_id2 + 1;
-  EXPECT_THAT(doc_store->DoesDocumentExist(invalid_document_id_out_of_range),
-              IsFalse());
+  EXPECT_FALSE(
+      doc_store->GetAliveDocumentFilterData(invalid_document_id_out_of_range));
 }
 
 TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
@@ -477,6 +477,35 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
   EXPECT_THAT(
       document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  int64_t document_log_size_after = filesystem_.GetFileSize(
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
+  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
+}
+
+TEST_F(DocumentStoreTest, DeleteNonexistentDocumentPrintableErrorMessage) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> document_store =
+      std::move(create_result.document_store);
+
+  // Validates that deleting something non-existing won't append anything to
+  // ground truth
+  int64_t document_log_size_before = filesystem_.GetFileSize(
+      absl_ports::StrCat(document_store_dir_, "/",
+                         DocumentLogCreator::GetDocumentLogFilename())
+          .c_str());
+
+  libtextclassifier3::Status status =
+      document_store->Delete("android$contacts/", "661");
+  EXPECT_THAT(status, StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  for (char c : status.error_message()) {
+    EXPECT_THAT(std::isprint(c), IsTrue());
+  }
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/",
@@ -1030,8 +1059,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // deleted
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(ElementsAre(0, 1, 2)));
   int64_t optimized_size1 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_EQ(original_size, optimized_size1);
@@ -1041,8 +1070,9 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1"));
-  ICING_ASSERT_OK(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  // DocumentId 0 is removed.
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, 1)));
   int64_t optimized_size2 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(original_size, Gt(optimized_size2));
@@ -1055,11 +1085,39 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // expired
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  // DocumentId 0 is removed, and DocumentId 2 is expired.
+  EXPECT_THAT(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+      IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId)));
   int64_t optimized_size3 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(optimized_size2, Gt(optimized_size3));
+
+  // Delete the last document
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri2"));
+  // DocumentId 0 and 1 is removed, and DocumentId 2 is expired.
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(ElementsAre(kInvalidDocumentId, kInvalidDocumentId,
+                                       kInvalidDocumentId)));
+  int64_t optimized_size4 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(optimized_size3, Gt(optimized_size4));
+}
+
+TEST_F(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
@@ -1130,12 +1188,15 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(doc_store->Get(document_id2),
               IsOkAndHolds(EqualsProto(test_document2_)));
-
   // Checks derived filter cache
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
-              IsOkAndHolds(DocumentFilterData(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
+
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
@@ -1220,10 +1281,14 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
               IsOkAndHolds(EqualsProto(test_document2_)));
 
   // Checks derived filter cache
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
-              IsOkAndHolds(DocumentFilterData(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
+
   // Checks derived score cache - note that they aren't regenerated from
   // scratch.
   EXPECT_THAT(
@@ -1293,8 +1358,11 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
               IsOkAndHolds(EqualsProto(test_document2_)));
 
   // Checks derived filter cache
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
-              IsOkAndHolds(DocumentFilterData(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
@@ -1704,8 +1772,7 @@ TEST_F(DocumentStoreTest, NonexistentDocumentFilterDataNotFound) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  EXPECT_THAT(doc_store->GetDocumentFilterData(/*document_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(/*document_id=*/0));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
@@ -1719,17 +1786,17 @@ TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              doc_store->Put(test_document1_));
 
-  EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
-          /*namespace_id=*/0,
-          /*schema_type_id=*/0,
-          /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
+                  /*namespace_id=*/0,
+                  /*schema_type_id=*/0, document1_expiration_timestamp_)));
 
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   // Associated entry of the deleted document is removed.
-  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(document_id));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
@@ -1857,12 +1924,13 @@ TEST_F(DocumentStoreTest,
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
-
-  EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(/*namespace_id=*/0,
-                                      /*schema_type_id=*/0,
-                                      /*expiration_timestamp_ms=*/1100)));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+  EXPECT_THAT(doc_filter_data, Eq(DocumentFilterData(
+                                   /*namespace_id=*/0,
+                                   /*schema_type_id=*/0,
+                                   /*expiration_timestamp_ms=*/1100)));
 }
 
 TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
@@ -1882,9 +1950,13 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
 
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+
   EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
+      doc_filter_data,
+      Eq(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
@@ -1908,9 +1980,13 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
 
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id));
+
   EXPECT_THAT(
-      doc_store->GetDocumentFilterData(document_id),
-      IsOkAndHolds(DocumentFilterData(
+      doc_filter_data,
+      Eq(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
@@ -2108,9 +2184,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         email_document_id, document_store->Put(DocumentProto(email_document)));
     EXPECT_THAT(document_store->Get(email_document_id),
                 IsOkAndHolds(EqualsProto(email_document)));
-    ICING_ASSERT_OK_AND_ASSIGN(
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData email_data,
-        document_store->GetDocumentFilterData(email_document_id));
+        document_store->GetAliveDocumentFilterData(email_document_id));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
     email_expiration_timestamp = email_data.expiration_timestamp_ms();
@@ -2121,9 +2197,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         document_store->Put(DocumentProto(message_document)));
     EXPECT_THAT(document_store->Get(message_document_id),
                 IsOkAndHolds(EqualsProto(message_document)));
-    ICING_ASSERT_OK_AND_ASSIGN(
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData message_data,
-        document_store->GetDocumentFilterData(message_document_id));
+        document_store->GetAliveDocumentFilterData(message_document_id));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
@@ -2161,9 +2237,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   // "email" document is fine
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
@@ -2173,9 +2249,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   // "message" document has an invalid SchemaTypeId
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
@@ -2227,16 +2303,16 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
                              document_store->Put(email_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2260,12 +2336,14 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
   // Check that the FilterCache holds the new SchemaTypeIds
-  ICING_ASSERT_OK_AND_ASSIGN(
-      email_data, document_store->GetDocumentFilterData(email_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      email_data,
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      message_data, document_store->GetDocumentFilterData(message_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      message_data,
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2457,16 +2535,16 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
                              document_store->Put(email_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
-  ICING_ASSERT_OK_AND_ASSIGN(
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2492,12 +2570,14 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       schema_store.get(), set_schema_result));
 
   // Check that the FilterCache holds the new SchemaTypeIds
-  ICING_ASSERT_OK_AND_ASSIGN(
-      email_data, document_store->GetDocumentFilterData(email_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      email_data,
+      document_store->GetAliveDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      message_data, document_store->GetDocumentFilterData(message_document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      message_data,
+      document_store->GetAliveDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -3379,8 +3459,9 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
             .SetTtlMs(document1_ttl_)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3420,8 +3501,9 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
         std::move(create_result.document_store);
 
     // Ensure that the type id of the email document has been correctly updated.
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
     EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
@@ -3477,8 +3559,9 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
             .SetTtlMs(document1_ttl_)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3516,8 +3599,9 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
         std::move(create_result.document_store);
 
     // Check that the type id of the email document has not been updated.
-    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
-                               doc_store->GetDocumentFilterData(docid));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        DocumentFilterData filter_data,
+        doc_store->GetAliveDocumentFilterData(docid));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 }
@@ -3733,7 +3817,6 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
   }
 }
 
-#ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   // Set up schema.
   SchemaProto schema =
@@ -3854,7 +3937,6 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   EXPECT_THAT(document_store->Get(/*document_id=*/2),
               IsOkAndHolds(EqualsProto(document3)));
 }
-#endif  // DISABLE_BACKWARDS_COMPAT_TEST
 
 TEST_F(DocumentStoreTest, GetDebugInfo) {
   SchemaProto schema =
@@ -3928,8 +4010,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
                                 .Build();
   ICING_ASSERT_OK(document_store->Put(document4, 2));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out1,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out1,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out1.crc(), Gt(0));
   EXPECT_THAT(out1.document_storage_info().num_alive_documents(), Eq(4));
   EXPECT_THAT(out1.document_storage_info().num_deleted_documents(), Eq(0));
@@ -3957,8 +4040,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
 
   // Delete document3.
   ICING_ASSERT_OK(document_store->Delete("namespace2", "email/3"));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out2,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out2,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out2.crc(), Gt(0));
   EXPECT_THAT(out2.crc(), Not(Eq(out1.crc())));
   EXPECT_THAT(out2.document_storage_info().num_alive_documents(), Eq(3));
@@ -3970,8 +4054,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
               UnorderedElementsAre(EqualsProto(info1), EqualsProto(info2),
                                    EqualsProto(info3)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out3,
-                             document_store->GetDebugInfo(/*verbosity=*/0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out3,
+      document_store->GetDebugInfo(DebugInfoVerbosity::BASIC));
   EXPECT_THAT(out3.corpus_info(), IsEmpty());
 }
 
@@ -3989,8 +4074,9 @@ TEST_F(DocumentStoreTest, GetDebugInfoWithoutSchema) {
                             schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out.crc(), Gt(0));
   EXPECT_THAT(out.document_storage_info().num_alive_documents(), Eq(0));
   EXPECT_THAT(out.document_storage_info().num_deleted_documents(), Eq(0));
@@ -4005,8 +4091,9 @@ TEST_F(DocumentStoreTest, GetDebugInfoForEmptyDocumentStore) {
                             schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDebugInfoProto out,
-                             document_store->GetDebugInfo(/*verbosity=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentDebugInfoProto out,
+      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
   EXPECT_THAT(out.crc(), Gt(0));
   EXPECT_THAT(out.document_storage_info().num_alive_documents(), Eq(0));
   EXPECT_THAT(out.document_storage_info().num_deleted_documents(), Eq(0));

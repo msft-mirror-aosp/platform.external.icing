@@ -103,8 +103,7 @@ void HeapifyTermDown(std::vector<TermMetadata>& scored_terms,
   // If the minimum is not the subtree root, swap and continue heapifying the
   // lower level subtree.
   if (min != target_subtree_root_index) {
-    std::swap(scored_terms.at(min),
-              scored_terms.at(target_subtree_root_index));
+    std::swap(scored_terms.at(min), scored_terms.at(target_subtree_root_index));
     HeapifyTermDown(scored_terms, min);
   }
 }
@@ -146,35 +145,6 @@ TermMetadata PopRootTerm(std::vector<TermMetadata>& scored_terms) {
   return root;
 }
 
-// Helper function to extract the root from the heap. The heap structure will be
-// maintained.
-//
-// Returns:
-//   The current root element on success
-//   RESOURCE_EXHAUSTED_ERROR if heap is empty
-libtextclassifier3::StatusOr<ScoredDocumentHit> PopRoot(
-    std::vector<ScoredDocumentHit>* scored_document_hits_heap,
-    const ScoredDocumentHitComparator& scored_document_hit_comparator) {
-  if (scored_document_hits_heap->empty()) {
-    // An invalid ScoredDocumentHit
-    return absl_ports::ResourceExhaustedError("Heap is empty");
-  }
-
-  // Steps to extract root from heap:
-  // 1. copy out root
-  ScoredDocumentHit root = scored_document_hits_heap->at(0);
-  const size_t last_node_index = scored_document_hits_heap->size() - 1;
-  // 2. swap root and the last node
-  std::swap(scored_document_hits_heap->at(0),
-            scored_document_hits_heap->at(last_node_index));
-  // 3. remove last node
-  scored_document_hits_heap->pop_back();
-  // 4. heapify root
-  Heapify(scored_document_hits_heap, /*target_subtree_root_index=*/0,
-          scored_document_hit_comparator);
-  return root;
-}
-
 }  // namespace
 
 void BuildHeapInPlace(
@@ -203,6 +173,29 @@ void PushToTermHeap(TermMetadata term, int number_to_return,
   }
 }
 
+libtextclassifier3::StatusOr<ScoredDocumentHit> PopNextTopResultFromHeap(
+    std::vector<ScoredDocumentHit>* scored_document_hits_heap,
+    const ScoredDocumentHitComparator& scored_document_hit_comparator) {
+  if (scored_document_hits_heap->empty()) {
+    // An invalid ScoredDocumentHit
+    return absl_ports::ResourceExhaustedError("Heap is empty");
+  }
+
+  // Steps to extract root from heap:
+  // 1. copy out root
+  ScoredDocumentHit root = scored_document_hits_heap->at(0);
+  const size_t last_node_index = scored_document_hits_heap->size() - 1;
+  // 2. swap root and the last node
+  std::swap(scored_document_hits_heap->at(0),
+            scored_document_hits_heap->at(last_node_index));
+  // 3. remove last node
+  scored_document_hits_heap->pop_back();
+  // 4. heapify root
+  Heapify(scored_document_hits_heap, /*target_subtree_root_index=*/0,
+          scored_document_hit_comparator);
+  return root;
+}
+
 std::vector<ScoredDocumentHit> PopTopResultsFromHeap(
     std::vector<ScoredDocumentHit>* scored_document_hits_heap, int num_results,
     const ScoredDocumentHitComparator& scored_document_hit_comparator) {
@@ -211,7 +204,8 @@ std::vector<ScoredDocumentHit> PopTopResultsFromHeap(
       num_results, static_cast<int>(scored_document_hits_heap->size()));
   while (result_size-- > 0) {
     libtextclassifier3::StatusOr<ScoredDocumentHit> next_best_document_hit_or =
-        PopRoot(scored_document_hits_heap, scored_document_hit_comparator);
+        PopNextTopResultFromHeap(scored_document_hits_heap,
+                                 scored_document_hit_comparator);
     if (next_best_document_hit_or.ok()) {
       scored_document_hit_result.push_back(
           std::move(next_best_document_hit_or).ValueOrDie());
