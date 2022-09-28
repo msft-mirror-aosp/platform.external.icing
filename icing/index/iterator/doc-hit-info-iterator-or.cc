@@ -115,7 +115,8 @@ libtextclassifier3::Status DocHitInfoIteratorOr::Advance() {
 
   // If equal, combine.
   if (left_document_id_ == right_document_id_) {
-    doc_hit_info_.MergeSectionsFrom(right_->doc_hit_info());
+    doc_hit_info_.MergeSectionsFrom(
+        right_->doc_hit_info().hit_section_ids_mask());
     hit_intersect_section_ids_mask_ &= right_->hit_intersect_section_ids_mask();
   }
 
@@ -195,7 +196,8 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
         hit_intersect_section_ids_mask_ =
             iterator->hit_intersect_section_ids_mask();
       } else {
-        doc_hit_info_.MergeSectionsFrom(iterator->doc_hit_info());
+        doc_hit_info_.MergeSectionsFrom(
+            iterator->doc_hit_info().hit_section_ids_mask());
         hit_intersect_section_ids_mask_ &=
             iterator->hit_intersect_section_ids_mask();
       }
