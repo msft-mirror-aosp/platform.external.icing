@@ -22,6 +22,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/scoring/bm25f-calculator.h"
+#include "icing/scoring/section-weights.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
@@ -89,6 +90,7 @@ class RelevanceScoreScorer : public Scorer {
     if (!query_it) {
       return default_score_;
     }
+
     return static_cast<double>(
         bm25f_calculator_->ComputeScore(query_it, hit_info, default_score_));
   }
@@ -122,11 +124,11 @@ class UsageScorer : public Scorer {
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT:
         return usage_scores.usage_type3_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type1_last_used_timestamp_s;
+        return usage_scores.usage_type1_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type2_last_used_timestamp_s;
+        return usage_scores.usage_type2_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type3_last_used_timestamp_s;
+        return usage_scores.usage_type3_last_used_timestamp_s * 1000.0;
       default:
         // This shouldn't happen if this scorer is used correctly.
         return default_score_;
@@ -155,11 +157,12 @@ class NoScorer : public Scorer {
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
-    ScoringSpecProto::RankingStrategy::Code rank_by, double default_score,
-    const DocumentStore* document_store) {
+    const ScoringSpecProto& scoring_spec, double default_score,
+    const DocumentStore* document_store, const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  switch (rank_by) {
+  switch (scoring_spec.rank_by()) {
     case ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE:
       return std::make_unique<DocumentScoreScorer>(document_store,
                                                    default_score);
@@ -167,7 +170,12 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
       return std::make_unique<DocumentCreationTimestampScorer>(document_store,
                                                                default_score);
     case ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE: {
-      auto bm25f_calculator = std::make_unique<Bm25fCalculator>(document_store);
+      ICING_ASSIGN_OR_RETURN(
+          std::unique_ptr<SectionWeights> section_weights,
+          SectionWeights::Create(schema_store, scoring_spec));
+
+      auto bm25f_calculator = std::make_unique<Bm25fCalculator>(
+          document_store, std::move(section_weights));
       return std::make_unique<RelevanceScoreScorer>(std::move(bm25f_calculator),
                                                     default_score);
     }
@@ -182,8 +190,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
       [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
-      return std::make_unique<UsageScorer>(document_store, rank_by,
-                                           default_score);
+      return std::make_unique<UsageScorer>(
+          document_store, scoring_spec.rank_by(), default_score);
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);
   }
