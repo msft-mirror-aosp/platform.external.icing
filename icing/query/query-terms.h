@@ -26,7 +26,7 @@ namespace lib {
 // A map from section names to sets of terms restricted to those sections.
 // Query terms that are not restricted are found at the entry with key "".
 using SectionRestrictQueryTermsMap =
-    std::unordered_map<std::string_view, std::unordered_set<std::string>>;
+    std::unordered_map<std::string, std::unordered_set<std::string>>;
 
 }  // namespace lib
 }  // namespace icing
