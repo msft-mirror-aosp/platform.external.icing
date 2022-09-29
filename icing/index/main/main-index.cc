@@ -234,24 +234,27 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
                                flash_index_storage_.get(), posting_list_id));
     ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
                            pl_accessor.GetNextHitsBatch());
-    for (const Hit& hit : hits) {
-      DocumentId document_id = hit.document_id();
-      if (document_id != last_document_id) {
-        last_document_id = document_id;
-        if (term_match_type == TermMatchType::EXACT_ONLY &&
-            hit.is_prefix_hit()) {
-          continue;
+    while (!hits.empty()) {
+      for (const Hit& hit : hits) {
+        DocumentId document_id = hit.document_id();
+        if (document_id != last_document_id) {
+          last_document_id = document_id;
+          if (term_match_type == TermMatchType::EXACT_ONLY &&
+              hit.is_prefix_hit()) {
+            continue;
+          }
+          if (!namespace_checker->BelongsToTargetNamespaces(document_id)) {
+            // The document is removed or expired or not belongs to target
+            // namespaces.
+            continue;
+          }
+          // TODO(b/152934343) Add search type in SuggestionSpec to ask user to
+          // input search type, prefix or exact. And make different score
+          // strategy base on that.
+          ++count;
         }
-        if (!namespace_checker->BelongsToTargetNamespaces(document_id)) {
-          // The document is removed or expired or not belongs to target
-          // namespaces.
-          continue;
-        }
-        // TODO(b/152934343) Add search type in SuggestionSpec to ask user to
-        // input search type, prefix or exact. And make different score strategy
-        // base on that.
-        ++count;
       }
+      ICING_ASSIGN_OR_RETURN(hits, pl_accessor.GetNextHitsBatch());
     }
     if (count > 0) {
       term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), count));

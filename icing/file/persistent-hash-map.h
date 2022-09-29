@@ -36,6 +36,48 @@ namespace lib {
 // should not contain termination character '\0'.
 class PersistentHashMap {
  public:
+  // For iterating through persistent hash map. The order is not guaranteed.
+  //
+  // Not thread-safe.
+  //
+  // Change in underlying persistent hash map invalidates iterator.
+  class Iterator {
+   public:
+    // Advance to the next entry.
+    //
+    // Returns:
+    //   True on success, otherwise false.
+    bool Advance();
+
+    // Get the key.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    std::string_view GetKey() const {
+      return std::string_view(map_->kv_storage_->array() + curr_kv_idx_,
+                              curr_key_len_);
+    }
+
+    // Get the memory mapped address of the value.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    const void* GetValue() const {
+      return static_cast<const void*>(map_->kv_storage_->array() +
+                                      curr_kv_idx_ + curr_key_len_ + 1);
+    }
+
+   private:
+    explicit Iterator(const PersistentHashMap* map)
+        : map_(map), curr_kv_idx_(0), curr_key_len_(0) {}
+
+    // Does not own
+    const PersistentHashMap* map_;
+
+    int32_t curr_kv_idx_;
+    int32_t curr_key_len_;
+
+    friend class PersistentHashMap;
+  };
+
   // Crcs and Info will be written into the metadata file.
   // File layout: <Crcs><Info>
   // Crcs
@@ -257,6 +299,19 @@ class PersistentHashMap {
   //   Any FileBackedVector errors
   libtextclassifier3::Status Get(std::string_view key, void* value) const;
 
+  // Delete the key value pair from the storage. If key doesn't exist, then do
+  // nothing and return NOT_FOUND_ERROR.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND_ERROR if the key doesn't exist
+  //   INVALID_ARGUMENT_ERROR if the key is invalid (i.e. contains '\0')
+  //   INTERNAL_ERROR on I/O error or any data inconsistency
+  //   Any FileBackedVector errors
+  libtextclassifier3::Status Delete(std::string_view key);
+
+  Iterator GetIterator() const { return Iterator(this); }
+
   // Flushes content to underlying files.
   //
   // Returns:
@@ -296,7 +351,19 @@ class PersistentHashMap {
 
   bool empty() const { return size() == 0; }
 
+  int32_t num_buckets() const { return bucket_storage_->num_elements(); }
+
  private:
+  struct EntryIndexPair {
+    int32_t target_entry_index;
+    int32_t prev_entry_index;
+
+    explicit EntryIndexPair(int32_t target_entry_index_in,
+                            int32_t prev_entry_index_in)
+        : target_entry_index(target_entry_index_in),
+          prev_entry_index(prev_entry_index_in) {}
+  };
+
   explicit PersistentHashMap(
       const Filesystem& filesystem, std::string_view base_dir,
       std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
@@ -319,15 +386,18 @@ class PersistentHashMap {
                           std::string_view base_dir, int32_t value_type_size,
                           int32_t max_load_factor_percent);
 
-  // Find the index of the key entry from a bucket (specified by bucket index).
-  // The caller should specify the desired bucket index.
+  // Find the index of the target entry (that contains the key) from a bucket
+  // (specified by bucket index). Also return the previous entry index, since
+  // Delete() needs it to update the linked list and head entry index. The
+  // caller should specify the desired bucket index.
   //
   // Returns:
-  //   int32_t: on success, the index of the entry, or Entry::kInvalidIndex if
-  //            not found
+  //   std::pair<int32_t, int32_t>: target entry index and previous entry index
+  //                                on success. If not found, then target entry
+  //                                index will be Entry::kInvalidIndex
   //   INTERNAL_ERROR if any content inconsistency
   //   Any FileBackedVector errors
-  libtextclassifier3::StatusOr<int32_t> FindEntryIndexByKey(
+  libtextclassifier3::StatusOr<EntryIndexPair> FindEntryIndexByKey(
       int32_t bucket_idx, std::string_view key) const;
 
   // Copy the hash map value of the entry into value buffer.

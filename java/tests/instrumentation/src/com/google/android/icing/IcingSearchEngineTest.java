@@ -214,6 +214,16 @@ public final class IcingSearchEngineTest {
     assertStatusOk(searchResultProto.getStatus());
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument);
+
+    // TODO(b/236412954): Enable these JNI latency tests once cl/469819190 is synced to Jetpack
+    // Test that JNI latency has been set properly
+    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
+    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
+    // assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
+    // assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
+    // assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
+    //     .isGreaterThan(0);
+    // assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
   }
 
   @Test
@@ -255,6 +265,16 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
     assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
+
+    // TODO(b/236412954): Enable these JNI latency tests once cl/469819190 is synced to Jetpack
+    // Test that JNI latency has been set
+    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
+    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
+    // assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
+    // assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
+    // assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
+    //     .isGreaterThan(0);
+    // assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
 
     // fetch rest pages
     for (int i = 1; i < 5; i++) {

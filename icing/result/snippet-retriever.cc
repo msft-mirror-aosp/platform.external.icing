@@ -613,9 +613,9 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
   const std::unordered_set<std::string>& unrestricted_set =
       (itr != query_terms.end()) ? itr->second : empty_set;
   while (section_id_mask != kSectionIdMaskNone) {
-    SectionId section_id = __builtin_ctz(section_id_mask);
+    SectionId section_id = __builtin_ctzll(section_id_mask);
     // Remove this section from the mask.
-    section_id_mask &= ~(1u << section_id);
+    section_id_mask &= ~(UINT64_C(1) << section_id);
 
     MatchOptions match_options = {snippet_spec};
     match_options.max_matches_remaining =
