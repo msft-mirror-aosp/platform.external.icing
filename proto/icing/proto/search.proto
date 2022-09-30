@@ -26,7 +26,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 6
+// Next tag: 7
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -65,6 +65,26 @@ message SearchSpecProto {
   // Timestamp taken just before sending proto across the JNI boundary from java
   // to native side.
   optional int64 java_to_native_start_timestamp_ms = 5;
+
+  message SearchType {
+    enum Code {
+      UNDEFINED = 0;
+      ICING_RAW_QUERY = 1;
+      EXPERIMENTAL_ICING_ADVANCED_QUERY = 2;
+    }
+  }
+  // This field determines which type of query parsing Icing will use to fulfill
+  // the query.
+  // ICING_RAW_QUERY is the current query language as released, which supports
+  // basic ands, ors and nots as well as grouping and property restricts.
+  // EXPERIMENTAL_ICING_ADVANCED_QUERY is a superset of ICING_RAW_QUERY that
+  // will also support the use of functions defined by Icing Lib.
+  // This field is only temporary. When fully complete, all queries will be
+  // parsed by EXPERIMENTAL_ICING_ADVANCED_QUERY. This field only exists to
+  // enable testing.
+  // TODO(b/208654892) Remove this field once EXPERIMENTAL_ICING_ADVANCED_QUERY
+  // is fully supported.
+  optional SearchType.Code search_type = 6 [default = ICING_RAW_QUERY];
 }
 
 // Client-supplied specifications on what to include/how to format the search
@@ -322,7 +342,7 @@ message GetResultSpecProto {
   repeated TypePropertyMask type_property_masks = 1;
 }
 
-// Next tag: 5
+// Next tag: 8
 message SuggestionSpecProto {
   // REQUIRED: The "raw" prefix string that users may type. For example, "f"
   // will search for suggested query that start with "f" like "foo", "fool".
@@ -353,6 +373,45 @@ message SuggestionSpecProto {
   }
 
   optional SuggestionScoringSpecProto scoring_spec = 4;
+
+  // OPTIONAL: Only search for suggestions that under the specified
+  // DocumentUris. If unset, the suggestion will search over all Documents.
+  //
+  // All namespace in the given NamespaceDocumentUriGroup should match the
+  // namespace_filters. i.e. appears in the namespace_filter or namespace_filter
+  // is empty.
+  //
+  // All given NamespaceDocumentUriGroup cannot have empty. Please use the
+  // namespace_filter to exclude a namespace.
+  //
+  // Note that this applies to the entire 'prefix'. To issue different
+  // suggestions for different DocumentIds, separate RunSuggestion()'s will need
+  // to be made.
+  repeated NamespaceDocumentUriGroup document_uri_filters = 5;
+
+  // OPTIONAL: Only search for suggestions that under the specified schemas.
+  // If unset, the suggestion will search over all schema types. Note that this
+  // applies to the entire 'prefix'. To issue different suggestions for
+  // different schema typs, separate RunSuggestion()'s will need to be made.
+  repeated string schema_type_filters = 6;
+
+  // OPTIONAL: Only search for suggestions that under the specified types and
+  // properties.
+  //
+  // If unset, the suggestion will search over all types.
+  // If the TypePropertyMask.paths is unset, the suggestion will search over all
+  // properties under the TypePropertyMask.schema_type.
+  //
+  // Note that this applies to the entire 'prefix'. To issue different
+  // suggestions for different types, separate RunSuggestion()'s will need to be
+  // made.
+  repeated TypePropertyMask type_property_filters = 7;
+}
+
+// A group that holds namespace and document_uris under it.
+message NamespaceDocumentUriGroup {
+  optional string namespace_ = 1;
+  repeated string document_uris = 2;
 }
 
 // Next tag: 3

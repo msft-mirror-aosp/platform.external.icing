@@ -38,7 +38,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
-#include "icing/testing/always-true-namespace-checker-impl.h"
+#include "icing/testing/always-true-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
@@ -1339,7 +1339,7 @@ TEST_F(IndexTest, InvalidHitBufferSize) {
 TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
   Index::Editor edit = index_->Edit(kDocumentId0, kSectionId2,
                                     TermMatchType::PREFIX, /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
@@ -1366,7 +1366,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
 TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
@@ -1389,7 +1389,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
 TEST_F(IndexTest, FindTermByPrefixShouldRespectNumToReturn) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit.BufferTerm("fo"), IsOk());
   EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
@@ -1414,7 +1414,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit1.BufferTerm("fo"), IsOk());
   EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
 
@@ -1453,7 +1453,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit1.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit1.BufferTerm("fool"), IsOk());
   EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
@@ -1481,7 +1481,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
 }
 
 TEST_F(IndexTest, FindTermByPrefixMultipleHitBatch) {
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   // Create multiple hit batches.
   for (int i = 0; i < 4000; i++) {
     Index::Editor edit = index_->Edit(i, kSectionId2, TermMatchType::EXACT_ONLY,
@@ -1509,7 +1509,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnInOrder) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit1.BufferTerm("term-one"), IsOk());
   EXPECT_THAT(edit1.BufferTerm("term-two"), IsOk());
   EXPECT_THAT(edit1.BufferTerm("term-three"), IsOk());
@@ -1622,7 +1622,7 @@ TEST_F(IndexTest, FindTermByPrefix_InTermMatchTypePrefix_ShouldReturnInOrder) {
   Index::Editor edit1 =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::PREFIX,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit1.BufferTerm("fo"), IsOk());
   EXPECT_THAT(edit1.IndexAllBufferedTerms(), IsOk());
 
@@ -1661,7 +1661,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnHitCountForMain) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
@@ -1715,7 +1715,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCombinedHitCount) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
@@ -1737,7 +1737,7 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
                    /*namespace_id=*/0);
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
 
   EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());

@@ -26,6 +26,9 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -216,9 +219,9 @@ bool IsTermInNamespaces(
 }
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
-MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             TermMatchType::Code term_match_type,
-                             const NamespaceChecker* namespace_checker) {
+MainIndex::FindTermsByPrefix(
+    const std::string& prefix, TermMatchType::Code term_match_type,
+    const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
@@ -243,7 +246,8 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
               hit.is_prefix_hit()) {
             continue;
           }
-          if (!namespace_checker->BelongsToTargetNamespaces(document_id)) {
+          if (!suggestion_result_checker->BelongsToTargetResults(
+                  document_id, hit.section_id())) {
             // The document is removed or expired or not belongs to target
             // namespaces.
             continue;

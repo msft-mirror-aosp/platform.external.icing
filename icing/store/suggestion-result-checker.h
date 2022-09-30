@@ -12,17 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_STORE_NAMESPACE_CHECKER_H_
-#define ICING_STORE_NAMESPACE_CHECKER_H_
+#ifndef ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
+#define ICING_STORE_SUGGESTION_RESULT_CHECKER_H_
 
+#include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
 
-class NamespaceChecker {
+class SuggestionResultChecker {
  public:
-  virtual ~NamespaceChecker() = default;
+  virtual ~SuggestionResultChecker() = default;
 
   // Check whether the given document id is belongs to the target namespaces.
   // Returns:
@@ -33,10 +34,11 @@ class NamespaceChecker {
   //                DocumentIds
   //   NOT_FOUND if the document or the filter data is not found
   //   INTERNAL_ERROR on all other errors
-  virtual bool BelongsToTargetNamespaces(DocumentId document_id) const = 0;
+  virtual bool BelongsToTargetResults(DocumentId document_id,
+                                      SectionId section_id) const = 0;
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_STORE_NAMESPACE_CHECKER_H_
+#endif  // ICING_STORE_SUGGESTION_RESULT_CHECKER_H_

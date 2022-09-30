@@ -20,7 +20,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/index.h"
-#include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/section-manager.h"
 #include "icing/store/document-id.h"
 #include "icing/tokenization/token.h"
