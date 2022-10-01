@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -184,7 +185,8 @@ std::string GetKeyValueStorageFilePath(std::string_view base_dir) {
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
 PersistentHashMap::Create(const Filesystem& filesystem,
                           std::string_view base_dir, int32_t value_type_size,
-                          int32_t max_load_factor_percent) {
+                          int32_t max_load_factor_percent,
+                          int32_t init_num_buckets) {
   if (!filesystem.FileExists(
           GetMetadataFilePath(base_dir, kSubDirectory).c_str()) ||
       !filesystem.FileExists(
@@ -194,7 +196,7 @@ PersistentHashMap::Create(const Filesystem& filesystem,
       !filesystem.FileExists(GetKeyValueStorageFilePath(base_dir).c_str())) {
     // TODO: erase all files if missing any.
     return InitializeNewFiles(filesystem, base_dir, value_type_size,
-                              max_load_factor_percent);
+                              max_load_factor_percent, init_num_buckets);
   }
   return InitializeExistingFiles(filesystem, base_dir, value_type_size,
                                  max_load_factor_percent);
@@ -397,7 +399,8 @@ libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeChecksum() {
 PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
                                       std::string_view base_dir,
                                       int32_t value_type_size,
-                                      int32_t max_load_factor_percent) {
+                                      int32_t max_load_factor_percent,
+                                      int32_t init_num_buckets) {
   // Create directory.
   const std::string dir_path = absl_ports::StrCat(base_dir, "/", kSubDirectory);
   if (!filesystem.CreateDirectoryRecursively(dir_path.c_str())) {
@@ -421,8 +424,9 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
                              filesystem, GetKeyValueStorageFilePath(base_dir),
                              MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
-  // Initialize one bucket.
-  ICING_RETURN_IF_ERROR(bucket_storage->Append(Bucket()));
+  // Initialize buckets.
+  ICING_RETURN_IF_ERROR(
+      bucket_storage->Set(/*idx=*/0, /*len=*/init_num_buckets, Bucket()));
   ICING_RETURN_IF_ERROR(bucket_storage->PersistToDisk());
 
   // Create and initialize new info
@@ -511,13 +515,16 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
     crcs_ptr->component_crcs.info_crc = info_ptr->ComputeChecksum().Get();
     crcs_ptr->all_crc = crcs_ptr->component_crcs.ComputeChecksum().Get();
     ICING_RETURN_IF_ERROR(metadata_mmapped_file->PersistToDisk());
-    // TODO(b/193919210): rehash if needed
   }
 
-  return std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
-      filesystem, base_dir, std::move(metadata_mmapped_file),
-      std::move(bucket_storage), std::move(entry_storage),
-      std::move(kv_storage)));
+  auto persistent_hash_map =
+      std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
+          filesystem, base_dir, std::move(metadata_mmapped_file),
+          std::move(bucket_storage), std::move(entry_storage),
+          std::move(kv_storage)));
+  ICING_RETURN_IF_ERROR(
+      persistent_hash_map->RehashIfNecessary(/*force_rehash=*/false));
+  return persistent_hash_map;
 }
 
 libtextclassifier3::StatusOr<PersistentHashMap::EntryIndexPair>
@@ -594,7 +601,52 @@ libtextclassifier3::Status PersistentHashMap::Insert(int32_t bucket_idx,
       Entry(new_kv_idx, mutable_bucket.Get().head_entry_index())));
   mutable_bucket.Get().set_head_entry_index(new_entry_idx);
 
-  // TODO: rehash if needed
+  return RehashIfNecessary(/*force_rehash=*/false);
+}
+
+libtextclassifier3::Status PersistentHashMap::RehashIfNecessary(
+    bool force_rehash) {
+  int32_t new_num_bucket = bucket_storage_->num_elements();
+  while (new_num_bucket <= Bucket::kMaxNumBuckets / 2 &&
+         size() > static_cast<int64_t>(new_num_bucket) *
+                      info()->max_load_factor_percent / 100) {
+    new_num_bucket *= 2;
+  }
+
+  if (!force_rehash && new_num_bucket == bucket_storage_->num_elements()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Resize and reset buckets.
+  ICING_RETURN_IF_ERROR(
+      bucket_storage_->Set(0, new_num_bucket, Bucket(Entry::kInvalidIndex)));
+
+  // Iterate all key value pairs in kv_storage, rehash and insert.
+  Iterator iter = GetIterator();
+  int32_t entry_idx = 0;
+  while (iter.Advance()) {
+    ICING_ASSIGN_OR_RETURN(int32_t bucket_idx,
+                           HashKeyToBucketIndex(iter.GetKey(), new_num_bucket));
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<Bucket>::MutableView mutable_bucket,
+                           bucket_storage_->GetMutable(bucket_idx));
+
+    // Update entry and bucket.
+    ICING_RETURN_IF_ERROR(entry_storage_->Set(
+        entry_idx,
+        Entry(iter.GetIndex(), mutable_bucket.Get().head_entry_index())));
+    mutable_bucket.Get().set_head_entry_index(entry_idx);
+
+    ++entry_idx;
+  }
+
+  // Since there will be some deleted entries, after rehashing entry_storage_
+  // # of vector elements may be greater than the actual # of entries.
+  // Therefore, we have to truncate entry_storage_ to the correct size.
+  if (entry_idx < entry_storage_->num_elements()) {
+    entry_storage_->TruncateTo(entry_idx);
+  }
+
+  info()->num_deleted_entries = 0;
 
   return libtextclassifier3::Status::OK;
 }

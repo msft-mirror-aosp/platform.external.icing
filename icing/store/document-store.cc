@@ -35,10 +35,15 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -180,6 +185,19 @@ InitializeStatsProto::DocumentStoreDataStatus GetDataStatus(
     case DataLoss::NONE:
       return InitializeStatsProto::NO_DATA_LOSS;
   }
+}
+
+std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
+    const KeyMapper<NamespaceId>* key_mapper) {
+  std::unordered_map<NamespaceId, std::string> namespace_ids_to_namespaces;
+
+  std::unique_ptr<typename KeyMapper<NamespaceId>::Iterator> itr =
+      key_mapper->GetIterator();
+  while (itr->Advance()) {
+    namespace_ids_to_namespaces.insert(
+        {itr->GetValue(), std::string(itr->GetKey())});
+  }
+  return namespace_ids_to_namespaces;
 }
 
 }  // namespace
@@ -704,7 +722,15 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
   }
   Crc32 document_log_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 document_key_mapper_checksum = document_key_mapper_->ComputeChecksum();
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = document_key_mapper_->ComputeChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of DocumentKeyMapper";
+    return checksum_or.status();
+  }
+  Crc32 document_key_mapper_checksum = std::move(checksum_or).ValueOrDie();
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -736,9 +762,25 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
   }
   Crc32 filter_cache_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 namespace_mapper_checksum = namespace_mapper_->ComputeChecksum();
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = namespace_mapper_->ComputeChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of namespace mapper";
+    return checksum_or.status();
+  }
+  Crc32 namespace_mapper_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 corpus_mapper_checksum = corpus_mapper_->ComputeChecksum();
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = corpus_mapper_->ComputeChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of corpus mapper";
+    return checksum_or.status();
+  }
+  Crc32 corpus_mapper_checksum = std::move(checksum_or).ValueOrDie();
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -996,7 +1038,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
 
 std::vector<std::string> DocumentStore::GetAllNamespaces() const {
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
-      namespace_mapper_->GetValuesToKeys();
+      GetNamespaceIdsToNamespaces(namespace_mapper_.get());
 
   std::unordered_set<NamespaceId> existing_namespace_ids;
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
@@ -1358,7 +1400,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
   int total_num_expired = 0;
   int total_num_deleted = 0;
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
-      namespace_mapper_->GetValuesToKeys();
+      GetNamespaceIdsToNamespaces(namespace_mapper_.get());
   std::unordered_map<std::string, NamespaceStorageInfoProto>
       namespace_to_storage_info;
 
@@ -1790,7 +1832,7 @@ DocumentStore::CollectCorpusInfo() const {
   // Maps from CorpusId to the corresponding protocol buffer in the result.
   std::unordered_map<CorpusId, DocumentDebugInfoProto::CorpusInfo*> info_map;
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
-      namespace_mapper_->GetValuesToKeys();
+      GetNamespaceIdsToNamespaces(namespace_mapper_.get());
   const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {

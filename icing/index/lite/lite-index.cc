@@ -42,6 +42,8 @@
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -335,7 +337,8 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
 
 int LiteIndex::AppendHits(
     uint32_t term_id, SectionIdMask section_id_mask,
-    bool only_from_prefix_sections, const NamespaceChecker* namespace_checker,
+    bool only_from_prefix_sections,
+    const SuggestionResultChecker* suggestion_result_checker,
     std::vector<DocHitInfo>* hits_out,
     std::vector<Hit::TermFrequencyArray>* term_frequency_out) {
   int count = 0;
@@ -360,8 +363,9 @@ int LiteIndex::AppendHits(
     if (document_id != last_document_id) {
       last_document_id = document_id;
       last_document_in_namespace =
-          namespace_checker == nullptr ||
-          namespace_checker->BelongsToTargetNamespaces(document_id);
+          suggestion_result_checker == nullptr ||
+          suggestion_result_checker->BelongsToTargetResults(document_id,
+                                                            hit.section_id());
       if (!last_document_in_namespace) {
         // The document is removed or expired or not belongs to target
         // namespaces.
@@ -386,9 +390,11 @@ int LiteIndex::AppendHits(
 }
 
 libtextclassifier3::StatusOr<int> LiteIndex::CountHits(
-    uint32_t term_id, const NamespaceChecker* namespace_checker) {
+    uint32_t term_id,
+    const SuggestionResultChecker* suggestion_result_checker) {
   return AppendHits(term_id, kSectionIdMaskAll,
-                    /*only_from_prefix_sections=*/false, namespace_checker,
+                    /*only_from_prefix_sections=*/false,
+                    suggestion_result_checker,
                     /*hits_out=*/nullptr);
 }
 

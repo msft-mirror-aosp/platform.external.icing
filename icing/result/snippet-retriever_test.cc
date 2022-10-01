@@ -67,6 +67,8 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
     StringIndexingConfig::TokenizerType::PLAIN;
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
     StringIndexingConfig::TokenizerType::VERBATIM;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
+    StringIndexingConfig::TokenizerType::RFC822;
 
 constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
@@ -1707,6 +1709,131 @@ TEST_F(SnippetRetrieverTest, SnippettingVerbatimCJK) {
   // span the length of our query term "我每", which has utf-16 length of 2.
   EXPECT_THAT(match_proto.exact_match_utf16_position(), Eq(0));
   EXPECT_THAT(match_proto.submatch_utf16_length(), Eq(2));
+}
+
+TEST_F(SnippetRetrieverTest, SnippettingRfc822Ascii) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("rfc822Type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("rfc822")
+                                        .SetDataTypeString(MATCH_PREFIX,
+                                                           TOKENIZER_RFC822)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "rfc822/1")
+          .SetSchema("rfc822Type")
+          .AddStringProperty("rfc822",
+                             "Alexander Sav <tom.bar@google.com>, Very Long "
+                             "Name Example <tjbarron@google.com>")
+          .Build();
+
+  SectionIdMask section_mask = 0b00000001;
+
+  // This should match both the first name token as well as the entire RFC822.
+  SectionRestrictQueryTermsMap query_terms{{"", {"alexand"}}};
+
+  snippet_spec_.set_max_window_utf32_length(35);
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), "rfc822");
+
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("Alexander Sav <tom.bar@google.com>,",
+                          "Alexander Sav <tom.bar@google.com>,"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)),
+              ElementsAre("Alexander Sav <tom.bar@google.com>", "Alexander"));
+  EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+              ElementsAre("Alexand", "Alexand"));
+
+  // "tom" should match the local component, local address, and address tokens.
+  query_terms = SectionRestrictQueryTermsMap{{"", {"tom"}}};
+  snippet_spec_.set_max_window_utf32_length(36);
+
+  snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), "rfc822");
+
+  content = GetString(&document, snippet.entries(0).property_name());
+
+  // TODO(b/248362902) Do we have to return three matches on the same window?
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("Alexander Sav <tom.bar@google.com>,",
+                          "Alexander Sav <tom.bar@google.com>,",
+                          "Alexander Sav <tom.bar@google.com>,"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)),
+              ElementsAre("tom.bar", "tom.bar@google.com", "tom"));
+  EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+              ElementsAre("tom", "tom", "tom"));
+}
+
+TEST_F(SnippetRetrieverTest, SnippettingRfc822CJK) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("rfc822Type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("rfc822")
+                                        .SetDataTypeString(MATCH_PREFIX,
+                                                           TOKENIZER_RFC822)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/true));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      snippet_retriever_,
+      SnippetRetriever::Create(schema_store_.get(), language_segmenter_.get(),
+                               normalizer_.get()));
+
+  std::string chinese_string = "我, 每天@走路, 去@上班";
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "rfc822/1")
+                               .SetSchema("rfc822Type")
+                               .AddStringProperty("rfc822", chinese_string)
+                               .Build();
+
+  SectionIdMask section_mask = 0b00000001;
+
+  SectionRestrictQueryTermsMap query_terms{{"", {"走"}}};
+
+  snippet_spec_.set_max_window_utf32_length(8);
+
+  SnippetProto snippet = snippet_retriever_->RetrieveSnippet(
+      query_terms, MATCH_PREFIX, snippet_spec_, document, section_mask);
+
+  // There should only be one snippet entry and match, the local component token
+  ASSERT_THAT(snippet.entries(), SizeIs(1));
+  EXPECT_THAT(snippet.entries(0).property_name(), "rfc822");
+
+  std::string_view content =
+      GetString(&document, snippet.entries(0).property_name());
+
+  // The local component, address, local address, and token will all match. The
+  // windows for address and token are "" as the snippet window is too small.
+  EXPECT_THAT(GetWindows(content, snippet.entries(0)),
+              ElementsAre("每天@走路,"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("走路"));
+  EXPECT_THAT(GetSubMatches(content, snippet.entries(0)), ElementsAre("走"));
 }
 
 }  // namespace

@@ -515,6 +515,9 @@ class IcingDynamicTrie : public IIcingStorage {
   // Not thread-safe.
   //
   // Change in underlying trie invalidates iterator.
+  //
+  // TODO(b/241784804): change IcingDynamicTrie::Iterator to follow the common
+  //                    iterator pattern in our codebase.
   class Iterator {
    public:
     Iterator(const IcingDynamicTrie &trie, const char *prefix,

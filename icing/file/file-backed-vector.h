@@ -350,18 +350,18 @@ class FileBackedVector {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsFileSize() const;
 
+  // Updates checksum of the vector contents and returns it.
+  //
+  // Returns:
+  //   INTERNAL_ERROR if the vector's internal state is inconsistent
+  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
+
   // Accessors.
   const T* array() const {
     return reinterpret_cast<const T*>(mmapped_file_->region());
   }
 
   int32_t num_elements() const { return header_->num_elements; }
-
-  // Updates checksum of the vector contents and returns it.
-  //
-  // Returns:
-  //   INTERNAL_ERROR if the vector's internal state is inconsistent
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
 
  public:
   class MutableArrayView {

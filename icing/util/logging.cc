@@ -18,6 +18,7 @@
 #include <exception>
 #include <string_view>
 
+#include "icing/proto/debug.pb.h"
 #include "icing/util/logging_raw.h"
 
 namespace icing {

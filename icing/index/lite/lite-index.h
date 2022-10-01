@@ -43,8 +43,8 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-checker.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 
@@ -151,14 +151,16 @@ class LiteIndex {
   // Returns the number of hits that would be added to hits_out.
   int AppendHits(
       uint32_t term_id, SectionIdMask section_id_mask,
-      bool only_from_prefix_sections, const NamespaceChecker* namespace_checker,
+      bool only_from_prefix_sections,
+      const SuggestionResultChecker* suggestion_result_checker,
       std::vector<DocHitInfo>* hits_out,
       std::vector<Hit::TermFrequencyArray>* term_frequency_out = nullptr);
 
   // Returns the hit count of the term.
   // Only those hits which belongs to the given namespaces will be counted.
   libtextclassifier3::StatusOr<int> CountHits(
-      uint32_t term_id, const NamespaceChecker* namespace_checker);
+      uint32_t term_id,
+      const SuggestionResultChecker* suggestion_result_checker);
 
   // Check if buffer has reached its capacity.
   bool is_full() const;

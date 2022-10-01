@@ -35,7 +35,14 @@
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
+
+#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+#include "icing/query/advanced-query-processor.h"
+#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+
+#include "icing/query/query-processor.h"
 #include "icing/query/query-terms.h"
+#include "icing/query/query-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -126,32 +133,40 @@ QueryProcessor::QueryProcessor(Index* index,
       document_store_(*document_store),
       schema_store_(*schema_store) {}
 
-DocHitInfoIteratorFilter::Options QueryProcessor::getFilterOptions(
-    const SearchSpecProto& search_spec) {
-  DocHitInfoIteratorFilter::Options options;
-
-  if (search_spec.namespace_filters_size() > 0) {
-    options.namespaces =
-        std::vector<std::string_view>(search_spec.namespace_filters().begin(),
-                                      search_spec.namespace_filters().end());
-  }
-
-  if (search_spec.schema_type_filters_size() > 0) {
-    options.schema_types =
-        std::vector<std::string_view>(search_spec.schema_type_filters().begin(),
-                                      search_spec.schema_type_filters().end());
-  }
-  return options;
-}
-
-libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseSearch(
+libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
-  ICING_ASSIGN_OR_RETURN(QueryResults results,
-                         ParseRawQuery(search_spec, ranking_strategy));
+  if (search_spec.search_type() == SearchSpecProto::SearchType::UNDEFINED) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Search type ",
+        SearchSpecProto::SearchType::Code_Name(search_spec.search_type()),
+        " is not supported."));
+  }
+  QueryResults results;
+  if (search_spec.search_type() ==
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+    ICING_VLOG(1) << "Using EXPERIMENTAL_ICING_ADVANCED_QUERY parser!";
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<AdvancedQueryProcessor> advanced_query_processor,
+        AdvancedQueryProcessor::Create(&index_, &language_segmenter_,
+                                       &normalizer_, &document_store_,
+                                       &schema_store_));
+    ICING_ASSIGN_OR_RETURN(results, advanced_query_processor->ParseSearch(
+                                        search_spec, ranking_strategy));
+#else   // !ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+    ICING_LOG(ERROR) << "Requested EXPERIMENTAL_ICING_ADVANCED_QUERY search "
+                        "type, but advanced query is not compiled in. Falling "
+                        "back to ICING_RAW_QUERY.";
+    ICING_ASSIGN_OR_RETURN(results,
+                           ParseRawQuery(search_spec, ranking_strategy));
+#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+  } else {
+    ICING_ASSIGN_OR_RETURN(results,
+                           ParseRawQuery(search_spec, ranking_strategy));
+  }
 
-  DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
       options);
@@ -159,11 +174,10 @@ QueryProcessor::ParseSearch(
 }
 
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto
-libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseRawQuery(
+libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
     const SearchSpecProto& search_spec,
     ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
-  DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
 
   // Tokenize the incoming raw query
   //
