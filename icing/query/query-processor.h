@@ -22,6 +22,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
+#include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -48,18 +49,6 @@ class QueryProcessor {
       const Normalizer* normalizer, const DocumentStore* document_store,
       const SchemaStore* schema_store);
 
-  struct QueryResults {
-    std::unique_ptr<DocHitInfoIterator> root_iterator;
-    // A map from section names to sets of terms restricted to those sections.
-    // Query terms that are not restricted are found at the entry with key "".
-    SectionRestrictQueryTermsMap query_terms;
-    // Hit iterators for the text terms in the query. These query_term_iterators
-    // are completely separate from the iterators that make the iterator tree
-    // beginning with root_iterator.
-    // This will only be populated when ranking_strategy == RELEVANCE_SCORE.
-    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-        query_term_iterators;
-  };
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
   //
@@ -97,11 +86,6 @@ class QueryProcessor {
   libtextclassifier3::StatusOr<QueryResults> ParseRawQuery(
       const SearchSpecProto& search_spec,
       ScoringSpecProto::RankingStrategy::Code ranking_strategy);
-
-  // Return the options for the DocHitInfoIteratorFilter based on the
-  // search_spec.
-  DocHitInfoIteratorFilter::Options getFilterOptions(
-      const SearchSpecProto& search_spec);
 
   // Not const because we could modify/sort the hit buffer in the lite index at
   // query time.

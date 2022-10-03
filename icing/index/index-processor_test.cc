@@ -93,6 +93,7 @@ constexpr std::string_view kNestedType = "NestedType";
 constexpr std::string_view kNestedProperty = "nested";
 constexpr std::string_view kExactVerbatimProperty = "verbatimExact";
 constexpr std::string_view kPrefixedVerbatimProperty = "verbatimPrefixed";
+constexpr std::string_view kRfc822Property = "rfc822";
 
 constexpr DocumentId kDocumentId0 = 0;
 constexpr DocumentId kDocumentId1 = 1;
@@ -100,9 +101,10 @@ constexpr DocumentId kDocumentId1 = 1;
 constexpr SectionId kExactSectionId = 0;
 constexpr SectionId kPrefixedSectionId = 1;
 constexpr SectionId kRepeatedSectionId = 2;
-constexpr SectionId kNestedSectionId = 3;
-constexpr SectionId kExactVerbatimSectionId = 4;
-constexpr SectionId kPrefixedVerbatimSectionId = 5;
+constexpr SectionId kRfc822SectionId = 3;
+constexpr SectionId kNestedSectionId = 4;
+constexpr SectionId kExactVerbatimSectionId = 5;
+constexpr SectionId kPrefixedVerbatimSectionId = 6;
 
 using Cardinality = PropertyConfigProto::Cardinality;
 using DataType = PropertyConfigProto::DataType;
@@ -125,6 +127,8 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
     StringIndexingConfig::TokenizerType::PLAIN;
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
     StringIndexingConfig::TokenizerType::VERBATIM;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
+    StringIndexingConfig::TokenizerType::RFC822;
 
 constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
@@ -197,6 +201,11 @@ class IndexProcessorTest : public Test {
                         PropertyConfigBuilder()
                             .SetName(kPrefixedVerbatimProperty)
                             .SetDataTypeString(MATCH_PREFIX, TOKENIZER_VERBATIM)
+                            .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kRfc822Property)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_RFC822)
                             .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(
                         PropertyConfigBuilder()
@@ -921,6 +930,149 @@ TEST_F(IndexProcessorTest, VerbatimPropertyDoesntMatchSubToken) {
 
   // We should not have hits for term "world" as the index processor should
   // create a sole token "Hello, world! for the document.
+  EXPECT_THAT(hits, IsEmpty());
+}
+
+// Some phrases that should match exactly to RFC822 tokens. We normalize the
+// tokens, so the case of the string property shouldn't matter.
+TEST_F(IndexProcessorTest, Rfc822PropertyExact) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/1")
+                               .SetSchema(std::string(kFakeType))
+                               .AddStringProperty(std::string(kRfc822Property),
+                                                  "<AlexSav@GOOGLE.com>")
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kRfc822SectionId, 2}};
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("alexsav", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  expected_map = {{kRfc822SectionId, 1}};
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("com", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("alexsav@google.com", kSectionIdMaskAll,
+                               TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+}
+
+TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/1")
+                               .SetSchema(std::string(kFakeType))
+                               .AddStringProperty(std::string(kRfc822Property),
+                                                  "<AlexSav@GOOGLE.com>")
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kRfc822SectionId, 2}};
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("alexsa", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+}
+
+// Some prefixes of generated RFC822 tokens.
+TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/1")
+                               .SetSchema(std::string(kFakeType))
+                               .AddStringProperty(std::string(kRfc822Property),
+                                                  "<alexsav@google.com>")
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kRfc822SectionId, 1}};
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("alexsav@", kSectionIdMaskAll,
+                                                 TermMatchType::PREFIX));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("goog", kSectionIdMaskAll,
+                                                      TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("ale", kSectionIdMaskAll,
+                                                      TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+}
+
+TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/1")
+                               .SetSchema(std::string(kFakeType))
+                               .AddStringProperty(std::string(kRfc822Property),
+                                                  "<alexsav@google.com>")
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  std::unordered_map<SectionId, Hit::TermFrequency> expect_map{{}};
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("abc.xyz", kSectionIdMaskAll, TermMatchType::PREFIX));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
+
   EXPECT_THAT(hits, IsEmpty());
 }
 

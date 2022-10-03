@@ -22,7 +22,8 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/schema/section.h"
-#include "icing/store/namespace-checker.h"
+#include "icing/store/suggestion-result-checker.h"
+#include "icing/testing/always-false-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -35,13 +36,6 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
-
-class AlwaysFalseNamespaceCheckerImpl : public NamespaceChecker {
- public:
-  bool BelongsToTargetNamespaces(DocumentId document_id) const override {
-    return false;
-  }
-};
 
 class LiteIndexTest : public testing::Test {
  protected:
@@ -98,10 +92,10 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
   EXPECT_THAT(hits1.back().hit_section_ids_mask(), Eq(0b11));
 
   std::vector<DocHitInfo> hits2;
-  AlwaysFalseNamespaceCheckerImpl always_false_namespace_checker;
+  AlwaysFalseSuggestionResultCheckerImpl always_false_suggestion_result_checker;
   lite_index_->AppendHits(foo_term_id, kSectionIdMaskAll,
                           /*only_from_prefix_sections=*/false,
-                          &always_false_namespace_checker, &hits2);
+                          &always_false_suggestion_result_checker, &hits2);
   // Check that no hits are returned because they get skipped by the namespace
   // checker.
   EXPECT_THAT(hits2, IsEmpty());

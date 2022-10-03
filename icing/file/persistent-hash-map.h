@@ -49,6 +49,8 @@ class PersistentHashMap {
     //   True on success, otherwise false.
     bool Advance();
 
+    int32_t GetIndex() const { return curr_kv_idx_; }
+
     // Get the key.
     //
     // REQUIRES: The preceding call for Advance() is true.
@@ -226,7 +228,8 @@ class PersistentHashMap {
                 "type size");
 
   static constexpr int32_t kVersion = 1;
-  static constexpr int32_t kDefaultMaxLoadFactorPercent = 75;
+  static constexpr int32_t kDefaultMaxLoadFactorPercent = 100;
+  static constexpr int32_t kDefaultInitNumBuckets = 8192;
 
   static constexpr std::string_view kFilePrefix = "persistent_hash_map";
   // Only metadata, bucket, entry files are stored under this sub-directory, for
@@ -248,6 +251,9 @@ class PersistentHashMap {
   //                          invoked (and # of buckets will be doubled).
   //                          Note that load_factor_percent exceeding 100 is
   //                          considered valid.
+  // init_num_buckets: initial # of buckets for the persistent hash map. It is
+  //                   used when creating new persistent hash map and ignored
+  //                   when creating the instance from existing files.
   //
   // Returns:
   //   FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
@@ -257,7 +263,8 @@ class PersistentHashMap {
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   Create(const Filesystem& filesystem, std::string_view base_dir,
          int32_t value_type_size,
-         int32_t max_load_factor_percent = kDefaultMaxLoadFactorPercent);
+         int32_t max_load_factor_percent = kDefaultMaxLoadFactorPercent,
+         int32_t init_num_buckets = kDefaultInitNumBuckets);
 
   ~PersistentHashMap();
 
@@ -379,7 +386,8 @@ class PersistentHashMap {
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   InitializeNewFiles(const Filesystem& filesystem, std::string_view base_dir,
-                     int32_t value_type_size, int32_t max_load_factor_percent);
+                     int32_t value_type_size, int32_t max_load_factor_percent,
+                     int32_t init_num_buckets);
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   InitializeExistingFiles(const Filesystem& filesystem,
@@ -420,6 +428,15 @@ class PersistentHashMap {
   //   Any FileBackedVector errors
   libtextclassifier3::Status Insert(int32_t bucket_idx, std::string_view key,
                                     const void* value);
+
+  // Rehash function. If force_rehash is true or the hash map loading is greater
+  // than max_load_factor, then it will rehash all keys.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on I/O error or any data inconsistency
+  //   Any FileBackedVector errors
+  libtextclassifier3::Status RehashIfNecessary(bool force_rehash);
 
   Crcs* crcs() {
     return reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +

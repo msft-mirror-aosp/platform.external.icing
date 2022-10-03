@@ -27,6 +27,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"

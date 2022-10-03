@@ -29,8 +29,9 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
-#include "icing/store/namespace-checker.h"
+#include "icing/proto/term.pb.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -83,7 +84,7 @@ class MainIndex {
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
       const std::string& prefix, TermMatchType::Code term_match_type,
-      const NamespaceChecker* namespace_checker);
+      const SuggestionResultChecker* suggestion_result_checker);
 
   struct LexiconMergeOutputs {
     // Maps from main_lexicon tvi for new branching point to the main_lexicon

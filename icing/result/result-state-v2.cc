@@ -19,6 +19,7 @@
 
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/scoring/scored-document-hits-ranker.h"

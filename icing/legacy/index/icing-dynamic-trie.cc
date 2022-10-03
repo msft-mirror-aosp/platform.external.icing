@@ -82,6 +82,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"

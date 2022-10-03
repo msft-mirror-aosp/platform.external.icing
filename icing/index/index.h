@@ -37,8 +37,8 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-checker.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -198,7 +198,7 @@ class Index {
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
       const std::string& prefix, int num_to_return,
       TermMatchType::Code term_match_type,
-      const NamespaceChecker* namespace_checker);
+      const SuggestionResultChecker* suggestion_result_checker);
 
   // A class that can be used to add hits to the index.
   //
@@ -286,7 +286,8 @@ class Index {
         filesystem_(filesystem) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
-      const std::string& prefix, const NamespaceChecker* namespace_checker);
+      const std::string& prefix,
+      const SuggestionResultChecker* suggestion_result_checker);
 
   std::unique_ptr<LiteIndex> lite_index_;
   std::unique_ptr<MainIndex> main_index_;

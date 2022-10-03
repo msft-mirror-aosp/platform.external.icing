@@ -18,6 +18,7 @@
 #include <string_view>
 
 #include "icing/absl_ports/str_join.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/section-manager.h"
 
