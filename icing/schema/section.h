@@ -28,17 +28,17 @@ namespace icing {
 namespace lib {
 
 using SectionId = int8_t;
-// 4 bits for 16 values. NOTE: Increasing this value means that SectionIdMask
-// must increase from an int16_t to an int32_t
-inline constexpr int kSectionIdBits = 4;
-inline constexpr SectionId kInvalidSectionId = (1 << kSectionIdBits);
-inline constexpr SectionId kMaxSectionId = kInvalidSectionId - 1;
+// 6 bits for 64 values.
+inline constexpr int kSectionIdBits = 6;
+inline constexpr SectionId kTotalNumSections = (1 << kSectionIdBits);
+inline constexpr SectionId kInvalidSectionId = kTotalNumSections;
+inline constexpr SectionId kMaxSectionId = kTotalNumSections - 1;
 inline constexpr SectionId kMinSectionId = 0;
 constexpr bool IsSectionIdValid(SectionId section_id) {
   return section_id >= kMinSectionId && section_id <= kMaxSectionId;
 }
 
-using SectionIdMask = int16_t;
+using SectionIdMask = int64_t;
 inline constexpr SectionIdMask kSectionIdMaskAll = ~SectionIdMask{0};
 inline constexpr SectionIdMask kSectionIdMaskNone = SectionIdMask{0};
 
@@ -77,6 +77,11 @@ struct SectionMetadata {
         id(id_in),
         tokenizer(tokenizer),
         term_match_type(term_match_type_in) {}
+
+  bool operator==(const SectionMetadata& rhs) const {
+    return path == rhs.path && id == rhs.id && tokenizer == rhs.tokenizer &&
+           term_match_type == rhs.term_match_type;
+  }
 };
 
 // Section is an icing internal concept similar to document property but with

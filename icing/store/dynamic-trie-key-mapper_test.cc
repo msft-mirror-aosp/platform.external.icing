@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/store/key-mapper.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -29,9 +29,9 @@ using ::testing::UnorderedElementsAre;
 namespace icing {
 namespace lib {
 namespace {
-constexpr int kMaxKeyMapperSize = 3 * 1024 * 1024;  // 3 MiB
+constexpr int kMaxDynamicTrieKeyMapperSize = 3 * 1024 * 1024;  // 3 MiB
 
-class KeyMapperTest : public testing::Test {
+class DynamicTrieKeyMapperTest : public testing::Test {
  protected:
   void SetUp() override { base_dir_ = GetTestTempDir() + "/key_mapper"; }
 
@@ -43,36 +43,51 @@ class KeyMapperTest : public testing::Test {
   Filesystem filesystem_;
 };
 
-TEST_F(KeyMapperTest, InvalidBaseDir) {
+std::unordered_map<std::string, DocumentId> GetAllKeyValuePairs(
+    const DynamicTrieKeyMapper<DocumentId>* key_mapper) {
+  std::unordered_map<std::string, DocumentId> ret;
+
+  std::unique_ptr<typename KeyMapper<DocumentId>::Iterator> itr =
+      key_mapper->GetIterator();
+  while (itr->Advance()) {
+    ret.emplace(itr->GetKey(), itr->GetValue());
+  }
+  return ret;
+}
+
+TEST_F(DynamicTrieKeyMapperTest, InvalidBaseDir) {
+  ASSERT_THAT(DynamicTrieKeyMapper<DocumentId>::Create(
+                  filesystem_, "/dev/null", kMaxDynamicTrieKeyMapperSize)
+                  .status()
+                  .error_message(),
+              HasSubstr("Failed to create DynamicTrieKeyMapper"));
+}
+
+TEST_F(DynamicTrieKeyMapperTest, NegativeMaxKeyMapperSizeReturnsInternalError) {
   ASSERT_THAT(
-      KeyMapper<DocumentId>::Create(filesystem_, "/dev/null", kMaxKeyMapperSize)
-          .status()
-          .error_message(),
-      HasSubstr("Failed to create KeyMapper"));
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_, -1),
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_F(KeyMapperTest, NegativeMaxKeyMapperSizeReturnsInternalError) {
-  ASSERT_THAT(KeyMapper<DocumentId>::Create(filesystem_, base_dir_, -1),
+TEST_F(DynamicTrieKeyMapperTest, TooLargeMaxKeyMapperSizeReturnsInternalError) {
+  ASSERT_THAT(DynamicTrieKeyMapper<DocumentId>::Create(
+                  filesystem_, base_dir_, std::numeric_limits<int>::max()),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_F(KeyMapperTest, TooLargeMaxKeyMapperSizeReturnsInternalError) {
-  ASSERT_THAT(KeyMapper<DocumentId>::Create(filesystem_, base_dir_,
-                                            std::numeric_limits<int>::max()),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-}
-
-TEST_F(KeyMapperTest, CreateNewKeyMapper) {
+TEST_F(DynamicTrieKeyMapperTest, CreateNewKeyMapper) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
   EXPECT_THAT(key_mapper->num_keys(), 0);
 }
 
-TEST_F(KeyMapperTest, CanUpdateSameKeyMultipleTimes) {
+TEST_F(DynamicTrieKeyMapperTest, CanUpdateSameKeyMultipleTimes) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
 
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->Put("default-youtube.com", 50));
@@ -88,10 +103,11 @@ TEST_F(KeyMapperTest, CanUpdateSameKeyMultipleTimes) {
   EXPECT_THAT(key_mapper->num_keys(), 2);
 }
 
-TEST_F(KeyMapperTest, GetOrPutOk) {
+TEST_F(DynamicTrieKeyMapperTest, GetOrPutOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
 
   EXPECT_THAT(key_mapper->Get("foo"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -99,15 +115,16 @@ TEST_F(KeyMapperTest, GetOrPutOk) {
   EXPECT_THAT(key_mapper->Get("foo"), IsOkAndHolds(1));
 }
 
-TEST_F(KeyMapperTest, CanPersistToDiskRegularly) {
+TEST_F(DynamicTrieKeyMapperTest, CanPersistToDiskRegularly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
-  // Can persist an empty KeyMapper.
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
+  // Can persist an empty DynamicTrieKeyMapper.
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
   EXPECT_THAT(key_mapper->num_keys(), 0);
 
-  // Can persist the smallest KeyMapper.
+  // Can persist the smallest DynamicTrieKeyMapper.
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
   EXPECT_THAT(key_mapper->num_keys(), 1);
@@ -124,17 +141,18 @@ TEST_F(KeyMapperTest, CanPersistToDiskRegularly) {
   EXPECT_THAT(key_mapper->num_keys(), 2);
 }
 
-TEST_F(KeyMapperTest, CanUseAcrossMultipleInstances) {
+TEST_F(DynamicTrieKeyMapperTest, CanUseAcrossMultipleInstances) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
 
   key_mapper.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
-      key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      key_mapper, DynamicTrieKeyMapper<DocumentId>::Create(
+                      filesystem_, base_dir_, kMaxDynamicTrieKeyMapperSize));
   EXPECT_THAT(key_mapper->num_keys(), 1);
   EXPECT_THAT(key_mapper->Get("default-google.com"), IsOkAndHolds(100));
 
@@ -146,41 +164,45 @@ TEST_F(KeyMapperTest, CanUseAcrossMultipleInstances) {
   EXPECT_THAT(key_mapper->Get("default-google.com"), IsOkAndHolds(300));
 }
 
-TEST_F(KeyMapperTest, CanDeleteAndRestartKeyMapping) {
+TEST_F(DynamicTrieKeyMapperTest, CanDeleteAndRestartKeyMapping) {
   // Can delete even if there's nothing there
-  ICING_EXPECT_OK(KeyMapper<DocumentId>::Delete(filesystem_, base_dir_));
+  ICING_EXPECT_OK(
+      DynamicTrieKeyMapper<DocumentId>::Delete(filesystem_, base_dir_));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
-  ICING_EXPECT_OK(KeyMapper<DocumentId>::Delete(filesystem_, base_dir_));
+  ICING_EXPECT_OK(
+      DynamicTrieKeyMapper<DocumentId>::Delete(filesystem_, base_dir_));
 
   key_mapper.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
-      key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
+      key_mapper, DynamicTrieKeyMapper<DocumentId>::Create(
+                      filesystem_, base_dir_, kMaxDynamicTrieKeyMapperSize));
   EXPECT_THAT(key_mapper->num_keys(), 0);
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   EXPECT_THAT(key_mapper->num_keys(), 1);
 }
 
-TEST_F(KeyMapperTest, GetValuesToKeys) {
+TEST_F(DynamicTrieKeyMapperTest, Iterator) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
-      KeyMapper<DocumentId>::Create(filesystem_, base_dir_, kMaxKeyMapperSize));
-  EXPECT_THAT(key_mapper->GetValuesToKeys(), IsEmpty());
+      std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
+      DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
+                                               kMaxDynamicTrieKeyMapperSize));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
 
   ICING_EXPECT_OK(key_mapper->Put("foo", /*value=*/1));
   ICING_EXPECT_OK(key_mapper->Put("bar", /*value=*/2));
-  EXPECT_THAT(key_mapper->GetValuesToKeys(),
-              UnorderedElementsAre(Pair(1, "foo"), Pair(2, "bar")));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2)));
 
   ICING_EXPECT_OK(key_mapper->Put("baz", /*value=*/3));
   EXPECT_THAT(
-      key_mapper->GetValuesToKeys(),
-      UnorderedElementsAre(Pair(1, "foo"), Pair(2, "bar"), Pair(3, "baz")));
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
 }
 
 }  // namespace

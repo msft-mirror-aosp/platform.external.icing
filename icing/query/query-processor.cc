@@ -35,7 +35,14 @@
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
+
+#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+#include "icing/query/advanced-query-processor.h"
+#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+
+#include "icing/query/query-processor.h"
 #include "icing/query/query-terms.h"
+#include "icing/query/query-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -69,7 +76,7 @@ struct ParserStateFrame {
 
   // If the last independent token was a property/section filter, then we need
   // to save the section name so we can create a section filter iterator.
-  std::string_view section_restrict = "";
+  std::string section_restrict;
 };
 
 // Combines any OR and AND iterators together into one iterator.
@@ -126,29 +133,40 @@ QueryProcessor::QueryProcessor(Index* index,
       document_store_(*document_store),
       schema_store_(*schema_store) {}
 
-DocHitInfoIteratorFilter::Options QueryProcessor::getFilterOptions(
-    const SearchSpecProto& search_spec) {
-  DocHitInfoIteratorFilter::Options options;
-
-  if (search_spec.namespace_filters_size() > 0) {
-    options.namespaces =
-        std::vector<std::string_view>(search_spec.namespace_filters().begin(),
-                                      search_spec.namespace_filters().end());
+libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
+  if (search_spec.search_type() == SearchSpecProto::SearchType::UNDEFINED) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Search type ",
+        SearchSpecProto::SearchType::Code_Name(search_spec.search_type()),
+        " is not supported."));
+  }
+  QueryResults results;
+  if (search_spec.search_type() ==
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+    ICING_VLOG(1) << "Using EXPERIMENTAL_ICING_ADVANCED_QUERY parser!";
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<AdvancedQueryProcessor> advanced_query_processor,
+        AdvancedQueryProcessor::Create(&index_, &language_segmenter_,
+                                       &normalizer_, &document_store_,
+                                       &schema_store_));
+    ICING_ASSIGN_OR_RETURN(results, advanced_query_processor->ParseSearch(
+                                        search_spec, ranking_strategy));
+#else   // !ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+    ICING_LOG(ERROR) << "Requested EXPERIMENTAL_ICING_ADVANCED_QUERY search "
+                        "type, but advanced query is not compiled in. Falling "
+                        "back to ICING_RAW_QUERY.";
+    ICING_ASSIGN_OR_RETURN(results,
+                           ParseRawQuery(search_spec, ranking_strategy));
+#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+  } else {
+    ICING_ASSIGN_OR_RETURN(results,
+                           ParseRawQuery(search_spec, ranking_strategy));
   }
 
-  if (search_spec.schema_type_filters_size() > 0) {
-    options.schema_types =
-        std::vector<std::string_view>(search_spec.schema_type_filters().begin(),
-                                      search_spec.schema_type_filters().end());
-  }
-  return options;
-}
-
-libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
-  ICING_ASSIGN_OR_RETURN(QueryResults results, ParseRawQuery(search_spec));
-
-  DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
       options);
@@ -156,9 +174,10 @@ QueryProcessor::ParseSearch(const SearchSpecProto& search_spec) {
 }
 
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto
-libtextclassifier3::StatusOr<QueryProcessor::QueryResults>
-QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
-  DocHitInfoIteratorFilter::Options options = getFilterOptions(search_spec);
+libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
 
   // Tokenize the incoming raw query
   //
@@ -220,7 +239,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
               "Encountered empty stack of ParserStateFrames");
         }
 
-        frames.top().section_restrict = token.text;
+        frames.top().section_restrict = std::string(token.text);
         break;
       }
       case Token::Type::REGULAR: {
@@ -257,8 +276,11 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
 
         ICING_ASSIGN_OR_RETURN(
             result_iterator,
-            index_.GetIterator(normalized_text, kSectionIdMaskAll,
-                               search_spec.term_match_type()));
+            index_.GetIterator(
+                normalized_text, kSectionIdMaskAll,
+                search_spec.term_match_type(),
+                /*need_hit_term_frequency=*/ranking_strategy ==
+                    ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
         // Add term iterator and terms to match if this is not a negation term.
         // WARNING: setting query terms at this point is not compatible with
@@ -268,14 +290,19 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
         if (!frames.top().saw_exclude) {
           ICING_ASSIGN_OR_RETURN(
               std::unique_ptr<DocHitInfoIterator> term_iterator,
-              index_.GetIterator(normalized_text, kSectionIdMaskAll,
-                                 search_spec.term_match_type()));
+              index_.GetIterator(
+                  normalized_text, kSectionIdMaskAll,
+                  search_spec.term_match_type(),
+                  /*need_hit_term_frequency=*/ranking_strategy ==
+                      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
-          results.query_term_iterators[normalized_text] =
-              std::make_unique<DocHitInfoIteratorFilter>(
-                  std::move(term_iterator), &document_store_, &schema_store_,
-                  options);
-
+          if (ranking_strategy ==
+              ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE) {
+            results.query_term_iterators[normalized_text] =
+                std::make_unique<DocHitInfoIteratorFilter>(
+                    std::move(term_iterator), &document_store_, &schema_store_,
+                    options);
+          }
           results.query_terms[frames.top().section_restrict].insert(
               std::move(normalized_text));
         }
@@ -330,7 +357,7 @@ QueryProcessor::ParseRawQuery(const SearchSpecProto& search_spec) {
         // the section restrict
         result_iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
             std::move(result_iterator), &document_store_, &schema_store_,
-            frames.top().section_restrict);
+            std::move(frames.top().section_restrict));
 
         frames.top().section_restrict = "";
       }

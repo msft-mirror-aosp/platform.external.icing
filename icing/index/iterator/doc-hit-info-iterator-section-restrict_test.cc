@@ -48,13 +48,13 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
 
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
 
-constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 
 class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
  protected:
@@ -121,12 +121,12 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // Created to test correct section_id_mask behavior.
   SectionIdMask original_section_id_mask = 0b00000101;  // hits in sections 0, 2
 
-  DocHitInfo doc_hit_info1 = DocHitInfo(document_id);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id);
   doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
   doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
 
   // Create a hit that was found in the indexed section
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   auto original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "hi");
@@ -152,8 +152,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 
   section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
   EXPECT_EQ(matched_terms_stats.at(0).term, "hi");
-  std::array<Hit::TermFrequency, kMaxSectionId> expected_term_frequencies{
-      1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  std::array<Hit::TermFrequency, kTotalNumSections> expected_term_frequencies{
+      1};
   EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
               ElementsAreArray(expected_term_frequencies));
   EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask,
