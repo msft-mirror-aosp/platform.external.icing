@@ -37,6 +37,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/proto/internal/optimize.pb.h"
@@ -45,9 +46,14 @@
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/query/query-processor.h"
+#include "icing/query/query-results.h"
 #include "icing/query/suggestion-processor.h"
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
@@ -62,7 +68,7 @@
 #include "icing/scoring/scoring-processor.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-checker-impl.h"
+#include "icing/store/suggestion-result-checker-impl.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
@@ -1113,15 +1119,15 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
-  auto query_results_or = query_processor->ParseSearch(search_spec);
+  auto query_results_or = query_processor->ParseSearch(
+      search_spec, ScoringSpecProto::RankingStrategy::NONE);
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
         component_timer->GetElapsedMilliseconds());
     return result_proto;
   }
-  QueryProcessor::QueryResults query_results =
-      std::move(query_results_or).ValueOrDie();
+  QueryResults query_results = std::move(query_results_or).ValueOrDie();
   delete_stats->set_parse_query_latency_ms(
       component_timer->GetElapsedMilliseconds());
 
@@ -1259,7 +1265,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     optimize_stats->set_index_restoration_mode(
         OptimizeStatsProto::INDEX_TRANSLATION);
     libtextclassifier3::Status index_optimize_status =
-        index_->Optimize(document_id_old_to_new_or.ValueOrDie());
+        index_->Optimize(document_id_old_to_new_or.ValueOrDie(),
+                         document_store_->last_added_document_id());
     if (!index_optimize_status.ok()) {
       ICING_LOG(WARNING) << "Failed to optimize index. Error: "
                          << index_optimize_status.error_message();
@@ -1487,19 +1494,21 @@ SearchResultProto IcingSearchEngine::Search(
     const ResultSpecProto& result_spec) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
-  // TODO(b/146008613) Explore ideas to make this function read-only.
-  absl_ports::unique_lock l(&mutex_);
-  if (!initialized_) {
-    result_status->set_code(StatusProto::FAILED_PRECONDITION);
-    result_status->set_message("IcingSearchEngine has not been initialized!");
-    return result_proto;
-  }
 
   QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   query_stats->set_query_length(search_spec.query().length());
   ScopedTimer overall_timer(clock_->GetNewTimer(), [query_stats](int64_t t) {
     query_stats->set_latency_ms(t);
   });
+  // TODO(b/146008613) Explore ideas to make this function read-only.
+  absl_ports::unique_lock l(&mutex_);
+  query_stats->set_lock_acquisition_latency_ms(
+      overall_timer.timer().GetElapsedMilliseconds());
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
 
   libtextclassifier3::Status status = ValidateResultSpec(result_spec);
   if (!status.ok()) {
@@ -1534,15 +1543,15 @@ SearchResultProto IcingSearchEngine::Search(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
-  auto query_results_or = query_processor->ParseSearch(search_spec);
+  auto query_results_or =
+      query_processor->ParseSearch(search_spec, scoring_spec.rank_by());
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     query_stats->set_parse_query_latency_ms(
         component_timer->GetElapsedMilliseconds());
     return result_proto;
   }
-  QueryProcessor::QueryResults query_results =
-      std::move(query_results_or).ValueOrDie();
+  QueryResults query_results = std::move(query_results_or).ValueOrDie();
   query_stats->set_parse_query_latency_ms(
       component_timer->GetElapsedMilliseconds());
 
@@ -1643,19 +1652,20 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
+  QueryStatsProto* query_stats = result_proto.mutable_query_stats();
+  query_stats->set_is_first_page(false);
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
   // ResultStateManager has its own writer lock, so here we only need a reader
   // lock for other components.
   absl_ports::shared_lock l(&mutex_);
+  query_stats->set_lock_acquisition_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
     return result_proto;
   }
 
-  QueryStatsProto* query_stats = result_proto.mutable_query_stats();
-  query_stats->set_is_first_page(false);
-
-  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
   auto result_retriever_or =
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get());
@@ -2006,22 +2016,163 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   std::unique_ptr<SuggestionProcessor> suggestion_processor =
       std::move(suggestion_processor_or).ValueOrDie();
 
+  // Populate target namespace filter.
   std::unordered_set<NamespaceId> namespace_ids;
   namespace_ids.reserve(suggestion_spec.namespace_filters_size());
   for (std::string_view name_space : suggestion_spec.namespace_filters()) {
     auto namespace_id_or = document_store_->GetNamespaceId(name_space);
     if (!namespace_id_or.ok()) {
+      // The current namespace doesn't exist.
       continue;
     }
     namespace_ids.insert(namespace_id_or.ValueOrDie());
   }
+  if (namespace_ids.empty() && !suggestion_spec.namespace_filters().empty()) {
+    // None of desired namespace exists, we should return directly.
+    response_status->set_code(StatusProto::OK);
+    return response;
+  }
+
+  // Populate target document id filter.
+  std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>
+      document_id_filter_map;
+  document_id_filter_map.reserve(suggestion_spec.document_uri_filters_size());
+  for (const NamespaceDocumentUriGroup& namespace_document_uri_group :
+       suggestion_spec.document_uri_filters()) {
+    auto namespace_id_or = document_store_->GetNamespaceId(
+        namespace_document_uri_group.namespace_());
+    if (!namespace_id_or.ok()) {
+      // The current namespace doesn't exist.
+      continue;
+    }
+    NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+    if (!namespace_ids.empty() &&
+        namespace_ids.find(namespace_id) == namespace_ids.end()) {
+      // The current namespace doesn't appear in the namespace filter.
+      response_status->set_code(StatusProto::INVALID_ARGUMENT);
+      response_status->set_message(absl_ports::StrCat(
+          "The namespace : ", namespace_document_uri_group.namespace_(),
+          " appears in the document uri filter, but doesn't appear in the "
+          "namespace filter."));
+      return response;
+    }
+
+    if (namespace_document_uri_group.document_uris().empty()) {
+      // Client should use namespace filter to filter out all document under
+      // a namespace.
+      response_status->set_code(StatusProto::INVALID_ARGUMENT);
+      response_status->set_message(absl_ports::StrCat(
+          "The namespace : ", namespace_document_uri_group.namespace_(),
+          " has empty document uri in the document uri filter. Please use the "
+          "namespace filter to exclude a namespace instead of the document uri "
+          "filter."));
+      return response;
+    }
+
+    // Translate namespace document Uris into document_ids
+    std::unordered_set<DocumentId> target_document_ids;
+    target_document_ids.reserve(
+        namespace_document_uri_group.document_uris_size());
+    for (std::string_view document_uri :
+         namespace_document_uri_group.document_uris()) {
+      auto document_id_or = document_store_->GetDocumentId(
+          namespace_document_uri_group.namespace_(), document_uri);
+      if (!document_id_or.ok()) {
+        continue;
+      }
+      target_document_ids.insert(document_id_or.ValueOrDie());
+    }
+    document_id_filter_map.insert({namespace_id, target_document_ids});
+  }
+  if (document_id_filter_map.empty() &&
+      !suggestion_spec.document_uri_filters().empty()) {
+    // None of desired DocumentId exists, we should return directly.
+    response_status->set_code(StatusProto::OK);
+    return response;
+  }
+
+  // Populate target schema type filter.
+  std::unordered_set<SchemaTypeId> schema_type_ids;
+  schema_type_ids.reserve(suggestion_spec.schema_type_filters_size());
+  for (std::string_view schema_type : suggestion_spec.schema_type_filters()) {
+    auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema_type);
+    if (!schema_type_id_or.ok()) {
+      continue;
+    }
+    schema_type_ids.insert(schema_type_id_or.ValueOrDie());
+  }
+  if (schema_type_ids.empty() &&
+      !suggestion_spec.schema_type_filters().empty()) {
+    // None of desired schema type exists, we should return directly.
+    response_status->set_code(StatusProto::OK);
+    return response;
+  }
+
+  // Populate target properties filter.
+  std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map;
+  property_filter_map.reserve(suggestion_spec.type_property_filters_size());
+  for (const TypePropertyMask& type_field_mask :
+       suggestion_spec.type_property_filters()) {
+    auto schema_type_id_or =
+        schema_store_->GetSchemaTypeId(type_field_mask.schema_type());
+    if (!schema_type_id_or.ok()) {
+      // The current schema doesn't exist
+      continue;
+    }
+    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+    if (!schema_type_ids.empty() &&
+        schema_type_ids.find(schema_type_id) == schema_type_ids.end()) {
+      // The current schema type doesn't appear in the schema type filter.
+      response_status->set_code(StatusProto::INVALID_ARGUMENT);
+      response_status->set_message(absl_ports::StrCat(
+          "The schema : ", type_field_mask.schema_type(),
+          " appears in the property filter, but doesn't appear in the schema"
+          " type filter."));
+      return response;
+    }
+
+    if (type_field_mask.paths().empty()) {
+      response_status->set_code(StatusProto::INVALID_ARGUMENT);
+      response_status->set_message(absl_ports::StrCat(
+          "The schema type : ", type_field_mask.schema_type(),
+          " has empty path in the property filter. Please use the schema type"
+          " filter to exclude a schema type instead of the property filter."));
+      return response;
+    }
+
+    // Translate property paths into section id mask
+    SectionIdMask section_mask = kSectionIdMaskNone;
+    auto section_metadata_list_or =
+        schema_store_->GetSectionMetadata(type_field_mask.schema_type());
+    if (!section_metadata_list_or.ok()) {
+      // The current schema doesn't has section metadata.
+      continue;
+    }
+    std::unordered_set<std::string> target_property_paths;
+    target_property_paths.reserve(type_field_mask.paths_size());
+    for (const std::string& target_property_path : type_field_mask.paths()) {
+      target_property_paths.insert(target_property_path);
+    }
+    const std::vector<SectionMetadata>* section_metadata_list =
+        section_metadata_list_or.ValueOrDie();
+    for (const SectionMetadata& section_metadata : *section_metadata_list) {
+      if (target_property_paths.find(section_metadata.path) !=
+          target_property_paths.end()) {
+        section_mask |= UINT64_C(1) << section_metadata.id;
+      }
+    }
+    property_filter_map.insert({schema_type_id, section_mask});
+  }
 
   // Run suggestion based on given SuggestionSpec.
-  NamespaceCheckerImpl namespace_checker_impl(document_store_.get(),
-                                              std::move(namespace_ids));
+  SuggestionResultCheckerImpl suggestion_result_checker_impl(
+      document_store_.get(), std::move(namespace_ids),
+      std::move(document_id_filter_map), std::move(schema_type_ids),
+      std::move(property_filter_map));
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> terms_or =
       suggestion_processor->QuerySuggestions(suggestion_spec,
-                                             &namespace_checker_impl);
+                                             &suggestion_result_checker_impl);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
     return response;

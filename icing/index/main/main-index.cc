@@ -26,6 +26,9 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -216,9 +219,9 @@ bool IsTermInNamespaces(
 }
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
-MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             TermMatchType::Code term_match_type,
-                             const NamespaceChecker* namespace_checker) {
+MainIndex::FindTermsByPrefix(
+    const std::string& prefix, TermMatchType::Code term_match_type,
+    const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
@@ -234,24 +237,28 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
                                flash_index_storage_.get(), posting_list_id));
     ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
                            pl_accessor.GetNextHitsBatch());
-    for (const Hit& hit : hits) {
-      DocumentId document_id = hit.document_id();
-      if (document_id != last_document_id) {
-        last_document_id = document_id;
-        if (term_match_type == TermMatchType::EXACT_ONLY &&
-            hit.is_prefix_hit()) {
-          continue;
+    while (!hits.empty()) {
+      for (const Hit& hit : hits) {
+        DocumentId document_id = hit.document_id();
+        if (document_id != last_document_id) {
+          last_document_id = document_id;
+          if (term_match_type == TermMatchType::EXACT_ONLY &&
+              hit.is_prefix_hit()) {
+            continue;
+          }
+          if (!suggestion_result_checker->BelongsToTargetResults(
+                  document_id, hit.section_id())) {
+            // The document is removed or expired or not belongs to target
+            // namespaces.
+            continue;
+          }
+          // TODO(b/152934343) Add search type in SuggestionSpec to ask user to
+          // input search type, prefix or exact. And make different score
+          // strategy base on that.
+          ++count;
         }
-        if (!namespace_checker->BelongsToTargetNamespaces(document_id)) {
-          // The document is removed or expired or not belongs to target
-          // namespaces.
-          continue;
-        }
-        // TODO(b/152934343) Add search type in SuggestionSpec to ask user to
-        // input search type, prefix or exact. And make different score strategy
-        // base on that.
-        ++count;
       }
+      ICING_ASSIGN_OR_RETURN(hits, pl_accessor.GetNextHitsBatch());
     }
     if (count > 0) {
       term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), count));

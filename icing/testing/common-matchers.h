@@ -24,8 +24,10 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
@@ -50,11 +52,12 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
   const DocHitInfo& actual = arg;
   SectionIdMask section_mask = kSectionIdMaskNone;
   for (SectionId section_id : section_ids) {
-    section_mask |= 1U << section_id;
+    section_mask |= UINT64_C(1) << section_id;
   }
   *result_listener << IcingStringUtil::StringPrintf(
-      "(actual is {document_id=%d, section_mask=%d}, but expected was "
-      "{document_id=%d, section_mask=%d}.)",
+      "(actual is {document_id=%d, section_mask=%" PRIu64
+      "}, but expected was "
+      "{document_id=%d, section_mask=%" PRIu64 "}.)",
       actual.document_id(), actual.hit_section_ids_mask(), document_id,
       section_mask);
   return actual.document_id() == document_id &&
@@ -64,7 +67,7 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
 // Used to match a DocHitInfo
 MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
            section_ids_to_term_frequencies_map, "") {
-  const DocHitInfo& actual = arg;
+  const DocHitInfoTermFrequencyPair& actual = arg;
   SectionIdMask section_mask = kSectionIdMaskNone;
 
   bool term_frequency_as_expected = true;
@@ -73,7 +76,7 @@ MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
   for (auto itr = section_ids_to_term_frequencies_map.begin();
        itr != section_ids_to_term_frequencies_map.end(); itr++) {
     SectionId section_id = itr->first;
-    section_mask |= 1U << section_id;
+    section_mask |= UINT64_C(1) << section_id;
     expected_tfs.push_back(itr->second);
     actual_tfs.push_back(actual.hit_term_frequency(section_id));
     if (actual.hit_term_frequency(section_id) != itr->second) {
@@ -88,14 +91,15 @@ MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
       absl_ports::StrJoin(expected_tfs, ",", absl_ports::NumberFormatter()),
       "]");
   *result_listener << IcingStringUtil::StringPrintf(
-      "(actual is {document_id=%d, section_mask=%d, term_frequencies=%s}, but "
-      "expected was "
-      "{document_id=%d, section_mask=%d, term_frequencies=%s}.)",
-      actual.document_id(), actual.hit_section_ids_mask(),
+      "(actual is {document_id=%d, section_mask=%" PRIu64
+      ", term_frequencies=%s}, but expected was "
+      "{document_id=%d, section_mask=%" PRIu64 ", term_frequencies=%s}.)",
+      actual.doc_hit_info().document_id(),
+      actual.doc_hit_info().hit_section_ids_mask(),
       actual_term_frequencies.c_str(), document_id, section_mask,
       expected_term_frequencies.c_str());
-  return actual.document_id() == document_id &&
-         actual.hit_section_ids_mask() == section_mask &&
+  return actual.doc_hit_info().document_id() == document_id &&
+         actual.doc_hit_info().hit_section_ids_mask() == section_mask &&
          term_frequency_as_expected;
 }
 

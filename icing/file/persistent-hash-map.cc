@@ -14,10 +14,12 @@
 
 #include "icing/file/persistent-hash-map.h"
 
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -183,7 +185,8 @@ std::string GetKeyValueStorageFilePath(std::string_view base_dir) {
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
 PersistentHashMap::Create(const Filesystem& filesystem,
                           std::string_view base_dir, int32_t value_type_size,
-                          int32_t max_load_factor_percent) {
+                          int32_t max_load_factor_percent,
+                          int32_t init_num_buckets) {
   if (!filesystem.FileExists(
           GetMetadataFilePath(base_dir, kSubDirectory).c_str()) ||
       !filesystem.FileExists(
@@ -193,7 +196,7 @@ PersistentHashMap::Create(const Filesystem& filesystem,
       !filesystem.FileExists(GetKeyValueStorageFilePath(base_dir).c_str())) {
     // TODO: erase all files if missing any.
     return InitializeNewFiles(filesystem, base_dir, value_type_size,
-                              max_load_factor_percent);
+                              max_load_factor_percent, init_num_buckets);
   }
   return InitializeExistingFiles(filesystem, base_dir, value_type_size,
                                  max_load_factor_percent);
@@ -213,16 +216,16 @@ libtextclassifier3::Status PersistentHashMap::Put(std::string_view key,
       int32_t bucket_idx,
       HashKeyToBucketIndex(key, bucket_storage_->num_elements()));
 
-  ICING_ASSIGN_OR_RETURN(int32_t target_entry_idx,
+  ICING_ASSIGN_OR_RETURN(EntryIndexPair idx_pair,
                          FindEntryIndexByKey(bucket_idx, key));
-  if (target_entry_idx == Entry::kInvalidIndex) {
+  if (idx_pair.target_entry_index == Entry::kInvalidIndex) {
     // If not found, then insert new key value pair.
     return Insert(bucket_idx, key, value);
   }
 
   // Otherwise, overwrite the value.
   ICING_ASSIGN_OR_RETURN(const Entry* entry,
-                         entry_storage_->Get(target_entry_idx));
+                         entry_storage_->Get(idx_pair.target_entry_index));
 
   int32_t kv_len = key.length() + 1 + info()->value_type_size;
   int32_t value_offset = key.length() + 1;
@@ -244,15 +247,15 @@ libtextclassifier3::Status PersistentHashMap::GetOrPut(std::string_view key,
       int32_t bucket_idx,
       HashKeyToBucketIndex(key, bucket_storage_->num_elements()));
 
-  ICING_ASSIGN_OR_RETURN(int32_t target_entry_idx,
+  ICING_ASSIGN_OR_RETURN(EntryIndexPair idx_pair,
                          FindEntryIndexByKey(bucket_idx, key));
-  if (target_entry_idx == Entry::kInvalidIndex) {
+  if (idx_pair.target_entry_index == Entry::kInvalidIndex) {
     // If not found, then insert new key value pair.
     return Insert(bucket_idx, key, next_value);
   }
 
   // Otherwise, copy the hash map value into next_value.
-  return CopyEntryValue(target_entry_idx, next_value);
+  return CopyEntryValue(idx_pair.target_entry_index, next_value);
 }
 
 libtextclassifier3::Status PersistentHashMap::Get(std::string_view key,
@@ -262,14 +265,76 @@ libtextclassifier3::Status PersistentHashMap::Get(std::string_view key,
       int32_t bucket_idx,
       HashKeyToBucketIndex(key, bucket_storage_->num_elements()));
 
-  ICING_ASSIGN_OR_RETURN(int32_t target_entry_idx,
+  ICING_ASSIGN_OR_RETURN(EntryIndexPair idx_pair,
                          FindEntryIndexByKey(bucket_idx, key));
-  if (target_entry_idx == Entry::kInvalidIndex) {
+  if (idx_pair.target_entry_index == Entry::kInvalidIndex) {
     return absl_ports::NotFoundError(
         absl_ports::StrCat("Key not found in PersistentHashMap ", base_dir_));
   }
 
-  return CopyEntryValue(target_entry_idx, value);
+  return CopyEntryValue(idx_pair.target_entry_index, value);
+}
+
+libtextclassifier3::Status PersistentHashMap::Delete(std::string_view key) {
+  ICING_RETURN_IF_ERROR(ValidateKey(key));
+  ICING_ASSIGN_OR_RETURN(
+      int32_t bucket_idx,
+      HashKeyToBucketIndex(key, bucket_storage_->num_elements()));
+
+  ICING_ASSIGN_OR_RETURN(EntryIndexPair idx_pair,
+                         FindEntryIndexByKey(bucket_idx, key));
+  if (idx_pair.target_entry_index == Entry::kInvalidIndex) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Key not found in PersistentHashMap ", base_dir_));
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      typename FileBackedVector<Entry>::MutableView mutable_target_entry,
+      entry_storage_->GetMutable(idx_pair.target_entry_index));
+  if (idx_pair.prev_entry_index == Entry::kInvalidIndex) {
+    // If prev_entry_idx is Entry::kInvalidIndex, then target_entry must be the
+    // head element of the entry linked list, and we have to update
+    // bucket->head_entry_index_.
+    //
+    // Before: target_entry (head) -> next_entry -> ...
+    // After: next_entry (head) -> ...
+    ICING_ASSIGN_OR_RETURN(
+        typename FileBackedVector<Bucket>::MutableView mutable_bucket,
+        bucket_storage_->GetMutable(bucket_idx));
+    if (mutable_bucket.Get().head_entry_index() !=
+        idx_pair.target_entry_index) {
+      return absl_ports::InternalError(
+          "Bucket head entry index is inconsistent with the actual entry linked"
+          "list head. This shouldn't happen");
+    }
+    mutable_bucket.Get().set_head_entry_index(
+        mutable_target_entry.Get().next_entry_index());
+  } else {
+    // Otherwise, connect prev_entry and next_entry, to remove target_entry from
+    // the entry linked list.
+    //
+    // Before: ... -> prev_entry -> target_entry -> next_entry -> ...
+    // After: ... -> prev_entry -> next_entry -> ...
+    ICING_ASSIGN_OR_RETURN(
+        typename FileBackedVector<Entry>::MutableView mutable_prev_entry,
+        entry_storage_->GetMutable(idx_pair.prev_entry_index));
+    mutable_prev_entry.Get().set_next_entry_index(
+        mutable_target_entry.Get().next_entry_index());
+  }
+
+  // Zero out the key value bytes. It is necessary for iterator to iterate
+  // through kv_storage and handle deleted keys properly.
+  int32_t kv_len = key.length() + 1 + info()->value_type_size;
+  ICING_RETURN_IF_ERROR(kv_storage_->Set(
+      mutable_target_entry.Get().key_value_index(), kv_len, '\0'));
+
+  // Invalidate target_entry
+  mutable_target_entry.Get().set_key_value_index(kInvalidKVIndex);
+  mutable_target_entry.Get().set_next_entry_index(Entry::kInvalidIndex);
+
+  ++(info()->num_deleted_entries);
+
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status PersistentHashMap::PersistToDisk() {
@@ -334,7 +399,8 @@ libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeChecksum() {
 PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
                                       std::string_view base_dir,
                                       int32_t value_type_size,
-                                      int32_t max_load_factor_percent) {
+                                      int32_t max_load_factor_percent,
+                                      int32_t init_num_buckets) {
   // Create directory.
   const std::string dir_path = absl_ports::StrCat(base_dir, "/", kSubDirectory);
   if (!filesystem.CreateDirectoryRecursively(dir_path.c_str())) {
@@ -358,8 +424,9 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
                              filesystem, GetKeyValueStorageFilePath(base_dir),
                              MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
-  // Initialize one bucket.
-  ICING_RETURN_IF_ERROR(bucket_storage->Append(Bucket()));
+  // Initialize buckets.
+  ICING_RETURN_IF_ERROR(
+      bucket_storage->Set(/*idx=*/0, /*len=*/init_num_buckets, Bucket()));
   ICING_RETURN_IF_ERROR(bucket_storage->PersistToDisk());
 
   // Create and initialize new info
@@ -440,27 +507,35 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
 
   // Allow max_load_factor_percent_ change.
   if (max_load_factor_percent != info_ptr->max_load_factor_percent) {
-    ICING_VLOG(2) << "Changing max_load_factor_percent from " << info_ptr->max_load_factor_percent << " to " << max_load_factor_percent;
+    ICING_VLOG(2) << "Changing max_load_factor_percent from "
+                  << info_ptr->max_load_factor_percent << " to "
+                  << max_load_factor_percent;
 
     info_ptr->max_load_factor_percent = max_load_factor_percent;
     crcs_ptr->component_crcs.info_crc = info_ptr->ComputeChecksum().Get();
     crcs_ptr->all_crc = crcs_ptr->component_crcs.ComputeChecksum().Get();
     ICING_RETURN_IF_ERROR(metadata_mmapped_file->PersistToDisk());
-    // TODO(b/193919210): rehash if needed
   }
 
-  return std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
-      filesystem, base_dir, std::move(metadata_mmapped_file),
-      std::move(bucket_storage), std::move(entry_storage),
-      std::move(kv_storage)));
+  auto persistent_hash_map =
+      std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
+          filesystem, base_dir, std::move(metadata_mmapped_file),
+          std::move(bucket_storage), std::move(entry_storage),
+          std::move(kv_storage)));
+  ICING_RETURN_IF_ERROR(
+      persistent_hash_map->RehashIfNecessary(/*force_rehash=*/false));
+  return persistent_hash_map;
 }
 
-libtextclassifier3::StatusOr<int32_t> PersistentHashMap::FindEntryIndexByKey(
-    int32_t bucket_idx, std::string_view key) const {
+libtextclassifier3::StatusOr<PersistentHashMap::EntryIndexPair>
+PersistentHashMap::FindEntryIndexByKey(int32_t bucket_idx,
+                                       std::string_view key) const {
   // Iterate all entries in the bucket, compare with key, and return the entry
   // index if exists.
   ICING_ASSIGN_OR_RETURN(const Bucket* bucket,
                          bucket_storage_->Get(bucket_idx));
+
+  int32_t prev_entry_idx = Entry::kInvalidIndex;
   int32_t curr_entry_idx = bucket->head_entry_index();
   while (curr_entry_idx != Entry::kInvalidIndex) {
     ICING_ASSIGN_OR_RETURN(const Entry* entry,
@@ -473,13 +548,14 @@ libtextclassifier3::StatusOr<int32_t> PersistentHashMap::FindEntryIndexByKey(
     ICING_ASSIGN_OR_RETURN(const char* kv_arr,
                            kv_storage_->Get(entry->key_value_index()));
     if (key.compare(kv_arr) == 0) {
-      return curr_entry_idx;
+      return EntryIndexPair(curr_entry_idx, prev_entry_idx);
     }
 
+    prev_entry_idx = curr_entry_idx;
     curr_entry_idx = entry->next_entry_index();
   }
 
-  return curr_entry_idx;
+  return EntryIndexPair(curr_entry_idx, prev_entry_idx);
 }
 
 libtextclassifier3::Status PersistentHashMap::CopyEntryValue(
@@ -525,9 +601,76 @@ libtextclassifier3::Status PersistentHashMap::Insert(int32_t bucket_idx,
       Entry(new_kv_idx, mutable_bucket.Get().head_entry_index())));
   mutable_bucket.Get().set_head_entry_index(new_entry_idx);
 
-  // TODO: rehash if needed
+  return RehashIfNecessary(/*force_rehash=*/false);
+}
+
+libtextclassifier3::Status PersistentHashMap::RehashIfNecessary(
+    bool force_rehash) {
+  int32_t new_num_bucket = bucket_storage_->num_elements();
+  while (new_num_bucket <= Bucket::kMaxNumBuckets / 2 &&
+         size() > static_cast<int64_t>(new_num_bucket) *
+                      info()->max_load_factor_percent / 100) {
+    new_num_bucket *= 2;
+  }
+
+  if (!force_rehash && new_num_bucket == bucket_storage_->num_elements()) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Resize and reset buckets.
+  ICING_RETURN_IF_ERROR(
+      bucket_storage_->Set(0, new_num_bucket, Bucket(Entry::kInvalidIndex)));
+
+  // Iterate all key value pairs in kv_storage, rehash and insert.
+  Iterator iter = GetIterator();
+  int32_t entry_idx = 0;
+  while (iter.Advance()) {
+    ICING_ASSIGN_OR_RETURN(int32_t bucket_idx,
+                           HashKeyToBucketIndex(iter.GetKey(), new_num_bucket));
+    ICING_ASSIGN_OR_RETURN(FileBackedVector<Bucket>::MutableView mutable_bucket,
+                           bucket_storage_->GetMutable(bucket_idx));
+
+    // Update entry and bucket.
+    ICING_RETURN_IF_ERROR(entry_storage_->Set(
+        entry_idx,
+        Entry(iter.GetIndex(), mutable_bucket.Get().head_entry_index())));
+    mutable_bucket.Get().set_head_entry_index(entry_idx);
+
+    ++entry_idx;
+  }
+
+  // Since there will be some deleted entries, after rehashing entry_storage_
+  // # of vector elements may be greater than the actual # of entries.
+  // Therefore, we have to truncate entry_storage_ to the correct size.
+  if (entry_idx < entry_storage_->num_elements()) {
+    entry_storage_->TruncateTo(entry_idx);
+  }
+
+  info()->num_deleted_entries = 0;
 
   return libtextclassifier3::Status::OK;
+}
+
+bool PersistentHashMap::Iterator::Advance() {
+  // Jump over the current key value pair before advancing to the next valid
+  // key value pair. In the first round (after construction), curr_key_len_
+  // is 0, so don't jump over anything.
+  if (curr_key_len_ != 0) {
+    curr_kv_idx_ += curr_key_len_ + 1 + map_->info()->value_type_size;
+    curr_key_len_ = 0;
+  }
+
+  // By skipping null chars, we will be automatically handling deleted entries
+  // (which are zeroed out during deletion).
+  for (const char* curr_kv_ptr = map_->kv_storage_->array() + curr_kv_idx_;
+       curr_kv_idx_ < map_->kv_storage_->num_elements();
+       ++curr_kv_ptr, ++curr_kv_idx_) {
+    if (*curr_kv_ptr != '\0') {
+      curr_key_len_ = strlen(curr_kv_ptr);
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace lib

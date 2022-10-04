@@ -25,9 +25,8 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
-#include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -87,6 +86,8 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
           status = editor.BufferTerm(token.data());
           break;
         case StringIndexingConfig::TokenizerType::NONE:
+          [[fallthrough]];
+        case StringIndexingConfig::TokenizerType::RFC822:
           [[fallthrough]];
         case StringIndexingConfig::TokenizerType::PLAIN:
           std::string normalized_term = normalizer_.NormalizeTerm(token);

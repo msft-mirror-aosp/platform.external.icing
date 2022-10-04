@@ -29,6 +29,7 @@ namespace icing {
 namespace lib {
 namespace {
 using ::testing::ElementsAre;
+using ::testing::IsEmpty;
 using ::testing::HasSubstr;
 
 class RawQueryTokenizerTest : public ::testing::Test {
@@ -47,6 +48,23 @@ TEST_F(RawQueryTokenizerTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(tokenizer_factory::CreateQueryTokenizer(
                   tokenizer_factory::RAW_QUERY, /*lang_segmenter=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+TEST_F(RawQueryTokenizerTest, NoTokensBeforeAdvancing) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Tokenizer> raw_query_tokenizer,
+      tokenizer_factory::CreateQueryTokenizer(tokenizer_factory::RAW_QUERY,
+                                              language_segmenter.get()));
+
+  constexpr std::string_view kText = "Hello, world!";
+  ICING_ASSERT_OK_AND_ASSIGN(auto token_iterator,
+                             raw_query_tokenizer->Tokenize(kText));
+
+  // We should get no tokens if we get the token before advancing.
+  EXPECT_THAT(token_iterator->GetTokens(), IsEmpty());
 }
 
 TEST_F(RawQueryTokenizerTest, Simple) {

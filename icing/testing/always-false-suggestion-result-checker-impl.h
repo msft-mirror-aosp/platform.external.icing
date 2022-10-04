@@ -12,23 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_ALWAYS_TRUE_NAMESPACE_CHECKER_IMPL_H_
-#define ICING_TESTING_ALWAYS_TRUE_NAMESPACE_CHECKER_IMPL_H_
+#ifndef ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
+#define ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_
 
+#include "icing/schema/section.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-checker.h"
+#include "icing/store/suggestion-result-checker.h"
 
 namespace icing {
 namespace lib {
 
-class AlwaysTrueNamespaceCheckerImpl : public NamespaceChecker {
+class AlwaysFalseSuggestionResultCheckerImpl : public SuggestionResultChecker {
  public:
-  bool BelongsToTargetNamespaces(DocumentId document_id) const override {
-    return true;
+  bool BelongsToTargetResults(DocumentId document_id,
+                              SectionId section_id) const override {
+    return false;
   }
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_ALWAYS_TRUE_NAMESPACE_CHECKER_IMPL_H_
+#endif  // ICING_TESTING_ALWAYS_TRUE_SUGGESTION_RESULT_CHECKER_IMPL_H_

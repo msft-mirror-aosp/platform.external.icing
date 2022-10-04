@@ -21,8 +21,8 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"

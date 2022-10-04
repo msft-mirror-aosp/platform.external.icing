@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_HIT_HIT_H_
 #define ICING_INDEX_HIT_HIT_H_
 
+#include <array>
 #include <cstdint>
 #include <limits>
 
@@ -54,6 +55,7 @@ class Hit {
 
   // The Term Frequency of a Hit.
   using TermFrequency = uint8_t;
+  using TermFrequencyArray = std::array<Hit::TermFrequency, kTotalNumSections>;
   // Max TermFrequency is 255.
   static constexpr TermFrequency kMaxTermFrequency =
       std::numeric_limits<TermFrequency>::max();

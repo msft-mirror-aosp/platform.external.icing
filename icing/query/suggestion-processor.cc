@@ -14,6 +14,8 @@
 
 #include "icing/query/suggestion-processor.h"
 
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
@@ -35,7 +37,7 @@ SuggestionProcessor::Create(Index* index,
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 SuggestionProcessor::QuerySuggestions(
     const icing::lib::SuggestionSpecProto& suggestion_spec,
-    const NamespaceChecker* namespace_checker) {
+    const SuggestionResultChecker* suggestion_result_checker) {
   // We use query tokenizer to tokenize the give prefix, and we only use the
   // last token to be the suggestion prefix.
   ICING_ASSIGN_OR_RETURN(
@@ -50,9 +52,10 @@ SuggestionProcessor::QuerySuggestions(
   std::string last_token;
   int token_start_pos;
   while (iterator->Advance()) {
-    Token token = iterator->GetToken();
-    last_token = token.text;
-    token_start_pos = token.text.data() - suggestion_spec.prefix().c_str();
+    for (const Token& token : iterator->GetTokens()) {
+      last_token = token.text;
+      token_start_pos = token.text.data() - suggestion_spec.prefix().c_str();
+    }
   }
 
   // If the position of the last token is not the end of the prefix, it means
@@ -77,7 +80,7 @@ SuggestionProcessor::QuerySuggestions(
           normalizer_.NormalizeTerm(last_token),
           suggestion_spec.num_to_return(),
           suggestion_spec.scoring_spec().scoring_match_type(),
-          namespace_checker));
+          suggestion_result_checker));
 
   for (TermMetadata& term : terms) {
     term.content = query_prefix + term.content;

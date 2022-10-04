@@ -30,8 +30,11 @@
 #include "icing/file/destructible-directory.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
@@ -335,7 +338,8 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
   Crc32 schema_checksum;
   schema_checksum.Append(schema_proto->SerializeAsString());
 
-  Crc32 schema_type_mapper_checksum = schema_type_mapper_->ComputeChecksum();
+  ICING_ASSIGN_OR_RETURN(Crc32 schema_type_mapper_checksum,
+                         schema_type_mapper_->ComputeChecksum());
 
   Crc32 total_checksum;
   total_checksum.Append(std::to_string(schema_checksum.Get()));
@@ -563,7 +567,7 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
       continue;
     }
     total_sections += sections_list_or.ValueOrDie()->size();
-    if (sections_list_or.ValueOrDie()->size() == kMaxSectionId + 1) {
+    if (sections_list_or.ValueOrDie()->size() == kTotalNumSections) {
       ++num_types_sections_exhausted;
     }
   }
