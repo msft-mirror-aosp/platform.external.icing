@@ -26,7 +26,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 5
+// Next tag: 7
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -61,11 +61,35 @@ message SearchSpecProto {
   // applies to the entire 'query'. To issue different queries for different
   // schema types, separate Search()'s will need to be made.
   repeated string schema_type_filters = 4;
+
+  // Timestamp taken just before sending proto across the JNI boundary from java
+  // to native side.
+  optional int64 java_to_native_start_timestamp_ms = 5;
+
+  message SearchType {
+    enum Code {
+      UNDEFINED = 0;
+      ICING_RAW_QUERY = 1;
+      EXPERIMENTAL_ICING_ADVANCED_QUERY = 2;
+    }
+  }
+  // This field determines which type of query parsing Icing will use to fulfill
+  // the query.
+  // ICING_RAW_QUERY is the current query language as released, which supports
+  // basic ands, ors and nots as well as grouping and property restricts.
+  // EXPERIMENTAL_ICING_ADVANCED_QUERY is a superset of ICING_RAW_QUERY that
+  // will also support the use of functions defined by Icing Lib.
+  // This field is only temporary. When fully complete, all queries will be
+  // parsed by EXPERIMENTAL_ICING_ADVANCED_QUERY. This field only exists to
+  // enable testing.
+  // TODO(b/208654892) Remove this field once EXPERIMENTAL_ICING_ADVANCED_QUERY
+  // is fully supported.
+  optional SearchType.Code search_type = 6 [default = ICING_RAW_QUERY];
 }
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 6
+// Next tag: 7
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -85,16 +109,16 @@ message ResultSpecProto {
     // have snippet information provided. If set to 0, snippeting is disabled.
     optional int32 num_matches_per_property = 2;
 
-    // How large of a window to provide. Windows start at max_window_bytes / 2
-    // bytes before the middle of the matching token and end at max_window_bytes
-    // / 2 bytes after the middle of the matching token. Windowing respects
-    // token boundaries.
-    // Therefore, the returned window may be smaller than requested. Setting
-    // max_window_bytes to 0 will disable windowing information. If matches
-    // enabled is also set to false, then snippeting is disabled.
-    // Ex. max_window_bytes = 16. "foo bar baz bat rat" with a query of "baz"
+    // How large of a window to provide. Windows start at
+    // max_window_utf32_length / 2 bytes before the middle of the matching token
+    // and end at max_window_utf32_length / 2 bytes after the middle of the
+    // matching token. Windowing respects token boundaries. Therefore, the
+    // returned window may be smaller than requested. Setting
+    // max_window_utf32_length to 0 will disable windowing information. If
+    // matches enabled is also set to false, then snippeting is disabled. Ex.
+    // max_window_utf32_length = 16. "foo bar baz bat rat" with a query of "baz"
     // will return a window of "bar baz bat" which is only 11 bytes long.
-    optional int32 max_window_bytes = 3;
+    optional int32 max_window_utf32_length = 3;
   }
   optional SnippetSpecProto snippet_spec = 3;
 
@@ -133,6 +157,15 @@ message ResultSpecProto {
   // ["ns0doc0", "ns0doc1", "ns1doc0", "ns3doc0", "ns3doc1", "ns2doc1",
   //  "ns3doc2"].
   repeated ResultGrouping result_groupings = 5;
+
+  // The threshold of total bytes of all documents to cutoff, in order to limit
+  // # of bytes in a single page.
+  // Note that it doesn't guarantee the result # of bytes will be smaller, equal
+  // to, or larger than the threshold. Instead, it is just a threshold to
+  // cutoff, and only guarantees total bytes of search results will exceed the
+  // threshold by less than the size of the final search result.
+  optional int32 num_total_bytes_per_page_threshold = 6
+      [default = 2147483647];  // INT_MAX
 }
 
 // The representation of a single match within a DocumentProto property.
@@ -309,7 +342,7 @@ message GetResultSpecProto {
   repeated TypePropertyMask type_property_masks = 1;
 }
 
-// Next tag: 4
+// Next tag: 8
 message SuggestionSpecProto {
   // REQUIRED: The "raw" prefix string that users may type. For example, "f"
   // will search for suggested query that start with "f" like "foo", "fool".
@@ -323,6 +356,62 @@ message SuggestionSpecProto {
 
   // REQUIRED: The number of suggestions to be returned.
   optional int32 num_to_return = 3;
+
+  // Indicates how the suggestion terms should be scored and ranked.
+  message SuggestionScoringSpecProto {
+    // TermMatchType.Code=UNKNOWN
+    // Should never purposely be set and may lead to undefined behavior. This is
+    // used for backwards compatibility reasons.
+    //
+    // TermMatchType.Code=EXACT_ONLY
+    // Only exact hits will be counted to score a suggestion term.
+    //
+    // TermMatchType.Code=PREFIX
+    // Both exact hits and prefix hits will be counted to score a suggestion
+    // term.
+    optional TermMatchType.Code scoring_match_type = 1;
+  }
+
+  optional SuggestionScoringSpecProto scoring_spec = 4;
+
+  // OPTIONAL: Only search for suggestions that under the specified
+  // DocumentUris. If unset, the suggestion will search over all Documents.
+  //
+  // All namespace in the given NamespaceDocumentUriGroup should match the
+  // namespace_filters. i.e. appears in the namespace_filter or namespace_filter
+  // is empty.
+  //
+  // All given NamespaceDocumentUriGroup cannot have empty. Please use the
+  // namespace_filter to exclude a namespace.
+  //
+  // Note that this applies to the entire 'prefix'. To issue different
+  // suggestions for different DocumentIds, separate RunSuggestion()'s will need
+  // to be made.
+  repeated NamespaceDocumentUriGroup document_uri_filters = 5;
+
+  // OPTIONAL: Only search for suggestions that under the specified schemas.
+  // If unset, the suggestion will search over all schema types. Note that this
+  // applies to the entire 'prefix'. To issue different suggestions for
+  // different schema typs, separate RunSuggestion()'s will need to be made.
+  repeated string schema_type_filters = 6;
+
+  // OPTIONAL: Only search for suggestions that under the specified types and
+  // properties.
+  //
+  // If unset, the suggestion will search over all types.
+  // If the TypePropertyMask.paths is unset, the suggestion will search over all
+  // properties under the TypePropertyMask.schema_type.
+  //
+  // Note that this applies to the entire 'prefix'. To issue different
+  // suggestions for different types, separate RunSuggestion()'s will need to be
+  // made.
+  repeated TypePropertyMask type_property_filters = 7;
+}
+
+// A group that holds namespace and document_uris under it.
+message NamespaceDocumentUriGroup {
+  optional string namespace_ = 1;
+  repeated string document_uris = 2;
 }
 
 // Next tag: 3
