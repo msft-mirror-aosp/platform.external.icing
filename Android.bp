@@ -91,4 +91,36 @@ cc_library_shared {
     min_sdk_version: "Tiramisu",
 }
 
+filegroup {
+    // TODO(b/193244409): Implement globs for additional tests.
+    name: "filesystem_common",
+    srcs: [
+        "icing/absl_ports/str_cat.cc",
+        "icing/file/filesystem.cc",
+        "icing/legacy/core/icing-string-util.cc",
+        "icing/testing/tmp-directory.cc",
+        "icing/util/logging.cc",
+        "icing/util/logging_raw.cc",
+    ],
+}
+
+cc_test {
+    name: "libicing_tests",
+    defaults: ["libicing_defaults"],
+    test_suites: ["device_tests"],
+    srcs: [
+        ":filesystem_common",
+        "icing/file/filesystem_test.cc",
+    ],
+    static_libs: [
+        "icing-c-proto",
+        "libgmock",
+        "libgtest",
+    ],
+    shared_libs: [
+        "liblog",
+        "libz",
+    ],
+}
+
 // TODO(cassiewang): Add build rules and a TEST_MAPPING for cc_tests
