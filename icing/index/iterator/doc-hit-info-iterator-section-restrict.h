@@ -42,7 +42,7 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   explicit DocHitInfoIteratorSectionRestrict(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      std::string_view target_section);
+      std::string target_section);
 
   libtextclassifier3::Status Advance() override;
 
@@ -75,7 +75,7 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   const SchemaStore& schema_store_;
 
   // Ensure that this does not outlive the underlying string value.
-  std::string_view target_section_;
+  std::string target_section_;
 };
 
 }  // namespace lib

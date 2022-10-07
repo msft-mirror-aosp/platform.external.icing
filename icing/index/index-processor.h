@@ -20,7 +20,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/index.h"
-#include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/section-manager.h"
 #include "icing/store/document-id.h"
 #include "icing/tokenization/token.h"
@@ -68,8 +68,6 @@ class IndexProcessor {
  private:
   IndexProcessor(const Normalizer* normalizer, Index* index, const Clock* clock)
       : normalizer_(*normalizer), index_(index), clock_(*clock) {}
-
-  std::string NormalizeToken(const Token& token);
 
   const Normalizer& normalizer_;
   Index* const index_;
