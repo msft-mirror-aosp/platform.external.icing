@@ -80,7 +80,7 @@ SuggestionProcessor::QuerySuggestions(
           normalizer_.NormalizeTerm(last_token),
           suggestion_spec.num_to_return(),
           suggestion_spec.scoring_spec().scoring_match_type(),
-          suggestion_result_checker));
+          suggestion_spec.scoring_spec().rank_by(), suggestion_result_checker));
 
   for (TermMetadata& term : terms) {
     term.content = query_prefix + term.content;

@@ -180,6 +180,120 @@ libtextclassifier3::Status ValidateSuggestionSpec(
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::StatusOr<
+    std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>>
+PopulateDocumentIdFilters(
+    const DocumentStore* document_store,
+    const icing::lib::SuggestionSpecProto& suggestion_spec,
+    const std::unordered_set<NamespaceId>& namespace_ids) {
+  std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>
+      document_id_filter_map;
+  document_id_filter_map.reserve(suggestion_spec.document_uri_filters_size());
+  for (const NamespaceDocumentUriGroup& namespace_document_uri_group :
+       suggestion_spec.document_uri_filters()) {
+    auto namespace_id_or = document_store->GetNamespaceId(
+        namespace_document_uri_group.namespace_());
+    if (!namespace_id_or.ok()) {
+      // The current namespace doesn't exist.
+      continue;
+    }
+    NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+    if (!namespace_ids.empty() &&
+        namespace_ids.find(namespace_id) == namespace_ids.end()) {
+      // The current namespace doesn't appear in the namespace filter.
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The namespace : ", namespace_document_uri_group.namespace_(),
+          " appears in the document uri filter, but doesn't appear in the "
+          "namespace filter."));
+    }
+
+    if (namespace_document_uri_group.document_uris().empty()) {
+      // Client should use namespace filter to filter out all document under
+      // a namespace.
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The namespace : ", namespace_document_uri_group.namespace_(),
+          " has empty document uri in the document uri filter. Please use the "
+          "namespace filter to exclude a namespace instead of the document uri "
+          "filter."));
+    }
+
+    // Translate namespace document Uris into document_ids
+    std::unordered_set<DocumentId> target_document_ids;
+    target_document_ids.reserve(
+        namespace_document_uri_group.document_uris_size());
+    for (std::string_view document_uri :
+         namespace_document_uri_group.document_uris()) {
+      auto document_id_or = document_store->GetDocumentId(
+          namespace_document_uri_group.namespace_(), document_uri);
+      if (!document_id_or.ok()) {
+        continue;
+      }
+      target_document_ids.insert(document_id_or.ValueOrDie());
+    }
+    document_id_filter_map.insert({namespace_id, target_document_ids});
+  }
+  return document_id_filter_map;
+}
+
+libtextclassifier3::StatusOr<std::unordered_map<SchemaTypeId, SectionIdMask>>
+PopulatePropertyFilters(
+    const SchemaStore* schema_store,
+    const icing::lib::SuggestionSpecProto& suggestion_spec,
+    const std::unordered_set<SchemaTypeId>& schema_type_ids) {
+  std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map;
+  property_filter_map.reserve(suggestion_spec.type_property_filters_size());
+  for (const TypePropertyMask& type_field_mask :
+       suggestion_spec.type_property_filters()) {
+    auto schema_type_id_or =
+        schema_store->GetSchemaTypeId(type_field_mask.schema_type());
+    if (!schema_type_id_or.ok()) {
+      // The current schema doesn't exist
+      continue;
+    }
+    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
+
+    if (!schema_type_ids.empty() &&
+        schema_type_ids.find(schema_type_id) == schema_type_ids.end()) {
+      // The current schema type doesn't appear in the schema type filter.
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The schema : ", type_field_mask.schema_type(),
+          " appears in the property filter, but doesn't appear in the schema"
+          " type filter."));
+    }
+
+    if (type_field_mask.paths().empty()) {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "The schema type : ", type_field_mask.schema_type(),
+          " has empty path in the property filter. Please use the schema type"
+          " filter to exclude a schema type instead of the property filter."));
+    }
+
+    // Translate property paths into section id mask
+    SectionIdMask section_mask = kSectionIdMaskNone;
+    auto section_metadata_list_or =
+        schema_store->GetSectionMetadata(type_field_mask.schema_type());
+    if (!section_metadata_list_or.ok()) {
+      // The current schema doesn't has section metadata.
+      continue;
+    }
+    std::unordered_set<std::string> target_property_paths;
+    target_property_paths.reserve(type_field_mask.paths_size());
+    for (const std::string& target_property_path : type_field_mask.paths()) {
+      target_property_paths.insert(target_property_path);
+    }
+    const std::vector<SectionMetadata>* section_metadata_list =
+        section_metadata_list_or.ValueOrDie();
+    for (const SectionMetadata& section_metadata : *section_metadata_list) {
+      if (target_property_paths.find(section_metadata.path) !=
+          target_property_paths.end()) {
+        section_mask |= UINT64_C(1) << section_metadata.id;
+      }
+    }
+    property_filter_map.insert({schema_type_id, section_mask});
+  }
+  return property_filter_map;
+}
+
 // Document store files are in a standalone subfolder for easier file
 // management. We can delete and recreate the subfolder and not touch/affect
 // anything else.
@@ -2034,56 +2148,14 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   }
 
   // Populate target document id filter.
-  std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>
-      document_id_filter_map;
-  document_id_filter_map.reserve(suggestion_spec.document_uri_filters_size());
-  for (const NamespaceDocumentUriGroup& namespace_document_uri_group :
-       suggestion_spec.document_uri_filters()) {
-    auto namespace_id_or = document_store_->GetNamespaceId(
-        namespace_document_uri_group.namespace_());
-    if (!namespace_id_or.ok()) {
-      // The current namespace doesn't exist.
-      continue;
-    }
-    NamespaceId namespace_id = namespace_id_or.ValueOrDie();
-    if (!namespace_ids.empty() &&
-        namespace_ids.find(namespace_id) == namespace_ids.end()) {
-      // The current namespace doesn't appear in the namespace filter.
-      response_status->set_code(StatusProto::INVALID_ARGUMENT);
-      response_status->set_message(absl_ports::StrCat(
-          "The namespace : ", namespace_document_uri_group.namespace_(),
-          " appears in the document uri filter, but doesn't appear in the "
-          "namespace filter."));
-      return response;
-    }
-
-    if (namespace_document_uri_group.document_uris().empty()) {
-      // Client should use namespace filter to filter out all document under
-      // a namespace.
-      response_status->set_code(StatusProto::INVALID_ARGUMENT);
-      response_status->set_message(absl_ports::StrCat(
-          "The namespace : ", namespace_document_uri_group.namespace_(),
-          " has empty document uri in the document uri filter. Please use the "
-          "namespace filter to exclude a namespace instead of the document uri "
-          "filter."));
-      return response;
-    }
-
-    // Translate namespace document Uris into document_ids
-    std::unordered_set<DocumentId> target_document_ids;
-    target_document_ids.reserve(
-        namespace_document_uri_group.document_uris_size());
-    for (std::string_view document_uri :
-         namespace_document_uri_group.document_uris()) {
-      auto document_id_or = document_store_->GetDocumentId(
-          namespace_document_uri_group.namespace_(), document_uri);
-      if (!document_id_or.ok()) {
-        continue;
-      }
-      target_document_ids.insert(document_id_or.ValueOrDie());
-    }
-    document_id_filter_map.insert({namespace_id, target_document_ids});
+  auto document_id_filter_map_or = PopulateDocumentIdFilters(
+      document_store_.get(), suggestion_spec, namespace_ids);
+  if (!document_id_filter_map_or.ok()) {
+    TransformStatus(document_id_filter_map_or.status(), response_status);
+    return response;
   }
+  std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>
+      document_id_filter_map = document_id_filter_map_or.ValueOrDie();
   if (document_id_filter_map.empty() &&
       !suggestion_spec.document_uri_filters().empty()) {
     // None of desired DocumentId exists, we should return directly.
@@ -2109,61 +2181,14 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   }
 
   // Populate target properties filter.
-  std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map;
-  property_filter_map.reserve(suggestion_spec.type_property_filters_size());
-  for (const TypePropertyMask& type_field_mask :
-       suggestion_spec.type_property_filters()) {
-    auto schema_type_id_or =
-        schema_store_->GetSchemaTypeId(type_field_mask.schema_type());
-    if (!schema_type_id_or.ok()) {
-      // The current schema doesn't exist
-      continue;
-    }
-    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
-
-    if (!schema_type_ids.empty() &&
-        schema_type_ids.find(schema_type_id) == schema_type_ids.end()) {
-      // The current schema type doesn't appear in the schema type filter.
-      response_status->set_code(StatusProto::INVALID_ARGUMENT);
-      response_status->set_message(absl_ports::StrCat(
-          "The schema : ", type_field_mask.schema_type(),
-          " appears in the property filter, but doesn't appear in the schema"
-          " type filter."));
-      return response;
-    }
-
-    if (type_field_mask.paths().empty()) {
-      response_status->set_code(StatusProto::INVALID_ARGUMENT);
-      response_status->set_message(absl_ports::StrCat(
-          "The schema type : ", type_field_mask.schema_type(),
-          " has empty path in the property filter. Please use the schema type"
-          " filter to exclude a schema type instead of the property filter."));
-      return response;
-    }
-
-    // Translate property paths into section id mask
-    SectionIdMask section_mask = kSectionIdMaskNone;
-    auto section_metadata_list_or =
-        schema_store_->GetSectionMetadata(type_field_mask.schema_type());
-    if (!section_metadata_list_or.ok()) {
-      // The current schema doesn't has section metadata.
-      continue;
-    }
-    std::unordered_set<std::string> target_property_paths;
-    target_property_paths.reserve(type_field_mask.paths_size());
-    for (const std::string& target_property_path : type_field_mask.paths()) {
-      target_property_paths.insert(target_property_path);
-    }
-    const std::vector<SectionMetadata>* section_metadata_list =
-        section_metadata_list_or.ValueOrDie();
-    for (const SectionMetadata& section_metadata : *section_metadata_list) {
-      if (target_property_paths.find(section_metadata.path) !=
-          target_property_paths.end()) {
-        section_mask |= UINT64_C(1) << section_metadata.id;
-      }
-    }
-    property_filter_map.insert({schema_type_id, section_mask});
+  auto property_filter_map_or = PopulatePropertyFilters(
+      schema_store_.get(), suggestion_spec, schema_type_ids);
+  if (!property_filter_map_or.ok()) {
+    TransformStatus(property_filter_map_or.status(), response_status);
+    return response;
   }
+  std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map =
+      property_filter_map_or.ValueOrDie();
 
   // Run suggestion based on given SuggestionSpec.
   SuggestionResultCheckerImpl suggestion_result_checker_impl(

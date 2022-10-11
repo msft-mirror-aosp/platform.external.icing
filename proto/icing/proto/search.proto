@@ -18,6 +18,7 @@ package icing.lib;
 
 import "icing/proto/document.proto";
 import "icing/proto/logging.proto";
+import "icing/proto/scoring.proto";
 import "icing/proto/status.proto";
 import "icing/proto/term.proto";
 
@@ -358,20 +359,6 @@ message SuggestionSpecProto {
   optional int32 num_to_return = 3;
 
   // Indicates how the suggestion terms should be scored and ranked.
-  message SuggestionScoringSpecProto {
-    // TermMatchType.Code=UNKNOWN
-    // Should never purposely be set and may lead to undefined behavior. This is
-    // used for backwards compatibility reasons.
-    //
-    // TermMatchType.Code=EXACT_ONLY
-    // Only exact hits will be counted to score a suggestion term.
-    //
-    // TermMatchType.Code=PREFIX
-    // Both exact hits and prefix hits will be counted to score a suggestion
-    // term.
-    optional TermMatchType.Code scoring_match_type = 1;
-  }
-
   optional SuggestionScoringSpecProto scoring_spec = 4;
 
   // OPTIONAL: Only search for suggestions that under the specified

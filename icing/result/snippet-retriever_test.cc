@@ -1775,7 +1775,7 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822Ascii) {
 
   content = GetString(&document, snippet.entries(0).property_name());
 
-  // TODO(b/248362902) Do we have to return three matches on the same window?
+  // TODO(b/248362902) Stop returning duplicate matches.
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
               ElementsAre("Alexander Sav <tom.bar@google.com>,",
                           "Alexander Sav <tom.bar@google.com>,",
@@ -1830,10 +1830,13 @@ TEST_F(SnippetRetrieverTest, SnippettingRfc822CJK) {
 
   // The local component, address, local address, and token will all match. The
   // windows for address and token are "" as the snippet window is too small.
+  // TODO(b/248362902) Stop returning duplicate matches.
   EXPECT_THAT(GetWindows(content, snippet.entries(0)),
-              ElementsAre("每天@走路,"));
-  EXPECT_THAT(GetMatches(content, snippet.entries(0)), ElementsAre("走路"));
-  EXPECT_THAT(GetSubMatches(content, snippet.entries(0)), ElementsAre("走"));
+              ElementsAre("每天@走路,", "每天@走路,"));
+  EXPECT_THAT(GetMatches(content, snippet.entries(0)),
+              ElementsAre("走路", "走路"));
+  EXPECT_THAT(GetSubMatches(content, snippet.entries(0)),
+              ElementsAre("走", "走"));
 }
 
 }  // namespace
