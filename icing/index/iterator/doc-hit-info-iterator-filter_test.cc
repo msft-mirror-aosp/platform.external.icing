@@ -28,6 +28,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
