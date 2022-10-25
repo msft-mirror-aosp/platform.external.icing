@@ -335,6 +335,7 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
                                           int& token_processed_index) {
     const char* address_start = nullptr;
     const char* local_address_end = nullptr;
+    const char* host_address_start = nullptr;
     const char* address_end = nullptr;
     const char* token_start = nullptr;
     const char* token_end = nullptr;
@@ -366,14 +367,17 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
         // which the name tokens appeared. Name tokens that appear before an
         // @ sign in the name will become RFC822_ADDRESS_COMPONENT_LOCAL, and
         // those after will become RFC822_ADDRESS_COMPONENT_HOST. We aren't
-        // able to determine RFC822_ADDRESS and RFC822_LOCAL_ADDRESS before
-        // checking the name tokens, so they will be added after the component
-        // tokens.
+        // able to determine RFC822_ADDRESS, RFC822_LOCAL_ADDRESS, and
+        // RFC_HOST_ADDRESS before checking the name tokens, so they will be
+        // added after the component tokens.
         if (address_start == nullptr) {
           address_start = text.begin();
         }
         address_end = text.end();
         if (text.begin() > at_sign_index) {
+          if (host_address_start == nullptr) {
+            host_address_start = text.begin();
+          }
           // Once this is hit, we switch to COMPONENT_HOST and mark end of the
           // local address
           converted_tokens.push_back(
@@ -396,6 +400,13 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
                   std::string_view(address_start,
                                    local_address_end - address_start)));
       }
+    }
+
+    if (host_address_start != nullptr && host_address_start < address_end) {
+      converted_tokens.push_back(
+          Token(Token::Type::RFC822_HOST_ADDRESS,
+                text_.substr(host_address_start - text_.begin(),
+                             address_end - host_address_start)));
     }
 
     if (token_start != nullptr) {
@@ -631,6 +642,8 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
     CharacterIterator address_start_iterator = iterator_;
     std::vector<Token> next_tokens;
 
+    // Place the at sign on the '<', so that if no at_sign is found, the default
+    // is that the entire address is the host part.
     int at_sign = -1;
     int address_end = -1;
 
@@ -668,7 +681,20 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
     } else {
       // All the tokens in the address are host components.
       type = Token::Type::RFC822_ADDRESS_COMPONENT_HOST;
+      // If no @ is found, treat the entire address as the host address.
+      at_sign = address_start - 1;
     }
+
+    // The only case where we don't have a host address part is something like
+    // <localaddress@>. If there is no @, the at_sign is the default -1, and the
+    // host address is [0, address_end).
+    int host_address_start = at_sign + 1;
+    if (host_address_start < address_end) {
+      next_tokens.push_back(Token(
+          Token::Type::RFC822_HOST_ADDRESS,
+          text_.substr(host_address_start, address_end - host_address_start)));
+    }
+
     next_tokens.push_back(
         Token(Token::Type::RFC822_ADDRESS,
               text_.substr(address_start, address_end - address_start)));

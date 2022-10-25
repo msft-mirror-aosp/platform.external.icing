@@ -83,9 +83,11 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit1));
 
   std::vector<DocHitInfo> hits1;
-  lite_index_->AppendHits(foo_term_id, kSectionIdMaskAll,
-                          /*only_from_prefix_sections=*/false,
-                          /*namespace_checker=*/nullptr, &hits1);
+  lite_index_->AppendHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &hits1);
   EXPECT_THAT(hits1, SizeIs(1));
   EXPECT_THAT(hits1.back().document_id(), Eq(0));
   // Check that the hits are coming from section 0 and section 1.
@@ -93,9 +95,11 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
 
   std::vector<DocHitInfo> hits2;
   AlwaysFalseSuggestionResultCheckerImpl always_false_suggestion_result_checker;
-  lite_index_->AppendHits(foo_term_id, kSectionIdMaskAll,
-                          /*only_from_prefix_sections=*/false,
-                          &always_false_suggestion_result_checker, &hits2);
+  lite_index_->AppendHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      &always_false_suggestion_result_checker, &hits2);
   // Check that no hits are returned because they get skipped by the namespace
   // checker.
   EXPECT_THAT(hits2, IsEmpty());

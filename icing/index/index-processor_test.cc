@@ -946,7 +946,7 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExact) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+  EXPECT_THAT(tokenized_document.num_tokens(), 7);
 
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
@@ -991,7 +991,7 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+  EXPECT_THAT(tokenized_document.num_tokens(), 7);
 
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
@@ -1019,7 +1019,7 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+  EXPECT_THAT(tokenized_document.num_tokens(), 7);
 
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
@@ -1060,7 +1060,7 @@ TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(tokenized_document.num_tokens(), 6);
+  EXPECT_THAT(tokenized_document.num_tokens(), 7);
 
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
