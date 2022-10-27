@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/file/memory-mapped-file.h"
-
 #include "perftools/profiles/collector/heap/alloc_recorder.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/memory-mapped-file.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/recorder-test-utils.h"
 #include "icing/testing/tmp-directory.h"
@@ -40,8 +39,15 @@ TEST(MemoryMappedFileTest, MMapMemoryLeak) {
   {
     std::string mmfile_dir = test_dir + "/file";
     ASSERT_TRUE(filesystem.CreateDirectoryRecursively(mmfile_dir.c_str()));
-    MemoryMappedFile mmfile(filesystem, mmfile_dir + "/mmfile",
-                            MemoryMappedFile::READ_WRITE_AUTO_SYNC);
+
+    // Don't use ICING_ASSERT_OK_AND_ASSIGN or matcher IsOk to prevent
+    // unnecessary implicit heap memory allocation in these macros.
+    libtextclassifier3::StatusOr<MemoryMappedFile> mmfile_or =
+        MemoryMappedFile::Create(filesystem, mmfile_dir + "/mmfile",
+                                 MemoryMappedFile::READ_WRITE_AUTO_SYNC);
+    ASSERT_TRUE(mmfile_or.ok());
+    MemoryMappedFile mmfile = std::move(mmfile_or).ValueOrDie();
+
     // How this works:
     // We request a 500-byte mapping starting at the 101st byte of the file.
     // But(!), mmap only accepts offsets that are multiples of page size. So

@@ -515,8 +515,7 @@ TEST_F(IndexProcessorTest, LexiconExhaustedTest) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
-                       testing::HasSubstr("Unable to add term")));
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
 }
 

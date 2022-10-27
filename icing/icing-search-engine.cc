@@ -981,21 +981,42 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   std::unique_ptr<IndexProcessor> index_processor =
       std::move(index_processor_or).ValueOrDie();
 
-  auto status = index_processor->IndexDocument(tokenized_document, document_id,
-                                               put_document_stats);
-  if (!status.ok()) {
-    // If we encountered a failure while indexing this document, then mark it as
-    // deleted.
+  auto index_status = index_processor->IndexDocument(
+      tokenized_document, document_id, put_document_stats);
+  // Getting an internal error from the index could possibly mean that the index
+  // is broken. Try to rebuild the index to recover.
+  if (absl_ports::IsInternal(index_status)) {
+    ICING_LOG(ERROR) << "Got an internal error from the index. Trying to "
+                        "rebuild the index!\n"
+                     << index_status.error_message();
+    index_status = index_->Reset();
+    if (index_status.ok()) {
+      index_status = RestoreIndexIfNeeded().status;
+      if (!index_status.ok()) {
+        ICING_LOG(ERROR) << "Failed to reindex documents after a failure of "
+                            "indexing a document.";
+      }
+    } else {
+      ICING_LOG(ERROR) << "Failed to reset the index after a failure of "
+                          "indexing a document.";
+    }
+  }
+
+  if (!index_status.ok()) {
+    // If we encountered a failure or cannot resolve an internal error while
+    // indexing this document, then mark it as deleted.
     libtextclassifier3::Status delete_status =
         document_store_->Delete(document_id);
     if (!delete_status.ok()) {
       // This is pretty dire (and, hopefully, unlikely). We can't roll back the
       // document that we just added. Wipeout the whole index.
+      ICING_LOG(ERROR) << "Cannot delete the document that is failed to index. "
+                          "Wiping out the whole Icing search engine.";
       ResetInternal();
     }
   }
 
-  TransformStatus(status, result_status);
+  TransformStatus(index_status, result_status);
   return result_proto;
 }
 

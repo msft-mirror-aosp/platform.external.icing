@@ -333,10 +333,13 @@ MainIndex::AddBackfillBranchPoints(const IcingDynamicTrie& other_lexicon) {
     uint32_t branching_prefix_tvi;
     bool new_key;
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-    if (!main_lexicon_->Insert(prefix.c_str(), &posting_list_id,
-                               &branching_prefix_tvi, /*replace=*/false,
-                               &new_key)) {
-      return absl_ports::InternalError("Could not insert branching prefix");
+    libtextclassifier3::Status status = main_lexicon_->Insert(
+        prefix.c_str(), &posting_list_id, &branching_prefix_tvi,
+        /*replace=*/false, &new_key);
+    if (!status.ok()) {
+      ICING_LOG(DBG) << "Could not insert branching prefix\n"
+                     << status.error_message();
+      return status;
     }
 
     // Backfills only contain prefix hits by default. So set these here but
@@ -361,11 +364,14 @@ MainIndex::AddTerms(const IcingDynamicTrie& other_lexicon,
        other_term_itr.IsValid(); other_term_itr.Advance()) {
     uint32_t new_main_tvi;
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-    if (!main_lexicon_->Insert(other_term_itr.GetKey(), &posting_list_id,
-                               &new_main_tvi,
-                               /*replace=*/false)) {
-      return absl_ports::InternalError(absl_ports::StrCat(
-          "Could not insert term: ", other_term_itr.GetKey()));
+    libtextclassifier3::Status status = main_lexicon_->Insert(
+        other_term_itr.GetKey(), &posting_list_id, &new_main_tvi,
+        /*replace=*/false);
+    if (!status.ok()) {
+      ICING_LOG(DBG) << "Could not insert term: " << other_term_itr.GetKey()
+                     << "\n"
+                     << status.error_message();
+      return status;
     }
 
     // Copy the properties from the other lexicon over to the main lexicon.
@@ -421,10 +427,13 @@ MainIndex::AddBranchPoints(const IcingDynamicTrie& other_lexicon,
       uint32_t prefix_tvi;
       bool new_key;
       PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-      if (!main_lexicon_->Insert(prefix.c_str(), &posting_list_id, &prefix_tvi,
-                                 /*replace=*/false, &new_key)) {
-        return absl_ports::InternalError(
-            absl_ports::StrCat("Could not insert prefix: ", prefix));
+      libtextclassifier3::Status status =
+          main_lexicon_->Insert(prefix.c_str(), &posting_list_id, &prefix_tvi,
+                                /*replace=*/false, &new_key);
+      if (!status.ok()) {
+        ICING_LOG(DBG) << "Could not insert prefix: " << prefix << "\n"
+                       << status.error_message();
+        return status;
       }
 
       // Prefix tvi will have hits in prefix section.
@@ -564,7 +573,9 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   std::unique_ptr<PostingListAccessor> pl_accessor;
   if (posting_list_id.is_valid()) {
     if (posting_list_id.block_index() >= flash_index_storage_->num_blocks()) {
-      ICING_LOG(ERROR) << "Index dropped hits. Invalid block index " << posting_list_id.block_index() << " >= " << flash_index_storage_->num_blocks();
+      ICING_LOG(ERROR) << "Index dropped hits. Invalid block index "
+                       << posting_list_id.block_index()
+                       << " >= " << flash_index_storage_->num_blocks();
       // TODO(b/159918304) : Consider revising the checksumming strategy in the
       // main index. Providing some mechanism to check for corruption - either
       // during initialization or some later time would allow us to avoid
@@ -755,12 +766,18 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
   }
   PostingListAccessor::FinalizeResult result =
       PostingListAccessor::Finalize(std::move(hit_accum));
-  uint32_t tvi;
-  if (!result.id.is_valid() ||
-      !new_index->main_lexicon_->Insert(term, &result.id, &tvi,
-                                        /*replace=*/false)) {
+  if (!result.id.is_valid()) {
     return absl_ports::InternalError(
-        absl_ports::StrCat("Could not transfer main index for term: ", term));
+        absl_ports::StrCat("Failed to add translated hits for term: ", term));
+  }
+  uint32_t tvi;
+  libtextclassifier3::Status status =
+      new_index->main_lexicon_->Insert(term, &result.id, &tvi,
+                                       /*replace=*/false);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Could not transfer main index for term: " << term << "\n"
+                   << status.error_message();
+    return status;
   }
   if (has_no_exact_hits && !new_index->main_lexicon_->SetProperty(
                                tvi, GetHasNoExactHitsPropertyId())) {

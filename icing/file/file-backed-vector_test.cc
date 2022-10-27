@@ -36,14 +36,12 @@
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 
-using ::testing::DoDefault;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsTrue;
 using ::testing::Lt;
 using ::testing::Not;
 using ::testing::Pointee;
-using ::testing::Return;
 using ::testing::SizeIs;
 
 namespace icing {
@@ -1231,92 +1229,35 @@ TEST_F(FileBackedVectorTest, InitNormalSucceeds) {
   }
 }
 
-TEST_F(FileBackedVectorTest, RemapFailureStillValidInstance) {
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<FileBackedVector<int>> vector,
-      FileBackedVector<int>::Create(
-          *mock_filesystem, file_path_,
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-
-  // 1. Write data to just before the first block resize. Running the test
-  // locally has determined that we'll first resize at 65531st entry.
-  constexpr int kResizingIndex = 16378;
-  for (int i = 0; i < kResizingIndex; ++i) {
-    ICING_ASSERT_OK(vector->Set(i, 7));
+TEST_F(FileBackedVectorTest, InitFromExistingFileShouldPreMapAtLeastFileSize) {
+  {
+    // 1. Create a vector with a few elements.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+            FileBackedVector<char>::kMaxFileSize));
+    Insert(vector.get(), 10000, "A");
+    Insert(vector.get(), 10001, "Z");
+    ASSERT_THAT(vector->PersistToDisk(), IsOk());
   }
 
-  // 2. The next Set call should cause a resize and a remap. Make that remap
-  // fail.
-  int num_calls = 0;
-  auto open_lambda = [this, &num_calls](const char* file_name) {
-    if (++num_calls == 2) {
-      return -1;
-    }
-    return this->filesystem().OpenForWrite(file_name);
-  };
-  ON_CALL(*mock_filesystem, OpenForWrite(_)).WillByDefault(open_lambda);
-  EXPECT_THAT(vector->Set(kResizingIndex, 7),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-
-  // 3. We should still be able to call set correctly for earlier regions.
-  ICING_EXPECT_OK(vector->Set(kResizingIndex / 2, 9));
-  EXPECT_THAT(vector->Get(kResizingIndex / 2), IsOkAndHolds(Pointee(Eq(9))));
-}
-
-TEST_F(FileBackedVectorTest, BadFileSizeDuringGrowReturnsError) {
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<FileBackedVector<int>> vector,
-      FileBackedVector<int>::Create(
-          *mock_filesystem, file_path_,
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-
-  // At first, the vector is empty and has no mapping established. The first Set
-  // call will cause a Grow.
-  // During Grow, we will attempt to check the underlying file size to see if
-  // growing is actually necessary. Return an error on the call to GetFileSize.
-  ON_CALL(*mock_filesystem, GetFileSize(A<const char*>()))
-      .WillByDefault(Return(Filesystem::kBadFileSize));
-
-  // We should fail gracefully and return an INTERNAL error to indicate that
-  // there was an issue retrieving the file size.
-  EXPECT_THAT(vector->Set(0, 7),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-}
-
-TEST_F(FileBackedVectorTest, PWriteFailsInTheSecondRound) {
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<FileBackedVector<int>> vector,
-      FileBackedVector<int>::Create(
-          *mock_filesystem, file_path_,
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-
-  // At first, the vector is empty and has no mapping established. The first Set
-  // call will cause a Grow.
-  // During Grow, we call PWrite for several rounds to grow the file. Mock
-  // PWrite to succeed in the first round, fail in the second round, and succeed
-  // in the rest rounds.
-
-  // This unit test checks if we check file size and Remap properly. If the
-  // first PWrite succeeds but the second PWrite fails, then the file size has
-  // been grown, but there will be no Remap for the MemoryMappedFile. Then,
-  // the next several Append() won't require file growth since the file size has
-  // been grown, but it causes memory error because we haven't remapped.
-  EXPECT_CALL(*mock_filesystem,
-              PWrite(A<int>(), A<off_t>(), A<const void*>(), A<size_t>()))
-      .WillOnce(DoDefault())
-      .WillOnce(Return(false))
-      .WillRepeatedly(DoDefault());
-
-  EXPECT_THAT(vector->Append(7),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-  EXPECT_THAT(vector->Get(/*idx=*/0),
-              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
-
-  EXPECT_THAT(vector->Append(7), IsOk());
-  EXPECT_THAT(vector->Get(/*idx=*/0), IsOkAndHolds(Pointee(Eq(7))));
+  {
+    // 2. Attempt to create the file with pre_mapping_mmap_size < file_size. It
+    //    should still pre-map file_size, so we can pass the checksum
+    //    verification when initializing and get the correct contents.
+    int64_t file_size = filesystem_.GetFileSize(file_path_.c_str());
+    int pre_mapping_mmap_size = 10;
+    ASSERT_THAT(pre_mapping_mmap_size, Lt(file_size));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> vector,
+        FileBackedVector<char>::Create(
+            filesystem_, file_path_,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+            FileBackedVector<char>::kMaxFileSize, pre_mapping_mmap_size));
+    EXPECT_THAT(Get(vector.get(), /*idx=*/10000, /*expected_len=*/2), Eq("AZ"));
+  }
 }
 
 }  // namespace

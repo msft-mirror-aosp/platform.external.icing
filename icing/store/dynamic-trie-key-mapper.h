@@ -32,6 +32,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/store/key-mapper.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -227,11 +228,14 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
     std::string_view key, T next_value) {
   std::string string_key(key);
   uint32_t value_index;
-  if (!trie_.Insert(string_key.c_str(), &next_value, &value_index,
-                    /*replace=*/false)) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Unable to insert key ", Formatter()(string_key),
-                           " into DynamicTrieKeyMapper ", file_prefix_, "."));
+  libtextclassifier3::Status status =
+      trie_.Insert(string_key.c_str(), &next_value, &value_index,
+                   /*replace=*/false);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Unable to insert key " << string_key
+                   << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
+                   << status.error_message();
+    return status;
   }
   // This memory address could be unaligned since we're just grabbing the value
   // from somewhere in the trie's suffix array. The suffix array is filled with
@@ -250,10 +254,12 @@ template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
     std::string_view key, T value) {
   std::string string_key(key);
-  if (!trie_.Insert(string_key.c_str(), &value)) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Unable to insert key ", Formatter()(string_key),
-                           " into DynamicTrieKeyMapper ", file_prefix_, "."));
+  libtextclassifier3::Status status = trie_.Insert(string_key.c_str(), &value);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Unable to insert key " << string_key
+                   << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
+                   << status.error_message();
+    return status;
   }
   return libtextclassifier3::Status::OK;
 }

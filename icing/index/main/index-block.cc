@@ -66,8 +66,10 @@ IndexBlock::CreateFromPreexistingIndexBlockRegion(const Filesystem& filesystem,
         "Provided block_size %d is too small to fit even the BlockHeader!",
         block_size));
   }
-  MemoryMappedFile mmapped_file(
-      filesystem, file_path, MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
+  ICING_ASSIGN_OR_RETURN(MemoryMappedFile mmapped_file,
+                         MemoryMappedFile::Create(
+                             filesystem, file_path,
+                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   ICING_RETURN_IF_ERROR(mmapped_file.Remap(offset, block_size));
   IndexBlock block(std::move(mmapped_file));
   ICING_RETURN_IF_ERROR(
@@ -87,8 +89,10 @@ IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
   }
   ICING_RETURN_IF_ERROR(
       ValidatePostingListBytes(posting_list_bytes, block_size));
-  MemoryMappedFile mmapped_file(
-      filesystem, file_path, MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
+  ICING_ASSIGN_OR_RETURN(MemoryMappedFile mmapped_file,
+                         MemoryMappedFile::Create(
+                             filesystem, file_path,
+                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   ICING_RETURN_IF_ERROR(mmapped_file.Remap(offset, block_size));
   IndexBlock block(std::move(mmapped_file));
   // Safe to ignore the return value of Reset. Reset returns an error if
@@ -99,7 +103,7 @@ IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
   return block;
 }
 
-IndexBlock::IndexBlock(MemoryMappedFile mmapped_block)
+IndexBlock::IndexBlock(MemoryMappedFile&& mmapped_block)
     : header_(reinterpret_cast<BlockHeader*>(mmapped_block.mutable_region())),
       posting_lists_start_ptr_(mmapped_block.mutable_region() +
                                sizeof(BlockHeader)),
