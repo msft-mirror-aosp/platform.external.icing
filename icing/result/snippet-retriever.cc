@@ -88,6 +88,8 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
       [[fallthrough]];
     case Token::Type::RFC822_LOCAL_ADDRESS:
       [[fallthrough]];
+    case Token::Type::RFC822_HOST_ADDRESS:
+      [[fallthrough]];
     case Token::Type::RFC822_ADDRESS:
       [[fallthrough]];
     case Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL:
@@ -109,6 +111,28 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
     case Token::Type::QUERY_OR:
       [[fallthrough]];
     case Token::Type::QUERY_PROPERTY:
+      [[fallthrough]];
+    case Token::Type::URL_SCHEME:
+      [[fallthrough]];
+    case Token::Type::URL_USERNAME:
+      [[fallthrough]];
+    case Token::Type::URL_PASSWORD:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_COMMON_PART:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_SIGNIFICANT_PART:
+      [[fallthrough]];
+    case Token::Type::URL_PORT:
+      [[fallthrough]];
+    case Token::Type::URL_PATH_PART:
+      [[fallthrough]];
+    case Token::Type::URL_QUERY:
+      [[fallthrough]];
+    case Token::Type::URL_REF:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX_INNERMOST:
       [[fallthrough]];
     case Token::Type::INVALID:
       ICING_LOG(WARNING) << "Unable to normalize token of type: "
@@ -142,16 +166,13 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       [[fallthrough]];
     case Token::Type::QUERY_PROPERTY:
       [[fallthrough]];
-    case Token::Type::INVALID:
-      ICING_LOG(WARNING)
-          << "Unexpected Token type " << static_cast<int>(token.type)
-          << " found when finding match end of query term and token.";
-      [[fallthrough]];
     case Token::Type::RFC822_NAME:
       [[fallthrough]];
     case Token::Type::RFC822_COMMENT:
       [[fallthrough]];
     case Token::Type::RFC822_LOCAL_ADDRESS:
+      [[fallthrough]];
+    case Token::Type::RFC822_HOST_ADDRESS:
       [[fallthrough]];
     case Token::Type::RFC822_ADDRESS:
       [[fallthrough]];
@@ -160,6 +181,33 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
     case Token::Type::RFC822_ADDRESS_COMPONENT_HOST:
       [[fallthrough]];
     case Token::Type::RFC822_TOKEN:
+      [[fallthrough]];
+    case Token::Type::URL_SCHEME:
+      [[fallthrough]];
+    case Token::Type::URL_USERNAME:
+      [[fallthrough]];
+    case Token::Type::URL_PASSWORD:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_COMMON_PART:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_SIGNIFICANT_PART:
+      [[fallthrough]];
+    case Token::Type::URL_PORT:
+      [[fallthrough]];
+    case Token::Type::URL_QUERY:
+      [[fallthrough]];
+    case Token::Type::URL_PATH_PART:
+      [[fallthrough]];
+    case Token::Type::URL_REF:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX_INNERMOST:
+      [[fallthrough]];
+    case Token::Type::INVALID:
+      ICING_LOG(WARNING)
+          << "Unexpected Token type " << static_cast<int>(token.type)
+          << " found when finding match end of query term and token.";
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.FindNormalizedMatchEndPosition(token.text,

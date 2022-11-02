@@ -134,10 +134,10 @@ MATCHER_P2(EqualsDocHitInfo, document_id, sections, "") {
 MATCHER_P2(EqualsTermMetadata, content, hit_count, "") {
   const TermMetadata& actual = arg;
   *result_listener << "actual is {content=" << actual.content
-                   << ", hit_count=" << actual.hit_count
+                   << ", score=" << actual.score
                    << "}, but expected was {content=" << content
-                   << ", hit_count=" << hit_count << "}.";
-  return actual.content == content && actual.hit_count == hit_count;
+                   << ", score=" << hit_count << "}.";
+  return actual.content == content && actual.score == hit_count;
 }
 
 TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
@@ -1343,24 +1343,33 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnEmpty) {
   EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo", /*num_to_return=*/0,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo",
-                                        /*num_to_return=*/-1,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"foo", /*num_to_return=*/0, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"foo", /*num_to_return=*/-1, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(IsEmpty()));
 
   ICING_ASSERT_OK(index_->Merge());
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo",
-                                        /*num_to_return=*/0,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"foo",
-                                        /*num_to_return=*/-1,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"foo", /*num_to_return=*/0, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"foo", /*num_to_return=*/-1, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
@@ -1372,18 +1381,22 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectResult) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // "b" should only match "bar" but not "foo".
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"b",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("bar", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"b", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("bar", 1))));
 
   ICING_ASSERT_OK(index_->Merge());
 
   // "b" should only match "bar" but not "foo".
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"b",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("bar", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"b", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("bar", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldRespectNumToReturn) {
@@ -1396,18 +1409,22 @@ TEST_F(IndexTest, FindTermByPrefixShouldRespectNumToReturn) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // We have 3 results but only 2 should be returned.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/2,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(SizeIs(2)));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/2, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(SizeIs(2)));
 
   ICING_ASSERT_OK(index_->Merge());
 
   // We have 3 results but only 2 should be returned.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/2,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(SizeIs(2)));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/2, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(SizeIs(2)));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
@@ -1431,22 +1448,26 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsInAllNamespaces) {
   EXPECT_THAT(edit3.IndexAllBufferedTerms(), IsOk());
 
   // Should return "fo", "foo" and "fool" across all namespaces.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(UnorderedElementsAre(
-                  EqualsTermMetadata("fo", 1), EqualsTermMetadata("foo", 1),
-                  EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
+                                        EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 1))));
 
   ICING_ASSERT_OK(index_->Merge());
 
   // Should return "fo", "foo" and "fool" across all namespaces.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(UnorderedElementsAre(
-                  EqualsTermMetadata("fo", 1), EqualsTermMetadata("foo", 1),
-                  EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
+                                        EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
@@ -1465,19 +1486,23 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCorrectHitCount) {
   EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 2 hits.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
-                                       EqualsTermMetadata("foo", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
+                               EqualsTermMetadata("foo", 1))));
 
   ICING_ASSERT_OK(index_->Merge());
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
-                                       EqualsTermMetadata("foo", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
+                               EqualsTermMetadata("foo", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixMultipleHitBatch) {
@@ -1490,17 +1515,21 @@ TEST_F(IndexTest, FindTermByPrefixMultipleHitBatch) {
     EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
   }
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 4000))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 4000))));
 
   ICING_ASSERT_OK(index_->Merge());
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 4000))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 4000))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnInOrder) {
@@ -1559,27 +1588,31 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnInOrder) {
   EXPECT_THAT(edit6.IndexAllBufferedTerms(), IsOk());
 
   // verify the order in lite index is correct.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"t",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-six", 6),
-                                       EqualsTermMetadata("term-five", 5),
-                                       EqualsTermMetadata("term-four", 4),
-                                       EqualsTermMetadata("term-three", 3),
-                                       EqualsTermMetadata("term-two", 2),
-                                       EqualsTermMetadata("term-one", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"t", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-six", 6),
+                               EqualsTermMetadata("term-five", 5),
+                               EqualsTermMetadata("term-four", 4),
+                               EqualsTermMetadata("term-three", 3),
+                               EqualsTermMetadata("term-two", 2),
+                               EqualsTermMetadata("term-one", 1))));
 
   ICING_ASSERT_OK(index_->Merge());
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"t",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-six", 6),
-                                       EqualsTermMetadata("term-five", 5),
-                                       EqualsTermMetadata("term-four", 4),
-                                       EqualsTermMetadata("term-three", 3),
-                                       EqualsTermMetadata("term-two", 2),
-                                       EqualsTermMetadata("term-one", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"t", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-six", 6),
+                               EqualsTermMetadata("term-five", 5),
+                               EqualsTermMetadata("term-four", 4),
+                               EqualsTermMetadata("term-three", 3),
+                               EqualsTermMetadata("term-two", 2),
+                               EqualsTermMetadata("term-one", 1))));
 
   // keep push terms to the lite index. We will add 2 document to term-five,
   // term-three and term-one. The output order should be 5-6-3-4-1-2.
@@ -1601,8 +1634,10 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnInOrder) {
 
   // verify the combination of lite index and main index is in correct order.
   EXPECT_THAT(
-      index_->FindTermsByPrefix(/*prefix=*/"t", /*num_to_return=*/10,
-                                TermMatchType::PREFIX, &impl),
+      index_->FindTermsByPrefix(
+          /*prefix=*/"t", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
       IsOkAndHolds(ElementsAre(
           EqualsTermMetadata("term-five", 7), EqualsTermMetadata("term-six", 6),
           EqualsTermMetadata("term-three", 5),
@@ -1610,12 +1645,14 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnInOrder) {
           EqualsTermMetadata("term-two", 2))));
 
   // Get the first three terms.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"t",
-                                        /*num_to_return=*/3,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-five", 7),
-                                       EqualsTermMetadata("term-six", 6),
-                                       EqualsTermMetadata("term-three", 5))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"t", /*num_to_return=*/3, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("term-five", 7),
+                               EqualsTermMetadata("term-six", 6),
+                               EqualsTermMetadata("term-three", 5))));
 }
 
 TEST_F(IndexTest, FindTermByPrefix_InTermMatchTypePrefix_ShouldReturnInOrder) {
@@ -1643,18 +1680,24 @@ TEST_F(IndexTest, FindTermByPrefix_InTermMatchTypePrefix_ShouldReturnInOrder) {
   // "fo"    { {doc0, exact_hit}, {doc1, prefix_hit}, {doc2, prefix_hit} }
   // "foo"   { {doc1, exact_hit}, {doc2, prefix_hit} }
   // "fool"  { {doc2, exact_hit} }
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fo", 3),
-                                       EqualsTermMetadata("foo", 2),
-                                       EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f",
+          /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fo", 3),
+                               EqualsTermMetadata("foo", 2),
+                               EqualsTermMetadata("fool", 1))));
   // Find by exact only, all terms should be equally.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*num_to_return=*/10,
-                                        TermMatchType::EXACT_ONLY, &impl),
-              IsOkAndHolds(UnorderedElementsAre(
-                  EqualsTermMetadata("fo", 1), EqualsTermMetadata("foo", 1),
-                  EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
+                                        EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnHitCountForMain) {
@@ -1696,17 +1739,21 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnHitCountForMain) {
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
   // 'foo' has 1 hit, 'fool' has 8 hits.
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f",
-                                        /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 8),
-                                       EqualsTermMetadata("foo", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 8),
+                               EqualsTermMetadata("foo", 1))));
 
   ICING_ASSERT_OK(index_->Merge());
 
   EXPECT_THAT(
-      index_->FindTermsByPrefix(/*prefix=*/"f", /*num_to_return=*/10,
-                                TermMatchType::PREFIX, &impl),
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
       IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
                                         EqualsTermMetadata("fool", 8))));
 }
@@ -1727,10 +1774,82 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnCombinedHitCount) {
   EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
 
-  EXPECT_THAT(index_->FindTermsByPrefix(/*prefix=*/"f", /*num_to_return=*/10,
-                                        TermMatchType::PREFIX, &impl),
-              IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
-                                       EqualsTermMetadata("foo", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fool", 2),
+                               EqualsTermMetadata("foo", 1))));
+}
+
+TEST_F(IndexTest, FindTermRankComparison) {
+  Index::Editor edit =
+      index_->Edit(kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY,
+                   /*namespace_id=*/0);
+  AlwaysTrueSuggestionResultCheckerImpl impl;
+  EXPECT_THAT(edit.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("fool"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  Index::Editor edit2 =
+      index_->Edit(kDocumentId2, kSectionId2, TermMatchType::PREFIX,
+                   /*namespace_id=*/0);
+  EXPECT_THAT(edit2.BufferTerm("fo"), IsOk());
+  EXPECT_THAT(edit2.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit2.IndexAllBufferedTerms(), IsOk());
+
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::TERM_FREQUENCY,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fo", 3),
+                               EqualsTermMetadata("foo", 2),
+                               EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 2),
+                                        EqualsTermMetadata("foo", 2),
+                                        EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE, &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
+                                        EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 1))));
+
+  ICING_ASSERT_OK(index_->Merge());
+
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::TERM_FREQUENCY,
+          &impl),
+      IsOkAndHolds(ElementsAre(EqualsTermMetadata("fo", 3),
+                               EqualsTermMetadata("foo", 2),
+                               EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 2),
+                                        EqualsTermMetadata("foo", 2),
+                                        EqualsTermMetadata("fool", 1))));
+  EXPECT_THAT(
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::EXACT_ONLY,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE, &impl),
+      IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("fo", 1),
+                                        EqualsTermMetadata("foo", 1),
+                                        EqualsTermMetadata("fool", 1))));
 }
 
 TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
@@ -1751,8 +1870,10 @@ TEST_F(IndexTest, FindTermByPrefixShouldReturnTermsFromBothIndices) {
 
   // 'foo' has 1 hit in the main index, 'fool' has 1 hit in the lite index.
   EXPECT_THAT(
-      index_->FindTermsByPrefix(/*prefix=*/"f", /*num_to_return=*/10,
-                                TermMatchType::PREFIX, &impl),
+      index_->FindTermsByPrefix(
+          /*prefix=*/"f", /*num_to_return=*/10, TermMatchType::PREFIX,
+          SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+          &impl),
       IsOkAndHolds(UnorderedElementsAre(EqualsTermMetadata("foo", 1),
                                         EqualsTermMetadata("fool", 1))));
 }

@@ -8532,6 +8532,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Query all suggestions, and they will be ranked.
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -8586,6 +8588,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8636,6 +8640,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8672,6 +8678,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NamespaceNotFound) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   EXPECT_THAT(response.status().code(), Eq(StatusProto::OK));
@@ -8730,6 +8738,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8769,6 +8779,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DeletionTest) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8834,6 +8846,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ShouldReturnInOneDocument) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1->set_namespace_("namespace1");
@@ -8897,6 +8911,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1_uri2 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1_uri2->set_namespace_("namespace1");
@@ -8950,6 +8966,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_namespace_filters("namespace1");
   suggestion_spec.add_namespace_filters("namespace2");
   NamespaceDocumentUriGroup* namespace1_uri1 =
@@ -8991,6 +9009,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DocumentIdDoesntExist) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_namespace_filters("namespace3");
   NamespaceDocumentUriGroup* namespace3_uri3 =
       suggestion_spec.add_document_uri_filters();
@@ -9031,6 +9051,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1->set_namespace_("namespace1");
@@ -9062,6 +9084,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1->set_namespace_("namespace1");
@@ -9133,6 +9157,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Email");
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -9168,6 +9194,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_SchemaTypeNotFound) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Email");
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -9208,6 +9236,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Only search in subject.
   TypePropertyMask* mask = suggestion_spec.add_type_property_filters();
@@ -9259,6 +9289,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Only search in Person.name.
   suggestion_spec.add_schema_type_filters("Person");
@@ -9335,6 +9367,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Email");
   suggestion_spec.add_schema_type_filters("Message");
   TypePropertyMask* mask1 = suggestion_spec.add_type_property_filters();
@@ -9394,6 +9428,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Message");
   TypePropertyMask* mask1 = suggestion_spec.add_type_property_filters();
   mask1->set_schema_type("Email");
@@ -9401,6 +9437,53 @@ TEST_F(IcingSearchEngineTest,
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   EXPECT_THAT(response.status().code(), Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_OrderByTermFrequency) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty(
+              "body", "termthree termthree termthree termtwo termtwo termone")
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Search in sender.name of Email but schema type is Message.
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("t");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::EXACT_ONLY);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::TERM_FREQUENCY);
+
+  SuggestionResponse::Suggestion suggestionTermOne;
+  suggestionTermOne.set_query("termone");
+  SuggestionResponse::Suggestion suggestionTermTwo;
+  suggestionTermTwo.set_query("termtwo");
+  SuggestionResponse::Suggestion suggestionTermThree;
+  suggestionTermThree.set_query("termthree");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              ElementsAre(EqualsProto(suggestionTermThree),
+                          EqualsProto(suggestionTermTwo),
+                          EqualsProto(suggestionTermOne)));
 }
 
 TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
@@ -9443,6 +9526,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
     suggestion_spec.set_num_to_return(10);
     suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
         TermMatchType::PREFIX);
+    suggestion_spec.mutable_scoring_spec()->set_rank_by(
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
     SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
     ASSERT_THAT(response.status(), ProtoIsOk());
@@ -9476,6 +9561,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
     suggestion_spec.set_num_to_return(10);
     suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
         TermMatchType::PREFIX);
+    suggestion_spec.mutable_scoring_spec()->set_rank_by(
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
     // Now namespace1 will return empty
     suggestion_spec.clear_namespace_filters();
@@ -9505,6 +9592,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_emptyPrefix) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
@@ -9519,6 +9608,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NonPositiveNumToReturn) {
   suggestion_spec.set_num_to_return(0);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
