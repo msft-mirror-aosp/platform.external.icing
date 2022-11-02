@@ -20,7 +20,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/hash/farmhash.h"
@@ -28,18 +27,14 @@
 #include "gtest/gtest.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/testing/random-string.h"
 #include "icing/testing/tmp-directory.h"
-#include "icing/util/logging.h"
+
+using testing::ElementsAre;
 
 namespace icing {
 namespace lib {
 
 namespace {
-
-using testing::ContainerEq;
-using testing::ElementsAre;
-using testing::StrEq;
 
 constexpr std::string_view kKeys[] = {
     "", "ab", "ac", "abd", "bac", "bb", "bacd", "abbb", "abcdefg",
@@ -110,17 +105,6 @@ class IcingDynamicTrieTest : public ::testing::Test {
   std::string trie_files_prefix_;
 };
 
-std::vector<std::pair<std::string, int>> RetrieveKeyValuePairs(
-    IcingDynamicTrie::Iterator& term_iter) {
-  std::vector<std::pair<std::string, int>> key_value;
-  for (; term_iter.IsValid(); term_iter.Advance()) {
-    uint32_t val;
-    memcpy(&val, term_iter.GetValue(), sizeof(val));
-    key_value.push_back(std::make_pair(term_iter.GetKey(), val));
-  }
-  return key_value;
-}
-
 constexpr std::string_view kCommonEnglishWords[] = {
     "that", "was",  "for",  "on",   "are",  "with",  "they", "be",    "at",
     "one",  "have", "this", "from", "word", "but",   "what", "some",  "you",
@@ -173,6 +157,7 @@ TEST_F(IcingDynamicTrieTest, Init) {
 TEST_F(IcingDynamicTrieTest, Iterator) {
   // Test iterator.
   IcingFilesystem filesystem;
+  uint32_t val;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
   ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
@@ -182,53 +167,104 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
     ASSERT_TRUE(trie.Insert(kKeys[i].data(), &i));
   }
 
-  // Should get the entire trie.
-  std::vector<std::pair<std::string, int>> exp_key_values = {
-      {"", 0},   {"ab", 1},  {"abbb", 7}, {"abcdefg", 8}, {"abd", 3},
-      {"ac", 2}, {"bac", 4}, {"bacd", 6}, {"bb", 5}};
-  IcingDynamicTrie::Iterator it_all(trie, "");
-  std::vector<std::pair<std::string, int>> key_values =
-      RetrieveKeyValuePairs(it_all);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+  // We try everything twice to test that Reset also works.
 
-  // Should get same results after calling Reset
-  it_all.Reset();
-  key_values = RetrieveKeyValuePairs(it_all);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+  // Should get the entire trie.
+  IcingDynamicTrie::Iterator it_all(trie, "");
+  for (int i = 0; i < 2; i++) {
+    uint32_t count = 0;
+    for (; it_all.IsValid(); it_all.Advance()) {
+      uint32_t val_idx = it_all.GetValueIndex();
+      EXPECT_EQ(it_all.GetValue(), trie.GetValueAtIndex(val_idx));
+      count++;
+    }
+    EXPECT_EQ(count, kNumKeys);
+    it_all.Reset();
+  }
 
   // Get everything under "a".
-  exp_key_values = {
-      {"ab", 1}, {"abbb", 7}, {"abcdefg", 8}, {"abd", 3}, {"ac", 2}};
   IcingDynamicTrie::Iterator it1(trie, "a");
-  key_values = RetrieveKeyValuePairs(it1);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+  for (int i = 0; i < 2; i++) {
+    ASSERT_TRUE(it1.IsValid());
+    EXPECT_STREQ(it1.GetKey(), "ab");
+    static const uint32_t kOne = 1;
+    ASSERT_TRUE(it1.GetValue() != nullptr);
+    EXPECT_TRUE(!memcmp(it1.GetValue(), &kOne, sizeof(kOne)));
 
-  // Should get same results after calling Reset
-  it1.Reset();
-  key_values = RetrieveKeyValuePairs(it1);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+    ASSERT_TRUE(it1.Advance());
+    ASSERT_TRUE(it1.IsValid());
+    EXPECT_STREQ(it1.GetKey(), "abbb");
+
+    ASSERT_TRUE(it1.Advance());
+    ASSERT_TRUE(it1.IsValid());
+    EXPECT_STREQ(it1.GetKey(), "abcdefg");
+
+    ASSERT_TRUE(it1.Advance());
+    ASSERT_TRUE(it1.IsValid());
+    EXPECT_STREQ(it1.GetKey(), "abd");
+
+    ASSERT_TRUE(it1.Advance());
+    ASSERT_TRUE(it1.IsValid());
+    EXPECT_STREQ(it1.GetKey(), "ac");
+
+    EXPECT_FALSE(it1.Advance());
+    EXPECT_FALSE(it1.IsValid());
+
+    it1.Reset();
+  }
 
   // Now "b".
-  exp_key_values = {{"bac", 4}, {"bacd", 6}, {"bb", 5}};
   IcingDynamicTrie::Iterator it2(trie, "b");
-  key_values = RetrieveKeyValuePairs(it2);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+  for (int i = 0; i < 2; i++) {
+    ASSERT_TRUE(it2.IsValid());
+    EXPECT_STREQ(it2.GetKey(), "bac");
+    val = 1;
+    ASSERT_TRUE(it1.GetValue() != nullptr);
+    EXPECT_TRUE(!memcmp(it1.GetValue(), &val, sizeof(val)));
+    val = 4;
+    ASSERT_TRUE(it2.GetValue() != nullptr);
+    EXPECT_TRUE(!memcmp(it2.GetValue(), &val, sizeof(val)));
 
-  // Should get same results after calling Reset
-  it2.Reset();
-  key_values = RetrieveKeyValuePairs(it2);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+    ASSERT_TRUE(it2.Advance());
+    ASSERT_TRUE(it2.IsValid());
+    EXPECT_STREQ(it2.GetKey(), "bacd");
+
+    ASSERT_TRUE(it2.Advance());
+    ASSERT_TRUE(it2.IsValid());
+    EXPECT_STREQ(it2.GetKey(), "bb");
+
+    EXPECT_FALSE(it2.Advance());
+    EXPECT_FALSE(it2.IsValid());
+
+    it2.Reset();
+  }
 
   // Get everything under "ab".
-  exp_key_values = {{"ab", 1}, {"abbb", 7}, {"abcdefg", 8}, {"abd", 3}};
   IcingDynamicTrie::Iterator it3(trie, "ab");
-  key_values = RetrieveKeyValuePairs(it3);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+  for (int i = 0; i < 2; i++) {
+    ASSERT_TRUE(it3.IsValid());
+    EXPECT_STREQ(it3.GetKey(), "ab");
+    val = 1;
+    ASSERT_TRUE(it3.GetValue() != nullptr);
+    EXPECT_TRUE(!memcmp(it3.GetValue(), &val, sizeof(val)));
 
-  // Should get same results after calling Reset
-  it3.Reset();
-  key_values = RetrieveKeyValuePairs(it3);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
+    ASSERT_TRUE(it3.Advance());
+    ASSERT_TRUE(it3.IsValid());
+    EXPECT_STREQ(it3.GetKey(), "abbb");
+
+    ASSERT_TRUE(it3.Advance());
+    ASSERT_TRUE(it3.IsValid());
+    EXPECT_STREQ(it3.GetKey(), "abcdefg");
+
+    ASSERT_TRUE(it3.Advance());
+    ASSERT_TRUE(it3.IsValid());
+    EXPECT_STREQ(it3.GetKey(), "abd");
+
+    EXPECT_FALSE(it3.Advance());
+    EXPECT_FALSE(it3.IsValid());
+
+    it3.Reset();
+  }
 
   // Should match only one key exactly.
   constexpr std::string_view kOneMatch[] = {
@@ -247,17 +283,14 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
 
   for (size_t k = 0; k < ABSL_ARRAYSIZE(kOneMatch); k++) {
     IcingDynamicTrie::Iterator it_single(trie, kOneMatch[k].data());
-    ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
-    EXPECT_THAT(it_single.GetKey(), StrEq(kOneMatchMatched[k].data()));
-    EXPECT_FALSE(it_single.Advance()) << kOneMatch[k];
-    EXPECT_FALSE(it_single.IsValid()) << kOneMatch[k];
+    for (int i = 0; i < 2; i++) {
+      ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
+      EXPECT_STREQ(it_single.GetKey(), kOneMatchMatched[k].data());
+      EXPECT_FALSE(it_single.Advance()) << kOneMatch[k];
+      EXPECT_FALSE(it_single.IsValid()) << kOneMatch[k];
 
-    // Should get same results after calling Reset
-    it_single.Reset();
-    ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
-    EXPECT_THAT(it_single.GetKey(), StrEq(kOneMatchMatched[k].data()));
-    EXPECT_FALSE(it_single.Advance()) << kOneMatch[k];
-    EXPECT_FALSE(it_single.IsValid()) << kOneMatch[k];
+      it_single.Reset();
+    }
   }
 
   // Matches nothing.
@@ -268,9 +301,11 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
   };
   for (size_t k = 0; k < ABSL_ARRAYSIZE(kNoMatch); k++) {
     IcingDynamicTrie::Iterator it_empty(trie, kNoMatch[k].data());
-    EXPECT_FALSE(it_empty.IsValid());
-    it_empty.Reset();
-    EXPECT_FALSE(it_empty.IsValid());
+    for (int i = 0; i < 2; i++) {
+      EXPECT_FALSE(it_empty.IsValid());
+
+      it_empty.Reset();
+    }
   }
 
   // Clear.
@@ -278,161 +313,6 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
   EXPECT_FALSE(IcingDynamicTrie::Iterator(trie, "").IsValid());
   EXPECT_EQ(0u, trie.size());
   EXPECT_EQ(1.0, trie.min_free_fraction());
-}
-
-TEST_F(IcingDynamicTrieTest, IteratorReverse) {
-  // Test iterator.
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  for (uint32_t i = 0; i < kNumKeys; i++) {
-    ASSERT_TRUE(trie.Insert(kKeys[i].data(), &i));
-  }
-
-  // Should get the entire trie.
-  std::vector<std::pair<std::string, int>> exp_key_values = {
-      {"bb", 5},      {"bacd", 6}, {"bac", 4}, {"ac", 2}, {"abd", 3},
-      {"abcdefg", 8}, {"abbb", 7}, {"ab", 1},  {"", 0}};
-  IcingDynamicTrie::Iterator it_all(trie, "", /*reverse=*/true);
-  std::vector<std::pair<std::string, int>> key_values =
-      RetrieveKeyValuePairs(it_all);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-  it_all.Reset();
-  key_values = RetrieveKeyValuePairs(it_all);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Get everything under "a".
-  exp_key_values = {
-      {"ac", 2}, {"abd", 3}, {"abcdefg", 8}, {"abbb", 7}, {"ab", 1}};
-  IcingDynamicTrie::Iterator it1(trie, "a", /*reverse=*/true);
-  key_values = RetrieveKeyValuePairs(it1);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Should get same results after calling Reset
-  it1.Reset();
-  key_values = RetrieveKeyValuePairs(it1);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Now "b".
-  exp_key_values = {{"bb", 5}, {"bacd", 6}, {"bac", 4}};
-  IcingDynamicTrie::Iterator it2(trie, "b", /*reverse=*/true);
-  key_values = RetrieveKeyValuePairs(it2);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Should get same results after calling Reset
-  it2.Reset();
-  key_values = RetrieveKeyValuePairs(it2);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Get everything under "ab".
-  exp_key_values = {{"abd", 3}, {"abcdefg", 8}, {"abbb", 7}, {"ab", 1}};
-  IcingDynamicTrie::Iterator it3(trie, "ab", /*reverse=*/true);
-  key_values = RetrieveKeyValuePairs(it3);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Should get same results after calling Reset
-  it3.Reset();
-  key_values = RetrieveKeyValuePairs(it3);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Should match only one key exactly.
-  constexpr std::string_view kOneMatch[] = {
-      "abd",
-      "abcd",
-      "abcdef",
-      "abcdefg",
-  };
-  // With the following match:
-  constexpr std::string_view kOneMatchMatched[] = {
-      "abd",
-      "abcdefg",
-      "abcdefg",
-      "abcdefg",
-  };
-
-  for (size_t k = 0; k < ABSL_ARRAYSIZE(kOneMatch); k++) {
-    IcingDynamicTrie::Iterator it_single(trie, kOneMatch[k].data(),
-                                         /*reverse=*/true);
-    ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
-    EXPECT_THAT(it_single.GetKey(), StrEq(kOneMatchMatched[k].data()));
-    EXPECT_FALSE(it_single.Advance()) << kOneMatch[k];
-    EXPECT_FALSE(it_single.IsValid()) << kOneMatch[k];
-
-    // Should get same results after calling Reset
-    it_single.Reset();
-    ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
-    EXPECT_THAT(it_single.GetKey(), StrEq(kOneMatchMatched[k].data()));
-    EXPECT_FALSE(it_single.Advance()) << kOneMatch[k];
-    EXPECT_FALSE(it_single.IsValid()) << kOneMatch[k];
-  }
-
-  // Matches nothing.
-  constexpr std::string_view kNoMatch[] = {
-      "abbd",
-      "abcdeg",
-      "abcdefh",
-  };
-  for (size_t k = 0; k < ABSL_ARRAYSIZE(kNoMatch); k++) {
-    IcingDynamicTrie::Iterator it_empty(trie, kNoMatch[k].data(),
-                                        /*reverse=*/true);
-    EXPECT_FALSE(it_empty.IsValid());
-    it_empty.Reset();
-    EXPECT_FALSE(it_empty.IsValid());
-  }
-
-  // Clear.
-  trie.Clear();
-  EXPECT_FALSE(
-      IcingDynamicTrie::Iterator(trie, "", /*reverse=*/true).IsValid());
-  EXPECT_EQ(0u, trie.size());
-  EXPECT_EQ(1.0, trie.min_free_fraction());
-}
-
-TEST_F(IcingDynamicTrieTest, IteratorLoadTest) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  std::default_random_engine random;
-  ICING_LOG(ERROR) << "Seed: " << std::default_random_engine::default_seed;
-
-  std::vector<std::pair<std::string, int>> exp_key_values;
-  // Randomly generate 1024 terms.
-  for (int i = 0; i < 1024; ++i) {
-    std::string term = RandomString("abcdefg", 5, &random) + std::to_string(i);
-    ASSERT_TRUE(trie.Insert(term.c_str(), &i));
-    exp_key_values.push_back(std::make_pair(term, i));
-  }
-  // Lexicographically sort the expected keys.
-  std::sort(exp_key_values.begin(), exp_key_values.end());
-
-  // Check that the iterator works.
-  IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-  std::vector<std::pair<std::string, int>> key_values =
-      RetrieveKeyValuePairs(term_iter);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Check that Reset works.
-  term_iter.Reset();
-  key_values = RetrieveKeyValuePairs(term_iter);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  std::reverse(exp_key_values.begin(), exp_key_values.end());
-  // Check that the reverse iterator works.
-  IcingDynamicTrie::Iterator term_iter_reverse(trie, /*prefix=*/"",
-                                               /*reverse=*/true);
-  key_values = RetrieveKeyValuePairs(term_iter_reverse);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
-
-  // Check that Reset works.
-  term_iter_reverse.Reset();
-  key_values = RetrieveKeyValuePairs(term_iter_reverse);
-  EXPECT_THAT(key_values, ContainerEq(exp_key_values));
 }
 
 TEST_F(IcingDynamicTrieTest, Persistence) {
@@ -1082,102 +962,6 @@ TEST_F(IcingDynamicTrieTest, DeletingNonExistingKeyShouldReturnTrue) {
   EXPECT_TRUE(trie.Find("bed", &value));
 }
 
-TEST_F(IcingDynamicTrieTest, DeletionResortsFullNextArray) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-  // 'f' -> [ 'a', 'j', 'o', 'u' ]
-  ASSERT_TRUE(trie.Insert("foul", &value));
-  ASSERT_TRUE(trie.Insert("far", &value));
-  ASSERT_TRUE(trie.Insert("fudge", &value));
-  ASSERT_TRUE(trie.Insert("fjord", &value));
-
-  // Delete the third child
-  EXPECT_TRUE(trie.Delete("foul"));
-
-  std::vector<std::string> remaining;
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.push_back(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ElementsAre("far", "fjord", "fudge"));
-}
-
-TEST_F(IcingDynamicTrieTest, DeletionResortsPartiallyFilledNextArray) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-  // 'f' -> [ 'a', 'o', 'u', 0xFF ]
-  ASSERT_TRUE(trie.Insert("foul", &value));
-  ASSERT_TRUE(trie.Insert("far", &value));
-  ASSERT_TRUE(trie.Insert("fudge", &value));
-
-  // Delete the second child
-  EXPECT_TRUE(trie.Delete("foul"));
-
-  std::vector<std::string> remaining;
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.push_back(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ElementsAre("far", "fudge"));
-}
-
-TEST_F(IcingDynamicTrieTest, DeletionLoadTest) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  std::default_random_engine random;
-  ICING_LOG(ERROR) << "Seed: " << std::default_random_engine::default_seed;
-  std::vector<std::string> terms;
-  uint32_t value;
-  // Randomly generate 2048 terms.
-  for (int i = 0; i < 2048; ++i) {
-    terms.push_back(RandomString("abcdefg", 5, &random));
-    ASSERT_TRUE(trie.Insert(terms.back().c_str(), &value));
-  }
-
-  // Randomly delete 1024 terms.
-  std::unordered_set<std::string> exp_remaining(terms.begin(), terms.end());
-  std::shuffle(terms.begin(), terms.end(), random);
-  for (int i = 0; i < 1024; ++i) {
-    exp_remaining.erase(terms[i]);
-    ASSERT_TRUE(trie.Delete(terms[i].c_str()));
-  }
-
-  // Check that the iterator still works, and the remaining terms are correct.
-  std::unordered_set<std::string> remaining;
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.insert(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ContainerEq(exp_remaining));
-
-  // Check that we can still insert terms after delete.
-  for (int i = 0; i < 2048; ++i) {
-    std::string term = RandomString("abcdefg", 5, &random);
-    ASSERT_TRUE(trie.Insert(term.c_str(), &value));
-    exp_remaining.insert(term);
-  }
-  remaining.clear();
-  for (IcingDynamicTrie::Iterator term_iter(trie, /*prefix=*/"");
-       term_iter.IsValid(); term_iter.Advance()) {
-    remaining.insert(term_iter.GetKey());
-  }
-  EXPECT_THAT(remaining, ContainerEq(exp_remaining));
-}
-
 }  // namespace
 
 // The tests below are accessing private methods and fields of IcingDynamicTrie
@@ -1347,143 +1131,6 @@ TEST_F(IcingDynamicTrieTest, BitmapsClosedWhenInitFails) {
   // Check that both the bitmap and the property files have been closed.
   ASSERT_FALSE(trie.deleted_bitmap_);
   ASSERT_EQ(0, trie.property_bitmaps_.size());
-}
-
-TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForExistingTerms) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-
-  ASSERT_TRUE(trie.Insert("", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-
-  ASSERT_TRUE(trie.Insert("ab", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-
-  ASSERT_TRUE(trie.Insert("ac", &value));
-  // "" is a prefix of "ab" and "ac", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-
-  ASSERT_TRUE(trie.Insert("ba", &value));
-  // "" now branches to "ba"
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-
-  ASSERT_TRUE(trie.Insert("a", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  // "a" branches to "ab" and "ac"
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-
-  ASSERT_TRUE(trie.Insert("abc", &value));
-  ASSERT_TRUE(trie.Insert("acd", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" is a prefix of "abc", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  // "ac" is a prefix of "acd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-
-  ASSERT_TRUE(trie.Insert("abcd", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" is a prefix of "abc" and "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  // "abc" is a prefix of "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
-
-  ASSERT_TRUE(trie.Insert("abd", &value));
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" branches to "abc" and "abd"
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abd"));
-}
-
-TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForNonExistingTerms) {
-  IcingFilesystem filesystem;
-  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
-                        &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
-
-  uint32_t value = 1;
-
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("aa", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("ac", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  // "a" does not exist in the trie, but now it branches to "aa" and "ac".
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("ad", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abcd", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abd", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  // "ab" does not exist in the trie, but now it branches to "abcd" and "abd".
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abce", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  // "abc" does not exist in the trie, but now it branches to "abcd" and "abce".
-  EXPECT_TRUE(trie.IsBranchingTerm("abc"));
-
-  ASSERT_TRUE(trie.Insert("abc_suffix", &value));
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_TRUE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_s"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_su"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_suffi"));
 }
 
 }  // namespace lib

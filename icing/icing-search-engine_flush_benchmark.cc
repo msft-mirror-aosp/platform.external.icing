@@ -32,10 +32,11 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/icing-search-engine.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
-#include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/status.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/document-generator.h"
 #include "icing/testing/random-string.h"
@@ -47,7 +48,7 @@
 //    //icing:icing-search-engine_flush_benchmark
 //
 //    $ blaze-bin/icing/icing-search-engine_flush_benchmark
-//    --benchmark_filter=all --benchmark_memory_usage
+//    --benchmarks=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -58,7 +59,7 @@
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/icing-search-engine_flush_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 
 namespace icing {
 namespace lib {

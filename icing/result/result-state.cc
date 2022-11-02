@@ -14,9 +14,6 @@
 
 #include "icing/result/result-state.h"
 
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/scoring/ranker.h"
 #include "icing/store/namespace-id.h"
@@ -85,15 +82,13 @@ class GroupResultLimiter {
 
   // Returns true if the scored_document_hit should be removed.
   bool operator()(const ScoredDocumentHit& scored_document_hit) {
-    auto document_filter_data_optional =
-        document_store_.GetAliveDocumentFilterData(
-            scored_document_hit.document_id());
-    if (!document_filter_data_optional) {
-      // Document doesn't exist.
+    auto document_filter_data_or = document_store_.GetDocumentFilterData(
+        scored_document_hit.document_id());
+    if (!document_filter_data_or.ok()) {
       return true;
     }
     NamespaceId namespace_id =
-        document_filter_data_optional.value().namespace_id();
+        document_filter_data_or.ValueOrDie().namespace_id();
     auto iter = namespace_group_id_map_.find(namespace_id);
     if (iter == namespace_group_id_map_.end()) {
       return false;

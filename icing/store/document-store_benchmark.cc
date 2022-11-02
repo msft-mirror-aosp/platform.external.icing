@@ -34,7 +34,6 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -47,7 +46,7 @@
 //    //icing/store:document-store_benchmark
 //
 //    $ blaze-bin/icing/store/document-store_benchmark
-//    --benchmark_filter=all --benchmark_memory_usage
+//    --benchmarks=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -58,20 +57,20 @@
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/document-store_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 
 namespace icing {
 namespace lib {
 
 namespace {
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
 
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
 
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
 
 class DestructibleDirectory {
  public:
@@ -165,8 +164,7 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
     // Check random document ids to see if they exist. Hopefully to simulate
     // page faulting in different sections of our mmapped derived files.
     int document_id = dist(random);
-    benchmark::DoNotOptimize(
-        document_store->GetAliveDocumentFilterData(document_id));
+    benchmark::DoNotOptimize(document_store->DoesDocumentExist(document_id));
   }
 }
 BENCHMARK(BM_DoesDocumentExistBenchmark);

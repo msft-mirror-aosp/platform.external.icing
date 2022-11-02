@@ -12,24 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/lite/lite-index-options.h"
-
-#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/legacy/index/icing-lite-index-options.h"
 
 namespace icing {
 namespace lib {
 
 namespace {
-
-constexpr int kIcingMaxVariantsPerToken = 10;  // Maximum number of variants
-
-constexpr size_t kIcingMaxSearchableDocumentSize = (1u << 16) - 1;  // 64K
-// Max num tokens per document. 64KB is our original maximum (searchable)
-// document size. We clip if document exceeds this.
-constexpr uint32_t kIcingMaxNumTokensPerDoc =
-    kIcingMaxSearchableDocumentSize / 5;
-constexpr uint32_t kIcingMaxNumHitsPerDocument =
-    kIcingMaxNumTokensPerDoc * kIcingMaxVariantsPerToken;
 
 uint32_t CalculateHitBufferSize(uint32_t hit_buffer_want_merge_bytes) {
   constexpr uint32_t kHitBufferSlopMult = 2;
@@ -39,7 +27,7 @@ uint32_t CalculateHitBufferSize(uint32_t hit_buffer_want_merge_bytes) {
   // TODO(b/111690435) Move LiteIndex::Element to a separate file so that this
   // can use sizeof(LiteIndex::Element)
   uint32_t hit_capacity_elts_with_slop =
-      hit_buffer_want_merge_bytes / sizeof(TermIdHitPair);
+      hit_buffer_want_merge_bytes / sizeof(uint64_t);
   // Add some slop for index variants on top of max num tokens.
   hit_capacity_elts_with_slop += kIcingMaxNumHitsPerDocument;
   hit_capacity_elts_with_slop *= kHitBufferSlopMult;
@@ -63,8 +51,8 @@ IcingDynamicTrie::Options CalculateTrieOptions(uint32_t hit_buffer_size) {
 
 }  // namespace
 
-LiteIndexOptions::LiteIndexOptions(const std::string& filename_base,
-                                   uint32_t hit_buffer_want_merge_bytes)
+IcingLiteIndexOptions::IcingLiteIndexOptions(
+    const std::string& filename_base, uint32_t hit_buffer_want_merge_bytes)
     : filename_base(filename_base),
       hit_buffer_want_merge_bytes(hit_buffer_want_merge_bytes) {
   hit_buffer_size = CalculateHitBufferSize(hit_buffer_want_merge_bytes);

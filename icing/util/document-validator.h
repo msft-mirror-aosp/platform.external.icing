@@ -17,6 +17,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-store.h"
 
 namespace icing {

@@ -15,19 +15,20 @@
 #ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 #define ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 
+#include "icing/legacy/index/icing-common-types.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {
 namespace lib {
 
-struct LiteIndexOptions {
-  LiteIndexOptions() = default;
-  // Creates LiteIndexOptions based off of the specified parameters. All
+struct IcingLiteIndexOptions {
+  IcingLiteIndexOptions() = default;
+  // Creates IcingLiteIndexOptions based off of the specified parameters. All
   // other fields are calculated based on the value of
   // hit_buffer_want_merge_bytes and the logic in CalculateHitBufferSize and
   // CalculateTrieOptions.
-  LiteIndexOptions(const std::string& filename_base,
-                   uint32_t hit_buffer_want_merge_bytes);
+  IcingLiteIndexOptions(const std::string& filename_base,
+                        uint32_t hit_buffer_want_merge_bytes);
 
   IcingDynamicTrie::Options lexicon_options;
   IcingDynamicTrie::Options display_mappings_options;

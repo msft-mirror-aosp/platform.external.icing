@@ -34,9 +34,9 @@ namespace lib {
 namespace {
 
 std::string SectionIdMaskToString(SectionIdMask section_id_mask) {
-  std::string mask(kTotalNumSections, '0');
+  std::string mask(kMaxSectionId + 1, '0');
   for (SectionId i = kMaxSectionId; i >= 0; --i) {
-    if (section_id_mask & (UINT64_C(1) << i)) {
+    if (section_id_mask & (1U << i)) {
       mask[kMaxSectionId - i] = '1';
     }
   }
@@ -102,10 +102,9 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
                          posting_list_accessor_->GetNextHitsBatch());
   ++num_blocks_inspected_;
   cached_doc_hit_infos_.reserve(hits.size() + 1);
-  cached_hit_term_frequency_.reserve(hits.size() + 1);
   for (const Hit& hit : hits) {
     // Check sections.
-    if (((UINT64_C(1) << hit.section_id()) & section_restrict_mask_) == 0) {
+    if (((1u << hit.section_id()) & section_restrict_mask_) == 0) {
       continue;
     }
     // We want exact hits, skip prefix-only hits.
@@ -115,10 +114,9 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
     if (cached_doc_hit_infos_.empty() ||
         hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
       cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
-      cached_hit_term_frequency_.push_back(Hit::TermFrequencyArray());
     }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id());
-    cached_hit_term_frequency_.back()[hit.section_id()] = hit.term_frequency();
+    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(),
+                                               hit.term_frequency());
   }
   return libtextclassifier3::Status::OK;
 }
@@ -144,20 +142,18 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
 
   ++num_blocks_inspected_;
   if (posting_list_accessor_ == nullptr) {
-    ICING_ASSIGN_OR_RETURN(MainIndex::GetPrefixAccessorResult result,
-                           main_index_->GetAccessorForPrefixTerm(term_));
+    ICING_ASSIGN_OR_RETURN(
+        MainIndex::GetPrefixAccessorResult result,
+        main_index_->GetAccessorForPrefixTerm(term_));
     posting_list_accessor_ = std::move(result.accessor);
     exact_ = result.exact;
   }
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
                          posting_list_accessor_->GetNextHitsBatch());
   cached_doc_hit_infos_.reserve(hits.size());
-  if (need_hit_term_frequency_) {
-    cached_hit_term_frequency_.reserve(hits.size());
-  }
   for (const Hit& hit : hits) {
     // Check sections.
-    if (((UINT64_C(1) << hit.section_id()) & section_restrict_mask_) == 0) {
+    if (((1u << hit.section_id()) & section_restrict_mask_) == 0) {
       continue;
     }
     // If we only want hits from prefix sections.
@@ -167,15 +163,9 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
     if (cached_doc_hit_infos_.empty() ||
         hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
       cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
-      if (need_hit_term_frequency_) {
-        cached_hit_term_frequency_.push_back(Hit::TermFrequencyArray());
-      }
     }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id());
-    if (need_hit_term_frequency_) {
-      cached_hit_term_frequency_.back()[hit.section_id()] =
-          hit.term_frequency();
-    }
+    cached_doc_hit_infos_.back().UpdateSection(hit.section_id(),
+                                               hit.term_frequency());
   }
   return libtextclassifier3::Status::OK;
 }

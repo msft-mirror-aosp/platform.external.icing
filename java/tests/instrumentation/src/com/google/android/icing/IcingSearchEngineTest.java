@@ -17,9 +17,6 @@ package com.google.android.icing;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
-import com.google.android.icing.IcingSearchEngine;
-import com.google.android.icing.proto.DebugInfoResultProto;
-import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
@@ -33,7 +30,6 @@ import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
-import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -57,10 +53,9 @@ import com.google.android.icing.proto.StringIndexingConfig;
 import com.google.android.icing.proto.StringIndexingConfig.TokenizerType;
 import com.google.android.icing.proto.SuggestionResponse;
 import com.google.android.icing.proto.SuggestionSpecProto;
-import com.google.android.icing.proto.SuggestionSpecProto.SuggestionScoringSpecProto;
 import com.google.android.icing.proto.TermMatchType;
-import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
+import com.google.android.icing.IcingSearchEngine;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -214,16 +209,6 @@ public final class IcingSearchEngineTest {
     assertStatusOk(searchResultProto.getStatus());
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument);
-
-    // TODO(b/236412954): Enable these JNI latency tests once cl/469819190 is synced to Jetpack
-    // Test that JNI latency has been set properly
-    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
-    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
-    // assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
-    // assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
-    // assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
-    //     .isGreaterThan(0);
-    // assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
   }
 
   @Test
@@ -265,16 +250,6 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
     assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
-
-    // TODO(b/236412954): Enable these JNI latency tests once cl/469819190 is synced to Jetpack
-    // Test that JNI latency has been set
-    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
-    // assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
-    // assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
-    // assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
-    // assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
-    //     .isGreaterThan(0);
-    // assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
 
     // fetch rest pages
     for (int i = 1; i < 5; i++) {
@@ -412,60 +387,6 @@ public final class IcingSearchEngineTest {
 
     DeleteByQueryResultProto deleteResultProto = icingSearchEngine.deleteByQuery(searchSpec);
     assertStatusOk(deleteResultProto.getStatus());
-    // By default, the deleteByQuery API does not return the summary about deleted documents, unless
-    // the returnDeletedDocumentInfo parameter is set to true.
-    assertThat(deleteResultProto.getDeletedDocumentsList()).isEmpty();
-
-    GetResultProto getResultProto =
-        icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
-    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
-    getResultProto =
-        icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
-    assertStatusOk(getResultProto.getStatus());
-  }
-
-  @Test
-  public void testDeleteByQueryWithDeletedDocumentInfo() throws Exception {
-    assertStatusOk(icingSearchEngine.initialize().getStatus());
-
-    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
-    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    assertThat(
-            icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
-                .getStatus()
-                .getCode())
-        .isEqualTo(StatusProto.Code.OK);
-
-    DocumentProto emailDocument1 =
-        createEmailDocument("namespace", "uri1").toBuilder()
-            .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("foo"))
-            .build();
-
-    assertStatusOk(icingSearchEngine.put(emailDocument1).getStatus());
-    DocumentProto emailDocument2 =
-        createEmailDocument("namespace", "uri2").toBuilder()
-            .addProperties(PropertyProto.newBuilder().setName("subject").addStringValues("bar"))
-            .build();
-
-    assertStatusOk(icingSearchEngine.put(emailDocument2).getStatus());
-
-    SearchSpecProto searchSpec =
-        SearchSpecProto.newBuilder()
-            .setQuery("foo")
-            .setTermMatchType(TermMatchType.Code.PREFIX)
-            .build();
-
-    DeleteByQueryResultProto deleteResultProto =
-        icingSearchEngine.deleteByQuery(searchSpec, /*returnDeletedDocumentInfo=*/ true);
-    assertStatusOk(deleteResultProto.getStatus());
-    DeleteByQueryResultProto.DocumentGroupInfo info =
-        DeleteByQueryResultProto.DocumentGroupInfo.newBuilder()
-            .setNamespace("namespace")
-            .setSchema("Email")
-            .addUris("uri1")
-            .build();
-    assertThat(deleteResultProto.getDeletedDocumentsList()).containsExactly(info);
 
     GetResultProto getResultProto =
         icingSearchEngine.get("namespace", "uri1", GetResultSpecProto.getDefaultInstance());
@@ -508,35 +429,6 @@ public final class IcingSearchEngineTest {
 
     StorageInfoResultProto storageInfoResultProto = icingSearchEngine.getStorageInfo();
     assertStatusOk(storageInfoResultProto.getStatus());
-  }
-
-  @Test
-  public void testGetDebugInfo() throws Exception {
-    assertStatusOk(icingSearchEngine.initialize().getStatus());
-
-    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
-    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    assertThat(
-            icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
-                .getStatus()
-                .getCode())
-        .isEqualTo(StatusProto.Code.OK);
-
-    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
-    assertStatusOk(icingSearchEngine.put(emailDocument).getStatus());
-
-    DebugInfoResultProto debugInfoResultProtoBasic =
-        icingSearchEngine.getDebugInfo(DebugInfoVerbosity.Code.BASIC);
-    assertStatusOk(debugInfoResultProtoBasic.getStatus());
-    assertThat(debugInfoResultProtoBasic.getDebugInfo().getDocumentInfo().getCorpusInfoList())
-        .isEmpty(); // because verbosity=BASIC
-
-    DebugInfoResultProto debugInfoResultProtoDetailed =
-        icingSearchEngine.getDebugInfo(DebugInfoVerbosity.Code.DETAILED);
-    assertStatusOk(debugInfoResultProtoDetailed.getStatus());
-    assertThat(debugInfoResultProtoDetailed.getDebugInfo().getDocumentInfo().getCorpusInfoList())
-        .hasSize(1); // because verbosity=DETAILED
   }
 
   @Test
@@ -758,45 +650,13 @@ public final class IcingSearchEngineTest {
     assertStatusOk(icingSearchEngine.put(emailDocument2).getStatus());
 
     SuggestionSpecProto suggestionSpec =
-        SuggestionSpecProto.newBuilder()
-            .setPrefix("f")
-            .setNumToReturn(10)
-            .setScoringSpec(
-                SuggestionScoringSpecProto.newBuilder()
-                    .setScoringMatchType(Code.EXACT_ONLY)
-                    .build())
-            .build();
+        SuggestionSpecProto.newBuilder().setPrefix("f").setNumToReturn(10).build();
 
     SuggestionResponse response = icingSearchEngine.searchSuggestions(suggestionSpec);
     assertStatusOk(response.getStatus());
     assertThat(response.getSuggestionsList()).hasSize(2);
     assertThat(response.getSuggestions(0).getQuery()).isEqualTo("foo");
     assertThat(response.getSuggestions(1).getQuery()).isEqualTo("fo");
-  }
-
-  @Test
-  public void testLogging() throws Exception {
-    // Set to INFO
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.INFO)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.INFO)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.DBG)).isFalse();
-
-    // Set to WARNING
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.WARNING)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.WARNING)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.INFO)).isFalse();
-
-    // Set to DEBUG
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.DBG)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.DBG)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE)).isFalse();
-
-    // Set to VERBOSE
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.VERBOSE, (short) 1)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE, (short) 1)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE, (short) 2)).isFalse();
-
-    assertThat(IcingSearchEngine.getLoggingTag()).isNotEmpty();
   }
 
   private static void assertStatusOk(StatusProto status) {

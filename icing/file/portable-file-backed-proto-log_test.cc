@@ -851,12 +851,11 @@ TEST_F(PortableFileBackedProtoLogTest, Iterator) {
 
   {
     // Iterator with bad filesystem
-    ScopedFd sfd(filesystem_.OpenForRead(file_path_.c_str()));
     MockFilesystem mock_filesystem;
-    ON_CALL(mock_filesystem, GetFileSize(A<int>()))
+    ON_CALL(mock_filesystem, GetFileSize(A<const char*>()))
         .WillByDefault(Return(Filesystem::kBadFileSize));
     PortableFileBackedProtoLog<DocumentProto>::Iterator bad_iterator(
-        mock_filesystem, sfd.get(), /*initial_offset=*/0);
+        mock_filesystem, file_path_, /*initial_offset=*/0);
     ASSERT_THAT(bad_iterator.Advance(),
                 StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   }

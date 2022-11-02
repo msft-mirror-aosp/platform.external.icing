@@ -34,7 +34,6 @@
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/ranker.h"
@@ -70,6 +69,24 @@ IcingDynamicTrie::Options GetMainLexiconOptions() {
   // The default values for IcingDynamicTrie::Options is fine for the main
   // lexicon.
   return IcingDynamicTrie::Options();
+}
+
+// Helper function to check if a term is in the given namespaces.
+// TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
+bool IsTermInNamespaces(
+    const IcingDynamicTrie::PropertyReadersAll& property_reader,
+    uint32_t value_index, const std::vector<NamespaceId>& namespace_ids) {
+  if (namespace_ids.empty()) {
+    return true;
+  }
+  for (NamespaceId namespace_id : namespace_ids) {
+    if (property_reader.HasProperty(GetNamespacePropertyId(namespace_id),
+                                    value_index)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 enum class MergeAction { kTakeLiteTerm, kTakeMainTerm, kMergeTerms };
@@ -120,7 +137,7 @@ std::vector<TermMetadata> MergeAndRankTermMetadatas(
         int total_est_hit_count =
             lite_term_itr->hit_count + main_term_itr->hit_count;
         PushToTermHeap(TermMetadata(std::move(lite_term_itr->content),
-                                    total_est_hit_count),
+                         total_est_hit_count),
                        num_to_return, merged_term_metadata_heap);
         ++lite_term_itr;
         ++main_term_itr;
@@ -184,24 +201,21 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
-                   TermMatchType::Code term_match_type,
-                   bool need_hit_term_frequency) {
+                   TermMatchType::Code term_match_type) {
   std::unique_ptr<DocHitInfoIterator> lite_itr;
   std::unique_ptr<DocHitInfoIterator> main_itr;
   switch (term_match_type) {
     case TermMatchType::EXACT_ONLY:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLiteExact>(
-          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
-          need_hit_term_frequency);
+          term_id_codec_.get(), lite_index_.get(), term, section_id_mask);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainExact>(
-          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
+          main_index_.get(), term, section_id_mask);
       break;
     case TermMatchType::PREFIX:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLitePrefix>(
-          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
-          need_hit_term_frequency);
+          term_id_codec_.get(), lite_index_.get(), term, section_id_mask);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
+          main_index_.get(), term, section_id_mask);
       break;
     default:
       return absl_ports::InvalidArgumentError(
@@ -213,29 +227,33 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
 }
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
-Index::FindLiteTermsByPrefix(
-    const std::string& prefix,
-    const SuggestionResultChecker* suggestion_result_checker) {
+Index::FindLiteTermsByPrefix(const std::string& prefix,
+                             const std::vector<NamespaceId>& namespace_ids) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
                                            prefix.c_str());
+
+  // A property reader to help check if a term has some property.
+  IcingDynamicTrie::PropertyReadersAll property_reader(lite_index_->lexicon());
 
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
     uint32_t term_value_index = term_iterator.GetValueIndex();
 
+    // Skips the terms that don't exist in the given namespaces. We won't skip
+    // any terms if namespace_ids is empty.
+    if (!IsTermInNamespaces(property_reader, term_value_index, namespace_ids)) {
+      term_iterator.Advance();
+      continue;
+    }
+
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(term_value_index, TviType::LITE),
         absl_ports::InternalError("Failed to access terms in lexicon."));
-    ICING_ASSIGN_OR_RETURN(
-        int hit_count,
-        lite_index_->CountHits(term_id, suggestion_result_checker));
-    if (hit_count > 0) {
-      // There is at least one document in the given namespace has this term.
-      term_metadata_list.push_back(
-          TermMetadata(term_iterator.GetKey(), hit_count));
-    }
+
+    term_metadata_list.emplace_back(term_iterator.GetKey(),
+                                    lite_index_->CountHits(term_id));
 
     term_iterator.Advance();
   }
@@ -243,23 +261,21 @@ Index::FindLiteTermsByPrefix(
 }
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
-Index::FindTermsByPrefix(
-    const std::string& prefix, int num_to_return,
-    TermMatchType::Code term_match_type,
-    const SuggestionResultChecker* suggestion_result_checker) {
+Index::FindTermsByPrefix(const std::string& prefix,
+                         const std::vector<NamespaceId>& namespace_ids,
+                         int num_to_return) {
   std::vector<TermMetadata> term_metadata_list;
   if (num_to_return <= 0) {
     return term_metadata_list;
   }
+
   // Get results from the LiteIndex.
-  ICING_ASSIGN_OR_RETURN(
-      std::vector<TermMetadata> lite_term_metadata_list,
-      FindLiteTermsByPrefix(prefix, suggestion_result_checker));
+  ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> lite_term_metadata_list,
+                         FindLiteTermsByPrefix(prefix, namespace_ids));
   // Append results from the MainIndex.
-  ICING_ASSIGN_OR_RETURN(
-      std::vector<TermMetadata> main_term_metadata_list,
-      main_index_->FindTermsByPrefix(prefix, term_match_type,
-                                     suggestion_result_checker));
+  ICING_ASSIGN_OR_RETURN(std::vector<TermMetadata> main_term_metadata_list,
+                         main_index_->FindTermsByPrefix(prefix, namespace_ids));
+
   return MergeAndRankTermMetadatas(std::move(lite_term_metadata_list),
                                    std::move(main_term_metadata_list),
                                    num_to_return);
@@ -268,19 +284,13 @@ Index::FindTermsByPrefix(
 IndexStorageInfoProto Index::GetStorageInfo() const {
   IndexStorageInfoProto storage_info;
   int64_t directory_size = filesystem_->GetDiskUsage(options_.base_dir.c_str());
-  storage_info.set_index_size(Filesystem::SanitizeFileSize(directory_size));
+  if (directory_size != Filesystem::kBadFileSize) {
+    storage_info.set_index_size(directory_size);
+  } else {
+    storage_info.set_index_size(-1);
+  }
   storage_info = lite_index_->GetStorageInfo(std::move(storage_info));
   return main_index_->GetStorageInfo(std::move(storage_info));
-}
-
-libtextclassifier3::Status Index::Optimize(
-    const std::vector<DocumentId>& document_id_old_to_new,
-    DocumentId new_last_added_document_id) {
-  if (main_index_->last_added_document_id() != kInvalidDocumentId) {
-    ICING_RETURN_IF_ERROR(main_index_->Optimize(document_id_old_to_new));
-  }
-  return lite_index_->Optimize(document_id_old_to_new, term_id_codec_.get(),
-                               new_last_added_document_id);
 }
 
 libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {

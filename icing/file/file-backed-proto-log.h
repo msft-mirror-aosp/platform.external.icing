@@ -455,8 +455,8 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
           absl_ports::StrCat("Error truncating file: ", file_path));
     }
 
-    ICING_LOG(WARNING) << "Truncated '" << file_path << "' to size "
-                       << last_known_good;
+    ICING_LOG(INFO) << "Truncated '" << file_path << "' to size "
+                    << last_known_good;
   }
 
   CreateResult create_result = {

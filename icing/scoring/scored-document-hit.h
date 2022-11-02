@@ -53,8 +53,8 @@ class ScoredDocumentHit {
   double score_;
 } __attribute__((packed));
 
-static_assert(sizeof(ScoredDocumentHit) == 20,
-              "Size of ScoredDocHit should be 20");
+static_assert(sizeof(ScoredDocumentHit) == 14,
+              "Size of ScoredDocHit should be 14");
 static_assert(icing_is_packed_pod<ScoredDocumentHit>::value, "go/icing-ubsan");
 
 // A custom comparator for ScoredDocumentHit that determines which

@@ -233,11 +233,6 @@ class Filesystem {
   // Increments to_increment by size if size is valid, or sets to_increment
   // to kBadFileSize if either size or to_increment is kBadFileSize.
   static void IncrementByOrSetInvalid(int64_t size, int64_t* to_increment);
-
-  // Return -1 if file_size is invalid. Otherwise, return file_size.
-  static int64_t SanitizeFileSize(int64_t file_size) {
-    return (file_size != kBadFileSize) ? file_size : -1;
-  }
 };
 // LINT.ThenChange(//depot/google3/icing/file/mock-filesystem.h)
 

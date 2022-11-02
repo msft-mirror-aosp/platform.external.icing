@@ -104,7 +104,7 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
 
   // Guaranteed that short_doc_id and long_doc_id match now
   doc_hit_info_ = short_->doc_hit_info();
-  doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info().hit_section_ids_mask());
+  doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info());
   hit_intersect_section_ids_mask_ = short_->hit_intersect_section_ids_mask() &
                                     long_->hit_intersect_section_ids_mask();
   return libtextclassifier3::Status::OK;
@@ -186,8 +186,7 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
       iterators_.at(0)->hit_intersect_section_ids_mask();
 
   for (size_t i = 1; i < iterators_.size(); i++) {
-    doc_hit_info_.MergeSectionsFrom(
-        iterators_.at(i)->doc_hit_info().hit_section_ids_mask());
+    doc_hit_info_.MergeSectionsFrom(iterators_.at(i)->doc_hit_info());
     hit_intersect_section_ids_mask_ &=
         iterators_.at(i)->hit_intersect_section_ids_mask();
   }

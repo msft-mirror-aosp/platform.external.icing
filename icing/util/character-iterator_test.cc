@@ -231,36 +231,5 @@ TEST(CharacterIteratorTest, InvalidUtf) {
   EXPECT_THAT(iterator, Eq(exp_iterator));
 }
 
-TEST(CharacterIteratorTest, MoveToUtfNegativeIndex) {
-  constexpr std::string_view kText = "¿Dónde está la biblioteca?";
-
-  CharacterIterator iterator_utf8(kText, /*utf8_index=*/-1, /*utf16_index=*/0,
-                             /*utf32_index=*/0);
-  // We should be able to successfully move when the index is negative.
-  EXPECT_THAT(iterator_utf8.MoveToUtf8(0), IsTrue());
-  // The character cache should be reset and contain the first character when
-  // resetting to index 0.
-  EXPECT_THAT(UCharToString(iterator_utf8.GetCurrentChar()), Eq("¿"));
-  EXPECT_THAT(iterator_utf8.utf8_index(), Eq(0));
-  EXPECT_THAT(iterator_utf8.utf16_index(), Eq(0));
-  EXPECT_THAT(iterator_utf8.utf32_index(), Eq(0));
-
-  CharacterIterator iterator_utf16(kText, /*utf8_index=*/0, /*utf16_index=*/-1,
-                             /*utf32_index=*/0);
-  EXPECT_THAT(iterator_utf16.MoveToUtf16(1), IsTrue());
-  EXPECT_THAT(iterator_utf16.GetCurrentChar(), Eq('D'));
-  EXPECT_THAT(iterator_utf16.utf8_index(), Eq(2));
-  EXPECT_THAT(iterator_utf16.utf16_index(), Eq(1));
-  EXPECT_THAT(iterator_utf16.utf32_index(), Eq(1));
-
-  CharacterIterator iterator_utf32(kText, /*utf8_index=*/0, /*utf16_index=*/0,
-                             /*utf32_index=*/-1);
-  EXPECT_THAT(iterator_utf32.MoveToUtf32(2), IsTrue());
-  EXPECT_THAT(UCharToString(iterator_utf32.GetCurrentChar()), Eq("ó"));
-  EXPECT_THAT(iterator_utf32.utf8_index(), Eq(3));
-  EXPECT_THAT(iterator_utf32.utf16_index(), Eq(2));
-  EXPECT_THAT(iterator_utf32.utf32_index(), Eq(2));
-}
-
 }  // namespace lib
 }  // namespace icing

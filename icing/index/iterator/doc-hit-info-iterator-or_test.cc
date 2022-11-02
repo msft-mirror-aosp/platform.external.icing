@@ -183,24 +183,24 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
     // Arbitrary section ids for the documents in the DocHitInfoIterators.
     // Created to test correct section_id_mask behavior.
     SectionIdMask section_id_mask1 = 0b01010101;  // hits in sections 0, 2, 4, 6
-    std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies1{
-        1, 0, 2, 0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1{
+        1, 0, 2, 0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0};
     SectionIdMask section_id_mask2 = 0b00000110;  // hits in sections 1, 2
-    std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies2{
-        0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies2{
+        0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-    DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(4);
+    DocHitInfo doc_hit_info1 = DocHitInfo(4);
     doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
     doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
     doc_hit_info1.UpdateSection(/*section_id=*/4, /*hit_term_frequency=*/3);
     doc_hit_info1.UpdateSection(/*section_id=*/6, /*hit_term_frequency=*/4);
 
-    DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(4);
+    DocHitInfo doc_hit_info2 = DocHitInfo(4);
     doc_hit_info2.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/2);
     doc_hit_info2.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/6);
 
-    std::vector<DocHitInfoTermFrequencyPair> first_vector = {doc_hit_info1};
-    std::vector<DocHitInfoTermFrequencyPair> second_vector = {doc_hit_info2};
+    std::vector<DocHitInfo> first_vector = {doc_hit_info1};
+    std::vector<DocHitInfo> second_vector = {doc_hit_info2};
 
     auto first_iter =
         std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
@@ -235,15 +235,15 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
     // Arbitrary section ids for the documents in the DocHitInfoIterators.
     // Created to test correct section_id_mask behavior.
     SectionIdMask section_id_mask1 = 0b00000101;  // hits in sections 0, 2
-    std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies1{
-        1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1{
+        1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-    DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(4);
+    DocHitInfo doc_hit_info1 = DocHitInfo(4);
     doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
     doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
 
-    std::vector<DocHitInfoTermFrequencyPair> first_vector = {doc_hit_info1};
-    std::vector<DocHitInfoTermFrequencyPair> second_vector = {doc_hit_info1};
+    std::vector<DocHitInfo> first_vector = {doc_hit_info1};
+    std::vector<DocHitInfo> second_vector = {doc_hit_info1};
 
     auto first_iter =
         std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
@@ -274,24 +274,24 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
     // Arbitrary section ids for the documents in the DocHitInfoIterators.
     // Created to test correct section_id_mask behavior.
     SectionIdMask section_id_mask1 = 0b01010101;  // hits in sections 0, 2, 4, 6
-    std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies1{
-        1, 0, 2, 0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1{
+        1, 0, 2, 0, 3, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0};
     SectionIdMask section_id_mask2 = 0b00000110;  // hits in sections 1, 2
-    std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies2{
-        0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies2{
+        0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-    DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(4);
+    DocHitInfo doc_hit_info1 = DocHitInfo(4);
     doc_hit_info1.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
     doc_hit_info1.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
     doc_hit_info1.UpdateSection(/*section_id=*/4, /*hit_term_frequency=*/3);
     doc_hit_info1.UpdateSection(/*section_id=*/6, /*hit_term_frequency=*/4);
 
-    DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(5);
+    DocHitInfo doc_hit_info2 = DocHitInfo(5);
     doc_hit_info2.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/2);
     doc_hit_info2.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/6);
 
-    std::vector<DocHitInfoTermFrequencyPair> first_vector = {doc_hit_info1};
-    std::vector<DocHitInfoTermFrequencyPair> second_vector = {doc_hit_info2};
+    std::vector<DocHitInfo> first_vector = {doc_hit_info1};
+    std::vector<DocHitInfo> second_vector = {doc_hit_info2};
 
     auto first_iter =
         std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
@@ -477,56 +477,55 @@ TEST(DocHitInfoIteratorOrNaryTest, PopulateMatchedTermsStats) {
   // DocHitInfoIterators.
   // For term "hi", document 10 and 8
   SectionIdMask section_id_mask1_hi = 0b01000101;  // hits in sections 0, 2, 6
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies1_hi{
-      1, 0, 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  DocHitInfoTermFrequencyPair doc_hit_info1_hi = DocHitInfo(10);
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1_hi{
+      1, 0, 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info1_hi = DocHitInfo(10);
   doc_hit_info1_hi.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/1);
   doc_hit_info1_hi.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/2);
   doc_hit_info1_hi.UpdateSection(/*section_id=*/6, /*hit_term_frequency=*/4);
 
   SectionIdMask section_id_mask2_hi = 0b00000110;  // hits in sections 1, 2
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies2_hi{
-      0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  DocHitInfoTermFrequencyPair doc_hit_info2_hi = DocHitInfo(8);
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies2_hi{
+      0, 2, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info2_hi = DocHitInfo(8);
   doc_hit_info2_hi.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/2);
   doc_hit_info2_hi.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/6);
 
   // For term "hello", document 10 and 9
   SectionIdMask section_id_mask1_hello = 0b00001001;  // hits in sections 0, 3
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies1_hello{
-      2, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  DocHitInfoTermFrequencyPair doc_hit_info1_hello = DocHitInfo(10);
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1_hello{
+      2, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info1_hello = DocHitInfo(10);
   doc_hit_info1_hello.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/2);
   doc_hit_info1_hello.UpdateSection(/*section_id=*/3, /*hit_term_frequency=*/3);
 
   SectionIdMask section_id_mask2_hello = 0b00001100;  // hits in sections 2, 3
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies2_hello{
-      0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  DocHitInfoTermFrequencyPair doc_hit_info2_hello = DocHitInfo(9);
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies2_hello{
+      0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info2_hello = DocHitInfo(9);
   doc_hit_info2_hello.UpdateSection(/*section_id=*/2, /*hit_term_frequency=*/3);
   doc_hit_info2_hello.UpdateSection(/*section_id=*/3, /*hit_term_frequency=*/2);
 
   // For term "ciao", document 9 and 8
   SectionIdMask section_id_mask1_ciao = 0b00000011;  // hits in sections 0, 1
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies1_ciao{
-      2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  DocHitInfoTermFrequencyPair doc_hit_info1_ciao = DocHitInfo(9);
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies1_ciao{
+      2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info1_ciao = DocHitInfo(9);
   doc_hit_info1_ciao.UpdateSection(/*section_id=*/0, /*hit_term_frequency=*/2);
   doc_hit_info1_ciao.UpdateSection(/*section_id=*/1, /*hit_term_frequency=*/3);
 
   SectionIdMask section_id_mask2_ciao = 0b00011000;  // hits in sections 3, 4
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies2_ciao{
-      0, 0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-  DocHitInfoTermFrequencyPair doc_hit_info2_ciao = DocHitInfo(8);
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies2_ciao{
+      0, 0, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  DocHitInfo doc_hit_info2_ciao = DocHitInfo(8);
   doc_hit_info2_ciao.UpdateSection(/*section_id=*/3, /*hit_term_frequency=*/3);
   doc_hit_info2_ciao.UpdateSection(/*section_id=*/4, /*hit_term_frequency=*/2);
 
-  std::vector<DocHitInfoTermFrequencyPair> first_vector = {doc_hit_info1_hi,
-                                                           doc_hit_info2_hi};
-  std::vector<DocHitInfoTermFrequencyPair> second_vector = {
-      doc_hit_info1_hello, doc_hit_info2_hello};
-  std::vector<DocHitInfoTermFrequencyPair> third_vector = {doc_hit_info1_ciao,
-                                                           doc_hit_info2_ciao};
+  std::vector<DocHitInfo> first_vector = {doc_hit_info1_hi, doc_hit_info2_hi};
+  std::vector<DocHitInfo> second_vector = {doc_hit_info1_hello,
+                                           doc_hit_info2_hello};
+  std::vector<DocHitInfo> third_vector = {doc_hit_info1_ciao,
+                                          doc_hit_info2_ciao};
 
   auto first_iter =
       std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");

@@ -15,7 +15,6 @@
 #ifndef ICING_INDEX_HIT_HIT_H_
 #define ICING_INDEX_HIT_HIT_H_
 
-#include <array>
 #include <cstdint>
 #include <limits>
 
@@ -55,7 +54,6 @@ class Hit {
 
   // The Term Frequency of a Hit.
   using TermFrequency = uint8_t;
-  using TermFrequencyArray = std::array<Hit::TermFrequency, kTotalNumSections>;
   // Max TermFrequency is 255.
   static constexpr TermFrequency kMaxTermFrequency =
       std::numeric_limits<TermFrequency>::max();
@@ -78,9 +76,6 @@ class Hit {
   TermFrequency term_frequency() const { return term_frequency_; }
   bool is_prefix_hit() const;
   bool is_in_prefix_section() const;
-
-  // Creates a new hit based on old_hit but with new_document_id set.
-  static Hit TranslateHit(Hit old_hit, DocumentId new_document_id);
 
   bool operator<(const Hit& h2) const { return value() < h2.value(); }
   bool operator==(const Hit& h2) const { return value() == h2.value(); }

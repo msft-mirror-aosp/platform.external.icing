@@ -16,8 +16,6 @@
 
 #include <algorithm>
 
-#include "icing/proto/document.pb.h"
-
 namespace icing {
 namespace lib {
 

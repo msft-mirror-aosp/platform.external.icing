@@ -40,11 +40,11 @@ struct TermMatchInfo {
   SectionIdMask section_ids_mask;
   // Array with fixed size kMaxSectionId. For every section id, i.e.
   // vector index, it stores the term frequency of the term.
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies;
+  std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies;
 
   explicit TermMatchInfo(
       std::string_view term, SectionIdMask section_ids_mask,
-      std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies)
+      std::array<Hit::TermFrequency, kMaxSectionId> term_frequencies)
       : term(term),
         section_ids_mask(section_ids_mask),
         term_frequencies(std::move(term_frequencies)) {}
