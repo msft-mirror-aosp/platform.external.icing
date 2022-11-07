@@ -243,7 +243,7 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
 
   const std::unique_ptr<const icing::lib::Clock> clock =
       std::make_unique<icing::lib::Clock>();
-  int32 java_to_native_jni_latency_ms =
+  int32_t java_to_native_jni_latency_ms =
       clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
 
   icing::lib::SearchResultProto next_page_result_proto =
@@ -297,7 +297,7 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
 
   const std::unique_ptr<const icing::lib::Clock> clock =
       std::make_unique<icing::lib::Clock>();
-  int32 java_to_native_jni_latency_ms =
+  int32_t java_to_native_jni_latency_ms =
       clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
 
   icing::lib::SearchResultProto search_result_proto =
