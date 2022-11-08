@@ -16,15 +16,15 @@
 #define ICING_LEGACY_INDEX_ICING_LITE_INDEX_HEADER_H_
 
 #include "icing/legacy/core/icing-string-util.h"
-#include "icing/legacy/index/icing-common-types.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
 
 // A wrapper around the actual mmapped header data.
-class IcingLiteIndex_Header {
+class LiteIndex_Header {
  public:
-  virtual ~IcingLiteIndex_Header() = default;
+  virtual ~LiteIndex_Header() = default;
 
   // Returns true if the magic of the header matches the hard-coded magic
   // value associated with this header format.
@@ -47,10 +47,10 @@ class IcingLiteIndex_Header {
   virtual void Reset() = 0;
 };
 
-class IcingLiteIndex_HeaderImpl : public IcingLiteIndex_Header {
+class LiteIndex_HeaderImpl : public LiteIndex_Header {
  public:
   struct HeaderData {
-    static const uint32_t kMagic = 0x6dfba6a0;
+    static const uint32_t kMagic = 0xb4fb8792;
 
     uint32_t lite_index_crc;
     uint32_t magic;
@@ -66,7 +66,7 @@ class IcingLiteIndex_HeaderImpl : public IcingLiteIndex_Header {
     uint32_t searchable_end;
   };
 
-  explicit IcingLiteIndex_HeaderImpl(HeaderData *hdr) : hdr_(hdr) {}
+  explicit LiteIndex_HeaderImpl(HeaderData *hdr) : hdr_(hdr) {}
 
   bool check_magic() const override {
     return hdr_->magic == HeaderData::kMagic;
@@ -97,7 +97,7 @@ class IcingLiteIndex_HeaderImpl : public IcingLiteIndex_Header {
   void Reset() override {
     hdr_->lite_index_crc = 0;
     hdr_->magic = HeaderData::kMagic;
-    hdr_->last_added_docid = kIcingInvalidDocId;
+    hdr_->last_added_docid = kInvalidDocumentId;
     hdr_->cur_size = 0;
     hdr_->searchable_end = 0;
   }
@@ -105,7 +105,7 @@ class IcingLiteIndex_HeaderImpl : public IcingLiteIndex_Header {
  private:
   HeaderData *hdr_;
 };
-static_assert(24 == sizeof(IcingLiteIndex_HeaderImpl::HeaderData),
+static_assert(24 == sizeof(LiteIndex_HeaderImpl::HeaderData),
               "sizeof(HeaderData) != 24");
 
 }  // namespace lib

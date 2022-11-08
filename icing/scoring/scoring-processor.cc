@@ -22,6 +22,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/scoring/ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer.h"

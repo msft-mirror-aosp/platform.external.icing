@@ -16,6 +16,8 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/term.proto";
+
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
@@ -97,6 +99,38 @@ message ScoringSpecProto {
 }
 
 // Next tag: 3
+message SuggestionScoringSpecProto {
+  message SuggestionRankingStrategy {
+    enum Code {
+      // No ranking strategy specified, terms may be returned in an arbitrary
+      // order.
+      NONE = 0;
+
+      // Ranked by the term's hit count.
+      DOCUMENT_COUNT = 1;
+
+      // Ranked by the term's frequency.
+      TERM_FREQUENCY = 2;
+    }
+  }
+
+  // TermMatchType.Code=UNKNOWN
+  // Should never purposely be set and may lead to undefined behavior. This is
+  // used for backwards compatibility reasons.
+  //
+  // TermMatchType.Code=EXACT_ONLY
+  // Only exact hits will be counted to score a suggestion term.
+  //
+  // TermMatchType.Code=PREFIX
+  // Both exact hits and prefix hits will be counted to score a suggestion
+  // term.
+  optional TermMatchType.Code scoring_match_type = 1;
+
+  // Rank the output suggested result by given SuggestionRankingStrategy.
+  optional SuggestionRankingStrategy.Code rank_by = 2;
+}
+
+// Next tag: 3
 message TypePropertyWeights {
   // Schema type to apply property weights to.
   optional string schema_type = 1;
@@ -116,8 +150,9 @@ message PropertyWeight {
   // specified, the property weight is discarded.
   optional string path = 1;
 
-  // Property weight, valid values are positive. Zero and negative weights are
-  // invalid and will result in an error. By default, a property is given a raw,
-  // pre-normalized weight of 1.0.
+  // Property weight, valid values are positive and zero. Setting a zero
+  // property weight will remove scoring contribution for a query term match in
+  // the property. Negative weights are invalid and will result in an error.
+  // By default, a property is given a raw, pre-normalized weight of 1.0.
   optional double weight = 2;
 }

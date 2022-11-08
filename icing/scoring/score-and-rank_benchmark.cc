@@ -49,7 +49,7 @@
 //    //icing/scoring:score-and-rank_benchmark
 //
 //    $ blaze-bin/icing/scoring/score-and-rank_benchmark
-//    --benchmarks=all --benchmark_memory_usage
+//    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -59,7 +59,8 @@
 //    $ adb push blaze-bin/icing/scoring/score-and-rank_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/score-and-rank_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/score-and-rank_benchmark
+//    --benchmark_filter=all
 
 namespace icing {
 namespace lib {
@@ -436,7 +437,7 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   SectionIdMask section_id_mask = 1U << section_id;
 
   // Puts documents into document store
-  std::vector<DocHitInfo> doc_hit_infos;
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos;
   for (int i = 0; i < num_of_documents; i++) {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentId document_id,
@@ -444,7 +445,8 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
                                 /*id=*/i, /*document_score=*/1,
                                 /*creation_timestamp_ms=*/1),
                             /*num_tokens=*/10));
-    DocHitInfo doc_hit = DocHitInfo(document_id, section_id_mask);
+    DocHitInfoTermFrequencyPair doc_hit =
+        DocHitInfo(document_id, section_id_mask);
     // Set five matches for term "foo" for each document hit.
     doc_hit.UpdateSection(section_id, /*hit_term_frequency=*/5);
     doc_hit_infos.push_back(doc_hit);

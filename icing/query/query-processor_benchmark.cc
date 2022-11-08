@@ -16,14 +16,16 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -37,7 +39,7 @@
 //    //icing/query:query-processor_benchmark
 //
 //    $ blaze-bin/icing/query/query-processor_benchmark
-//    --benchmarks=all
+//    --benchmark_filter=all
 //
 // Run on an Android device:
 //    Make target //icing/tokenization:language-segmenter depend on
@@ -53,7 +55,7 @@
 //    $ adb push blaze-bin/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmark_filter=all
 //    --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
@@ -154,8 +156,11 @@ void BM_QueryOneTerm(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -289,8 +294,11 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -409,8 +417,11 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -529,8 +540,11 @@ void BM_QueryHiragana(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
