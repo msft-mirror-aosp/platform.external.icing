@@ -66,10 +66,19 @@ PostingListAccessor::GetNextHitsBatch() {
   }
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> batch,
                          preexisting_posting_list_->posting_list.GetHits());
-  uint32_t block_index = preexisting_posting_list_->block.next_block_index();
-  if (block_index != kInvalidBlockIndex) {
+  uint32_t next_block_index;
+  // Posting lists will only be chained when they are max-sized, in which case
+  // block.next_block_index() will point to the next block for the next posting
+  // list. Otherwise, block.next_block_index() can be kInvalidBlockIndex or be
+  // used to point to the next free list block, which is not relevant here.
+  if (preexisting_posting_list_->block.max_num_posting_lists() == 1) {
+    next_block_index = preexisting_posting_list_->block.next_block_index();
+  } else {
+    next_block_index = kInvalidBlockIndex;
+  }
+  if (next_block_index != kInvalidBlockIndex) {
     PostingListIdentifier next_posting_list_id(
-        block_index, /*posting_list_index=*/0,
+        next_block_index, /*posting_list_index=*/0,
         preexisting_posting_list_->block.posting_list_index_bits());
     ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                            storage_->GetPostingList(next_posting_list_id));

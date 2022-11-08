@@ -26,6 +26,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
 #include "icing/schema/schema-store.h"
@@ -278,7 +279,7 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
   return false;
 }
 
-std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
+inline std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   switch (code) {
     case libtextclassifier3::StatusCode::OK:
       return "OK";
@@ -319,7 +320,7 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   }
 }
 
-std::string ProtoStatusCodeToString(StatusProto::Code code) {
+inline std::string ProtoStatusCodeToString(StatusProto::Code code) {
   switch (code) {
     case StatusProto::OK:
       return "OK";
@@ -444,8 +445,8 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
        *expected_copy.mutable_results()) {
     result.clear_score();
   }
-  return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
-                            result_listener);
+  return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
+                            actual_copy, result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
