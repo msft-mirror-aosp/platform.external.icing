@@ -39,12 +39,13 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-checker.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 
@@ -141,21 +142,29 @@ class LiteIndex {
 
   // Add all hits with term_id from the sections specified in section_id_mask,
   // skipping hits in non-prefix sections if only_from_prefix_sections is true,
-  // to hits_out. If hits_out is nullptr, no hits will be added.
+  // to hits_out. If hits_out is nullptr, no hits will be added. The
+  // corresponding hit term frequencies will also be added if term_frequency_out
+  // is nullptr.
   //
   // Only those hits which belongs to the given namespaces will be counted and
-  // appended. A nullptr namespace checker  will disable this check.
+  // appended. A nullptr namespace checker will disable this check.
   //
-  // Returns the number of hits that would be added to hits_out.
-  int AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
-                 bool only_from_prefix_sections,
-                 const NamespaceChecker* namespace_checker,
-                 std::vector<DocHitInfo>* hits_out);
+  // Returns the score of hits that would be added to hits_out according the
+  // given score_by.
+  int AppendHits(
+      uint32_t term_id, SectionIdMask section_id_mask,
+      bool only_from_prefix_sections,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+      const SuggestionResultChecker* suggestion_result_checker,
+      std::vector<DocHitInfo>* hits_out,
+      std::vector<Hit::TermFrequencyArray>* term_frequency_out = nullptr);
 
   // Returns the hit count of the term.
   // Only those hits which belongs to the given namespaces will be counted.
-  libtextclassifier3::StatusOr<int> CountHits(
-      uint32_t term_id, const NamespaceChecker* namespace_checker);
+  libtextclassifier3::StatusOr<int> ScoreHits(
+      uint32_t term_id,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+      const SuggestionResultChecker* suggestion_result_checker);
 
   // Check if buffer has reached its capacity.
   bool is_full() const;

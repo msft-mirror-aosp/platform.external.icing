@@ -42,6 +42,8 @@
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -230,7 +232,8 @@ Crc32 LiteIndex::ComputeChecksum() {
   Crc32 all_crc(header_->CalculateHeaderCrc());
   all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
                                   sizeof(dependent_crcs)));
-  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000 << "ms";
+  ICING_VLOG(2) << "Lite index crc computed in " << timer.Elapsed() * 1000
+                << "ms";
 
   return all_crc;
 }
@@ -277,9 +280,12 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
     const std::string& term, TermMatchType::Code term_match_type,
     NamespaceId namespace_id) {
   uint32_t tvi;
-  if (!lexicon_.Insert(term.c_str(), "", &tvi, false)) {
-    return absl_ports::ResourceExhaustedError(
-        absl_ports::StrCat("Unable to add term ", term, " to lexicon!"));
+  libtextclassifier3::Status status =
+      lexicon_.Insert(term.c_str(), "", &tvi, false);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Unable to add term " << term << " to lexicon!\n"
+                   << status.error_message();
+    return status;
   }
   ICING_RETURN_IF_ERROR(UpdateTermProperties(
       tvi, term_match_type == TermMatchType::PREFIX, namespace_id));
@@ -332,14 +338,17 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
   return tvi;
 }
 
-int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
-                          bool only_from_prefix_sections,
-                          const NamespaceChecker* namespace_checker,
-                          std::vector<DocHitInfo>* hits_out) {
-  int count = 0;
+int LiteIndex::AppendHits(
+    uint32_t term_id, SectionIdMask section_id_mask,
+    bool only_from_prefix_sections,
+    SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+    const SuggestionResultChecker* suggestion_result_checker,
+    std::vector<DocHitInfo>* hits_out,
+    std::vector<Hit::TermFrequencyArray>* term_frequency_out) {
+  int score = 0;
   DocumentId last_document_id = kInvalidDocumentId;
   // Record whether the last document belongs to the given namespaces.
-  bool last_document_in_namespace = false;
+  bool is_last_document_desired = false;
   for (uint32_t idx = Seek(term_id); idx < header_->cur_size(); idx++) {
     TermIdHitPair term_id_hit_pair(
         hit_buffer_.array_cast<TermIdHitPair>()[idx]);
@@ -347,40 +356,75 @@ int LiteIndex::AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
 
     const Hit& hit = term_id_hit_pair.hit();
     // Check sections.
-    if (((1u << hit.section_id()) & section_id_mask) == 0) {
+    if (((UINT64_C(1) << hit.section_id()) & section_id_mask) == 0) {
       continue;
     }
     // Check prefix section only.
     if (only_from_prefix_sections && !hit.is_in_prefix_section()) {
       continue;
     }
+    // TODO(b/230553264) Move common logic into helper function once we support
+    //  score term by prefix_hit in lite_index.
+    // Check whether this Hit is desired.
     DocumentId document_id = hit.document_id();
-    if (document_id != last_document_id) {
+    bool is_new_document = document_id != last_document_id;
+    if (is_new_document) {
       last_document_id = document_id;
-      last_document_in_namespace =
-          namespace_checker == nullptr ||
-          namespace_checker->BelongsToTargetNamespaces(document_id);
-      if (!last_document_in_namespace) {
-        // The document is removed or expired or not belongs to target
-        // namespaces.
-        continue;
-      }
-      ++count;
-      if (hits_out != nullptr) {
-        hits_out->push_back(DocHitInfo(document_id));
+      is_last_document_desired =
+          suggestion_result_checker == nullptr ||
+          suggestion_result_checker->BelongsToTargetResults(document_id,
+                                                            hit.section_id());
+    }
+    if (!is_last_document_desired) {
+      // The document is removed or expired or not desired.
+      continue;
+    }
+
+    // Score the hit by the strategy
+    switch (score_by) {
+      case SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE:
+        score = 1;
+        break;
+      case SuggestionScoringSpecProto::SuggestionRankingStrategy::
+          DOCUMENT_COUNT:
+        if (is_new_document) {
+          ++score;
+        }
+        break;
+      case SuggestionScoringSpecProto::SuggestionRankingStrategy::
+          TERM_FREQUENCY:
+        if (hit.has_term_frequency()) {
+          score += hit.term_frequency();
+        } else {
+          ++score;
+        }
+        break;
+    }
+
+    // Append the Hit or update hit section to the output vector.
+    if (is_new_document && hits_out != nullptr) {
+      hits_out->push_back(DocHitInfo(document_id));
+      if (term_frequency_out != nullptr) {
+        term_frequency_out->push_back(Hit::TermFrequencyArray());
       }
     }
-    if (hits_out != nullptr && last_document_in_namespace) {
-      hits_out->back().UpdateSection(hit.section_id(), hit.term_frequency());
+    if (hits_out != nullptr) {
+      hits_out->back().UpdateSection(hit.section_id());
+      if (term_frequency_out != nullptr) {
+        term_frequency_out->back()[hit.section_id()] = hit.term_frequency();
+      }
     }
   }
-  return count;
+  return score;
 }
 
-libtextclassifier3::StatusOr<int> LiteIndex::CountHits(
-    uint32_t term_id, const NamespaceChecker* namespace_checker) {
+libtextclassifier3::StatusOr<int> LiteIndex::ScoreHits(
+    uint32_t term_id,
+    SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+    const SuggestionResultChecker* suggestion_result_checker) {
   return AppendHits(term_id, kSectionIdMaskAll,
-                    /*only_from_prefix_sections=*/false, namespace_checker,
+                    /*only_from_prefix_sections=*/false, score_by,
+                    suggestion_result_checker,
                     /*hits_out=*/nullptr);
 }
 
@@ -458,7 +502,8 @@ void LiteIndex::SortHits() {
                        array_start + header_->cur_size());
   }
   ICING_VLOG(2) << "Lite index sort and merge " << sort_len << " into "
-      << header_->searchable_end() << " in " << timer.Elapsed() * 1000 << "ms";
+                << header_->searchable_end() << " in " << timer.Elapsed() * 1000
+                << "ms";
 
   // Now the entire array is sorted.
   header_->set_searchable_end(header_->cur_size());

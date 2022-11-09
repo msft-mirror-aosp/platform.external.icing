@@ -15,6 +15,9 @@
 #include "icing/file/persistent-hash-map.h"
 
 #include <cstring>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -33,13 +36,20 @@ namespace lib {
 namespace {
 
 static constexpr int32_t kCorruptedValueOffset = 3;
+static constexpr int32_t kTestInitNumBuckets = 1;
 
+using ::testing::Contains;
 using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::Key;
+using ::testing::Lt;
 using ::testing::Not;
+using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::SizeIs;
+using ::testing::UnorderedElementsAre;
 
 using Bucket = PersistentHashMap::Bucket;
 using Crcs = PersistentHashMap::Crcs;
@@ -67,6 +77,18 @@ class PersistentHashMapTest : public ::testing::Test {
     int val;
     ICING_RETURN_IF_ERROR(persistent_hash_map->Get(key, &val));
     return val;
+  }
+
+  std::unordered_map<std::string, int> GetAllKeyValuePairs(
+      PersistentHashMap::Iterator&& iter) {
+    std::unordered_map<std::string, int> kvps;
+
+    while (iter.Advance()) {
+      int val;
+      memcpy(&val, iter.GetValue(), sizeof(val));
+      kvps.emplace(iter.GetKey(), val);
+    }
+    return kvps;
   }
 
   Filesystem filesystem_;
@@ -131,24 +153,60 @@ TEST_F(PersistentHashMapTest, InitializeNewFiles) {
                      .Get()));
 }
 
-TEST_F(PersistentHashMapTest,
-       TestInitializationFailsWithoutPersistToDiskOrDestruction) {
+TEST_F(PersistentHashMapTest, InitializeNewFilesWithCustomInitBucketSize) {
   // Create new persistent hash map
-  // Set max_load_factor_percent as 1000. Load factor percent is calculated as
-  // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
-  // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
-  // 1000, we would allow the insertion of up to 10 keys before rehashing, to
-  // avoid PersistToDisk being called implicitly by rehashing.
+  int custom_init_bucket_size = 123;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(filesystem_, base_dir_,
                                 /*value_type_size=*/sizeof(int),
-                                /*max_load_factor_percent=*/1000));
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                custom_init_bucket_size));
+  EXPECT_THAT(persistent_hash_map->num_buckets(), Eq(custom_init_bucket_size));
+}
+
+TEST_F(PersistentHashMapTest, InitBucketSizeShouldNotAffectExistingFiles) {
+  int init_bucket_size1 = 4;
+  {
+    // Create new persistent hash map
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PersistentHashMap> persistent_hash_map,
+        PersistentHashMap::Create(
+            filesystem_, base_dir_,
+            /*value_type_size=*/sizeof(int),
+            PersistentHashMap::kDefaultMaxLoadFactorPercent,
+            init_bucket_size1));
+    EXPECT_THAT(persistent_hash_map->num_buckets(), Eq(init_bucket_size1));
+
+    ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
+  }
+
+  int init_bucket_size2 = 8;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                init_bucket_size2));
+  // # of buckets should still be the original value.
+  EXPECT_THAT(persistent_hash_map->num_buckets(), Eq(init_bucket_size1));
+}
+
+TEST_F(PersistentHashMapTest,
+       TestInitializationFailsWithoutPersistToDiskOrDestruction) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int)));
 
   // Put some key value pairs.
   ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
   ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
-  // TODO(b/193919210): call Delete() to change PersistentHashMap header
+  ICING_ASSERT_OK(persistent_hash_map->Put("c", Serialize(3).data()));
+  // Call Delete() to change PersistentHashMap metadata info
+  // (num_deleted_entries)
+  ICING_ASSERT_OK(persistent_hash_map->Delete("c"));
 
   ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
   ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
@@ -157,28 +215,24 @@ TEST_F(PersistentHashMapTest,
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
   EXPECT_THAT(PersistentHashMap::Create(filesystem_, base_dir_,
-                                        /*value_type_size=*/sizeof(int),
-                                        /*max_load_factor_percent=*/1000),
+                                        /*value_type_size=*/sizeof(int)),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(PersistentHashMapTest, TestInitializationSucceedsWithPersistToDisk) {
   // Create new persistent hash map
-  // Set max_load_factor_percent as 1000. Load factor percent is calculated as
-  // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
-  // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
-  // 1000, we would allow the insertion of up to 10 keys before rehashing, to
-  // avoid PersistToDisk being called implicitly by rehashing.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map1,
       PersistentHashMap::Create(filesystem_, base_dir_,
-                                /*value_type_size=*/sizeof(int),
-                                /*max_load_factor_percent=*/1000));
+                                /*value_type_size=*/sizeof(int)));
 
   // Put some key value pairs.
   ICING_ASSERT_OK(persistent_hash_map1->Put("a", Serialize(1).data()));
   ICING_ASSERT_OK(persistent_hash_map1->Put("b", Serialize(2).data()));
-  // TODO(b/193919210): call Delete() to change PersistentHashMap header
+  ICING_ASSERT_OK(persistent_hash_map1->Put("c", Serialize(3).data()));
+  // Call Delete() to change PersistentHashMap metadata info
+  // (num_deleted_entries)
+  ICING_ASSERT_OK(persistent_hash_map1->Delete("c"));
 
   ASSERT_THAT(persistent_hash_map1, Pointee(SizeIs(2)));
   ASSERT_THAT(GetValueByKey(persistent_hash_map1.get(), "a"), IsOkAndHolds(1));
@@ -192,8 +246,7 @@ TEST_F(PersistentHashMapTest, TestInitializationSucceedsWithPersistToDisk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map2,
       PersistentHashMap::Create(filesystem_, base_dir_,
-                                /*value_type_size=*/sizeof(int),
-                                /*max_load_factor_percent=*/1000));
+                                /*value_type_size=*/sizeof(int)));
   EXPECT_THAT(persistent_hash_map2, Pointee(SizeIs(2)));
   EXPECT_THAT(GetValueByKey(persistent_hash_map2.get(), "a"), IsOkAndHolds(1));
   EXPECT_THAT(GetValueByKey(persistent_hash_map2.get(), "b"), IsOkAndHolds(2));
@@ -202,19 +255,16 @@ TEST_F(PersistentHashMapTest, TestInitializationSucceedsWithPersistToDisk) {
 TEST_F(PersistentHashMapTest, TestInitializationSucceedsAfterDestruction) {
   {
     // Create new persistent hash map
-    // Set max_load_factor_percent as 1000. Load factor percent is calculated as
-    // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
-    // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
-    // 1000, we would allow the insertion of up to 10 keys before rehashing, to
-    // avoid PersistToDisk being called implicitly by rehashing.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
         PersistentHashMap::Create(filesystem_, base_dir_,
-                                  /*value_type_size=*/sizeof(int),
-                                  /*max_load_factor_percent=*/1000));
+                                  /*value_type_size=*/sizeof(int)));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
-    // TODO(b/193919210): call Delete() to change PersistentHashMap header
+    ICING_ASSERT_OK(persistent_hash_map->Put("c", Serialize(3).data()));
+    // Call Delete() to change PersistentHashMap metadata info
+    // (num_deleted_entries)
+    ICING_ASSERT_OK(persistent_hash_map->Delete("c"));
 
     ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
     ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
@@ -229,8 +279,7 @@ TEST_F(PersistentHashMapTest, TestInitializationSucceedsAfterDestruction) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
         PersistentHashMap::Create(filesystem_, base_dir_,
-                                  /*value_type_size=*/sizeof(int),
-                                  /*max_load_factor_percent=*/1000));
+                                  /*value_type_size=*/sizeof(int)));
     EXPECT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
     EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
     EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "b"), IsOkAndHolds(2));
@@ -485,8 +534,11 @@ TEST_F(PersistentHashMapTest,
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_,
-                                  /*value_type_size=*/sizeof(int)));
+        PersistentHashMap::Create(
+            filesystem_, base_dir_,
+            /*value_type_size=*/sizeof(int),
+            PersistentHashMap::kDefaultMaxLoadFactorPercent,
+            kTestInitNumBuckets));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
 
@@ -497,7 +549,7 @@ TEST_F(PersistentHashMapTest,
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  int32_t new_max_load_factor_percent = 100;
+  int32_t new_max_load_factor_percent = 200;
   {
     ASSERT_THAT(new_max_load_factor_percent,
                 Not(Eq(PersistentHashMap::kDefaultMaxLoadFactorPercent)));
@@ -535,7 +587,85 @@ TEST_F(PersistentHashMapTest,
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
         PersistentHashMap::Create(filesystem_, base_dir_,
                                   /*value_type_size=*/sizeof(int),
-                                  new_max_load_factor_percent));
+                                  new_max_load_factor_percent,
+                                  kTestInitNumBuckets));
+
+    ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
+  }
+}
+
+TEST_F(PersistentHashMapTest,
+       InitializeExistingFilesWithDifferentMaxLoadFactorPercentShouldRehash) {
+  double prev_loading_percent;
+  int prev_num_buckets;
+  {
+    // Create new persistent hash map
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PersistentHashMap> persistent_hash_map,
+        PersistentHashMap::Create(
+            filesystem_, base_dir_,
+            /*value_type_size=*/sizeof(int),
+            PersistentHashMap::kDefaultMaxLoadFactorPercent,
+            kTestInitNumBuckets));
+    ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
+    ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
+    ICING_ASSERT_OK(persistent_hash_map->Put("c", Serialize(3).data()));
+
+    ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+    ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
+    ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), "b"), IsOkAndHolds(2));
+    ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), "c"), IsOkAndHolds(3));
+
+    prev_loading_percent = persistent_hash_map->size() * 100.0 /
+                           persistent_hash_map->num_buckets();
+    prev_num_buckets = persistent_hash_map->num_buckets();
+    ASSERT_THAT(prev_loading_percent,
+                Not(Gt(PersistentHashMap::kDefaultMaxLoadFactorPercent)));
+
+    ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
+  }
+
+  int32_t greater_max_load_factor_percent = 150;
+  {
+    ASSERT_THAT(greater_max_load_factor_percent, Gt(prev_loading_percent));
+    // Attempt to create the persistent hash map with max load factor greater
+    // than previous loading. There should be no rehashing and # of buckets
+    // should remain the same.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PersistentHashMap> persistent_hash_map,
+        PersistentHashMap::Create(filesystem_, base_dir_,
+                                  /*value_type_size=*/sizeof(int),
+                                  greater_max_load_factor_percent,
+                                  kTestInitNumBuckets));
+
+    EXPECT_THAT(persistent_hash_map->num_buckets(), Eq(prev_num_buckets));
+
+    ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
+  }
+
+  int32_t smaller_max_load_factor_percent = 25;
+  {
+    ASSERT_THAT(smaller_max_load_factor_percent, Lt(prev_loading_percent));
+    // Attempt to create the persistent hash map with max load factor smaller
+    // than previous loading. There should be rehashing since the loading
+    // exceeds the limit.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PersistentHashMap> persistent_hash_map,
+        PersistentHashMap::Create(filesystem_, base_dir_,
+                                  /*value_type_size=*/sizeof(int),
+                                  smaller_max_load_factor_percent,
+                                  kTestInitNumBuckets));
+
+    // After changing max_load_factor_percent, there should be rehashing and the
+    // new loading should not be greater than the new max load factor.
+    EXPECT_THAT(persistent_hash_map->size() * 100.0 /
+                    persistent_hash_map->num_buckets(),
+                Not(Gt(smaller_max_load_factor_percent)));
+    EXPECT_THAT(persistent_hash_map->num_buckets(), Not(Eq(prev_num_buckets)));
+
+    EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
+    EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "b"), IsOkAndHolds(2));
+    EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "c"), IsOkAndHolds(3));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
@@ -546,7 +676,9 @@ TEST_F(PersistentHashMapTest, PutAndGet) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(filesystem_, base_dir_,
-                                /*value_type_size=*/sizeof(int)));
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
 
   EXPECT_THAT(persistent_hash_map, Pointee(IsEmpty()));
   EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
@@ -575,7 +707,9 @@ TEST_F(PersistentHashMapTest, PutShouldOverwriteValueIfKeyExists) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(filesystem_, base_dir_,
-                                /*value_type_size=*/sizeof(int)));
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
 
   ICING_ASSERT_OK(
       persistent_hash_map->Put("default-google.com", Serialize(100).data()));
@@ -596,12 +730,45 @@ TEST_F(PersistentHashMapTest, PutShouldOverwriteValueIfKeyExists) {
               IsOkAndHolds(300));
 }
 
+TEST_F(PersistentHashMapTest, ShouldRehash) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  int original_num_buckets = persistent_hash_map->num_buckets();
+  // Insert 100 key value pairs. There should be rehashing so the loading of
+  // hash map doesn't exceed max_load_factor.
+  for (int i = 0; i < 100; ++i) {
+    std::string key = "default-google.com-" + std::to_string(i);
+    ICING_ASSERT_OK(persistent_hash_map->Put(key, &i));
+    ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(i + 1)));
+
+    EXPECT_THAT(persistent_hash_map->size() * 100.0 /
+                    persistent_hash_map->num_buckets(),
+                Not(Gt(PersistentHashMap::kDefaultMaxLoadFactorPercent)));
+  }
+  EXPECT_THAT(persistent_hash_map->num_buckets(),
+              Not(Eq(original_num_buckets)));
+
+  // After rehashing, we should still be able to get all inserted entries.
+  for (int i = 0; i < 100; ++i) {
+    std::string key = "default-google.com-" + std::to_string(i);
+    EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), key), IsOkAndHolds(i));
+  }
+}
+
 TEST_F(PersistentHashMapTest, GetOrPutShouldPutIfKeyDoesNotExist) {
   // Create new persistent hash map
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(filesystem_, base_dir_,
-                                /*value_type_size=*/sizeof(int)));
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
 
   ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -620,7 +787,9 @@ TEST_F(PersistentHashMapTest, GetOrPutShouldGetIfKeyExists) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(filesystem_, base_dir_,
-                                /*value_type_size=*/sizeof(int)));
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
 
   ASSERT_THAT(
       persistent_hash_map->Put("default-google.com", Serialize(1).data()),
@@ -635,6 +804,226 @@ TEST_F(PersistentHashMapTest, GetOrPutShouldGetIfKeyExists) {
   EXPECT_THAT(persistent_hash_map, Pointee(SizeIs(1)));
   EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
               IsOkAndHolds(1));
+}
+
+TEST_F(PersistentHashMapTest, Delete) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  // Delete a non-existing key should get NOT_FOUND error
+  EXPECT_THAT(persistent_hash_map->Delete("default-google.com"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com", Serialize(100).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-youtube.com", Serialize(50).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
+
+  // Delete an existing key should succeed
+  ICING_EXPECT_OK(persistent_hash_map->Delete("default-google.com"));
+  EXPECT_THAT(persistent_hash_map, Pointee(SizeIs(1)));
+  // The deleted key should not be found.
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  // Other key should remain unchanged and available
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-youtube.com"),
+              IsOkAndHolds(50));
+
+  // Insert back the deleted key. Should get new value
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com", Serialize(200).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
+              IsOkAndHolds(200));
+
+  // Delete again
+  ICING_EXPECT_OK(persistent_hash_map->Delete("default-google.com"));
+  EXPECT_THAT(persistent_hash_map, Pointee(SizeIs(1)));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  // Other keys should remain unchanged and available
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-youtube.com"),
+              IsOkAndHolds(50));
+}
+
+TEST_F(PersistentHashMapTest, DeleteMultiple) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  std::unordered_map<std::string, int> existing_keys;
+  std::unordered_set<std::string> deleted_keys;
+  // Insert 100 key value pairs
+  for (int i = 0; i < 100; ++i) {
+    std::string key = "default-google.com-" + std::to_string(i);
+    ICING_ASSERT_OK(persistent_hash_map->Put(key, &i));
+    existing_keys[key] = i;
+  }
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(existing_keys.size())));
+
+  // Delete several keys.
+  // Simulate with std::unordered_map and verify.
+  std::vector<int> delete_target_ids{3, 4, 6, 9, 13, 18, 24, 31, 39, 48, 58};
+  for (const int delete_target_id : delete_target_ids) {
+    std::string key = "default-google.com-" + std::to_string(delete_target_id);
+    ASSERT_THAT(existing_keys, Contains(Key(key)));
+    ASSERT_THAT(GetValueByKey(persistent_hash_map.get(), key),
+                IsOkAndHolds(existing_keys[key]));
+    ICING_EXPECT_OK(persistent_hash_map->Delete(key));
+
+    existing_keys.erase(key);
+    deleted_keys.insert(key);
+  }
+
+  // Deleted keys should not be found.
+  for (const std::string& deleted_key : deleted_keys) {
+    EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), deleted_key),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  }
+  // Other keys should remain unchanged and available
+  for (const auto& [existing_key, existing_value] : existing_keys) {
+    EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), existing_key),
+                IsOkAndHolds(existing_value));
+  }
+  // Verify by iterator as well
+  EXPECT_THAT(GetAllKeyValuePairs(persistent_hash_map->GetIterator()),
+              Eq(existing_keys));
+}
+
+TEST_F(PersistentHashMapTest, DeleteBucketHeadElement) {
+  // Create new persistent hash map
+  // Set max_load_factor_percent as 1000. Load factor percent is calculated as
+  // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
+  // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
+  // 1000, we would allow the insertion of up to 10 keys before rehashing.
+  // Preventing rehashing makes it much easier to test collisions.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                /*max_load_factor_percent=*/1000,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+  ASSERT_THAT(persistent_hash_map->num_buckets(), Eq(1));
+
+  // Delete the head element of the bucket. Note that in our implementation, the
+  // last added element will become the head element of the bucket.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-2"));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-0"),
+              IsOkAndHolds(0));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-1"),
+              IsOkAndHolds(1));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-2"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(PersistentHashMapTest, DeleteBucketIntermediateElement) {
+  // Create new persistent hash map
+  // Set max_load_factor_percent as 1000. Load factor percent is calculated as
+  // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
+  // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
+  // 1000, we would allow the insertion of up to 10 keys before rehashing.
+  // Preventing rehashing makes it much easier to test collisions.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                /*max_load_factor_percent=*/1000,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+  ASSERT_THAT(persistent_hash_map->num_buckets(), Eq(1));
+
+  // Delete any intermediate element of the bucket.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-1"));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-0"),
+              IsOkAndHolds(0));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-1"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-2"),
+              IsOkAndHolds(2));
+}
+
+TEST_F(PersistentHashMapTest, DeleteBucketTailElement) {
+  // Create new persistent hash map
+  // Set max_load_factor_percent as 1000. Load factor percent is calculated as
+  // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
+  // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
+  // 1000, we would allow the insertion of up to 10 keys before rehashing.
+  // Preventing rehashing makes it much easier to test collisions.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                /*max_load_factor_percent=*/1000,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+  ASSERT_THAT(persistent_hash_map->num_buckets(), Eq(1));
+
+  // Delete the last element of the bucket. Note that in our implementation, the
+  // first added element will become the tail element of the bucket.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-0"));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-0"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-1"),
+              IsOkAndHolds(1));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com-2"),
+              IsOkAndHolds(2));
+}
+
+TEST_F(PersistentHashMapTest, DeleteBucketOnlySingleElement) {
+  // Create new persistent hash map
+  // Set max_load_factor_percent as 1000. Load factor percent is calculated as
+  // 100 * num_keys / num_buckets. Therefore, with 1 bucket (the initial # of
+  // buckets in an empty PersistentHashMap) and a max_load_factor_percent of
+  // 1000, we would allow the insertion of up to 10 keys before rehashing.
+  // Preventing rehashing makes it much easier to test collisions.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                /*max_load_factor_percent=*/1000,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com", Serialize(100).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(1)));
+
+  // Delete the only single element of the bucket.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com"));
+  ASSERT_THAT(persistent_hash_map, Pointee(IsEmpty()));
+  EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "default-google.com"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(PersistentHashMapTest, ShouldFailIfKeyContainsTerminationCharacter) {
@@ -654,6 +1043,139 @@ TEST_F(PersistentHashMapTest, ShouldFailIfKeyContainsTerminationCharacter) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(persistent_hash_map->Get(invalid_key_view, &val),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(persistent_hash_map->Delete(invalid_key_view),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(PersistentHashMapTest, EmptyHashMapIterator) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  EXPECT_FALSE(persistent_hash_map->GetIterator().Advance());
+}
+
+TEST_F(PersistentHashMapTest, Iterator) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  std::unordered_map<std::string, int> kvps;
+  // Insert 100 key value pairs
+  for (int i = 0; i < 100; ++i) {
+    std::string key = "default-google.com-" + std::to_string(i);
+    ICING_ASSERT_OK(persistent_hash_map->Put(key, &i));
+    kvps.emplace(key, i);
+  }
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(kvps.size())));
+
+  EXPECT_THAT(GetAllKeyValuePairs(persistent_hash_map->GetIterator()),
+              Eq(kvps));
+}
+
+TEST_F(PersistentHashMapTest, IteratorAfterDeletingFirstKeyValuePair) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+
+  // Delete the first key value pair.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-0"));
+  EXPECT_THAT(GetAllKeyValuePairs(persistent_hash_map->GetIterator()),
+              UnorderedElementsAre(Pair("default-google.com-1", 1),
+                                   Pair("default-google.com-2", 2)));
+}
+
+TEST_F(PersistentHashMapTest, IteratorAfterDeletingIntermediateKeyValuePair) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+
+  // Delete any intermediate key value pair.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-1"));
+  EXPECT_THAT(GetAllKeyValuePairs(persistent_hash_map->GetIterator()),
+              UnorderedElementsAre(Pair("default-google.com-0", 0),
+                                   Pair("default-google.com-2", 2)));
+}
+
+TEST_F(PersistentHashMapTest, IteratorAfterDeletingLastKeyValuePair) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+
+  // Delete the last key value pair.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-2"));
+  EXPECT_THAT(GetAllKeyValuePairs(persistent_hash_map->GetIterator()),
+              UnorderedElementsAre(Pair("default-google.com-0", 0),
+                                   Pair("default-google.com-1", 1)));
+}
+
+TEST_F(PersistentHashMapTest, IteratorAfterDeletingAllKeyValuePairs) {
+  // Create new persistent hash map
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PersistentHashMap> persistent_hash_map,
+      PersistentHashMap::Create(filesystem_, base_dir_,
+                                /*value_type_size=*/sizeof(int),
+                                PersistentHashMap::kDefaultMaxLoadFactorPercent,
+                                kTestInitNumBuckets));
+
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-0", Serialize(0).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-1", Serialize(1).data()));
+  ICING_ASSERT_OK(
+      persistent_hash_map->Put("default-google.com-2", Serialize(2).data()));
+  ASSERT_THAT(persistent_hash_map, Pointee(SizeIs(3)));
+
+  // Delete all key value pairs.
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-0"));
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-1"));
+  ICING_ASSERT_OK(persistent_hash_map->Delete("default-google.com-2"));
+  ASSERT_THAT(persistent_hash_map, Pointee(IsEmpty()));
+  EXPECT_FALSE(persistent_hash_map->GetIterator().Advance());
 }
 
 }  // namespace

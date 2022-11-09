@@ -56,7 +56,7 @@ std::vector<DocHitInfo> GetExactHits(
     MainIndex* main_index, const std::string& term,
     SectionIdMask section_mask = kSectionIdMaskAll) {
   auto iterator = std::make_unique<DocHitInfoIteratorTermMainExact>(
-      main_index, term, section_mask);
+      main_index, term, section_mask, /*need_hit_term_frequency=*/true);
   return GetHits(std::move(iterator));
 }
 
@@ -64,7 +64,7 @@ std::vector<DocHitInfo> GetPrefixHits(
     MainIndex* main_index, const std::string& term,
     SectionIdMask section_mask = kSectionIdMaskAll) {
   auto iterator = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-      main_index, term, section_mask);
+      main_index, term, section_mask, /*need_hit_term_frequency=*/true);
   return GetHits(std::move(iterator));
 }
 

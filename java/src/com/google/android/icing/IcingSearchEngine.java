@@ -306,9 +306,21 @@ public class IcingSearchEngine implements Closeable {
       @NonNull ResultSpecProto resultSpec) {
     throwIfClosed();
 
+    // Note that on Android System.currentTimeMillis() is the standard "wall" clock and can be set
+    // by the user or the phone network so the time may jump backwards or forwards unpredictably.
+    // This could lead to inaccurate final JNI latency calculations or unexpected negative numbers
+    // in the case where the phone time is changed while sending data across JNI layers.
+    // However these occurrences should be very rare, so we will keep usage of
+    // System.currentTimeMillis() due to the lack of better time functions that can provide a
+    // consistent timestamp across all platforms.
+    long javaToNativeStartTimestampMs = System.currentTimeMillis();
     byte[] searchResultBytes =
         nativeSearch(
-            this, searchSpec.toByteArray(), scoringSpec.toByteArray(), resultSpec.toByteArray());
+            this,
+            searchSpec.toByteArray(),
+            scoringSpec.toByteArray(),
+            resultSpec.toByteArray(),
+            javaToNativeStartTimestampMs);
     if (searchResultBytes == null) {
       Log.e(TAG, "Received null SearchResultProto from native.");
       return SearchResultProto.newBuilder()
@@ -317,7 +329,10 @@ public class IcingSearchEngine implements Closeable {
     }
 
     try {
-      return SearchResultProto.parseFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      SearchResultProto.Builder searchResultProtoBuilder =
+          SearchResultProto.newBuilder().mergeFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      setNativeToJavaJniLatency(searchResultProtoBuilder);
+      return searchResultProtoBuilder.build();
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing SearchResultProto.", e);
       return SearchResultProto.newBuilder()
@@ -330,7 +345,7 @@ public class IcingSearchEngine implements Closeable {
   public SearchResultProto getNextPage(long nextPageToken) {
     throwIfClosed();
 
-    byte[] searchResultBytes = nativeGetNextPage(this, nextPageToken);
+    byte[] searchResultBytes = nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
     if (searchResultBytes == null) {
       Log.e(TAG, "Received null SearchResultProto from native.");
       return SearchResultProto.newBuilder()
@@ -339,13 +354,26 @@ public class IcingSearchEngine implements Closeable {
     }
 
     try {
-      return SearchResultProto.parseFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      SearchResultProto.Builder searchResultProtoBuilder =
+          SearchResultProto.newBuilder().mergeFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      setNativeToJavaJniLatency(searchResultProtoBuilder);
+      return searchResultProtoBuilder.build();
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing SearchResultProto.", e);
       return SearchResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
+  }
+
+  private void setNativeToJavaJniLatency(SearchResultProto.Builder searchResultProtoBuilder) {
+    int nativeToJavaLatencyMs =
+        (int)
+            (System.currentTimeMillis()
+                - searchResultProtoBuilder.getQueryStats().getNativeToJavaStartTimestampMs());
+    searchResultProtoBuilder.setQueryStats(
+        searchResultProtoBuilder.getQueryStats().toBuilder()
+            .setNativeToJavaJniLatencyMs(nativeToJavaLatencyMs));
   }
 
   @NonNull
@@ -657,9 +685,11 @@ public class IcingSearchEngine implements Closeable {
       IcingSearchEngine instance,
       byte[] searchSpecBytes,
       byte[] scoringSpecBytes,
-      byte[] resultSpecBytes);
+      byte[] resultSpecBytes,
+      long javaToNativeStartTimestampMs);
 
-  private static native byte[] nativeGetNextPage(IcingSearchEngine instance, long nextPageToken);
+  private static native byte[] nativeGetNextPage(
+      IcingSearchEngine instance, long nextPageToken, long javaToNativeStartTimestampMs);
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngine instance, long nextPageToken);

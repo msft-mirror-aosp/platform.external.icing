@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <string>
 
+#include "icing/proto/debug.pb.h"
+
 // NOTE: this file contains two implementations: one for Android, one for all
 // other cases.  We always build exactly one implementation.
 #if defined(__ANDROID__)

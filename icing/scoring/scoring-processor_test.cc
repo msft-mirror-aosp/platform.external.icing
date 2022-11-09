@@ -24,6 +24,8 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -329,19 +331,19 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/50));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
 
   SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  SectionIdMask section_id_mask = UINT64_C(1) << section_id;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -398,19 +400,19 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/10));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
 
   SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  SectionIdMask section_id_mask = UINT64_C(1) << section_id;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -466,13 +468,13 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/10));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   // Document 1 contains the query term "foo" 5 times
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/5);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   // Document 1 contains the query term "foo" 1 time
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   // Document 1 contains the query term "foo" 3 times
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
   doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/2);
@@ -482,8 +484,8 @@ TEST_F(ScoringProcessorTest,
   SectionIdMask section_id_mask3 = 0b00000011;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -528,11 +530,11 @@ TEST_F(ScoringProcessorTest,
       document_store()->Put(document1, /*num_tokens=*/10));
 
   // Document 1 contains the term "foo" 0 times in the "subject" property
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/0);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -580,16 +582,17 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -651,16 +654,17 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -719,11 +723,11 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -809,16 +813,17 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =

@@ -34,6 +34,7 @@
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
