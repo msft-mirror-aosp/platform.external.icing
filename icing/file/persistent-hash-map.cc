@@ -450,10 +450,11 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
                                       &new_crcs, &new_info));
 
   // Mmap the content of the crcs and info.
-  auto metadata_mmapped_file = std::make_unique<MemoryMappedFile>(
-      filesystem, metadata_file_path,
-      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
-  ICING_RETURN_IF_ERROR(metadata_mmapped_file->Remap(
+  ICING_ASSIGN_OR_RETURN(MemoryMappedFile metadata_mmapped_file,
+                         MemoryMappedFile::Create(
+                             filesystem, metadata_file_path,
+                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file.Remap(
       /*file_offset=*/0, /*mmap_size=*/sizeof(Crcs) + sizeof(Info)));
 
   return std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
@@ -468,10 +469,12 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
                                            int32_t value_type_size,
                                            int32_t max_load_factor_percent) {
   // Mmap the content of the crcs and info.
-  auto metadata_mmapped_file = std::make_unique<MemoryMappedFile>(
-      filesystem, GetMetadataFilePath(base_dir, kSubDirectory),
-      MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC);
-  ICING_RETURN_IF_ERROR(metadata_mmapped_file->Remap(
+  ICING_ASSIGN_OR_RETURN(
+      MemoryMappedFile metadata_mmapped_file,
+      MemoryMappedFile::Create(
+          filesystem, GetMetadataFilePath(base_dir, kSubDirectory),
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file.Remap(
       /*file_offset=*/0, /*mmap_size=*/sizeof(Crcs) + sizeof(Info)));
 
   // Initialize 3 storages
@@ -491,9 +494,9 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
                              MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
   Crcs* crcs_ptr = reinterpret_cast<Crcs*>(
-      metadata_mmapped_file->mutable_region() + Crcs::kFileOffset);
+      metadata_mmapped_file.mutable_region() + Crcs::kFileOffset);
   Info* info_ptr = reinterpret_cast<Info*>(
-      metadata_mmapped_file->mutable_region() + Info::kFileOffset);
+      metadata_mmapped_file.mutable_region() + Info::kFileOffset);
 
   // Value type size should be consistent.
   if (value_type_size != info_ptr->value_type_size) {
@@ -514,7 +517,7 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
     info_ptr->max_load_factor_percent = max_load_factor_percent;
     crcs_ptr->component_crcs.info_crc = info_ptr->ComputeChecksum().Get();
     crcs_ptr->all_crc = crcs_ptr->component_crcs.ComputeChecksum().Get();
-    ICING_RETURN_IF_ERROR(metadata_mmapped_file->PersistToDisk());
+    ICING_RETURN_IF_ERROR(metadata_mmapped_file.PersistToDisk());
   }
 
   auto persistent_hash_map =

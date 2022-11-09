@@ -306,6 +306,13 @@ public class IcingSearchEngine implements Closeable {
       @NonNull ResultSpecProto resultSpec) {
     throwIfClosed();
 
+    // Note that on Android System.currentTimeMillis() is the standard "wall" clock and can be set
+    // by the user or the phone network so the time may jump backwards or forwards unpredictably.
+    // This could lead to inaccurate final JNI latency calculations or unexpected negative numbers
+    // in the case where the phone time is changed while sending data across JNI layers.
+    // However these occurrences should be very rare, so we will keep usage of
+    // System.currentTimeMillis() due to the lack of better time functions that can provide a
+    // consistent timestamp across all platforms.
     long javaToNativeStartTimestampMs = System.currentTimeMillis();
     byte[] searchResultBytes =
         nativeSearch(

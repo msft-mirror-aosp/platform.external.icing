@@ -243,17 +243,15 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
 
   const std::unique_ptr<const icing::lib::Clock> clock =
       std::make_unique<icing::lib::Clock>();
-  // TODO(b/236412954): java_to_native_start_timestamp_ms can only be used after
-  // cl/469819190 is synced to Jetpack and exported back to google3.
-  // int32 java_to_native_jni_latency_ms =
-  //     clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
+  int32_t java_to_native_jni_latency_ms =
+      clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
 
   icing::lib::SearchResultProto next_page_result_proto =
       icing->GetNextPage(next_page_token);
 
   icing::lib::QueryStatsProto* query_stats =
       next_page_result_proto.mutable_query_stats();
-  // query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
+  query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
   query_stats->set_native_to_java_start_timestamp_ms(clock->GetSystemTimeMilliseconds());
 
   return SerializeProtoToJniByteArray(env, next_page_result_proto);
@@ -299,17 +297,15 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
 
   const std::unique_ptr<const icing::lib::Clock> clock =
       std::make_unique<icing::lib::Clock>();
-  // TODO(b/236412954): java_to_native_start_timestamp_ms can only be used after
-  // cl/469819190 is synced to Jetpack and exported back to google3.
-  // int32 java_to_native_jni_latency_ms =
-  //     clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
+  int32_t java_to_native_jni_latency_ms =
+      clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
 
   icing::lib::SearchResultProto search_result_proto =
       icing->Search(search_spec_proto, scoring_spec_proto, result_spec_proto);
 
   icing::lib::QueryStatsProto* query_stats =
       search_result_proto.mutable_query_stats();
-  // query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
+  query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
   query_stats->set_native_to_java_start_timestamp_ms(clock->GetSystemTimeMilliseconds());
 
   return SerializeProtoToJniByteArray(env, search_result_proto);

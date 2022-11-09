@@ -373,13 +373,14 @@ class PersistentHashMap {
 
   explicit PersistentHashMap(
       const Filesystem& filesystem, std::string_view base_dir,
-      std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
+      MemoryMappedFile&& metadata_mmapped_file,
       std::unique_ptr<FileBackedVector<Bucket>> bucket_storage,
       std::unique_ptr<FileBackedVector<Entry>> entry_storage,
       std::unique_ptr<FileBackedVector<char>> kv_storage)
       : filesystem_(&filesystem),
         base_dir_(base_dir),
-        metadata_mmapped_file_(std::move(metadata_mmapped_file)),
+        metadata_mmapped_file_(std::make_unique<MemoryMappedFile>(
+            std::move(metadata_mmapped_file))),
         bucket_storage_(std::move(bucket_storage)),
         entry_storage_(std::move(entry_storage)),
         kv_storage_(std::move(kv_storage)) {}
