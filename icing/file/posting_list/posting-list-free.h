@@ -12,29 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
-#define ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
-
-#include <sys/mman.h>
+#ifndef ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
+#define ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_
 
 #include <cstdint>
 #include <cstring>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-utils.h"
 #include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
-
-// A FlashIndexBlock can contain multiple posting lists. This specifies which
-// PostingList in the FlashIndexBlock we want to refer to.
-using PostingListIndex = int32_t;
-inline constexpr PostingListIndex kInvalidPostingListIndex = ~0U;
 
 // A posting list in the index block's free list.
 //
@@ -51,14 +43,17 @@ class PostingListFree {
   //
   // RETURNS:
   //   - A valid PostingListFree on success
-  //   - INVALID_ARGUMENT if size_in_bytes < min_posting_list_size()
-  //       || size_in_bytes % sizeof(Hit) != 0.
+  //   - INVALID_ARGUMENT if posting_list_utils::IsValidPostingListSize check
+  //       fails
   //   - FAILED_PRECONDITION if posting_list_buffer is null
   static libtextclassifier3::StatusOr<PostingListFree>
-  CreateFromPreexistingPostingListFreeRegion(void *posting_list_buffer,
-                                             uint32_t size_in_bytes) {
+  CreateFromPreexistingPostingListFreeRegion(void* posting_list_buffer,
+                                             uint32_t size_in_bytes,
+                                             uint32_t data_type_bytes,
+                                             uint32_t min_posting_list_size) {
     ICING_RETURN_ERROR_IF_NULL(posting_list_buffer);
-    if (!posting_list_utils::IsValidPostingListSize(size_in_bytes)) {
+    if (!posting_list_utils::IsValidPostingListSize(
+            size_in_bytes, data_type_bytes, min_posting_list_size)) {
       return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
           "Requested posting list size %d is invalid!", size_in_bytes));
     }
@@ -74,15 +69,17 @@ class PostingListFree {
   //
   // RETURNS:
   //   - A valid PostingListFree on success
-  //   - INVALID_ARGUMENT if size_in_bytes < min_size() || size_in_bytes %
-  //   sizeof(Hit) != 0.
+  //   - INVALID_ARGUMENT if posting_list_utils::IsValidPostingListSize check
+  //       fails
   //   - FAILED_PRECONDITION if posting_list_buffer is null
   static libtextclassifier3::StatusOr<PostingListFree>
-  CreateFromUnitializedRegion(void *posting_list_buffer,
-                              uint32_t size_in_bytes) {
+  CreateFromUnitializedRegion(void* posting_list_buffer, uint32_t size_in_bytes,
+                              uint32_t data_type_bytes,
+                              uint32_t min_posting_list_size) {
     ICING_ASSIGN_OR_RETURN(PostingListFree posting_list_free,
                            CreateFromPreexistingPostingListFreeRegion(
-                               posting_list_buffer, size_in_bytes));
+                               posting_list_buffer, size_in_bytes,
+                               data_type_bytes, min_posting_list_size));
     posting_list_free.Clear();
     return posting_list_free;
   }
@@ -101,8 +98,8 @@ class PostingListFree {
   }
 
  private:
-  PostingListFree(void *posting_list_buffer, uint32_t size_in_bytes)
-      : posting_list_buffer_(static_cast<uint8_t *>(posting_list_buffer)),
+  explicit PostingListFree(void* posting_list_buffer, uint32_t size_in_bytes)
+      : posting_list_buffer_(static_cast<uint8_t*>(posting_list_buffer)),
         size_in_bytes_(size_in_bytes) {}
 
   // Reset the current free posting list as unchained free posting list so that
@@ -114,16 +111,11 @@ class PostingListFree {
   // A byte array of size size_in_bytes_. The first sizeof(PostingListIndex)
   // bytes which will store the next posting list index, the rest are unused and
   // can be anything.
-  uint8_t *posting_list_buffer_;
+  uint8_t* posting_list_buffer_;
   [[maybe_unused]] uint32_t size_in_bytes_;
-
-  static_assert(sizeof(PostingListIndex) <=
-                    posting_list_utils::min_posting_list_size(),
-                "PostingListIndex must be small enough to fit in a "
-                "minimum-sized Posting List.");
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_POSTING_LIST_FREE_H_
+#endif  // ICING_FILE_POSTING_LIST_POSTING_LIST_FREE_H_

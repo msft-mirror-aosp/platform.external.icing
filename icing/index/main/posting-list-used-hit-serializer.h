@@ -1,4 +1,4 @@
-// Copyright (C) 2019 Google LLC
+// Copyright (C) 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,104 +12,93 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_POSTING_LIST_USED_H_
-#define ICING_INDEX_MAIN_POSTING_LIST_USED_H_
+#ifndef ICING_INDEX_MAIN_POSTING_LIST_USED_HIT_SERIALIZER_H_
+#define ICING_INDEX_MAIN_POSTING_LIST_USED_HIT_SERIALIZER_H_
 
-#include <sys/mman.h>
-
-#include <algorithm>
-#include <cstring>
+#include <cstdint>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-utils.h"
-#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
 
-// A posting list with hits in it. Layout described in comments in
-// posting-list-used.cc.
-class PostingListUsed {
+// A serializer class to serialize hits to PostingListUsed. Layout described in
+// comments in posting-list-used-hit-serializer.cc.
+class PostingListUsedHitSerializer : public PostingListUsedSerializer {
  public:
-  // Creates a PostingListUsed that points to a buffer of size_in_bytes bytes.
-  // 'Preexisting' means that posting_list_buffer was previously modified by
-  // another instance of PostingListUsed.
-  //
-  // Caller owns the hits buffer and must not free it while using a
-  // PostingListUsed.
+  static constexpr uint32_t kSpecialHitsSize = sizeof(Hit) * kNumSpecialData;
+
+  uint32_t GetDataTypeBytes() const override { return sizeof(Hit); }
+
+  uint32_t GetMinPostingListSize() const override {
+    static constexpr uint32_t kMinPostingListSize = kSpecialHitsSize;
+    static_assert(sizeof(PostingListIndex) <= kMinPostingListSize,
+                  "PostingListIndex must be small enough to fit in a "
+                  "minimum-sized Posting List.");
+
+    return kMinPostingListSize;
+  }
+
+  // Min size of posting list that can fit these used bytes (see MoveFrom).
+  uint32_t GetMinPostingListSizeToFit(
+      const PostingListUsed* posting_list_used) const override;
+
+  // Returns bytes used by actual hits.
+  uint32_t GetBytesUsed(
+      const PostingListUsed* posting_list_used) const override;
+
+  void Clear(PostingListUsed* posting_list_used) const override;
+
+  // Moves contents from posting list 'src' to 'dst'. Clears 'src'.
   //
   // RETURNS:
-  //   - A valid PostingListUsed if successful
-  //   - INVALID_ARGUMENT if size_in_bytes < min_posting_list_size()
-  //       || size_in_bytes % sizeof(Hit) != 0.
-  //   - FAILED_PRECONDITION if posting_list_buffer is null
-  static libtextclassifier3::StatusOr<PostingListUsed>
-  CreateFromPreexistingPostingListUsedRegion(void *posting_list_buffer,
-                                             uint32_t size_in_bytes);
-
-  // Creates a PostingListUsed that points to a buffer of size_in_bytes bytes
-  // and initializes the content of the buffer so that the returned
-  // PostingListUsed is empty.
-  //
-  // Caller owns the posting_list_buffer buffer and must not free it while using
-  // a PostingListUsed.
-  //
-  // RETURNS:
-  //   - A valid PostingListUsed if successful
-  //   - INVALID_ARGUMENT if size_in_bytes < min_posting_list_size()
-  //       || size_in_bytes % sizeof(Hit) != 0.
-  //   - FAILED_PRECONDITION if posting_list_buffer is null
-  static libtextclassifier3::StatusOr<PostingListUsed>
-  CreateFromUnitializedRegion(void *posting_list_buffer,
-                              uint32_t size_in_bytes);
-
-  // Move contents from another posting list. Clears other.
-  //
-  // RETURNS:
-  //   - OK, if successful
-  //   - INVALID_ARGUMENT if 'other' is not valid or 'other' is too large to fit
-  //       in 'this'.
-  //   - FAILED_PRECONDITION if 'this' posting list is in a corrupted state.
-  libtextclassifier3::Status MoveFrom(PostingListUsed *other);
-
-  // Min size of posting list that can fit these used bytes. (See
-  // MoveFrom.)
-  uint32_t MinPostingListSizeToFit() const;
+  //   - OK on success
+  //   - INVALID_ARGUMENT if 'src' is not valid or 'src' is too large to fit in
+  //       'dst'.
+  //   - FAILED_PRECONDITION if 'dst' posting list is in a corrupted state.
+  libtextclassifier3::Status MoveFrom(PostingListUsed* dst,
+                                      PostingListUsed* src) const override;
 
   // Prepend a hit to the posting list.
+  //
   // RETURNS:
   //   - INVALID_ARGUMENT if !hit.is_valid() or if hit is not less than the
-  //   previously added hit.
+  //       previously added hit.
   //   - RESOURCE_EXHAUSTED if there is no more room to add hit to the posting
-  //   list.
-  libtextclassifier3::Status PrependHit(const Hit &hit);
+  //       list.
+  libtextclassifier3::Status PrependHit(PostingListUsed* posting_list_used,
+                                        const Hit& hit) const;
 
-  // Prepend hits to the posting list. Hits should be sorted in
-  // descending order (as defined by the less than operator for Hit)
+  // Prepend hits to the posting list. Hits should be sorted in descending order
+  // (as defined by the less than operator for Hit)
   //
   // Returns the number of hits that could be prepended to the posting list. If
   // keep_prepended is true, whatever could be prepended is kept, otherwise the
   // posting list is left in its original state.
-  template <class T, Hit (*GetHit)(const T &)>
-  uint32_t PrependHitArray(const T *array, uint32_t num_hits,
-                           bool keep_prepended);
+  template <class T, Hit (*GetHit)(const T&)>
+  uint32_t PrependHitArray(PostingListUsed* posting_list_used, const T* array,
+                           uint32_t num_hits, bool keep_prepended) const;
 
   // Retrieves the hits stored in the posting list.
   //
   // RETURNS:
   //   - On success, a vector of hits sorted by the reverse order of prepending.
   //   - INTERNAL_ERROR if the posting list has been corrupted somehow.
-  libtextclassifier3::StatusOr<std::vector<Hit>> GetHits() const;
+  libtextclassifier3::StatusOr<std::vector<Hit>> GetHits(
+      const PostingListUsed* posting_list_used) const;
 
   // Same as GetHits but appends hits to hits_out.
   //
   // RETURNS:
   //   - On success, a vector of hits sorted by the reverse order of prepending.
   //   - INTERNAL_ERROR if the posting list has been corrupted somehow.
-  libtextclassifier3::Status GetHits(std::vector<Hit> *hits_out) const;
+  libtextclassifier3::Status GetHits(const PostingListUsed* posting_list_used,
+                                     std::vector<Hit>* hits_out) const;
 
   // Undo the last num_hits hits prepended. If num_hits > number of
   // hits we clear all hits.
@@ -117,10 +106,8 @@ class PostingListUsed {
   // RETURNS:
   //   - OK on success
   //   - INTERNAL_ERROR if the posting list has been corrupted somehow.
-  libtextclassifier3::Status PopFrontHits(uint32_t num_hits);
-
-  // Returns bytes used by actual hits.
-  uint32_t BytesUsed() const;
+  libtextclassifier3::Status PopFrontHits(PostingListUsed* posting_list_used,
+                                          uint32_t num_hits) const;
 
  private:
   // Posting list layout formats:
@@ -201,71 +188,83 @@ class PostingListUsed {
   // -+ | 0x07FFF320  |0x07FFF40E,87|  0x000  |    196   |   434   |  125 | 788
   // |
   // +-------------+-------------+---------+----------+---------+------+---------+
-  PostingListUsed(void *posting_list_buffer, uint32_t size_in_bytes)
-      : posting_list_buffer_(static_cast<uint8_t *>(posting_list_buffer)),
-        size_in_bytes_(size_in_bytes) {}
 
   // Helpers to determine what state the posting list is in.
-  bool full() const {
-    return get_special_hit(0).ValueOrDie().is_valid() &&
-           get_special_hit(1).ValueOrDie().is_valid();
+  bool IsFull(const PostingListUsed* posting_list_used) const {
+    return GetSpecialHit(posting_list_used, /*index=*/0)
+               .ValueOrDie()
+               .is_valid() &&
+           GetSpecialHit(posting_list_used, /*index=*/1)
+               .ValueOrDie()
+               .is_valid();
   }
-  bool almost_full() const {
-    return !get_special_hit(0).ValueOrDie().is_valid();
+
+  bool IsAlmostFull(const PostingListUsed* posting_list_used) const {
+    return !GetSpecialHit(posting_list_used, /*index=*/0)
+                .ValueOrDie()
+                .is_valid();
   }
-  bool empty() const {
-    return get_special_hit(0).ValueOrDie().value() == size_in_bytes_ &&
-           !get_special_hit(1).ValueOrDie().is_valid();
+
+  bool IsEmpty(const PostingListUsed* posting_list_used) const {
+    return GetSpecialHit(posting_list_used, /*index=*/0).ValueOrDie().value() ==
+               posting_list_used->size_in_bytes() &&
+           !GetSpecialHit(posting_list_used, /*index=*/1)
+                .ValueOrDie()
+                .is_valid();
   }
 
   // Returns false if both special hits are invalid or if the offset value
   // stored in the special hit is less than kSpecialHitsSize or greater than
-  // size_in_bytes_. Returns true, otherwise.
-  bool IsPostingListValid() const;
+  // posting_list_used->size_in_bytes(). Returns true, otherwise.
+  bool IsPostingListValid(const PostingListUsed* posting_list_used) const;
 
   // Prepend hit to a posting list that is in the ALMOST_FULL state.
   // RETURNS:
   //  - OK, if successful
   //  - INVALID_ARGUMENT if hit is not less than the previously added hit.
-  libtextclassifier3::Status PrependHitToAlmostFull(const Hit &hit);
+  libtextclassifier3::Status PrependHitToAlmostFull(
+      PostingListUsed* posting_list_used, const Hit& hit) const;
 
   // Prepend hit to a posting list that is in the EMPTY state. This will always
   // succeed because there are no pre-existing hits and no validly constructed
   // posting list could fail to fit one hit.
-  void PrependHitToEmpty(const Hit &hit);
+  void PrependHitToEmpty(PostingListUsed* posting_list_used,
+                         const Hit& hit) const;
 
   // Prepend hit to a posting list that is in the NOT_FULL state.
   // RETURNS:
   //  - OK, if successful
   //  - INVALID_ARGUMENT if hit is not less than the previously added hit.
-  libtextclassifier3::Status PrependHitToNotFull(const Hit &hit,
-                                                 uint32_t offset);
-
-  // Reset contents to an empty posting list. This *must* be called if the
-  // posting_list_buffer_ region is uninitialized.
-  void Clear();
+  libtextclassifier3::Status PrependHitToNotFull(
+      PostingListUsed* posting_list_used, const Hit& hit,
+      uint32_t offset) const;
 
   // Returns either 0 (full state), sizeof(Hit) (almost_full state) or
-  // a byte offset between kSpecialHitsSize and size_in_bytes_ (inclusive)
-  // (not_full state).
-  uint32_t get_start_byte_offset() const;
+  // a byte offset between kSpecialHitsSize and
+  // posting_list_used->size_in_bytes() (inclusive) (not_full state).
+  uint32_t GetStartByteOffset(const PostingListUsed* posting_list_used) const;
 
   // Sets the special hits to properly reflect what offset is (see layout
   // comment for further details).
   //
-  // Returns false if offset > size_in_bytes_ or offset is (kSpecialHitsSize,
-  // sizeof(Hit)) or offset is (sizeof(Hit), 0). True, otherwise.
-  bool set_start_byte_offset(uint32_t offset);
+  // Returns false if offset > posting_list_used->size_in_bytes() or offset is
+  // (kSpecialHitsSize, sizeof(Hit)) or offset is (sizeof(Hit), 0). True,
+  // otherwise.
+  bool SetStartByteOffset(PostingListUsed* posting_list_used,
+                          uint32_t offset) const;
 
   // Manipulate padded areas. We never store the same hit value twice
   // so a delta of 0 is a pad byte.
 
   // Returns offset of first non-pad byte.
-  uint32_t GetPadEnd(uint32_t offset) const;
+  uint32_t GetPadEnd(const PostingListUsed* posting_list_used,
+                     uint32_t offset) const;
 
   // Fill padding between offset start and offset end with 0s.
-  // Returns false if end > size_in_bytes_. True, otherwise.
-  bool PadToEnd(uint32_t start, uint32_t end);
+  // Returns false if end > posting_list_used->size_in_bytes(). True,
+  // otherwise.
+  bool PadToEnd(PostingListUsed* posting_list_used, uint32_t start,
+                uint32_t end) const;
 
   // Helper for AppendHits/PopFrontHits. Adds limit number of hits to out or all
   // hits in the posting list if the posting list contains less than limit
@@ -279,19 +278,22 @@ class PostingListUsed {
   // RETURNS:
   //   - OK on success
   //   - INTERNAL_ERROR if the posting list has been corrupted somehow.
-  libtextclassifier3::Status GetHitsInternal(uint32_t limit, bool pop,
-                                             std::vector<Hit> *out) const;
+  libtextclassifier3::Status GetHitsInternal(
+      const PostingListUsed* posting_list_used, uint32_t limit, bool pop,
+      std::vector<Hit>* out) const;
 
   // Retrieves the value stored in the index-th special hit.
   //
   // RETURNS:
   //   - A valid Hit, on success
-  //   - INVALID_ARGUMENT if index is not less than kNumSpecialHits
-  libtextclassifier3::StatusOr<Hit> get_special_hit(uint32_t index) const;
+  //   - INVALID_ARGUMENT if index is not less than kNumSpecialData
+  libtextclassifier3::StatusOr<Hit> GetSpecialHit(
+      const PostingListUsed* posting_list_used, uint32_t index) const;
 
   // Sets the value stored in the index-th special hit to val. If index is not
   // less than kSpecialHitSize / sizeof(Hit), this has no effect.
-  bool set_special_hit(uint32_t index, const Hit &val);
+  bool SetSpecialHit(PostingListUsed* posting_list_used, uint32_t index,
+                     const Hit& val) const;
 
   // Prepends hit to the memory region [offset - sizeof(Hit), offset] and
   // returns the new beginning of the padded region.
@@ -301,7 +303,8 @@ class PostingListUsed {
   //   - INVALID_ARGUMENT if hit will not fit (uncompressed) between offset and
   // kSpecialHitsSize
   libtextclassifier3::StatusOr<uint32_t> PrependHitUncompressed(
-      const Hit &hit, uint32_t offset);
+      PostingListUsed* posting_list_used, const Hit& hit,
+      uint32_t offset) const;
 
   // If hit has a term frequency, consumes the term frequency at offset, updates
   // hit to include the term frequency and updates offset to reflect that the
@@ -310,29 +313,25 @@ class PostingListUsed {
   // RETURNS:
   //   - OK, if successful
   //   - INVALID_ARGUMENT if hit has a term frequency and offset +
-  //   sizeof(Hit::TermFrequency) >=
-  //     size_in_bytes_
+  //     sizeof(Hit::TermFrequency) >= posting_list_used->size_in_bytes()
   libtextclassifier3::Status ConsumeTermFrequencyIfPresent(
-      Hit *hit, uint32_t *offset) const;
-
-  // A byte array of size size_in_bytes_ containing encoded hits for this
-  // posting list.
-  uint8_t *posting_list_buffer_;  // does not own!
-  uint32_t size_in_bytes_;
+      const PostingListUsed* posting_list_used, Hit* hit,
+      uint32_t* offset) const;
 };
 
 // Inlined functions. Implementation details below. Avert eyes!
-template <class T, Hit (*GetHit)(const T &)>
-uint32_t PostingListUsed::PrependHitArray(const T *array, uint32_t num_hits,
-                                          bool keep_prepended) {
-  if (!IsPostingListValid()) {
+template <class T, Hit (*GetHit)(const T&)>
+uint32_t PostingListUsedHitSerializer::PrependHitArray(
+    PostingListUsed* posting_list_used, const T* array, uint32_t num_hits,
+    bool keep_prepended) const {
+  if (!IsPostingListValid(posting_list_used)) {
     return 0;
   }
 
   // Prepend hits working backwards from array[num_hits - 1].
   uint32_t i;
   for (i = 0; i < num_hits; ++i) {
-    if (!PrependHit(GetHit(array[num_hits - i - 1])).ok()) {
+    if (!PrependHit(posting_list_used, GetHit(array[num_hits - i - 1])).ok()) {
       break;
     }
   }
@@ -341,7 +340,7 @@ uint32_t PostingListUsed::PrependHitArray(const T *array, uint32_t num_hits,
     // before. PopFrontHits guarantees that it will remove all 'i' hits so long
     // as there are at least 'i' hits in the posting list, which we know there
     // are.
-    PopFrontHits(i);
+    PopFrontHits(posting_list_used, /*num_hits=*/i);
   }
   return i;
 }
@@ -349,4 +348,4 @@ uint32_t PostingListUsed::PrependHitArray(const T *array, uint32_t num_hits,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_POSTING_LIST_USED_H_
+#endif  // ICING_INDEX_MAIN_POSTING_LIST_USED_HIT_SERIALIZER_H_

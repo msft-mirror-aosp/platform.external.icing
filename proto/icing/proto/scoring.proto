@@ -68,6 +68,9 @@ message ScoringSpecProto {
 
       // Ranked by relevance score, currently computed as BM25F score.
       RELEVANCE_SCORE = 9;
+
+      // Ranked by the aggregated score of the joined documents.
+      JOIN_AGGREGATE_SCORE = 10;
     }
   }
   optional RankingStrategy.Code rank_by = 1;

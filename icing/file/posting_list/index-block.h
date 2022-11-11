@@ -12,29 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_INDEX_BLOCK_H_
-#define ICING_INDEX_MAIN_INDEX_BLOCK_H_
+#ifndef ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
+#define ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_
 
-#include <sys/mman.h>
+#include <sys/types.h>
 
-#include <algorithm>
-#include <cstring>
-#include <limits>
+#include <cstdint>
 #include <memory>
-#include <string>
-#include <unordered_set>
-#include <vector>
+#include <string_view>
 
 #include "icing/file/memory-mapped-file.h"
-#include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-free.h"
-#include "icing/index/main/posting-list-used.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-used.h"
 #include "icing/legacy/index/icing-bit-util.h"
 
 namespace icing {
 namespace lib {
-
-inline constexpr uint32_t kInvalidBlockIndex = 0;
 
 // This class is used to manage I/O to a single flash block and to manage the
 // division of that flash block into PostingLists. It provides an interface to
@@ -51,16 +44,11 @@ class IndexBlock {
  public:
   // What is the maximum posting list size in bytes that can be stored in this
   // block.
-  static uint32_t CalculateMaxPostingListBytes(uint32_t block_size_in_bytes) {
-    return (block_size_in_bytes - sizeof(BlockHeader)) / sizeof(Hit) *
-           sizeof(Hit);
+  static uint32_t CalculateMaxPostingListBytes(uint32_t block_size_in_bytes,
+                                               uint32_t data_type_bytes) {
+    return (block_size_in_bytes - sizeof(BlockHeader)) / data_type_bytes *
+           data_type_bytes;
   }
-
-  // For a given min number of bits needed to store PostingListIndex for a
-  // block of "block_size", return the approximate number of hits that a full
-  // posting list in this block could accomodate.
-  static uint32_t ApproximateFullPostingListHitsForBlock(
-      uint32_t block_size, int posting_list_index_bits);
 
   // Create an IndexBlock to reference the previously used region of the
   // mmapped_file starting at offset with size block_size
@@ -74,6 +62,7 @@ class IndexBlock {
   static libtextclassifier3::StatusOr<IndexBlock>
   CreateFromPreexistingIndexBlockRegion(const Filesystem& filesystem,
                                         std::string_view file_path,
+                                        PostingListUsedSerializer* serializer,
                                         off_t offset, uint32_t block_size);
 
   // Create an IndexBlock to reference an uninitialized region of the
@@ -88,8 +77,9 @@ class IndexBlock {
   //   max_posting_list_bytes(size).
   //   - INTERNAL_ERROR if unable to mmap the region [offset, offset+block_size)
   static libtextclassifier3::StatusOr<IndexBlock> CreateFromUninitializedRegion(
-      const Filesystem& filesystem, std::string_view file_path, off_t offset,
-      uint32_t block_size, uint32_t posting_list_bytes);
+      const Filesystem& filesystem, std::string_view file_path,
+      PostingListUsedSerializer* serializer, off_t offset, uint32_t block_size,
+      uint32_t posting_list_bytes);
 
   IndexBlock(const IndexBlock&) = delete;
   IndexBlock& operator=(const IndexBlock&) = delete;
@@ -174,7 +164,8 @@ class IndexBlock {
  private:
   // Assumes that mmapped_file already has established a valid mapping to the
   // requested block.
-  explicit IndexBlock(MemoryMappedFile&& mmapped_block);
+  explicit IndexBlock(PostingListUsedSerializer* serializer,
+                      MemoryMappedFile&& mmapped_block);
 
   // Resets IndexBlock to hold posting lists of posting_list_bytes size and adds
   // all posting lists to the free list.
@@ -212,6 +203,8 @@ class IndexBlock {
   char* posting_lists_start_ptr_;
   uint32_t block_size_in_bytes_;
 
+  PostingListUsedSerializer* serializer_;  // Does not own.
+
   // MemoryMappedFile used to interact with the underlying flash block.
   std::unique_ptr<MemoryMappedFile> mmapped_block_;
 };
@@ -219,4 +212,4 @@ class IndexBlock {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_INDEX_BLOCK_H_
+#endif  // ICING_FILE_POSTING_LIST_INDEX_BLOCK_H_

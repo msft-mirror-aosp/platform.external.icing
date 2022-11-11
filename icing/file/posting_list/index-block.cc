@@ -12,19 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/index-block.h"
+#include "icing/file/posting_list/index-block.h"
 
-#include <algorithm>
-#include <cinttypes>
-#include <limits>
+#include <sys/types.h>
+
+#include <cstdint>
+#include <memory>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/memory-mapped-file.h"
-#include "icing/index/main/posting-list-free.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-free.h"
+#include "icing/file/posting_list/posting-list-utils.h"
 #include "icing/legacy/core/icing-string-util.h"
-#include "icing/util/math-util.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -32,35 +35,30 @@ namespace lib {
 
 namespace {
 
-libtextclassifier3::Status ValidatePostingListBytes(uint32_t posting_list_bytes,
-                                                    uint32_t block_size) {
-  if (posting_list_bytes >
-          IndexBlock::CalculateMaxPostingListBytes(block_size) ||
-      !posting_list_utils::IsValidPostingListSize(posting_list_bytes)) {
+libtextclassifier3::Status ValidatePostingListBytes(
+    PostingListUsedSerializer* serializer, uint32_t posting_list_bytes,
+    uint32_t block_size) {
+  if (posting_list_bytes > IndexBlock::CalculateMaxPostingListBytes(
+                               block_size, serializer->GetDataTypeBytes()) ||
+      !posting_list_utils::IsValidPostingListSize(
+          posting_list_bytes, serializer->GetDataTypeBytes(),
+          serializer->GetMinPostingListSize())) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Requested posting list size %d is illegal for a flash block with max "
         "posting list size of %d",
         posting_list_bytes,
-        IndexBlock::CalculateMaxPostingListBytes(block_size)));
+        IndexBlock::CalculateMaxPostingListBytes(
+            block_size, serializer->GetDataTypeBytes())));
   }
   return libtextclassifier3::Status::OK;
 }
 
 }  // namespace
 
-uint32_t IndexBlock::ApproximateFullPostingListHitsForBlock(
-    uint32_t block_size, int posting_list_index_bits) {
-  // Assume 50% compressed and most don't have term frequencies.
-  uint32_t bytes_per_hit = sizeof(Hit::Value) / 2;
-  return (block_size - sizeof(BlockHeader)) /
-         ((1u << posting_list_index_bits) * bytes_per_hit);
-}
-
 libtextclassifier3::StatusOr<IndexBlock>
-IndexBlock::CreateFromPreexistingIndexBlockRegion(const Filesystem& filesystem,
-                                                  std::string_view file_path,
-                                                  off_t offset,
-                                                  uint32_t block_size) {
+IndexBlock::CreateFromPreexistingIndexBlockRegion(
+    const Filesystem& filesystem, std::string_view file_path,
+    PostingListUsedSerializer* serializer, off_t offset, uint32_t block_size) {
   if (block_size < sizeof(BlockHeader)) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Provided block_size %d is too small to fit even the BlockHeader!",
@@ -71,15 +69,16 @@ IndexBlock::CreateFromPreexistingIndexBlockRegion(const Filesystem& filesystem,
                              filesystem, file_path,
                              MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   ICING_RETURN_IF_ERROR(mmapped_file.Remap(offset, block_size));
-  IndexBlock block(std::move(mmapped_file));
-  ICING_RETURN_IF_ERROR(
-      ValidatePostingListBytes(block.get_posting_list_bytes(), block_size));
+  IndexBlock block(serializer, std::move(mmapped_file));
+  ICING_RETURN_IF_ERROR(ValidatePostingListBytes(
+      serializer, block.get_posting_list_bytes(), block_size));
   return block;
 }
 
 libtextclassifier3::StatusOr<IndexBlock>
 IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
                                           std::string_view file_path,
+                                          PostingListUsedSerializer* serializer,
                                           off_t offset, uint32_t block_size,
                                           uint32_t posting_list_bytes) {
   if (block_size < sizeof(BlockHeader)) {
@@ -88,13 +87,13 @@ IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
         block_size));
   }
   ICING_RETURN_IF_ERROR(
-      ValidatePostingListBytes(posting_list_bytes, block_size));
+      ValidatePostingListBytes(serializer, posting_list_bytes, block_size));
   ICING_ASSIGN_OR_RETURN(MemoryMappedFile mmapped_file,
                          MemoryMappedFile::Create(
                              filesystem, file_path,
                              MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
   ICING_RETURN_IF_ERROR(mmapped_file.Remap(offset, block_size));
-  IndexBlock block(std::move(mmapped_file));
+  IndexBlock block(serializer, std::move(mmapped_file));
   // Safe to ignore the return value of Reset. Reset returns an error if
   // posting_list_bytes is invalid, but this function ensures that
   // posting_list_bytes is valid thanks to the call to ValidatePostingListBytes
@@ -103,17 +102,19 @@ IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
   return block;
 }
 
-IndexBlock::IndexBlock(MemoryMappedFile&& mmapped_block)
+IndexBlock::IndexBlock(PostingListUsedSerializer* serializer,
+                       MemoryMappedFile&& mmapped_block)
     : header_(reinterpret_cast<BlockHeader*>(mmapped_block.mutable_region())),
       posting_lists_start_ptr_(mmapped_block.mutable_region() +
                                sizeof(BlockHeader)),
       block_size_in_bytes_(mmapped_block.region_size()),
+      serializer_(serializer),
       mmapped_block_(
           std::make_unique<MemoryMappedFile>(std::move(mmapped_block))) {}
 
 libtextclassifier3::Status IndexBlock::Reset(int posting_list_bytes) {
   ICING_RETURN_IF_ERROR(ValidatePostingListBytes(
-      posting_list_bytes, mmapped_block_->region_size()));
+      serializer_, posting_list_bytes, mmapped_block_->region_size()));
   header_->free_list_posting_list_index = kInvalidPostingListIndex;
   header_->next_block_index = kInvalidBlockIndex;
   header_->posting_list_bytes = posting_list_bytes;
@@ -140,7 +141,8 @@ IndexBlock::GetAllocatedPostingList(PostingListIndex posting_list_index) {
         posting_list_index, max_num_posting_lists()));
   }
   return PostingListUsed::CreateFromPreexistingPostingListUsedRegion(
-      get_posting_list_ptr(posting_list_index), get_posting_list_bytes());
+      serializer_, get_posting_list_ptr(posting_list_index),
+      get_posting_list_bytes());
 }
 
 libtextclassifier3::StatusOr<PostingListIndex>
@@ -159,7 +161,9 @@ IndexBlock::AllocatePostingList() {
   // always return OK and ValueOrDie is safe to call.
   auto posting_list_or =
       PostingListFree::CreateFromPreexistingPostingListFreeRegion(
-          get_posting_list_ptr(posting_list_index), get_posting_list_bytes());
+          get_posting_list_ptr(posting_list_index), get_posting_list_bytes(),
+          serializer_->GetDataTypeBytes(),
+          serializer_->GetMinPostingListSize());
   PostingListFree plfree = std::move(posting_list_or).ValueOrDie();
 
   header_->free_list_posting_list_index = plfree.get_next_posting_list_index();
@@ -172,7 +176,8 @@ IndexBlock::AllocatePostingList() {
 
   // Make it a used posting list.
   PostingListUsed::CreateFromUnitializedRegion(
-      get_posting_list_ptr(posting_list_index), get_posting_list_bytes());
+      serializer_, get_posting_list_ptr(posting_list_index),
+      get_posting_list_bytes());
   return posting_list_index;
 }
 
@@ -188,7 +193,8 @@ void IndexBlock::FreePostingList(PostingListIndex posting_list_index) {
   // So CreateFromUninitializedRegion will always return OK and ValueOrDie is
   // safe to call.
   auto posting_list_or = PostingListFree::CreateFromUnitializedRegion(
-      get_posting_list_ptr(posting_list_index), get_posting_list_bytes());
+      get_posting_list_ptr(posting_list_index), get_posting_list_bytes(),
+      serializer_->GetDataTypeBytes(), serializer_->GetMinPostingListSize());
   PostingListFree plfree = std::move(posting_list_or).ValueOrDie();
 
   // Put at the head of the list.

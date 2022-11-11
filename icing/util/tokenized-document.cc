@@ -49,9 +49,11 @@ libtextclassifier3::Status TokenizedDocument::Tokenize(
   DocumentValidator validator(schema_store);
   ICING_RETURN_IF_ERROR(validator.Validate(document_));
 
-  ICING_ASSIGN_OR_RETURN(std::vector<Section> sections,
+  ICING_ASSIGN_OR_RETURN(SectionGroup section_group,
                          schema_store->ExtractSections(document_));
-  for (const Section& section : sections) {
+  // string sections
+  for (const Section<std::string_view>& section :
+       section_group.string_sections) {
     ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
                            tokenizer_factory::CreateIndexingTokenizer(
                                section.metadata.tokenizer, language_segmenter));

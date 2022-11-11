@@ -97,21 +97,6 @@ constexpr std::string_view kIpsumText =
     "vehicula posuere vitae, convallis eu lorem. Donec semper augue eu nibh "
     "placerat semper.";
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
-    PropertyConfigProto::Cardinality::REQUIRED;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
-    PropertyConfigProto::Cardinality::REPEATED;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_NONE =
-    StringIndexingConfig::TokenizerType::NONE;
-
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-constexpr TermMatchType::Code MATCH_NONE = TermMatchType::UNKNOWN;
-
 PortableFileBackedProtoLog<DocumentWrapper>::Header ReadDocumentLogHeader(
     Filesystem filesystem, const std::string& file_path) {
   PortableFileBackedProtoLog<DocumentWrapper>::Header header;
@@ -219,51 +204,55 @@ SchemaProto CreateMessageSchema() {
       .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
           PropertyConfigBuilder()
               .SetName("body")
-              .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
               .SetCardinality(CARDINALITY_REQUIRED)))
       .Build();
 }
 
 SchemaProto CreateEmailSchema() {
   return SchemaBuilder()
-      .AddType(
-          SchemaTypeConfigBuilder()
-              .SetType("Email")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_REQUIRED))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_REQUIRED)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Email")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("body")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_REQUIRED))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("subject")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_REQUIRED)))
       .Build();
 }
 
 SchemaProto CreatePersonAndEmailSchema() {
   return SchemaBuilder()
-      .AddType(
-          SchemaTypeConfigBuilder()
-              .SetType("Person")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("name")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("emailAddress")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Person")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("name")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("emailAddress")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL)))
       .AddType(
           SchemaTypeConfigBuilder()
               .SetType("Email")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                      .SetName("body")
+                      .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                      .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                      .SetName("subject")
+                      .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                      .SetCardinality(CARDINALITY_OPTIONAL))
               .AddProperty(PropertyConfigBuilder()
                                .SetName("sender")
                                .SetDataTypeDocument(
@@ -1285,10 +1274,11 @@ TEST_F(IcingSearchEngineTest,
   SchemaTypeConfigProto person_proto =
       SchemaTypeConfigBuilder()
           .SetType("Person")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("name")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto nested_schema =
       SchemaBuilder()
@@ -1301,11 +1291,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
@@ -1373,11 +1363,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   set_schema_result = icing.SetSchema(no_nested_schema);
@@ -1415,16 +1405,16 @@ TEST_F(IcingSearchEngineTest,
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SetSchemaResultProto set_schema_result =
@@ -1472,7 +1462,7 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -1507,16 +1497,16 @@ TEST_F(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SetSchemaResultProto set_schema_result =
@@ -1564,16 +1554,16 @@ TEST_F(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("to")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("to")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   set_schema_result = icing.SetSchema(
@@ -1608,25 +1598,26 @@ TEST_F(IcingSearchEngineTest, ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
                   .SetDataTypeDocument("Person",
                                        /*index_nested_properties=*/true)
                   .SetCardinality(CARDINALITY_OPTIONAL))
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("subject")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto nested_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Person")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("name")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("company")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("company")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_schema_type)
           .Build();
 
@@ -1681,7 +1672,7 @@ TEST_F(IcingSearchEngineTest, ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_schema_type)
           .Build();
@@ -6833,7 +6824,7 @@ TEST_F(IcingSearchEngineTest,
             .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
                 PropertyConfigBuilder()
                     .SetName("unindexedField")
-                    .SetDataTypeString(MATCH_NONE, TOKENIZER_NONE)
+                    .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
                     .SetCardinality(CARDINALITY_REQUIRED)))
             .Build();
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -7294,16 +7285,16 @@ TEST_F(IcingSearchEngineTest,
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("Message")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("body")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_REQUIRED))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("subject")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("body")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("subject")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     // Write the marker file
     std::string marker_filepath =
@@ -8148,7 +8139,7 @@ TEST_F(IcingSearchEngineTest, SnippetErrorTest) {
           .AddType(SchemaTypeConfigBuilder().SetType("Generic").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -8257,7 +8248,7 @@ TEST_F(IcingSearchEngineTest, CJKSnippetTest) {
   // Search and request snippet matching but no windowing.
   SearchSpecProto search_spec;
   search_spec.set_query("走");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
 
   ResultSpecProto result_spec;
   result_spec.mutable_snippet_spec()->set_num_to_snippet(
@@ -8328,7 +8319,7 @@ TEST_F(IcingSearchEngineTest, InvalidToEmptyQueryTest) {
   // Search and request snippet matching but no windowing.
   SearchSpecProto search_spec;
   search_spec.set_query("?");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
   ScoringSpecProto scoring_spec;
   ResultSpecProto result_spec;
 
@@ -8394,7 +8385,7 @@ TEST_F(IcingSearchEngineTest, EmojiSnippetTest) {
   // Search and request snippet matching but no windowing.
   SearchSpecProto search_spec;
   search_spec.set_query("🐟");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
 
   ResultSpecProto result_spec;
   result_spec.mutable_snippet_spec()->set_num_to_snippet(1);
@@ -8455,7 +8446,7 @@ TEST_F(IcingSearchEngineTest, PutDocumentIndexFailureDeletion) {
   // Make sure that the document isn't searchable.
   SearchSpecProto search_spec;
   search_spec.set_query("foo");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
 
   SearchResultProto search_results =
       icing.Search(search_spec, ScoringSpecProto::default_instance(),
@@ -9103,12 +9094,12 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
@@ -9118,11 +9109,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -9176,7 +9167,7 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_SchemaTypeNotFound) {
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -9312,12 +9303,12 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
@@ -9327,11 +9318,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -9391,12 +9382,12 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
@@ -9406,11 +9397,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -9447,7 +9438,7 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_OrderByTermFrequency) {
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -9697,49 +9688,49 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFor64Sections) {
           .AddType(SchemaTypeConfigBuilder()
                        // Person has 4 sections.
                        .SetType("Person")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("firstName")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("lastName")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("emailAddress")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("phoneNumber")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("phoneNumber")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        // Email has 16 sections.
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("date")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("time")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("date")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("time")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(
                            PropertyConfigBuilder()
                                .SetName("sender")

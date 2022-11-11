@@ -62,17 +62,6 @@ using ::testing::SizeIs;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
 
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-
 class QueryProcessorTest
     : public ::testing::TestWithParam<SearchSpecProto::SearchType::Code> {
  protected:
@@ -2417,7 +2406,7 @@ TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   // First and only indexed property, so it gets a section_id of 0
@@ -2486,20 +2475,20 @@ TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
                        // Section "a" would get sectionId 0
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("a")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("foo")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -2583,12 +2572,12 @@ TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   int email_foo_section_id = 0;
@@ -2691,11 +2680,11 @@ TEST_P(QueryProcessorTest, NestedPropertyFilter) {
                        .SetType("Bar")
                        // Add an unindexed property so we generate section
                        // metadata on it
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("baz")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("baz")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2764,12 +2753,12 @@ TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("bar")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   int email_foo_section_id = 0;
@@ -2983,12 +2972,12 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   int email_foo_section_id = 0;

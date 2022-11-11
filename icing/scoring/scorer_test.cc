@@ -41,12 +41,6 @@ namespace lib {
 namespace {
 using ::testing::Eq;
 
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
-    PropertyConfigProto::Cardinality::REQUIRED;
-
 class ScorerTest : public testing::Test {
  protected:
   ScorerTest()

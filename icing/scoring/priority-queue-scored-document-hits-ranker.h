@@ -51,7 +51,14 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
 
     bool operator()(const ScoredDocumentHit& lhs,
                     const ScoredDocumentHit& rhs) const {
-      return is_ascending_ == !(lhs < rhs);
+      // STL comparator requirement: equal MUST return false.
+      // If writing `return is_ascending_ == !(lhs < rhs)`:
+      // - When lhs == rhs, !(lhs < rhs) is true
+      // - If is_ascending_ is true, then we return true for equal case!
+      if (is_ascending_) {
+        return rhs < lhs;
+      }
+      return lhs < rhs;
     }
 
    private:

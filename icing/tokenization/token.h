@@ -47,7 +47,7 @@ struct Token {
     QUERY_RIGHT_PARENTHESES,  // Right parentheses
 
     // Types used in URL tokenization
-    URL_SCHEME,  // "http", "https"
+    URL_SCHEME,  // "http", "https", "ftp", "content"
     URL_USERNAME,
     URL_PASSWORD,
     URL_HOST_COMMON_PART,  // Hosts are split into two types, common and
