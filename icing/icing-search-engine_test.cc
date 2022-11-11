@@ -31,14 +31,21 @@
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
+#include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -8525,6 +8532,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Query all suggestions, and they will be ranked.
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -8579,6 +8588,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8629,12 +8640,49 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
               UnorderedElementsAre(EqualsProto(suggestionFoo),
                                    EqualsProto(suggestionFool)));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NamespaceNotFound) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fo")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace2", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // Search for non-exist namespace3
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.add_namespace_filters("namespace3");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  EXPECT_THAT(response.status().code(), Eq(StatusProto::OK));
 }
 
 TEST_F(IcingSearchEngineTest,
@@ -8690,6 +8738,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8729,6 +8779,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DeletionTest) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8760,6 +8812,678 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DeletionTest) {
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
               UnorderedElementsAre(EqualsProto(suggestionFool)));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ShouldReturnInOneDocument) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  SuggestionResponse::Suggestion suggestionFool;
+  suggestionFool.set_query("fool");
+  SuggestionResponse::Suggestion suggestionFoo;
+  suggestionFoo.set_query("foo");
+
+  // Only search in namespace1,uri1
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  NamespaceDocumentUriGroup* namespace1_uri1 =
+      suggestion_spec.add_document_uri_filters();
+  namespace1_uri1->set_namespace_("namespace1");
+  namespace1_uri1->add_document_uris("uri1");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFool)));
+
+  // Only search in namespace1,uri2
+  suggestion_spec.clear_document_uri_filters();
+  NamespaceDocumentUriGroup* namespace1_uri2 =
+      suggestion_spec.add_document_uri_filters();
+  namespace1_uri2->set_namespace_("namespace1");
+  namespace1_uri2->add_document_uris("uri2");
+
+  response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFoo)));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_ShouldReturnInMultipleDocument) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace1", "uri3")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  SuggestionResponse::Suggestion suggestionFool;
+  suggestionFool.set_query("fool");
+  SuggestionResponse::Suggestion suggestionFoo;
+  suggestionFoo.set_query("foo");
+
+  // Only search document in namespace1,uri1 and namespace2,uri2
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  NamespaceDocumentUriGroup* namespace1_uri1_uri2 =
+      suggestion_spec.add_document_uri_filters();
+  namespace1_uri1_uri2->set_namespace_("namespace1");
+  namespace1_uri1_uri2->add_document_uris("uri1");
+  namespace1_uri1_uri2->add_document_uris("uri2");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFool),
+                                   EqualsProto(suggestionFoo)));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_ShouldReturnInDesiredDocumentAndNamespace) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace2", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace3", "uri3")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  SuggestionResponse::Suggestion suggestionFool;
+  suggestionFool.set_query("fool");
+  SuggestionResponse::Suggestion suggestionFoo;
+  suggestionFoo.set_query("foo");
+
+  // Only search document in namespace1,uri1 and all documents under namespace2
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  suggestion_spec.add_namespace_filters("namespace1");
+  suggestion_spec.add_namespace_filters("namespace2");
+  NamespaceDocumentUriGroup* namespace1_uri1 =
+      suggestion_spec.add_document_uri_filters();
+  namespace1_uri1->set_namespace_("namespace1");
+  namespace1_uri1->add_document_uris("uri1");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFool),
+                                   EqualsProto(suggestionFoo)));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DocumentIdDoesntExist) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace2", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // Search for a non-exist document id : namespace3,uri3
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  suggestion_spec.add_namespace_filters("namespace3");
+  NamespaceDocumentUriGroup* namespace3_uri3 =
+      suggestion_spec.add_document_uri_filters();
+  namespace3_uri3->set_namespace_("namespace3");
+  namespace3_uri3->add_document_uris("uri3");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_DocumentIdFilterDoesntMatchNamespaceFilter) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace2", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "foo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // Search for the document namespace1,uri1 with namespace filter in
+  // namespace2.
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  NamespaceDocumentUriGroup* namespace1_uri1 =
+      suggestion_spec.add_document_uri_filters();
+  namespace1_uri1->set_namespace_("namespace1");
+  namespace1_uri1->add_document_uris("uri1");
+  suggestion_spec.add_namespace_filters("namespace2");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  EXPECT_THAT(response.status().code(), Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_EmptyDocumentIdInNamespace) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Give empty document uris in namespace 1
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  NamespaceDocumentUriGroup* namespace1_uri1 =
+      suggestion_spec.add_document_uri_filters();
+  namespace1_uri1->set_namespace_("namespace1");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  EXPECT_THAT(response.status().code(), Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_ShouldReturnInDesiredSchemaType) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "fool")
+          .AddDocumentProperty("sender", DocumentBuilder()
+                                             .SetKey("namespace", "uri1-sender")
+                                             .SetSchema("Person")
+                                             .AddStringProperty("name", "foo")
+                                             .Build())
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  SuggestionResponse::Suggestion suggestionFool;
+  suggestionFool.set_query("fool");
+  SuggestionResponse::Suggestion suggestionFoo;
+  suggestionFoo.set_query("foo");
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  suggestion_spec.add_schema_type_filters("Email");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFoo),
+                                   EqualsProto(suggestionFool)));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_SchemaTypeNotFound) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  suggestion_spec.add_schema_type_filters("Email");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_ShouldReturnInDesiredProperty) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "fool")
+          .AddDocumentProperty("sender",
+                               DocumentBuilder()
+                                   .SetKey("namespace", "uri1-sender")
+                                   .SetSchema("Person")
+                                   .AddStringProperty("name", "foo")
+                                   .AddStringProperty("emailAddress", "fo")
+                                   .Build())
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  SuggestionResponse::Suggestion suggestionFool;
+  suggestionFool.set_query("fool");
+  SuggestionResponse::Suggestion suggestionFoo;
+  suggestionFoo.set_query("foo");
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+
+  // Only search in subject.
+  TypePropertyMask* mask = suggestion_spec.add_type_property_filters();
+  mask->set_schema_type("Email");
+  mask->add_paths("subject");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFool)));
+
+  // Search in subject and sender.name
+  suggestion_spec.clear_type_property_filters();
+  mask = suggestion_spec.add_type_property_filters();
+  mask->set_schema_type("Email");
+  mask->add_paths("subject");
+  mask->add_paths("sender.name");
+
+  response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFoo),
+                                   EqualsProto(suggestionFool)));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_NestedPropertyReturnNothing) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "fool")
+          .AddDocumentProperty("sender", DocumentBuilder()
+                                             .SetKey("namespace", "uri1-sender")
+                                             .SetSchema("Person")
+                                             .AddStringProperty("name", "foo")
+                                             .Build())
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+
+  // Only search in Person.name.
+  suggestion_spec.add_schema_type_filters("Person");
+  TypePropertyMask* mask = suggestion_spec.add_type_property_filters();
+  mask->set_schema_type("Person");
+  mask->add_paths("name");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_PropertyFilterAndSchemaFilter) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "fool")
+          .AddDocumentProperty("sender", DocumentBuilder()
+                                             .SetKey("namespace", "uri1-sender")
+                                             .SetSchema("Person")
+                                             .AddStringProperty("name", "foo")
+                                             .Build())
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  SuggestionResponse::Suggestion suggestionFoo;
+  suggestionFoo.set_query("foo");
+  SuggestionResponse::Suggestion suggestionFo;
+  suggestionFo.set_query("fo");
+
+  // Search in sender.name of Email and everything in Message.
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  suggestion_spec.add_schema_type_filters("Email");
+  suggestion_spec.add_schema_type_filters("Message");
+  TypePropertyMask* mask1 = suggestion_spec.add_type_property_filters();
+  mask1->set_schema_type("Email");
+  mask1->add_paths("sender.name");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              UnorderedElementsAre(EqualsProto(suggestionFoo),
+                                   EqualsProto(suggestionFo)));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchSuggestionsTest_PropertyFilterNotMatchSchemaFilter) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("Message")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Search in sender.name of Email but schema type is Message.
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+  suggestion_spec.add_schema_type_filters("Message");
+  TypePropertyMask* mask1 = suggestion_spec.add_type_property_filters();
+  mask1->set_schema_type("Email");
+  mask1->add_paths("sender.name");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  EXPECT_THAT(response.status().code(), Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_OrderByTermFrequency) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty(
+              "body", "termthree termthree termthree termtwo termtwo termone")
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Search in sender.name of Email but schema type is Message.
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("t");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::EXACT_ONLY);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::TERM_FREQUENCY);
+
+  SuggestionResponse::Suggestion suggestionTermOne;
+  suggestionTermOne.set_query("termone");
+  SuggestionResponse::Suggestion suggestionTermTwo;
+  suggestionTermTwo.set_query("termtwo");
+  SuggestionResponse::Suggestion suggestionTermThree;
+  suggestionTermThree.set_query("termthree");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              ElementsAre(EqualsProto(suggestionTermThree),
+                          EqualsProto(suggestionTermTwo),
+                          EqualsProto(suggestionTermOne)));
 }
 
 TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
@@ -8802,6 +9526,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
     suggestion_spec.set_num_to_return(10);
     suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
         TermMatchType::PREFIX);
+    suggestion_spec.mutable_scoring_spec()->set_rank_by(
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
     SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
     ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8835,6 +9561,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
     suggestion_spec.set_num_to_return(10);
     suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
         TermMatchType::PREFIX);
+    suggestion_spec.mutable_scoring_spec()->set_rank_by(
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
     // Now namespace1 will return empty
     suggestion_spec.clear_namespace_filters();
@@ -8864,6 +9592,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_emptyPrefix) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
@@ -8878,6 +9608,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NonPositiveNumToReturn) {
   suggestion_spec.set_num_to_return(0);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));

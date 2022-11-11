@@ -32,6 +32,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-processor.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -72,7 +73,8 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
 
 constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
 
-class QueryProcessorTest : public Test {
+class QueryProcessorTest
+    : public ::testing::TestWithParam<SearchSpecProto::SearchType::Code> {
  protected:
   QueryProcessorTest()
       : test_dir_(GetTestTempDir() + "/icing"),
@@ -146,7 +148,7 @@ class QueryProcessorTest : public Test {
   std::unique_ptr<DocumentStore> document_store_;
 };
 
-TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
+TEST_P(QueryProcessorTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
       QueryProcessor::Create(/*index=*/nullptr, language_segmenter_.get(),
                              normalizer_.get(), document_store_.get(),
@@ -172,7 +174,7 @@ TEST_F(QueryProcessorTest, CreationWithNullPointerShouldFail) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
+TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -212,9 +214,10 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
 
   SearchSpecProto search_spec;
   search_spec.set_query("()");
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
 
@@ -225,7 +228,7 @@ TEST_F(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   EXPECT_THAT(results.query_term_iterators, IsEmpty());
 }
 
-TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
+TEST_P(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -265,9 +268,10 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
 
   SearchSpecProto search_spec;
   search_spec.set_query("");
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
 
@@ -278,7 +282,7 @@ TEST_F(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
   EXPECT_THAT(results.query_term_iterators, IsEmpty());
 }
 
-TEST_F(QueryProcessorTest, QueryTermNormalized) {
+TEST_P(QueryProcessorTest, QueryTermNormalized) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -327,9 +331,10 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
   SearchSpecProto search_spec;
   search_spec.set_query("hElLo WORLD");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -355,7 +360,7 @@ TEST_F(QueryProcessorTest, QueryTermNormalized) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
+TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -401,9 +406,10 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("he");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -424,7 +430,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
+TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -471,9 +477,10 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   SearchSpecProto search_spec;
   search_spec.set_query("he");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -494,7 +501,7 @@ TEST_F(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, OneTermExactMatch) {
+TEST_P(QueryProcessorTest, OneTermExactMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -540,9 +547,10 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -563,7 +571,7 @@ TEST_F(QueryProcessorTest, OneTermExactMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
+TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -609,9 +617,10 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello hello");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -634,7 +643,7 @@ TEST_F(QueryProcessorTest, AndSameTermExactMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
+TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -683,9 +692,10 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello world");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -710,7 +720,7 @@ TEST_F(QueryProcessorTest, AndTwoTermExactMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
+TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -756,9 +766,10 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("he he");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -781,7 +792,7 @@ TEST_F(QueryProcessorTest, AndSameTermPrefixMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
+TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -830,9 +841,10 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("he wo");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -858,7 +870,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
+TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -907,9 +919,10 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello wo");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -935,7 +948,7 @@ TEST_F(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
+TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -989,9 +1002,10 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR world");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1025,7 +1039,7 @@ TEST_F(QueryProcessorTest, OrTwoTermExactMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
+TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1079,9 +1093,10 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("he OR wo");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1114,7 +1129,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
+TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1167,9 +1182,10 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR wo");
   search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1202,7 +1218,7 @@ TEST_F(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
+TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1272,9 +1288,10 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
     SearchSpecProto search_spec;
     search_spec.set_query("puppy OR kitten dog");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1308,9 +1325,10 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
     SearchSpecProto search_spec;
     search_spec.set_query("animal puppy OR kitten");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1363,9 +1381,10 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
     SearchSpecProto search_spec;
     search_spec.set_query("kitten foo OR bar OR cat");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1394,7 +1413,7 @@ TEST_F(QueryProcessorTest, CombinedAndOrTerms) {
   }
 }
 
-TEST_F(QueryProcessorTest, OneGroup) {
+TEST_P(QueryProcessorTest, OneGroup) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1455,9 +1474,10 @@ TEST_F(QueryProcessorTest, OneGroup) {
   SearchSpecProto search_spec;
   search_spec.set_query("puppy OR (kitten foo)");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1472,7 +1492,7 @@ TEST_F(QueryProcessorTest, OneGroup) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 }
 
-TEST_F(QueryProcessorTest, TwoGroups) {
+TEST_P(QueryProcessorTest, TwoGroups) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1533,9 +1553,10 @@ TEST_F(QueryProcessorTest, TwoGroups) {
   SearchSpecProto search_spec;
   search_spec.set_query("(puppy dog) OR (kitten cat)");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1552,7 +1573,7 @@ TEST_F(QueryProcessorTest, TwoGroups) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(4));
 }
 
-TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
+TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1613,9 +1634,10 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   SearchSpecProto search_spec;
   search_spec.set_query("puppy OR ((((kitten foo))))");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1630,7 +1652,7 @@ TEST_F(QueryProcessorTest, ManyLevelNestedGrouping) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 }
 
-TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
+TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1688,11 +1710,13 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
 
   // Document 1 will match puppy and Document 2 matches (kitten AND (cat))
   SearchSpecProto search_spec;
-  search_spec.set_query("puppy OR (kitten(cat))");
+  // TODO(b/208654892) decide how we want to handle queries of the form foo(...)
+  search_spec.set_query("puppy OR (kitten (cat))");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1709,7 +1733,7 @@ TEST_F(QueryProcessorTest, OneLevelNestedGrouping) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 }
 
-TEST_F(QueryProcessorTest, ExcludeTerm) {
+TEST_P(QueryProcessorTest, ExcludeTerm) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1761,9 +1785,10 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
   SearchSpecProto search_spec;
   search_spec.set_query("-hello");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
 
@@ -1776,7 +1801,7 @@ TEST_F(QueryProcessorTest, ExcludeTerm) {
   EXPECT_THAT(results.query_term_iterators, IsEmpty());
 }
 
-TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
+TEST_P(QueryProcessorTest, ExcludeNonexistentTerm) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1827,9 +1852,10 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
   SearchSpecProto search_spec;
   search_spec.set_query("-foo");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
 
@@ -1841,7 +1867,7 @@ TEST_F(QueryProcessorTest, ExcludeNonexistentTerm) {
   EXPECT_THAT(results.query_term_iterators, IsEmpty());
 }
 
-TEST_F(QueryProcessorTest, ExcludeAnd) {
+TEST_P(QueryProcessorTest, ExcludeAnd) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1901,9 +1927,10 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
     SearchSpecProto search_spec;
     search_spec.set_query("-dog -cat");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1919,9 +1946,10 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
     SearchSpecProto search_spec;
     search_spec.set_query("-animal cat");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -1935,7 +1963,7 @@ TEST_F(QueryProcessorTest, ExcludeAnd) {
   }
 }
 
-TEST_F(QueryProcessorTest, ExcludeOr) {
+TEST_P(QueryProcessorTest, ExcludeOr) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -1995,9 +2023,10 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
     SearchSpecProto search_spec;
     search_spec.set_query("-animal OR -cat");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2014,9 +2043,10 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
     SearchSpecProto search_spec;
     search_spec.set_query("animal OR -cat");
     search_spec.set_term_match_type(term_match_type);
+    search_spec.set_search_type(GetParam());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        QueryProcessor::QueryResults results,
+        QueryResults results,
         query_processor->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2032,7 +2062,7 @@ TEST_F(QueryProcessorTest, ExcludeOr) {
   }
 }
 
-TEST_F(QueryProcessorTest, WithoutTermFrequency) {
+TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2102,9 +2132,10 @@ TEST_F(QueryProcessorTest, WithoutTermFrequency) {
   SearchSpecProto search_spec;
   search_spec.set_query("animal puppy OR kitten");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
   // Since need_hit_term_frequency is false, the expected term frequencies
@@ -2150,7 +2181,7 @@ TEST_F(QueryProcessorTest, WithoutTermFrequency) {
   EXPECT_THAT(results.query_term_iterators, IsEmpty());
 }
 
-TEST_F(QueryProcessorTest, DeletedFilter) {
+TEST_P(QueryProcessorTest, DeletedFilter) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2210,9 +2241,10 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2226,7 +2258,7 @@ TEST_F(QueryProcessorTest, DeletedFilter) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, NamespaceFilter) {
+TEST_P(QueryProcessorTest, NamespaceFilter) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2286,9 +2318,10 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
   search_spec.add_namespace_filters("namespace1");
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2302,7 +2335,7 @@ TEST_F(QueryProcessorTest, NamespaceFilter) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, SchemaTypeFilter) {
+TEST_P(QueryProcessorTest, SchemaTypeFilter) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
@@ -2360,9 +2393,10 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
   search_spec.add_schema_type_filters("email");
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2376,7 +2410,7 @@ TEST_F(QueryProcessorTest, SchemaTypeFilter) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
+TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
@@ -2428,9 +2462,10 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("subject:animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2444,7 +2479,7 @@ TEST_F(QueryProcessorTest, SectionFilterForOneDocument) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
+TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
@@ -2522,9 +2557,10 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2541,7 +2577,7 @@ TEST_F(QueryProcessorTest, SectionFilterAcrossSchemaTypes) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
+TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
@@ -2609,9 +2645,10 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
   search_spec.set_query("foo:animal");
   search_spec.add_schema_type_filters("email");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2626,7 +2663,101 @@ TEST_F(QueryProcessorTest, SectionFilterWithinSchemaType) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
+TEST_P(QueryProcessorTest, NestedPropertyFilter) {
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  // Add an unindexed property so we generate section
+                  // metadata on it
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("foo")
+                                   .SetDataTypeDocument(
+                                       "Foo", /*index_nested_properties=*/true)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Foo")
+                  // Add an unindexed property so we generate section
+                  // metadata on it
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("bar")
+                                   .SetDataTypeDocument(
+                                       "Bar", /*index_nested_properties=*/true)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Bar")
+                       // Add an unindexed property so we generate section
+                       // metadata on it
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("baz")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      schema_store_,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  document_store_ = std::move(create_result.document_store);
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "1")
+                                                      .SetSchema("email")
+                                                      .Build()));
+
+  // Populate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email document has content "animal"
+  ASSERT_THAT(AddTokenToIndex(email_document_id, /*section_id=*/0,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Perform query
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QueryProcessor> query_processor,
+      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+                             normalizer_.get(), document_store_.get(),
+                             schema_store_.get()));
+
+  SearchSpecProto search_spec;
+  // Create a section filter '<section name>:<query term>', but only look
+  // within documents of email schema
+  search_spec.set_query("foo.bar.baz:animal");
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+
+  // Even though the section id is the same, we should be able to tell that it
+  // doesn't match to the name of the section filter
+  DocHitInfo expectedDocHitInfo1(email_document_id);
+  expectedDocHitInfo1.UpdateSection(/*section_id=*/0);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expectedDocHitInfo1));
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo.bar.baz"],
+              UnorderedElementsAre("animal"));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+}
+
+TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
@@ -2696,9 +2827,10 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
   // within documents of email schema
   search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2713,7 +2845,7 @@ TEST_F(QueryProcessorTest, SectionFilterRespectsDifferentSectionIds) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
+TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2759,9 +2891,10 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   // within documents of email schema
   search_spec.set_query("nonexistent:animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2774,7 +2907,7 @@ TEST_F(QueryProcessorTest, NonexistentSectionFilterReturnsEmptyResults) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
+TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
@@ -2828,9 +2961,10 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   // within documents of email schema
   search_spec.set_query("foo:animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2842,7 +2976,7 @@ TEST_F(QueryProcessorTest, UnindexedSectionFilterReturnsEmptyResults) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 }
 
-TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
+TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
   // Create the schema and document store
   SchemaProto schema =
       SchemaBuilder()
@@ -2911,9 +3045,10 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("cat OR foo:animal");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
@@ -2931,7 +3066,7 @@ TEST_F(QueryProcessorTest, SectionFilterTermAndUnrestrictedTerm) {
   EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 }
 
-TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
+TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -2980,9 +3115,10 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
 
@@ -2992,7 +3128,7 @@ TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
               ElementsAre(expectedDocHitInfo));
 }
 
-TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
+TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
@@ -3041,14 +3177,25 @@ TEST_F(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      QueryProcessor::QueryResults results,
+      QueryResults results,
       query_processor->ParseSearch(search_spec,
                                    ScoringSpecProto::RankingStrategy::NONE));
 
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    QueryProcessorTest, QueryProcessorTest,
+#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+    testing::Values(
+        SearchSpecProto::SearchType::ICING_RAW_QUERY,
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY));
+#else   // !ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+    testing::Values(SearchSpecProto::SearchType::ICING_RAW_QUERY));
+#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
 
 }  // namespace
 

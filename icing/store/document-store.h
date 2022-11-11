@@ -34,6 +34,7 @@
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -235,6 +236,20 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<NamespaceId> GetNamespaceId(
       std::string_view name_space) const;
+
+  // Helper method to find a DocumentId that is associated with the given
+  // namespace and uri.
+  //
+  // NOTE: The DocumentId may refer to a invalid document (deleted
+  // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
+  // refers to a valid Document.
+  //
+  // Returns:
+  //   A DocumentId on success
+  //   NOT_FOUND if the key doesn't exist
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
+      std::string_view name_space, std::string_view uri) const;
 
   // Returns the CorpusId associated with the given namespace and schema.
   //
@@ -599,20 +614,6 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int> BatchDelete(NamespaceId namespace_id,
                                                 SchemaTypeId schema_type_id);
-
-  // Helper method to find a DocumentId that is associated with the given
-  // namespace and uri.
-  //
-  // NOTE: The DocumentId may refer to a invalid document (deleted
-  // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
-  // refers to a valid Document.
-  //
-  // Returns:
-  //   A DocumentId on success
-  //   NOT_FOUND if the key doesn't exist
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
-      std::string_view name_space, std::string_view uri) const;
 
   // Returns the CorpusAssociatedScoreData of the corpus specified by the
   // corpus_id.

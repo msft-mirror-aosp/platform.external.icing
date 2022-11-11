@@ -14,6 +14,9 @@
 
 #include "icing/result/result-state.h"
 
+#include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/scoring/ranker.h"
 #include "icing/store/namespace-id.h"

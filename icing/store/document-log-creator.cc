@@ -26,6 +26,7 @@
 #include "icing/file/file-backed-proto-log.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"

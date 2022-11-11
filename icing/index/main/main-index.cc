@@ -26,6 +26,9 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/proto/debug.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -216,16 +219,18 @@ bool IsTermInNamespaces(
 }
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
-MainIndex::FindTermsByPrefix(const std::string& prefix,
-                             TermMatchType::Code term_match_type,
-                             const NamespaceChecker* namespace_checker) {
+MainIndex::FindTermsByPrefix(
+    const std::string& prefix, TermMatchType::Code scoring_match_type,
+    SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+    const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
 
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
-    int count = 0;
+    int score = 0;
     DocumentId last_document_id = kInvalidDocumentId;
+    bool is_last_document_in_desired = false;
 
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
     memcpy(&posting_list_id, term_iterator.GetValue(), sizeof(posting_list_id));
@@ -236,28 +241,54 @@ MainIndex::FindTermsByPrefix(const std::string& prefix,
                            pl_accessor.GetNextHitsBatch());
     while (!hits.empty()) {
       for (const Hit& hit : hits) {
+        // Check whether this Hit is desired.
         DocumentId document_id = hit.document_id();
-        if (document_id != last_document_id) {
+        bool is_new_document = document_id != last_document_id;
+        if (is_new_document) {
           last_document_id = document_id;
-          if (term_match_type == TermMatchType::EXACT_ONLY &&
-              hit.is_prefix_hit()) {
-            continue;
-          }
-          if (!namespace_checker->BelongsToTargetNamespaces(document_id)) {
-            // The document is removed or expired or not belongs to target
-            // namespaces.
-            continue;
-          }
-          // TODO(b/152934343) Add search type in SuggestionSpec to ask user to
-          // input search type, prefix or exact. And make different score
-          // strategy base on that.
-          ++count;
+          is_last_document_in_desired =
+              suggestion_result_checker->BelongsToTargetResults(
+                  document_id, hit.section_id());
         }
+        if (!is_last_document_in_desired) {
+          // The document is removed or expired or not belongs to target
+          // namespaces.
+          continue;
+        }
+        if (scoring_match_type == TermMatchType::EXACT_ONLY &&
+            hit.is_prefix_hit()) {
+          continue;
+        }
+
+        // Score the hit by the strategy
+        if (score_by ==
+            SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE) {
+          // Give 1 to all match terms and return them in arbitrary order
+          score = 1;
+          break;
+        } else if (score_by == SuggestionScoringSpecProto::
+                                   SuggestionRankingStrategy::DOCUMENT_COUNT &&
+                   is_new_document) {
+          ++score;
+        } else if (score_by == SuggestionScoringSpecProto::
+                                   SuggestionRankingStrategy::TERM_FREQUENCY) {
+          if (hit.has_term_frequency()) {
+            score += hit.term_frequency();
+          } else {
+            ++score;
+          }
+        }
+      }
+      if (score_by ==
+              SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE &&
+          score == 1) {
+        // The term is desired and no need to be scored.
+        break;
       }
       ICING_ASSIGN_OR_RETURN(hits, pl_accessor.GetNextHitsBatch());
     }
-    if (count > 0) {
-      term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), count));
+    if (score > 0) {
+      term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), score));
     }
 
     term_iterator.Advance();
