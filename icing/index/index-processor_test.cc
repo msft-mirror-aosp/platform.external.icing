@@ -94,6 +94,12 @@ constexpr std::string_view kNestedProperty = "nested";
 constexpr std::string_view kExactVerbatimProperty = "verbatimExact";
 constexpr std::string_view kPrefixedVerbatimProperty = "verbatimPrefixed";
 constexpr std::string_view kRfc822Property = "rfc822";
+// TODO (b/246964044): remove ifdef guard when url-tokenizer is ready for export
+// to Android.
+#ifdef ENABLE_URL_TOKENIZER
+constexpr std::string_view kExactUrlProperty = "urlExact";
+constexpr std::string_view kPrefixedUrlProperty = "urlPrefixed";
+#endif  // ENABLE_URL_TOKENIZER
 
 constexpr DocumentId kDocumentId0 = 0;
 constexpr DocumentId kDocumentId1 = 1;
@@ -103,8 +109,15 @@ constexpr SectionId kPrefixedSectionId = 1;
 constexpr SectionId kRepeatedSectionId = 2;
 constexpr SectionId kRfc822SectionId = 3;
 constexpr SectionId kNestedSectionId = 4;
+#ifdef ENABLE_URL_TOKENIZER
+constexpr SectionId kUrlExactSectionId = 5;
+constexpr SectionId kUrlPrefixedSectionId = 6;
+constexpr SectionId kExactVerbatimSectionId = 7;
+constexpr SectionId kPrefixedVerbatimSectionId = 8;
+#else  // !ENABLE_URL_TOKENIZER
 constexpr SectionId kExactVerbatimSectionId = 5;
 constexpr SectionId kPrefixedVerbatimSectionId = 6;
+#endif  // ENABLE_URL_TOKENIZER
 
 using Cardinality = PropertyConfigProto::Cardinality;
 using DataType = PropertyConfigProto::DataType;
@@ -113,25 +126,10 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Test;
 
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
-    PropertyConfigProto::DataType::BYTES;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
-    PropertyConfigProto::Cardinality::REPEATED;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
-    StringIndexingConfig::TokenizerType::VERBATIM;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
-    StringIndexingConfig::TokenizerType::RFC822;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
+#ifdef ENABLE_URL_TOKENIZER
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
+    StringIndexingConfig::TokenizerType::URL;
+#endif  // ENABLE_URL_TOKENIZER
 
 class IndexProcessorTest : public Test {
  protected:
@@ -169,16 +167,16 @@ class IndexProcessorTest : public Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kFakeType)
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName(kExactProperty)
-                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName(kPrefixedProperty)
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kExactProperty)
+                                     .SetDataTypeString(TERM_MATCH_EXACT,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPrefixedProperty)
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kUnindexedProperty1)
                                      .SetDataType(TYPE_STRING)
@@ -187,26 +185,38 @@ class IndexProcessorTest : public Test {
                                      .SetName(kUnindexedProperty2)
                                      .SetDataType(TYPE_BYTES)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kRepeatedProperty)
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kExactVerbatimProperty)
+                                     .SetDataTypeString(TERM_MATCH_EXACT,
+                                                        TOKENIZER_VERBATIM)
+                                     .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPrefixedVerbatimProperty)
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_VERBATIM)
+                                     .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kRfc822Property)
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_RFC822)
+                                     .SetCardinality(CARDINALITY_REPEATED))
+#ifdef ENABLE_URL_TOKENIZER
                     .AddProperty(
                         PropertyConfigBuilder()
-                            .SetName(kRepeatedProperty)
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetName(kExactUrlProperty)
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_URL)
                             .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(
                         PropertyConfigBuilder()
-                            .SetName(kExactVerbatimProperty)
-                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_VERBATIM)
+                            .SetName(kPrefixedUrlProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_URL)
                             .SetCardinality(CARDINALITY_REPEATED))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName(kPrefixedVerbatimProperty)
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_VERBATIM)
-                            .SetCardinality(CARDINALITY_REPEATED))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName(kRfc822Property)
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_RFC822)
-                            .SetCardinality(CARDINALITY_REPEATED))
+#endif  // ENABLE_URL_TOKENIZER
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName(kSubProperty)
@@ -216,11 +226,11 @@ class IndexProcessorTest : public Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kNestedType)
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName(kNestedProperty)
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kNestedProperty)
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
@@ -1074,6 +1084,191 @@ TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
 
   EXPECT_THAT(hits, IsEmpty());
 }
+
+#ifdef ENABLE_URL_TOKENIZER
+TEST_F(IndexProcessorTest, ExactUrlProperty) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kExactUrlProperty),
+                             "http://www.google.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 7);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("google", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kUrlExactSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("http", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  expected_map = {{kUrlExactSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("www.google.com", kSectionIdMaskAll,
+                               TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  expected_map = {{kUrlExactSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("http://www.google.com", kSectionIdMaskAll,
+                               TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  expected_map = {{kUrlExactSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+}
+
+TEST_F(IndexProcessorTest, ExactUrlPropertyDoesNotMatchPrefix) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kExactUrlProperty),
+                             "https://mail.google.com/calendar/render")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 8);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("co", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("mail.go", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("mail.google.com", kSectionIdMaskAll,
+                               TermMatchType::EXACT_ONLY));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+}
+
+TEST_F(IndexProcessorTest, PrefixUrlProperty) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPrefixedUrlProperty),
+                             "http://www.google.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 7);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // "goo" is a prefix of "google" and "google.com"
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("goo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kUrlPrefixedSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  // "http" is a prefix of "http" and "http://www.google.com"
+  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("http", kSectionIdMaskAll,
+                                                      TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  expected_map = {{kUrlPrefixedSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+
+  // "www.go" is a prefix of "www.google.com"
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("www.go", kSectionIdMaskAll, TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  expected_map = {{kUrlPrefixedSectionId, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        kDocumentId0, expected_map)));
+}
+
+TEST_F(IndexProcessorTest, PrefixUrlPropertyNoMatch) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPrefixedUrlProperty),
+                             "https://mail.google.com/calendar/render")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(tokenized_document.num_tokens(), 8);
+
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // no token starts with "gle", so we should have no hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("gle", kSectionIdMaskAll, TermMatchType::PREFIX));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("w.goo", kSectionIdMaskAll, TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+
+  // tokens have separators removed, so no hits here
+  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator(".com", kSectionIdMaskAll,
+                                                      TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr, index_->GetIterator("calendar/render", kSectionIdMaskAll,
+                               TermMatchType::PREFIX));
+  hits = GetHitsWithTermFrequency(std::move(itr));
+  EXPECT_THAT(hits, IsEmpty());
+}
+#endif  // ENABLE_URL_TOKENIZER
 
 }  // namespace
 

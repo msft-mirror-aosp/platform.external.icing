@@ -19,11 +19,12 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/index-block.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/flash-index-storage.h"
-#include "icing/index/main/index-block.h"
-#include "icing/index/main/posting-list-identifier.h"
-#include "icing/index/main/posting-list-used.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/hit-test-utils.h"
 #include "icing/testing/tmp-directory.h"
@@ -39,20 +40,45 @@ using ::testing::Eq;
 using ::testing::Lt;
 using ::testing::SizeIs;
 
-TEST(PostingListAccessorStorageTest, HitsAddAndRetrieveProperly) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
+class PostingListAccessorTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    test_dir_ = GetTestTempDir() + "/test_dir";
+    file_name_ = test_dir_ + "/test_file.idx.index";
 
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
+    ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
+    ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
+
+    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        FlashIndexStorage flash_index_storage,
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
+    flash_index_storage_ =
+        std::make_unique<FlashIndexStorage>(std::move(flash_index_storage));
+  }
+
+  void TearDown() override {
+    flash_index_storage_.reset();
+    serializer_.reset();
+    ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
+  }
+
+  Filesystem filesystem_;
+  std::string test_dir_;
+  std::string file_name_;
+  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
+  std::unique_ptr<FlashIndexStorage> flash_index_storage_;
+};
+
+TEST_F(PostingListAccessorTest, HitsAddAndRetrieveProperly) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   // Add some hits! Any hits!
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
   for (const Hit& hit : hits1) {
     ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
   }
@@ -64,23 +90,17 @@ TEST(PostingListAccessorStorageTest, HitsAddAndRetrieveProperly) {
 
   // Retrieve some hits.
   ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
-                             flash_index_storage.GetPostingList(result.id));
-  EXPECT_THAT(pl_holder.posting_list.GetHits(),
+                             flash_index_storage_->GetPostingList(result.id));
+  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
   EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
 }
 
-TEST(PostingListAccessorStorageTest, PreexistingPLKeepOnSameBlock) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, PreexistingPLKeepOnSameBlock) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   // Add a single hit. This will fit in a min-sized posting list.
   Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
@@ -95,8 +115,9 @@ TEST(PostingListAccessorStorageTest, PreexistingPLKeepOnSameBlock) {
   // at least two hits, so this should NOT cause the previous pl to be
   // reallocated.
   ICING_ASSERT_OK_AND_ASSIGN(
-      pl_accessor, PostingListAccessor::CreateFromExisting(&flash_index_storage,
-                                                           result1.id));
+      pl_accessor,
+      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
+                                              serializer_.get(), result1.id));
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/1);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit2));
   PostingListAccessor::FinalizeResult result2 =
@@ -108,22 +129,16 @@ TEST(PostingListAccessorStorageTest, PreexistingPLKeepOnSameBlock) {
   // The posting list at result2.id should hold all of the hits that have been
   // added.
   ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
-                             flash_index_storage.GetPostingList(result2.id));
-  EXPECT_THAT(pl_holder.posting_list.GetHits(),
+                             flash_index_storage_->GetPostingList(result2.id));
+  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
               IsOkAndHolds(ElementsAre(hit2, hit1)));
 }
 
-TEST(PostingListAccessorStorageTest, PreexistingPLReallocateToLargerPL) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, PreexistingPLReallocateToLargerPL) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   // The smallest posting list size is 15 bytes. The first four hits will be
   // compressed to one byte each and will be able to fit in the 5 byte padded
   // region. The last hit will fit in one of the special hits. The posting list
@@ -142,8 +157,9 @@ TEST(PostingListAccessorStorageTest, PreexistingPLReallocateToLargerPL) {
 
   // Now let's add some more hits!
   ICING_ASSERT_OK_AND_ASSIGN(
-      pl_accessor, PostingListAccessor::CreateFromExisting(&flash_index_storage,
-                                                           result1.id));
+      pl_accessor,
+      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
+                                              serializer_.get(), result1.id));
   // The current posting list can fit at most 2 more hits. Adding 12 more hits
   // should result in these hits being moved to a larger posting list.
   std::vector<Hit> hits2 = CreateHits(
@@ -167,22 +183,16 @@ TEST(PostingListAccessorStorageTest, PreexistingPLReallocateToLargerPL) {
     hits1.push_back(hit);
   }
   ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
-                             flash_index_storage.GetPostingList(result2.id));
-  EXPECT_THAT(pl_holder.posting_list.GetHits(),
+                             flash_index_storage_->GetPostingList(result2.id));
+  EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 }
 
-TEST(PostingListAccessorStorageTest, MultiBlockChainsBlocksProperly) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, MultiBlockChainsBlocksProperly) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   // Add some hits! Any hits!
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
@@ -202,11 +212,11 @@ TEST(PostingListAccessorStorageTest, MultiBlockChainsBlocksProperly) {
   // Now let's retrieve them!
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListHolder pl_holder,
-      flash_index_storage.GetPostingList(second_block_id));
+      flash_index_storage_->GetPostingList(second_block_id));
   // This pl_holder will only hold a posting list with the hits that didn't fit
   // on the first block.
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Hit> second_block_hits,
-                             pl_holder.posting_list.GetHits());
+                             serializer_->GetHits(&pl_holder.posting_list));
   ASSERT_THAT(second_block_hits, SizeIs(Lt(hits1.size())));
   auto first_block_hits_start = hits1.rbegin() + second_block_hits.size();
   EXPECT_THAT(second_block_hits,
@@ -219,24 +229,17 @@ TEST(PostingListAccessorStorageTest, MultiBlockChainsBlocksProperly) {
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
                               /*posting_list_index_bits=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(pl_holder,
-                             flash_index_storage.GetPostingList(pl_id));
+                             flash_index_storage_->GetPostingList(pl_id));
   EXPECT_THAT(
-      pl_holder.posting_list.GetHits(),
+      serializer_->GetHits(&pl_holder.posting_list),
       IsOkAndHolds(ElementsAreArray(first_block_hits_start, hits1.rend())));
 }
 
-TEST(PostingListAccessorStorageTest,
-     PreexistingMultiBlockReusesBlocksProperly) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   // Add some hits! Any hits!
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
@@ -254,8 +257,9 @@ TEST(PostingListAccessorStorageTest,
   // Now add a couple more hits. These should fit on the existing, not full
   // second block.
   ICING_ASSERT_OK_AND_ASSIGN(
-      pl_accessor, PostingListAccessor::CreateFromExisting(&flash_index_storage,
-                                                           first_add_id));
+      pl_accessor,
+      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
+                                              serializer_.get(), first_add_id));
   std::vector<Hit> hits2 = CreateHits(
       /*start_docid=*/hits1.back().document_id() + 1, /*num_hits=*/50,
       /*desired_byte_length=*/1);
@@ -273,12 +277,13 @@ TEST(PostingListAccessorStorageTest,
   for (const Hit& hit : hits2) {
     hits1.push_back(hit);
   }
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder pl_holder,
-                             flash_index_storage.GetPostingList(second_add_id));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListHolder pl_holder,
+      flash_index_storage_->GetPostingList(second_add_id));
   // This pl_holder will only hold a posting list with the hits that didn't fit
   // on the first block.
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<Hit> second_block_hits,
-                             pl_holder.posting_list.GetHits());
+                             serializer_->GetHits(&pl_holder.posting_list));
   ASSERT_THAT(second_block_hits, SizeIs(Lt(hits1.size())));
   auto first_block_hits_start = hits1.rbegin() + second_block_hits.size();
   EXPECT_THAT(second_block_hits,
@@ -291,39 +296,27 @@ TEST(PostingListAccessorStorageTest,
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
                               /*posting_list_index_bits=*/0);
   ICING_ASSERT_OK_AND_ASSIGN(pl_holder,
-                             flash_index_storage.GetPostingList(pl_id));
+                             flash_index_storage_->GetPostingList(pl_id));
   EXPECT_THAT(
-      pl_holder.posting_list.GetHits(),
+      serializer_->GetHits(&pl_holder.posting_list),
       IsOkAndHolds(ElementsAreArray(first_block_hits_start, hits1.rend())));
 }
 
-TEST(PostingListAccessorStorageTest, InvalidHitReturnsInvalidArgument) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, InvalidHitReturnsInvalidArgument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   Hit invalid_hit;
   EXPECT_THAT(pl_accessor.PrependHit(invalid_hit),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST(PostingListAccessorStorageTest, HitsNotDecreasingReturnsInvalidArgument) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, HitsNotDecreasingReturnsInvalidArgument) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
 
@@ -336,43 +329,32 @@ TEST(PostingListAccessorStorageTest, HitsNotDecreasingReturnsInvalidArgument) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST(PostingListAccessorStorageTest, NewPostingListNoHitsAdded) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, NewPostingListNoHitsAdded) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   PostingListAccessor::FinalizeResult result1 =
       PostingListAccessor::Finalize(std::move(pl_accessor));
   EXPECT_THAT(result1.status,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST(PostingListAccessorStorageTest, PreexistingPostingListNoHitsAdded) {
-  std::string test_dir = GetTestTempDir() + "/test_dir";
-  std::string file_name = test_dir + "/test_file.idx.index";
-  Filesystem filesystem;
-  ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(test_dir.c_str()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(FlashIndexStorage flash_index_storage,
-                             FlashIndexStorage::Create(file_name, &filesystem));
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor,
-                             PostingListAccessor::Create(&flash_index_storage));
+TEST_F(PostingListAccessorTest, PreexistingPostingListNoHitsAdded) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor,
+      PostingListAccessor::Create(flash_index_storage_.get(),
+                                  serializer_.get()));
   Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency);
   ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
       PostingListAccessor::Finalize(std::move(pl_accessor));
   ICING_ASSERT_OK(result1.status);
 
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListAccessor pl_accessor2,
-                             PostingListAccessor::CreateFromExisting(
-                                 &flash_index_storage, result1.id));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListAccessor pl_accessor2,
+      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
+                                              serializer_.get(), result1.id));
   PostingListAccessor::FinalizeResult result2 =
       PostingListAccessor::Finalize(std::move(pl_accessor2));
   ICING_ASSERT_OK(result2.status);

@@ -20,9 +20,10 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/main/flash-index-storage.h"
 #include "icing/index/main/posting-list-accessor.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
@@ -203,8 +204,9 @@ class MainIndex {
       const std::vector<DocumentId>& document_id_old_to_new);
 
  private:
-  MainIndex(const std::string& index_directory, const Filesystem* filesystem,
-            const IcingFilesystem* icing_filesystem);
+  explicit MainIndex(const std::string& index_directory,
+                     const Filesystem* filesystem,
+                     const IcingFilesystem* icing_filesystem);
 
   libtextclassifier3::Status Init();
 
@@ -323,6 +325,8 @@ class MainIndex {
   std::string base_dir_;
   const Filesystem* filesystem_;
   const IcingFilesystem* icing_filesystem_;
+  std::unique_ptr<PostingListUsedHitSerializer>
+      posting_list_used_hit_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
 };

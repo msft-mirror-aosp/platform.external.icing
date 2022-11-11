@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/file/posting_list/posting-list-utils.h"
 
 #include "icing/legacy/index/icing-bit-util.h"
 #include "icing/util/logging.h"
@@ -22,27 +22,28 @@ namespace lib {
 
 namespace posting_list_utils {
 
-bool IsValidPostingListSize(uint32_t size_in_bytes) {
-  // size must be sizeof(Hit) aligned. Otherwise, we can have serious
+bool IsValidPostingListSize(uint32_t size_in_bytes, uint32_t data_type_bytes,
+                            uint32_t min_posting_list_size) {
+  // size must be data_type_bytes aligned. Otherwise, we can have serious
   // wasted space in the worst case.
-  if (size_in_bytes % sizeof(Hit) != 0) {
-    ICING_LOG(ERROR) << "Size " << size_in_bytes << " hit " << sizeof(Hit);
+  if (size_in_bytes % data_type_bytes != 0) {
+    ICING_LOG(ERROR) << "Size " << size_in_bytes << " data " << data_type_bytes;
     return false;
   }
 
   // Must be able to store the min information.
-  if (size_in_bytes < min_posting_list_size()) {
+  if (size_in_bytes < min_posting_list_size) {
     ICING_LOG(ERROR) << "Size " << size_in_bytes << " is less than min size "
-                     << min_posting_list_size();
+                     << min_posting_list_size;
     return false;
   }
 
-  // We re-use the first two hits as pointers into the posting list
-  // so the posting list size must fit in sizeof(Hit).
-  if (BitsToStore(size_in_bytes) > sizeof(Hit::Value) * 8) {
+  // We re-use the first two data as pointers into the posting list
+  // so the posting list size must fit in data_type_bytes.
+  if (BitsToStore(size_in_bytes) > data_type_bytes * 8) {
     ICING_LOG(ERROR)
         << "Posting list size must be small enough to store the offset in "
-        << sizeof(Hit::Value) * 8 << " bytes.";
+        << data_type_bytes << " bytes.";
     return false;
   }
 
