@@ -15,10 +15,10 @@
 #ifndef ICING_INDEX_MAIN_INDEX_BLOCK_H_
 #define ICING_INDEX_MAIN_INDEX_BLOCK_H_
 
-#include <string.h>
 #include <sys/mman.h>
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <string>
@@ -174,7 +174,7 @@ class IndexBlock {
  private:
   // Assumes that mmapped_file already has established a valid mapping to the
   // requested block.
-  IndexBlock(MemoryMappedFile mmapped_block);
+  explicit IndexBlock(MemoryMappedFile&& mmapped_block);
 
   // Resets IndexBlock to hold posting lists of posting_list_bytes size and adds
   // all posting lists to the free list.

@@ -20,9 +20,11 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/schema-util.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -78,11 +80,11 @@ class SectionManagerTest : public ::testing::Test {
   }
 
   void SetUp() override {
-    // KeyMapper uses 3 internal arrays for bookkeeping. Give each one 128KiB so
-    // the total KeyMapper should get 384KiB
+    // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each
+    // one 128KiB so the total DynamicTrieKeyMapper should get 384KiB
     int key_mapper_size = 3 * 128 * 1024;
     ICING_ASSERT_OK_AND_ASSIGN(schema_type_mapper_,
-                               KeyMapper<SchemaTypeId>::Create(
+                               DynamicTrieKeyMapper<SchemaTypeId>::Create(
                                    filesystem_, test_dir_, key_mapper_size));
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeEmail, 0));
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeConversation, 1));
@@ -397,13 +399,14 @@ TEST_F(SectionManagerTest,
                           type_with_non_string_properties);
   type_config_map.emplace(empty_type.schema_type(), empty_type);
 
-  // KeyMapper uses 3 internal arrays for bookkeeping. Give each one 128KiB so
-  // the total KeyMapper should get 384KiB
+  // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
+  // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
   int key_mapper_size = 3 * 128 * 1024;
   std::string dir = GetTestTempDir() + "/non_string_fields";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper,
-      KeyMapper<SchemaTypeId>::Create(filesystem_, dir, key_mapper_size));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, dir,
+                                                 key_mapper_size));
   ICING_ASSERT_OK(schema_type_mapper->Put(
       type_with_non_string_properties.schema_type(), /*schema_type_id=*/0));
   ICING_ASSERT_OK(schema_type_mapper->Put(empty_type.schema_type(),
@@ -486,13 +489,14 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
   type_config_map.emplace(type.schema_type(), type);
   type_config_map.emplace(document_type.schema_type(), document_type);
 
-  // KeyMapper uses 3 internal arrays for bookkeeping. Give each one 128KiB so
-  // the total KeyMapper should get 384KiB
+  // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
+  // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
   int key_mapper_size = 3 * 128 * 1024;
   std::string dir = GetTestTempDir() + "/recurse_into_document";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper,
-      KeyMapper<SchemaTypeId>::Create(filesystem_, dir, key_mapper_size));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, dir,
+                                                 key_mapper_size));
   int type_schema_type_id = 0;
   int document_type_schema_type_id = 1;
   ICING_ASSERT_OK(
@@ -560,13 +564,14 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
   type_config_map.emplace(type.schema_type(), type);
   type_config_map.emplace(document_type.schema_type(), document_type);
 
-  // KeyMapper uses 3 internal arrays for bookkeeping. Give each one 128KiB so
-  // the total KeyMapper should get 384KiB
+  // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
+  // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
   int key_mapper_size = 3 * 128 * 1024;
   std::string dir = GetTestTempDir() + "/recurse_into_document";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper,
-      KeyMapper<SchemaTypeId>::Create(filesystem_, dir, key_mapper_size));
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, dir,
+                                                 key_mapper_size));
   int type_schema_type_id = 0;
   int document_type_schema_type_id = 1;
   ICING_ASSERT_OK(

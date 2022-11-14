@@ -22,6 +22,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/scoring/ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer.h"
@@ -39,19 +40,20 @@ constexpr double kDefaultScoreInAscendingOrder =
 
 libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
 ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
-                         const DocumentStore* document_store) {
+                         const DocumentStore* document_store,
+                         const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   bool is_descending_order =
       scoring_spec.order_by() == ScoringSpecProto::Order::DESC;
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(scoring_spec.rank_by(),
+      Scorer::Create(scoring_spec,
                      is_descending_order ? kDefaultScoreInDescendingOrder
                                          : kDefaultScoreInAscendingOrder,
-                     document_store));
-
+                     document_store, schema_store));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));
