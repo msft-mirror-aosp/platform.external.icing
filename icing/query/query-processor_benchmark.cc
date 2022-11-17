@@ -17,6 +17,8 @@
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
 #include "icing/index/index.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
 #include "icing/schema/schema-store.h"
@@ -154,8 +156,11 @@ void BM_QueryOneTerm(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -289,8 +294,11 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -409,8 +417,11 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -529,8 +540,11 @@ void BM_QueryHiragana(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryProcessor::QueryResults results =
-        query_processor->ParseSearch(search_spec).ValueOrDie();
+    QueryResults results =
+        query_processor
+            ->ParseSearch(search_spec,
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+            .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }

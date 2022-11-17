@@ -34,6 +34,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"

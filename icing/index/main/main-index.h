@@ -28,9 +28,11 @@
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
-#include "icing/store/namespace-checker.h"
+#include "icing/proto/term.pb.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -70,20 +72,20 @@ class MainIndex {
   libtextclassifier3::StatusOr<GetPrefixAccessorResult>
   GetAccessorForPrefixTerm(const std::string& prefix);
 
-  // Finds terms with the given prefix in the given namespaces. If
-  // 'namespace_ids' is empty, returns results from all the namespaces. The
+  // Finds terms with the given prefix in the given result checker. The
   // input prefix must be normalized, otherwise inaccurate results may be
-  // returned. If term_match_type is EXACT, only exact hit will be counted and
-  // it is PREFIX, both prefix and exact hits will be counted. Results are not
-  // sorted specifically and are in lexigraphical order. Number of results are
-  // no more than 'num_to_return'.
+  // returned. If scoring_match_type is EXACT, only exact hit will be counted
+  // and it is PREFIX, both prefix and exact hits will be counted. Results are
+  // not sorted specifically and are in lexigraphical order. Number of results
+  // are no more than 'num_to_return'.
   //
   // Returns:
   //   A list of TermMetadata on success
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
-      const std::string& prefix, TermMatchType::Code term_match_type,
-      const NamespaceChecker* namespace_checker);
+      const std::string& prefix, TermMatchType::Code scoring_match_type,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
+      const SuggestionResultChecker* suggestion_result_checker);
 
   struct LexiconMergeOutputs {
     // Maps from main_lexicon tvi for new branching point to the main_lexicon

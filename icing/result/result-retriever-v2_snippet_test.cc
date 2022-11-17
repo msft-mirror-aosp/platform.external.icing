@@ -188,7 +188,7 @@ DocumentProto CreateDocument(int id) {
 SectionIdMask CreateSectionIdMask(const std::vector<SectionId>& section_ids) {
   SectionIdMask mask = 0;
   for (SectionId section_id : section_ids) {
-    mask |= (1u << section_id);
+    mask |= (UINT64_C(1) << section_id);
   }
   return mask;
 }

@@ -236,12 +236,23 @@ Java_com_google_android_icing_IcingSearchEngine_nativeGetAllNamespaces(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeGetNextPage(
-    JNIEnv* env, jclass clazz, jobject object, jlong next_page_token) {
+    JNIEnv* env, jclass clazz, jobject object, jlong next_page_token,
+    jlong java_to_native_start_timestamp_ms) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
+  const std::unique_ptr<const icing::lib::Clock> clock =
+      std::make_unique<icing::lib::Clock>();
+  int32_t java_to_native_jni_latency_ms =
+      clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
+
   icing::lib::SearchResultProto next_page_result_proto =
       icing->GetNextPage(next_page_token);
+
+  icing::lib::QueryStatsProto* query_stats =
+      next_page_result_proto.mutable_query_stats();
+  query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
+  query_stats->set_native_to_java_start_timestamp_ms(clock->GetSystemTimeMilliseconds());
 
   return SerializeProtoToJniByteArray(env, next_page_result_proto);
 }
@@ -260,7 +271,8 @@ Java_com_google_android_icing_IcingSearchEngine_nativeInvalidateNextPageToken(
 JNIEXPORT jbyteArray JNICALL
 Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
     JNIEnv* env, jclass clazz, jobject object, jbyteArray search_spec_bytes,
-    jbyteArray scoring_spec_bytes, jbyteArray result_spec_bytes) {
+    jbyteArray scoring_spec_bytes, jbyteArray result_spec_bytes,
+    jlong java_to_native_start_timestamp_ms) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
 
@@ -283,8 +295,18 @@ Java_com_google_android_icing_IcingSearchEngine_nativeSearch(
     return nullptr;
   }
 
+  const std::unique_ptr<const icing::lib::Clock> clock =
+      std::make_unique<icing::lib::Clock>();
+  int32_t java_to_native_jni_latency_ms =
+      clock->GetSystemTimeMilliseconds() - java_to_native_start_timestamp_ms;
+
   icing::lib::SearchResultProto search_result_proto =
       icing->Search(search_spec_proto, scoring_spec_proto, result_spec_proto);
+
+  icing::lib::QueryStatsProto* query_stats =
+      search_result_proto.mutable_query_stats();
+  query_stats->set_java_to_native_jni_latency_ms(java_to_native_jni_latency_ms);
+  query_stats->set_native_to_java_start_timestamp_ms(clock->GetSystemTimeMilliseconds());
 
   return SerializeProtoToJniByteArray(env, search_result_proto);
 }

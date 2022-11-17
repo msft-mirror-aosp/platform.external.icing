@@ -27,6 +27,7 @@
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/result/page-result.h"
@@ -196,7 +197,7 @@ DocumentProto CreateDocument(int id) {
 SectionIdMask CreateSectionIdMask(const std::vector<SectionId>& section_ids) {
   SectionIdMask mask = 0;
   for (SectionId section_id : section_ids) {
-    mask |= (1u << section_id);
+    mask |= (UINT64_C(1) << section_id);
   }
   return mask;
 }
