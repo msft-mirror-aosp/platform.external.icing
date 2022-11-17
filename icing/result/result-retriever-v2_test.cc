@@ -64,15 +64,6 @@ using ::testing::Return;
 using ::testing::SizeIs;
 using NamespaceIdMap = std::unordered_map<NamespaceId, int>;
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-
 // Mock the behavior of GroupResultLimiter::ShouldBeRemoved.
 class MockGroupResultLimiter : public GroupResultLimiterV2 {
  public:
@@ -116,12 +107,12 @@ class ResultRetrieverV2Test : public ::testing::Test {
                          .SetType("Email")
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("name")
-                                          .SetDataTypeString(MATCH_PREFIX,
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("body")
-                                          .SetDataTypeString(MATCH_EXACT,
+                                          .SetDataTypeString(TERM_MATCH_EXACT,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(
@@ -133,16 +124,16 @@ class ResultRetrieverV2Test : public ::testing::Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("Person")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("name")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("emailAddress")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("name")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("emailAddress")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 

@@ -77,7 +77,7 @@ class MonkeyDocumentGenerator {
         num_namespaces_(num_namespaces),
         num_uris_(num_uris) {}
 
-  SchemaTypeConfigProto GetType() const {
+  const SchemaTypeConfigProto& GetType() const {
     std::uniform_int_distribution<> dist(0, schema_->types_size() - 1);
     return schema_->types(dist(*random_));
   }

@@ -48,14 +48,6 @@ using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-
 class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
  protected:
   DocHitInfoIteratorSectionRestrictTest()
@@ -74,7 +66,7 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
                                .AddProperty(
                                    PropertyConfigBuilder()
                                        .SetName(indexed_property_)
-                                       .SetDataTypeString(MATCH_EXACT,
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
                                                           TOKENIZER_PLAIN)
                                        .SetCardinality(CARDINALITY_OPTIONAL)))
                   .Build();

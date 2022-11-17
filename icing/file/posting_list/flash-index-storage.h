@@ -12,22 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_FLASH_INDEX_STORAGE_H_
-#define ICING_INDEX_FLASH_INDEX_STORAGE_H_
+#ifndef ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
+#define ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/filesystem.h"
-#include "icing/index/main/flash-index-storage-header.h"
-#include "icing/index/main/index-block.h"
-#include "icing/index/main/posting-list-free.h"
-#include "icing/index/main/posting-list-identifier.h"
-#include "icing/index/main/posting-list-used.h"
+#include "icing/file/posting_list/flash-index-storage-header.h"
+#include "icing/file/posting_list/index-block.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-used.h"
 #include "icing/legacy/core/icing-packed-pod.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -84,7 +85,7 @@ class FlashIndexStorage {
   //     one from disk.
   static libtextclassifier3::StatusOr<FlashIndexStorage> Create(
       const std::string& index_filename, const Filesystem* filesystem,
-      bool in_memory = true);
+      PostingListUsedSerializer* serializer, bool in_memory = true);
 
   // Retrieve the PostingList referred to by PostingListIdentifier. This posting
   // list must have been previously allocated by a prior call to
@@ -136,7 +137,7 @@ class FlashIndexStorage {
     return filesystem_->GetDiskUsage(block_fd_.get());
   }
 
-  // Returns the size of the index file used to contains hits.
+  // Returns the size of the index file used to contains data.
   uint64_t GetElementsSize() const {
     // Element size is the same as disk size excluding the header block.
     return GetDiskUsage() - block_size();
@@ -157,14 +158,19 @@ class FlashIndexStorage {
     return 1.0 - static_cast<double>(num_blocks_) / kMaxBlockIndex;
   }
 
+  const PostingListUsedSerializer* serializer() const { return serializer_; }
+  PostingListUsedSerializer* serializer() { return serializer_; }
+
   libtextclassifier3::Status Reset();
 
   // TODO(b/222349894) Convert the string output to a protocol buffer instead.
   void GetDebugInfo(DebugInfoVerbosity::Code verbosity, std::string* out) const;
 
  private:
-  FlashIndexStorage(const std::string& index_filename,
-                    const Filesystem* filesystem, bool has_in_memory_freelists);
+  explicit FlashIndexStorage(const std::string& index_filename,
+                             const Filesystem* filesystem,
+                             PostingListUsedSerializer* serializer,
+                             bool has_in_memory_freelists);
 
   // Init the index from persistence. Create if file does not exist. We do not
   // erase corrupt files.
@@ -281,10 +287,12 @@ class FlashIndexStorage {
 
   const Filesystem* filesystem_;  // not owned; can't be null
 
+  PostingListUsedSerializer* serializer_;  // not owned; can't be null
+
   bool has_in_memory_freelists_;
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_FLASH_INDEX_STORAGE_H_
+#endif  // ICING_FILE_POSTING_LIST_FLASH_INDEX_STORAGE_H_

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/flash-index-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 
 #include <unistd.h>
 
@@ -27,6 +27,7 @@
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -49,9 +50,13 @@ class FlashIndexStorageTest : public testing::Test {
     test_dir_ = GetTestTempDir() + "/test_dir";
     file_name_ = test_dir_ + "/test_file.idx.index";
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
+
+    // TODO(b/249829533): test different serializers
+    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
   }
 
   void TearDown() override {
+    serializer_.reset();
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
   }
 
@@ -59,6 +64,7 @@ class FlashIndexStorageTest : public testing::Test {
   std::string test_dir_;
   std::string file_name_;
   Filesystem filesystem_;
+  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
 };
 
 TEST_F(FlashIndexStorageTest, CorruptHeader) {
@@ -66,13 +72,13 @@ TEST_F(FlashIndexStorageTest, CorruptHeader) {
     // Create the header file
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
   }
   {
     // Read the valid header - should pass
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
   }
   {
     // Corrupt the header file by changing pl_bytes
@@ -84,8 +90,9 @@ TEST_F(FlashIndexStorageTest, CorruptHeader) {
   {
     // Read the header file - should fail because pl_bytes is not divisible
     // by sizeof(Hit), which is 5 as of writing
-    ASSERT_THAT(FlashIndexStorage::Create(file_name_, &filesystem_),
-                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+    ASSERT_THAT(
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()),
+        StatusIs(libtextclassifier3::StatusCode::INTERNAL));
   }
   {
     // Correct the pl_bytes header alignment
@@ -98,7 +105,7 @@ TEST_F(FlashIndexStorageTest, CorruptHeader) {
     // Read the valid header - should pass
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
   }
 
   // Delete the file
@@ -110,7 +117,7 @@ TEST_F(FlashIndexStorageTest, EmptyStorage) {
     // Create the header file
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
     // An 'empty' FlashIndexStorage should have:
     //   1. One block allocated for the header
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(1));
@@ -126,7 +133,7 @@ TEST_F(FlashIndexStorageTest, EmptyStorage) {
     // Read the valid header. All functions should return the same values.
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(1));
     EXPECT_THAT(flash_index_storage.empty(), IsTrue());
     EXPECT_THAT(flash_index_storage.get_last_indexed_docid(),
@@ -140,7 +147,7 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
   // Create the header file
   ICING_ASSERT_OK_AND_ASSIGN(
       FlashIndexStorage flash_index_storage,
-      FlashIndexStorage::Create(file_name_, &filesystem_));
+      FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
   {
     // 1. Request a PL that is 1/2 block size. Remember that block size also
     // includes the BlockHeader. The BlockHeader isn't publicly visible, so we
@@ -165,9 +172,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
         Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
         Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
     for (const Hit& hit : hits1) {
-      ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder1.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 
     // 2. Get another PL. This should be on the same flash block. There should
@@ -188,9 +196,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
         Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
         Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
     for (const Hit& hit : hits2) {
-      ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder2.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Now, free the first posting list. This should add it to the free list
@@ -214,7 +223,7 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     EXPECT_THAT(posting_list_holder3.id.block_index(), Eq(id1.block_index()));
     // Make sure this pl is empty. The hits that used to be there should be
     // gone.
-    EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                 IsOkAndHolds(IsEmpty()));
     std::vector<Hit> hits3 = {
         Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
@@ -222,9 +231,10 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
         Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
         Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
     for (const Hit& hit : hits3) {
-      ICING_ASSERT_OK(posting_list_holder3.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder3.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits3.rbegin(), hits3.rend())));
   }
   EXPECT_THAT(flash_index_storage.GetDiskUsage(),
@@ -235,7 +245,8 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
   // Create the header file
   ICING_ASSERT_OK_AND_ASSIGN(
       FlashIndexStorage flash_index_storage,
-      FlashIndexStorage::Create(file_name_, &filesystem_, /*in_memory=*/false));
+      FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get(),
+                                /*in_memory=*/false));
 
   {
     // 1. Request a PL that is 1/2 block size. Remember that block size also
@@ -261,9 +272,10 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
         Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
         Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
     for (const Hit& hit : hits1) {
-      ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder1.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 
     // 2. Get another PL. This should be on the same flash block. There should
@@ -284,9 +296,10 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
         Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
         Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
     for (const Hit& hit : hits2) {
-      ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder2.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Now, free the first posting list. This should add it to the free list
@@ -310,7 +323,7 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     EXPECT_THAT(posting_list_holder3.id.block_index(), Eq(id1.block_index()));
     // Make sure this pl is empty. The hits that used to be there should be
     // gone.
-    EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                 IsOkAndHolds(IsEmpty()));
     std::vector<Hit> hits3 = {
         Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
@@ -318,9 +331,10 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
         Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
         Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
     for (const Hit& hit : hits3) {
-      ICING_ASSERT_OK(posting_list_holder3.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder3.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits3.rbegin(), hits3.rend())));
   }
   EXPECT_THAT(flash_index_storage.GetDiskUsage(),
@@ -334,17 +348,18 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
     // Create the header file
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
 
     {
       // 1. Request a PL that is 1/2 block size. Remember that block size also
       // includes the BlockHeader. The BlockHeader isn't publicly visible, so we
       // subtract 100 bytes to be sure. AllocatePostingList will round up from
       // kHalfBlockPostingListSize to whatever the correct size is.
-      half_block_posting_list_size = (flash_index_storage.block_size() - 100) / 2;
-      ICING_ASSERT_OK_AND_ASSIGN(
-          PostingListHolder posting_list_holder1,
-          flash_index_storage.AllocatePostingList(half_block_posting_list_size));
+      half_block_posting_list_size =
+          (flash_index_storage.block_size() - 100) / 2;
+      ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder posting_list_holder1,
+                                 flash_index_storage.AllocatePostingList(
+                                     half_block_posting_list_size));
       // We expect:
       //   1. FlashIndexStorage will return a valid id.
       id1 = posting_list_holder1.id;
@@ -359,16 +374,17 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
           Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
           Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
       for (const Hit& hit : hits1) {
-        ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
+        ICING_ASSERT_OK(
+            serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
       }
-      EXPECT_THAT(posting_list_holder1.posting_list.GetHits(),
+      EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
                   IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 
       // 2. Get another PL. This should be on the same flash block. There should
       // be no allocation.
-      ICING_ASSERT_OK_AND_ASSIGN(
-          PostingListHolder posting_list_holder2,
-          flash_index_storage.AllocatePostingList(half_block_posting_list_size));
+      ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder posting_list_holder2,
+                                 flash_index_storage.AllocatePostingList(
+                                     half_block_posting_list_size));
       // We expect:
       //   1. FlashIndexStorage will return a valid id.
       EXPECT_THAT(posting_list_holder2.id.is_valid(), IsTrue());
@@ -382,17 +398,19 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
           Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
           Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
       for (const Hit& hit : hits2) {
-        ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
+        ICING_ASSERT_OK(
+            serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
       }
-      EXPECT_THAT(posting_list_holder2.posting_list.GetHits(),
+      EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
                   IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
-      // 3. Now, free the first posting list. This should add it to the free list
+      // 3. Now, free the first posting list. This should add it to the free
+      // list
       flash_index_storage.FreePostingList(std::move(posting_list_holder1));
     }
 
     EXPECT_THAT(flash_index_storage.GetDiskUsage(),
-            Eq(2 * flash_index_storage.block_size()));
+                Eq(2 * flash_index_storage.block_size()));
     // 4. The FlashIndexStorage should go out of scope and flush the in-memory
     // posting list to disk
   }
@@ -401,14 +419,14 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
     // Recreate the flash index.
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
-        FlashIndexStorage::Create(file_name_, &filesystem_));
+        FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
 
     {
       // 5. Request another posting list. This should NOT grow the index because
       // the first posting list is free.
-      ICING_ASSERT_OK_AND_ASSIGN(
-          PostingListHolder posting_list_holder3,
-          flash_index_storage.AllocatePostingList(half_block_posting_list_size));
+      ICING_ASSERT_OK_AND_ASSIGN(PostingListHolder posting_list_holder3,
+                                 flash_index_storage.AllocatePostingList(
+                                     half_block_posting_list_size));
       // We expect:
       //   1. FlashIndexStorage will return a valid id.
       EXPECT_THAT(posting_list_holder3.id.is_valid(), IsTrue());
@@ -422,7 +440,7 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       EXPECT_THAT(posting_list_holder3.id.block_index(), Eq(id1.block_index()));
       // Make sure this pl is empty. The hits that used to be there should be
       // gone.
-      EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
+      EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                   IsOkAndHolds(IsEmpty()));
       std::vector<Hit> hits3 = {
           Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
@@ -430,13 +448,14 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
           Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
           Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
       for (const Hit& hit : hits3) {
-        ICING_ASSERT_OK(posting_list_holder3.posting_list.PrependHit(hit));
+        ICING_ASSERT_OK(
+            serializer_->PrependHit(&posting_list_holder3.posting_list, hit));
       }
-      EXPECT_THAT(posting_list_holder3.posting_list.GetHits(),
+      EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                   IsOkAndHolds(ElementsAreArray(hits3.rbegin(), hits3.rend())));
     }
     EXPECT_THAT(flash_index_storage.GetDiskUsage(),
-        Eq(2 * flash_index_storage.block_size()));
+                Eq(2 * flash_index_storage.block_size()));
   }
 }
 
@@ -444,7 +463,7 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
   // Create the header file
   ICING_ASSERT_OK_AND_ASSIGN(
       FlashIndexStorage flash_index_storage,
-      FlashIndexStorage::Create(file_name_, &filesystem_));
+      FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
   {
     // 1. Request a PL that is 1/2 block size. Remember that block size also
     // includes the BlockHeader. The BlockHeader isn't publicly visible, so we
@@ -471,9 +490,10 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
         Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
         Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
     for (const Hit& hit : hits1) {
-      ICING_ASSERT_OK(posting_list_holder1.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder1.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 
     // 2. Get a PL that is 1/4 block size. Even though a 1/4 block PL could
@@ -497,9 +517,10 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
         Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
         Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
     for (const Hit& hit : hits2) {
-      ICING_ASSERT_OK(posting_list_holder2.posting_list.PrependHit(hit));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
     }
-    EXPECT_THAT(posting_list_holder2.posting_list.GetHits(),
+    EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Request another 1/4 block-size posting list. This should NOT grow the
@@ -526,7 +547,7 @@ TEST_F(FlashIndexStorageTest, AllocateTooLargePostingList) {
   // Create the header file
   ICING_ASSERT_OK_AND_ASSIGN(
       FlashIndexStorage flash_index_storage,
-      FlashIndexStorage::Create(file_name_, &filesystem_));
+      FlashIndexStorage::Create(file_name_, &filesystem_, serializer_.get()));
 
   // Request a PL that is 2x block size.
   const int kDoubleBlockSize = flash_index_storage.block_size() * 2;

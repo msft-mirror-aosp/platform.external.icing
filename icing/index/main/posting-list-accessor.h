@@ -15,14 +15,17 @@
 #ifndef ICING_INDEX_POSTING_LIST_ACCESSOR_H_
 #define ICING_INDEX_POSTING_LIST_ACCESSOR_H_
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/flash-index-storage.h"
-#include "icing/index/main/posting-list-identifier.h"
-#include "icing/index/main/posting-list-used.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 
 namespace icing {
 namespace lib {
@@ -48,7 +51,7 @@ class PostingListAccessor {
   //   - On success, a valid instance of PostingListAccessor
   //   - INVALID_ARGUMENT error if storage has an invalid block_size.
   static libtextclassifier3::StatusOr<PostingListAccessor> Create(
-      FlashIndexStorage* storage);
+      FlashIndexStorage* storage, PostingListUsedHitSerializer* serializer);
 
   // Create a PostingListAccessor with an existing posting list identified by
   // existing_posting_list_id.
@@ -61,7 +64,7 @@ class PostingListAccessor {
   //   - On success, a valid instance of PostingListAccessor
   //   - INVALID_ARGUMENT if storage has an invalid block_size.
   static libtextclassifier3::StatusOr<PostingListAccessor> CreateFromExisting(
-      FlashIndexStorage* storage,
+      FlashIndexStorage* storage, PostingListUsedHitSerializer* serializer,
       PostingListIdentifier existing_posting_list_id);
 
   // Retrieve the next batch of hits for the posting list chain
@@ -109,10 +112,11 @@ class PostingListAccessor {
 
  private:
   explicit PostingListAccessor(
-      FlashIndexStorage* storage,
+      FlashIndexStorage* storage, PostingListUsedHitSerializer* serializer,
       std::unique_ptr<uint8_t[]> posting_list_buffer_array,
       PostingListUsed posting_list_buffer)
       : storage_(storage),
+        serializer_(serializer),
         prev_block_identifier_(PostingListIdentifier::kInvalid),
         posting_list_buffer_array_(std::move(posting_list_buffer_array)),
         posting_list_buffer_(std::move(posting_list_buffer)),
@@ -136,6 +140,8 @@ class PostingListAccessor {
   libtextclassifier3::Status FreePostingListChain();
 
   FlashIndexStorage* storage_;  // Does not own.
+
+  PostingListUsedHitSerializer* serializer_;  // Does not own.
 
   // The PostingListIdentifier of the first max-sized posting list in the
   // posting list chain or PostingListIdentifier::kInvalid if there is no
