@@ -33,7 +33,7 @@ class HeaderBlock {
   // The class used to access the actual header.
   struct Header {
     // A magic used to mark the beginning of a valid header.
-    static constexpr int kMagic = 0x6dfba6ae;
+    static constexpr int kMagic = 0xb0780cf4;
     int magic;
     int block_size;
     int last_indexed_docid;

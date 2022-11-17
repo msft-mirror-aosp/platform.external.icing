@@ -43,6 +43,18 @@ class DynamicTrieKeyMapperTest : public testing::Test {
   Filesystem filesystem_;
 };
 
+std::unordered_map<std::string, DocumentId> GetAllKeyValuePairs(
+    const DynamicTrieKeyMapper<DocumentId>* key_mapper) {
+  std::unordered_map<std::string, DocumentId> ret;
+
+  std::unique_ptr<typename KeyMapper<DocumentId>::Iterator> itr =
+      key_mapper->GetIterator();
+  while (itr->Advance()) {
+    ret.emplace(itr->GetKey(), itr->GetValue());
+  }
+  return ret;
+}
+
 TEST_F(DynamicTrieKeyMapperTest, InvalidBaseDir) {
   ASSERT_THAT(DynamicTrieKeyMapper<DocumentId>::Create(
                   filesystem_, "/dev/null", kMaxDynamicTrieKeyMapperSize)
@@ -175,22 +187,22 @@ TEST_F(DynamicTrieKeyMapperTest, CanDeleteAndRestartKeyMapping) {
   EXPECT_THAT(key_mapper->num_keys(), 1);
 }
 
-TEST_F(DynamicTrieKeyMapperTest, GetValuesToKeys) {
+TEST_F(DynamicTrieKeyMapperTest, Iterator) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<DocumentId>> key_mapper,
       DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_,
                                                kMaxDynamicTrieKeyMapperSize));
-  EXPECT_THAT(key_mapper->GetValuesToKeys(), IsEmpty());
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()), IsEmpty());
 
   ICING_EXPECT_OK(key_mapper->Put("foo", /*value=*/1));
   ICING_EXPECT_OK(key_mapper->Put("bar", /*value=*/2));
-  EXPECT_THAT(key_mapper->GetValuesToKeys(),
-              UnorderedElementsAre(Pair(1, "foo"), Pair(2, "bar")));
+  EXPECT_THAT(GetAllKeyValuePairs(key_mapper.get()),
+              UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2)));
 
   ICING_EXPECT_OK(key_mapper->Put("baz", /*value=*/3));
   EXPECT_THAT(
-      key_mapper->GetValuesToKeys(),
-      UnorderedElementsAre(Pair(1, "foo"), Pair(2, "bar"), Pair(3, "baz")));
+      GetAllKeyValuePairs(key_mapper.get()),
+      UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
 }
 
 }  // namespace

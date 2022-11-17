@@ -1,4 +1,4 @@
-// Copyright (C) 2021 Google LLC
+// Copyright (C) 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_TESTING_ALWAYS_TRUE_NAMESPACE_CHECKER_IMPL_H_
-#define ICING_TESTING_ALWAYS_TRUE_NAMESPACE_CHECKER_IMPL_H_
+#ifndef ICING_ABSL_PORTS_ASCII_STR_TO_LOWER_H_
+#define ICING_ABSL_PORTS_ASCII_STR_TO_LOWER_H_
 
-#include "icing/store/document-id.h"
-#include "icing/store/namespace-checker.h"
+#include <string>
 
 namespace icing {
 namespace lib {
+namespace absl_ports {
 
-class AlwaysTrueNamespaceCheckerImpl : public NamespaceChecker {
- public:
-  bool BelongsToTargetNamespaces(DocumentId document_id) const override {
-    return true;
-  }
-};
+// Converts the characters in `s` to lowercase, changing the contents of `s`.
+void AsciiStrToLower(std::string* s);
 
+// Creates a lowercase string from a given std::string_view.
+inline std::string AsciiStrToLower(std::string_view s) {
+  std::string result(s);
+  AsciiStrToLower(&result);
+  return result;
+}
+
+}  // namespace absl_ports
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_TESTING_ALWAYS_TRUE_NAMESPACE_CHECKER_IMPL_H_
+#endif  // ICING_ABSL_PORTS_ASCII_TO_LOWER_H_

@@ -60,7 +60,10 @@ libtextclassifier3::Status TokenizedDocument::Tokenize(
       ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> itr,
                              tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
-        token_sequence.push_back(itr->GetToken().text);
+        std::vector<Token> batch_tokens = itr->GetTokens();
+        for (const Token& token : batch_tokens) {
+          token_sequence.push_back(token.text);
+        }
       }
     }
     tokenized_sections_.emplace_back(SectionMetadata(section.metadata),
