@@ -15,16 +15,60 @@
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 
 #include <cstdint>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
+
+namespace {
+
+// Check if s1 is a prefix of s2.
+bool IsPrefix(std::string_view s1, std::string_view s2) {
+  if (s1.length() > s2.length()) {
+    return false;
+  }
+  return s1 == s2.substr(0, s1.length());
+}
+
+bool DoesDocumentMatchQuery(const MonkeyTokenizedDocument &document,
+                            const std::string &query,
+                            TermMatchType::Code term_match_type) {
+  std::vector<std::string_view> strs = absl_ports::StrSplit(query, ":");
+  std::string_view query_term;
+  std::string_view section_restrict;
+  if (strs.size() > 1) {
+    section_restrict = strs[0];
+    query_term = strs[1];
+  } else {
+    query_term = query;
+  }
+  for (const MonkeyTokenizedSection &section : document.tokenized_sections) {
+    if (!section_restrict.empty() && section.path != section_restrict) {
+      continue;
+    }
+    for (const std::string &token : section.token_sequence) {
+      if (section.term_match_type == TermMatchType::EXACT_ONLY ||
+          term_match_type == TermMatchType::EXACT_ONLY) {
+        if (token == query_term) {
+          return true;
+        }
+      } else if (IsPrefix(query_term, token)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
 
 InMemoryIcingSearchEngine::PickDocumentResult
 InMemoryIcingSearchEngine::RandomPickDocument(float p_alive, float p_all,
@@ -108,44 +152,67 @@ libtextclassifier3::Status InMemoryIcingSearchEngine::Delete(
   return doc_id_or.status();
 }
 
-libtextclassifier3::Status InMemoryIcingSearchEngine::DeleteByNamespace(
-    const std::string &name_space) {
+libtextclassifier3::StatusOr<uint32_t>
+InMemoryIcingSearchEngine::DeleteByNamespace(const std::string &name_space) {
   std::vector<DocumentId> doc_ids_to_delete;
   for (DocumentId doc_id : existing_doc_ids_) {
     if (documents_[doc_id].document.namespace_() == name_space) {
       doc_ids_to_delete.push_back(doc_id);
     }
   }
-  if (doc_ids_to_delete.empty()) {
-    return absl_ports::NotFoundError(absl_ports::StrCat(
-        "Namespace: ", name_space,
-        " is not found by InMemoryIcingSearchEngine::DeleteByNamespace."));
-  }
   for (DocumentId doc_id : doc_ids_to_delete) {
     const DocumentProto &document = documents_[doc_id].document;
-    ICING_RETURN_IF_ERROR(Delete(document.namespace_(), document.uri()));
+    if (!Delete(document.namespace_(), document.uri()).ok()) {
+      return absl_ports::InternalError(
+          "Should never happen. There are inconsistencies in the in-memory "
+          "Icing.");
+    }
   }
-  return libtextclassifier3::Status::OK;
+  return doc_ids_to_delete.size();
 }
 
-libtextclassifier3::Status InMemoryIcingSearchEngine::DeleteBySchemaType(
-    const std::string &schema_type) {
+libtextclassifier3::StatusOr<uint32_t>
+InMemoryIcingSearchEngine::DeleteBySchemaType(const std::string &schema_type) {
   std::vector<DocumentId> doc_ids_to_delete;
   for (DocumentId doc_id : existing_doc_ids_) {
     if (documents_[doc_id].document.schema() == schema_type) {
       doc_ids_to_delete.push_back(doc_id);
     }
   }
-  if (doc_ids_to_delete.empty()) {
-    return absl_ports::NotFoundError(absl_ports::StrCat(
-        "Type: ", schema_type,
-        " is not found by InMemoryIcingSearchEngine::DeleteBySchemaType."));
-  }
   for (DocumentId doc_id : doc_ids_to_delete) {
     const DocumentProto &document = documents_[doc_id].document;
-    ICING_RETURN_IF_ERROR(Delete(document.namespace_(), document.uri()));
+    if (!Delete(document.namespace_(), document.uri()).ok()) {
+      return absl_ports::InternalError(
+          "Should never happen. There are inconsistencies in the in-memory "
+          "Icing.");
+    }
   }
-  return libtextclassifier3::Status::OK;
+  return doc_ids_to_delete.size();
+}
+
+libtextclassifier3::StatusOr<uint32_t> InMemoryIcingSearchEngine::DeleteByQuery(
+    const SearchSpecProto &search_spec) {
+  std::vector<DocumentId> doc_ids_to_delete = InternalSearch(search_spec);
+  for (DocumentId doc_id : doc_ids_to_delete) {
+    const DocumentProto &document = documents_[doc_id].document;
+    if (!Delete(document.namespace_(), document.uri()).ok()) {
+      return absl_ports::InternalError(
+          "Should never happen. There are inconsistencies in the in-memory "
+          "Icing.");
+    }
+  }
+  return doc_ids_to_delete.size();
+}
+
+std::vector<DocumentProto> InMemoryIcingSearchEngine::Search(
+    const SearchSpecProto &search_spec) const {
+  std::vector<DocumentId> matched_doc_ids = InternalSearch(search_spec);
+  std::vector<DocumentProto> result;
+  result.reserve(matched_doc_ids.size());
+  for (DocumentId doc_id : matched_doc_ids) {
+    result.push_back(documents_[doc_id].document);
+  }
+  return result;
 }
 
 libtextclassifier3::StatusOr<DocumentId> InMemoryIcingSearchEngine::InternalGet(
@@ -160,6 +227,18 @@ libtextclassifier3::StatusOr<DocumentId> InMemoryIcingSearchEngine::InternalGet(
   return absl_ports::NotFoundError(absl_ports::StrCat(
       name_space, ", ", uri,
       " is not found by InMemoryIcingSearchEngine::InternalGet."));
+}
+
+std::vector<DocumentId> InMemoryIcingSearchEngine::InternalSearch(
+    const SearchSpecProto &search_spec) const {
+  std::vector<DocumentId> matched_doc_ids;
+  for (DocumentId doc_id : existing_doc_ids_) {
+    if (DoesDocumentMatchQuery(documents_[doc_id], search_spec.query(),
+                               search_spec.term_match_type())) {
+      matched_doc_ids.push_back(doc_id);
+    }
+  }
+  return matched_doc_ids;
 }
 
 }  // namespace lib

@@ -12,28 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
-#define ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
-
-#include <string>
-
-#include "icing/proto/document.pb.h"
-#include "icing/proto/term.pb.h"
+#include "gtest/gtest.h"
+#include "icing/monkey_test/icing-monkey-test-runner.h"
+#include "icing/portable/platform.h"
 
 namespace icing {
 namespace lib {
 
-struct MonkeyTokenizedSection {
-  std::string path;
-  TermMatchType::Code term_match_type;
-  std::vector<std::string> token_sequence;
-};
-
-struct MonkeyTokenizedDocument {
-  DocumentProto document;
-  std::vector<MonkeyTokenizedSection> tokenized_sections;
-};
+TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
+  uint32_t num_iterations = IsAndroidArm() ? 1000 : 5000;
+  IcingMonkeyTestRunner runner;
+  ASSERT_NO_FATAL_FAILURE(runner.CreateIcingSearchEngineWithSchema());
+  ASSERT_NO_FATAL_FAILURE(runner.Run(num_iterations));
+}
 
 }  // namespace lib
 }  // namespace icing
-#endif  // ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
