@@ -14,38 +14,43 @@
 
 #include "icing/index/main/posting-list-accessor.h"
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/index/main/flash-index-storage.h"
-#include "icing/index/main/index-block.h"
-#include "icing/index/main/posting-list-identifier.h"
-#include "icing/index/main/posting-list-used.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/index-block.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/file/posting_list/posting-list-used.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
 libtextclassifier3::StatusOr<PostingListAccessor> PostingListAccessor::Create(
-    FlashIndexStorage *storage) {
-  uint32_t max_posting_list_bytes =
-      IndexBlock::CalculateMaxPostingListBytes(storage->block_size());
+    FlashIndexStorage *storage, PostingListUsedHitSerializer *serializer) {
+  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+      storage->block_size(), serializer->GetDataTypeBytes());
   std::unique_ptr<uint8_t[]> posting_list_buffer_array =
       std::make_unique<uint8_t[]>(max_posting_list_bytes);
   ICING_ASSIGN_OR_RETURN(
       PostingListUsed posting_list_buffer,
       PostingListUsed::CreateFromUnitializedRegion(
-          posting_list_buffer_array.get(), max_posting_list_bytes));
-  return PostingListAccessor(storage, std::move(posting_list_buffer_array),
+          serializer, posting_list_buffer_array.get(), max_posting_list_bytes));
+  return PostingListAccessor(storage, serializer,
+                             std::move(posting_list_buffer_array),
                              std::move(posting_list_buffer));
 }
 
 libtextclassifier3::StatusOr<PostingListAccessor>
 PostingListAccessor::CreateFromExisting(
-    FlashIndexStorage *storage,
+    FlashIndexStorage *storage, PostingListUsedHitSerializer *serializer,
     PostingListIdentifier existing_posting_list_id) {
   // Our posting_list_buffer_ will start as empty.
-  ICING_ASSIGN_OR_RETURN(PostingListAccessor pl_accessor, Create(storage));
+  ICING_ASSIGN_OR_RETURN(PostingListAccessor pl_accessor,
+                         Create(storage, serializer));
   ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                          storage->GetPostingList(existing_posting_list_id));
   pl_accessor.preexisting_posting_list_ =
@@ -64,8 +69,9 @@ PostingListAccessor::GetNextHitsBatch() {
         "Cannot retrieve hits from a PostingListAccessor that was not created "
         "from a preexisting posting list.");
   }
-  ICING_ASSIGN_OR_RETURN(std::vector<Hit> batch,
-                         preexisting_posting_list_->posting_list.GetHits());
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<Hit> batch,
+      serializer_->GetHits(&preexisting_posting_list_->posting_list));
   uint32_t next_block_index;
   // Posting lists will only be chained when they are max-sized, in which case
   // block.next_block_index() will point to the next block for the next posting
@@ -95,7 +101,7 @@ libtextclassifier3::Status PostingListAccessor::PrependHit(const Hit &hit) {
   PostingListUsed &active_pl = (preexisting_posting_list_ != nullptr)
                                    ? preexisting_posting_list_->posting_list
                                    : posting_list_buffer_;
-  libtextclassifier3::Status status = active_pl.PrependHit(hit);
+  libtextclassifier3::Status status = serializer_->PrependHit(&active_pl, hit);
   if (!absl_ports::IsResourceExhausted(status)) {
     return status;
   }
@@ -112,7 +118,7 @@ libtextclassifier3::Status PostingListAccessor::PrependHit(const Hit &hit) {
   // It's fine to explicitly reference posting_list_buffer_ here because there's
   // no way of reaching this line while preexisting_posting_list_ is still in
   // use.
-  return posting_list_buffer_.PrependHit(hit);
+  return serializer_->PrependHit(&posting_list_buffer_, hit);
 }
 
 void PostingListAccessor::FlushPreexistingPostingList() {
@@ -127,7 +133,8 @@ void PostingListAccessor::FlushPreexistingPostingList() {
     // and free this posting list.
     //
     // Move will always succeed since posting_list_buffer_ is max_pl_bytes.
-    posting_list_buffer_.MoveFrom(&preexisting_posting_list_->posting_list);
+    serializer_->MoveFrom(/*dst=*/&posting_list_buffer_,
+                          /*src=*/&preexisting_posting_list_->posting_list);
 
     // Now that all the contents of this posting list have been copied, there's
     // no more use for it. Make it available to be used for another posting
@@ -140,13 +147,14 @@ void PostingListAccessor::FlushPreexistingPostingList() {
 libtextclassifier3::Status PostingListAccessor::FlushInMemoryPostingList() {
   // We exceeded max_pl_bytes(). Need to flush posting_list_buffer_ and update
   // the chain.
-  uint32_t max_posting_list_bytes =
-      IndexBlock::CalculateMaxPostingListBytes(storage_->block_size());
+  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+      storage_->block_size(), serializer_->GetDataTypeBytes());
   ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                          storage_->AllocatePostingList(max_posting_list_bytes));
   holder.block.set_next_block_index(prev_block_identifier_.block_index());
   prev_block_identifier_ = holder.id;
-  return holder.posting_list.MoveFrom(&posting_list_buffer_);
+  return serializer_->MoveFrom(/*dst=*/&holder.posting_list,
+                               /*src=*/&posting_list_buffer_);
 }
 
 PostingListAccessor::FinalizeResult PostingListAccessor::Finalize(
@@ -158,7 +166,7 @@ PostingListAccessor::FinalizeResult PostingListAccessor::Finalize(
                              accessor.preexisting_posting_list_->id};
     return result;
   }
-  if (accessor.posting_list_buffer_.BytesUsed() <= 0) {
+  if (accessor.serializer_->GetBytesUsed(&accessor.posting_list_buffer_) <= 0) {
     FinalizeResult result = {absl_ports::InvalidArgumentError(
                                  "Can't finalize an empty PostingListAccessor. "
                                  "There's nothing to Finalize!"),
@@ -166,10 +174,12 @@ PostingListAccessor::FinalizeResult PostingListAccessor::Finalize(
     return result;
   }
   uint32_t posting_list_bytes =
-      accessor.posting_list_buffer_.MinPostingListSizeToFit();
+      accessor.serializer_->GetMinPostingListSizeToFit(
+          &accessor.posting_list_buffer_);
   if (accessor.prev_block_identifier_.is_valid()) {
     posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
-        accessor.storage_->block_size());
+        accessor.storage_->block_size(),
+        accessor.serializer_->GetDataTypeBytes());
   }
   auto holder_or = accessor.storage_->AllocatePostingList(posting_list_bytes);
   if (!holder_or.ok()) {
@@ -189,7 +199,9 @@ PostingListAccessor::FinalizeResult PostingListAccessor::Finalize(
   // is valid because we created it in-memory. And finally, we know that the
   // hits from posting_list_buffer_ will fit in editor.posting_list() because we
   // requested it be at at least posting_list_bytes large.
-  auto status = holder.posting_list.MoveFrom(&accessor.posting_list_buffer_);
+  auto status =
+      accessor.serializer_->MoveFrom(/*dst=*/&holder.posting_list,
+                                     /*src=*/&accessor.posting_list_buffer_);
   if (!status.ok()) {
     FinalizeResult result = {std::move(status),
                              accessor.prev_block_identifier_};

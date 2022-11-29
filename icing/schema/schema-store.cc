@@ -516,14 +516,16 @@ libtextclassifier3::StatusOr<std::vector<std::string_view>>
 SchemaStore::GetStringSectionContent(const DocumentProto& document,
                                      std::string_view section_path) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  return section_manager_->GetStringSectionContent(document, section_path);
+  return section_manager_->GetSectionContent<std::string_view>(document,
+                                                               section_path);
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string_view>>
 SchemaStore::GetStringSectionContent(const DocumentProto& document,
                                      SectionId section_id) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  return section_manager_->GetStringSectionContent(document, section_id);
+  return section_manager_->GetSectionContent<std::string_view>(document,
+                                                               section_id);
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>
@@ -533,7 +535,7 @@ SchemaStore::GetSectionMetadata(SchemaTypeId schema_type_id,
   return section_manager_->GetSectionMetadata(schema_type_id, section_id);
 }
 
-libtextclassifier3::StatusOr<std::vector<Section>> SchemaStore::ExtractSections(
+libtextclassifier3::StatusOr<SectionGroup> SchemaStore::ExtractSections(
     const DocumentProto& document) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return section_manager_->ExtractSections(document);

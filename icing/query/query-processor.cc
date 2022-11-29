@@ -288,16 +288,15 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
         // section restricts. Those are not currently supported. If they became
         // supported, this handling for query terms would need to be altered.
         if (!frames.top().saw_exclude) {
-          ICING_ASSIGN_OR_RETURN(
-              std::unique_ptr<DocHitInfoIterator> term_iterator,
-              index_.GetIterator(
-                  normalized_text, kSectionIdMaskAll,
-                  search_spec.term_match_type(),
-                  /*need_hit_term_frequency=*/ranking_strategy ==
-                      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
-
           if (ranking_strategy ==
               ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE) {
+            ICING_ASSIGN_OR_RETURN(
+                std::unique_ptr<DocHitInfoIterator> term_iterator,
+                index_.GetIterator(
+                    normalized_text, kSectionIdMaskAll,
+                    search_spec.term_match_type(),
+                    /*need_hit_term_frequency=*/ranking_strategy ==
+                        ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
             results.query_term_iterators[normalized_text] =
                 std::make_unique<DocHitInfoIteratorFilter>(
                     std::move(term_iterator), &document_store_, &schema_store_,

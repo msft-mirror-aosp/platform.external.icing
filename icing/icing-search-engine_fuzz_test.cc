@@ -34,14 +34,6 @@ namespace icing {
 namespace lib {
 namespace {
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
-    PropertyConfigProto::Cardinality::REQUIRED;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-
 IcingSearchEngineOptions Setup() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestTempDir() + "/icing");
@@ -86,7 +78,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   icing.SetSchema(schema_proto);

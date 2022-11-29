@@ -20,12 +20,13 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/main/posting-list-accessor.h"
-#include "icing/index/main/posting-list-identifier.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {

@@ -12,28 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
-#define ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
+#ifndef ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
+#define ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_
 
-#include <string>
-
-#include "icing/proto/document.pb.h"
-#include "icing/proto/term.pb.h"
+#include <cstdint>
 
 namespace icing {
 namespace lib {
 
-struct MonkeyTokenizedSection {
-  std::string path;
-  TermMatchType::Code term_match_type;
-  std::vector<std::string> token_sequence;
-};
+// A FlashIndexBlock can contain multiple posting lists. This specifies which
+// PostingList in the FlashIndexBlock we want to refer to.
+using PostingListIndex = int32_t;
+inline constexpr PostingListIndex kInvalidPostingListIndex = ~0U;
 
-struct MonkeyTokenizedDocument {
-  DocumentProto document;
-  std::vector<MonkeyTokenizedSection> tokenized_sections;
-};
+inline constexpr uint32_t kNumSpecialData = 2;
 
-}  // namespace lib
-}  // namespace icing
-#endif  // ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
+inline constexpr uint32_t kInvalidBlockIndex = 0;
+
+}  //  namespace lib
+}  //  namespace icing
+
+#endif  // ICING_FILE_POSTING_LIST_POSTING_LIST_COMMON_H_

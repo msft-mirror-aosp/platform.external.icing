@@ -65,14 +65,6 @@ namespace lib {
 
 namespace {
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-
 class DestructibleDirectory {
  public:
   explicit DestructibleDirectory(const Filesystem& filesystem,
@@ -101,17 +93,18 @@ DocumentProto CreateDocument(const std::string namespace_,
 
 SchemaProto CreateSchema() {
   return SchemaBuilder()
-      .AddType(
-          SchemaTypeConfigBuilder()
-              .SetType("email")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("email")
+                   .AddProperty(
+                       PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+                   .AddProperty(
+                       PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL)))
       .Build();
 }
 

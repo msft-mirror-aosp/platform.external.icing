@@ -192,6 +192,10 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
       return std::make_unique<UsageScorer>(
           document_store, scoring_spec.rank_by(), default_score);
+    case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
+      ICING_LOG(WARNING)
+          << "JOIN_AGGREGATE_SCORE not implemented, falling back to NoScorer";
+      [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);
   }

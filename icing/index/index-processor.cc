@@ -89,6 +89,8 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
           [[fallthrough]];
         case StringIndexingConfig::TokenizerType::RFC822:
           [[fallthrough]];
+        case StringIndexingConfig::TokenizerType::URL:
+          [[fallthrough]];
         case StringIndexingConfig::TokenizerType::PLAIN:
           std::string normalized_term = normalizer_.NormalizeTerm(token);
           status = editor.BufferTerm(normalized_term.c_str());
