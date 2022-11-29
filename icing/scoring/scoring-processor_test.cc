@@ -41,12 +41,6 @@ using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
 class ScoringProcessorTest : public testing::Test {
  protected:
   ScoringProcessorTest()

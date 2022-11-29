@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-free.h"
+#include "icing/file/posting_list/posting-list-free.h"
 
 #include <cstdint>
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gtest/gtest.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/testing/common-matchers.h"
 
 namespace icing {
@@ -27,55 +27,76 @@ namespace lib {
 
 namespace {
 
+// TODO(b/249829533): test different serializers
+
 TEST(PostingListTest, PostingListFree) {
+  PostingListUsedHitSerializer serializer;
   static const size_t kHitsSize = 2551 * sizeof(Hit);
 
   std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kHitsSize);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListFree pl_free,
       PostingListFree::CreateFromUnitializedRegion(
-          static_cast<void *>(hits_buf.get()), kHitsSize));
+          static_cast<void *>(hits_buf.get()), kHitsSize,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()));
   EXPECT_EQ(pl_free.get_next_posting_list_index(), kInvalidPostingListIndex);
 }
 
 TEST(PostingListTest, PostingListTooSmallInvalidArgument) {
-  static const size_t kHitSizeTooSmall =
-      posting_list_utils::min_posting_list_size() - sizeof(Hit);
+  PostingListUsedHitSerializer serializer;
+  const size_t kHitSizeTooSmall =
+      serializer.GetMinPostingListSize() - sizeof(Hit);
 
   std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kHitSizeTooSmall);
-  EXPECT_THAT(PostingListFree::CreateFromUnitializedRegion(
-                  static_cast<void *>(hits_buf.get()), kHitSizeTooSmall),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(PostingListFree::CreateFromPreexistingPostingListFreeRegion(
-                  static_cast<void *>(hits_buf.get()), kHitSizeTooSmall),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      PostingListFree::CreateFromUnitializedRegion(
+          static_cast<void *>(hits_buf.get()), kHitSizeTooSmall,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      PostingListFree::CreateFromPreexistingPostingListFreeRegion(
+          static_cast<void *>(hits_buf.get()), kHitSizeTooSmall,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(PostingListTest, PostingListNotAlignedInvalidArgument) {
-  static const size_t kHitSizeNotAligned =
-      posting_list_utils::min_posting_list_size() + 1;
+  PostingListUsedHitSerializer serializer;
+  const size_t kHitSizeNotAligned = serializer.GetMinPostingListSize() + 1;
 
   std::unique_ptr<char[]> hits_buf =
       std::make_unique<char[]>(kHitSizeNotAligned);
-  EXPECT_THAT(PostingListFree::CreateFromUnitializedRegion(
-                  static_cast<void *>(hits_buf.get()), kHitSizeNotAligned),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-  EXPECT_THAT(PostingListFree::CreateFromPreexistingPostingListFreeRegion(
-                  static_cast<void *>(hits_buf.get()), kHitSizeNotAligned),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      PostingListFree::CreateFromUnitializedRegion(
+          static_cast<void *>(hits_buf.get()), kHitSizeNotAligned,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      PostingListFree::CreateFromPreexistingPostingListFreeRegion(
+          static_cast<void *>(hits_buf.get()), kHitSizeNotAligned,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(PostingListTest, PostingListNullBufferFailedPrecondition) {
-  static const size_t kHitSize = posting_list_utils::min_posting_list_size();
-  EXPECT_THAT(PostingListFree::CreateFromUnitializedRegion(
-                  /*posting_list_buffer=*/nullptr, kHitSize),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(PostingListFree::CreateFromPreexistingPostingListFreeRegion(
-                  /*posting_list_buffer=*/nullptr, kHitSize),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  PostingListUsedHitSerializer serializer;
+  const size_t kHitSize = serializer.GetMinPostingListSize();
+
+  // nullptr posting_list_buffer
+  EXPECT_THAT(
+      PostingListFree::CreateFromUnitializedRegion(
+          /*posting_list_buffer=*/nullptr, kHitSize,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      PostingListFree::CreateFromPreexistingPostingListFreeRegion(
+          /*posting_list_buffer=*/nullptr, kHitSize,
+          serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST(PostingListTest, PostingListFreePreexistingRegion) {
+  PostingListUsedHitSerializer serializer;
   constexpr PostingListIndex kOtherPostingListIndex = 12;
   static const size_t kHitsSize = 2551 * sizeof(Hit);
 
@@ -85,7 +106,8 @@ TEST(PostingListTest, PostingListFreePreexistingRegion) {
     ICING_ASSERT_OK_AND_ASSIGN(
         PostingListFree pl_free,
         PostingListFree::CreateFromUnitializedRegion(
-            static_cast<void *>(hits_buf.get()), kHitsSize));
+            static_cast<void *>(hits_buf.get()), kHitsSize,
+            serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()));
     pl_free.set_next_posting_list_index(kOtherPostingListIndex);
     EXPECT_EQ(pl_free.get_next_posting_list_index(), kOtherPostingListIndex);
   }
@@ -95,12 +117,14 @@ TEST(PostingListTest, PostingListFreePreexistingRegion) {
     ICING_ASSERT_OK_AND_ASSIGN(
         PostingListFree pl_free,
         PostingListFree::CreateFromPreexistingPostingListFreeRegion(
-            static_cast<void *>(hits_buf.get()), kHitsSize));
+            static_cast<void *>(hits_buf.get()), kHitsSize,
+            serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()));
     EXPECT_EQ(pl_free.get_next_posting_list_index(), kOtherPostingListIndex);
   }
 }
 
 TEST(PostingListTest, PostingListFreeUninitializedRegion) {
+  PostingListUsedHitSerializer serializer;
   constexpr PostingListIndex kOtherPostingListIndex = 12;
   static const size_t kHitsSize = 2551 * sizeof(Hit);
 
@@ -110,7 +134,8 @@ TEST(PostingListTest, PostingListFreeUninitializedRegion) {
     ICING_ASSERT_OK_AND_ASSIGN(
         PostingListFree pl_free,
         PostingListFree::CreateFromUnitializedRegion(
-            static_cast<void *>(hits_buf.get()), kHitsSize));
+            static_cast<void *>(hits_buf.get()), kHitsSize,
+            serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()));
     pl_free.set_next_posting_list_index(kOtherPostingListIndex);
     EXPECT_EQ(pl_free.get_next_posting_list_index(), kOtherPostingListIndex);
   }
@@ -120,7 +145,8 @@ TEST(PostingListTest, PostingListFreeUninitializedRegion) {
     ICING_ASSERT_OK_AND_ASSIGN(
         PostingListFree pl_free,
         PostingListFree::CreateFromUnitializedRegion(
-            static_cast<void *>(hits_buf.get()), kHitsSize));
+            static_cast<void *>(hits_buf.get()), kHitsSize,
+            serializer.GetDataTypeBytes(), serializer.GetMinPostingListSize()));
     EXPECT_EQ(pl_free.get_next_posting_list_index(), kInvalidPostingListIndex);
   }
 }

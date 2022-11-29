@@ -98,20 +98,6 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
       [[fallthrough]];
     case Token::Type::RFC822_TOKEN:
       [[fallthrough]];
-    case Token::Type::REGULAR:
-      return normalizer.NormalizeTerm(token.text);
-    case Token::Type::VERBATIM:
-      return std::string(token.text);
-    case Token::Type::QUERY_EXCLUSION:
-      [[fallthrough]];
-    case Token::Type::QUERY_LEFT_PARENTHESES:
-      [[fallthrough]];
-    case Token::Type::QUERY_RIGHT_PARENTHESES:
-      [[fallthrough]];
-    case Token::Type::QUERY_OR:
-      [[fallthrough]];
-    case Token::Type::QUERY_PROPERTY:
-      [[fallthrough]];
     case Token::Type::URL_SCHEME:
       [[fallthrough]];
     case Token::Type::URL_USERNAME:
@@ -133,6 +119,20 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
     case Token::Type::URL_SUFFIX:
       [[fallthrough]];
     case Token::Type::URL_SUFFIX_INNERMOST:
+      [[fallthrough]];
+    case Token::Type::REGULAR:
+      return normalizer.NormalizeTerm(token.text);
+    case Token::Type::VERBATIM:
+      return std::string(token.text);
+    case Token::Type::QUERY_EXCLUSION:
+      [[fallthrough]];
+    case Token::Type::QUERY_LEFT_PARENTHESES:
+      [[fallthrough]];
+    case Token::Type::QUERY_RIGHT_PARENTHESES:
+      [[fallthrough]];
+    case Token::Type::QUERY_OR:
+      [[fallthrough]];
+    case Token::Type::QUERY_PROPERTY:
       [[fallthrough]];
     case Token::Type::INVALID:
       ICING_LOG(WARNING) << "Unable to normalize token of type: "
@@ -165,6 +165,11 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
     case Token::Type::QUERY_OR:
       [[fallthrough]];
     case Token::Type::QUERY_PROPERTY:
+      [[fallthrough]];
+    case Token::Type::INVALID:
+      ICING_LOG(WARNING)
+          << "Unexpected Token type " << static_cast<int>(token.type)
+          << " found when finding match end of query term and token.";
       [[fallthrough]];
     case Token::Type::RFC822_NAME:
       [[fallthrough]];
@@ -203,11 +208,6 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
     case Token::Type::URL_SUFFIX:
       [[fallthrough]];
     case Token::Type::URL_SUFFIX_INNERMOST:
-      [[fallthrough]];
-    case Token::Type::INVALID:
-      ICING_LOG(WARNING)
-          << "Unexpected Token type " << static_cast<int>(token.type)
-          << " found when finding match end of query term and token.";
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.FindNormalizedMatchEndPosition(token.text,
@@ -336,7 +336,9 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowStart(
 CharacterIterator IncludeTrailingPunctuation(
     std::string_view value, CharacterIterator window_end_exclusive,
     int window_end_max_exclusive_utf32) {
-  while (window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
+  size_t max_search_index = value.length() - 1;
+  while (window_end_exclusive.utf8_index() <= max_search_index &&
+         window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
     int char_len = 0;
     if (!i18n_utils::IsPunctuationAt(value, window_end_exclusive.utf8_index(),
                                      &char_len)) {

@@ -41,12 +41,6 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
  public:
@@ -141,16 +135,16 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest,
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   // Make sure our schema is still the same as we expect. If not, there's
@@ -281,16 +275,16 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest, MigrateToLargerScale) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   // Make sure our schema is still the same as we expect. If not, there's

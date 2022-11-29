@@ -71,7 +71,14 @@ class ScoredDocumentHitComparator {
 
   bool operator()(const ScoredDocumentHit& lhs,
                   const ScoredDocumentHit& rhs) const {
-    return is_descending_ == !(lhs < rhs);
+    // STL comparator requirement: equal MUST return false.
+    // If writing `return is_descending_ == !(lhs < rhs)`:
+    // - When lhs == rhs, !(lhs < rhs) is true
+    // - If is_descending_ is true, then we return true for equal case!
+    if (is_descending_) {
+      return rhs < lhs;
+    }
+    return lhs < rhs;
   }
 
  private:

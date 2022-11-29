@@ -221,15 +221,21 @@ class SchemaStore {
   libtextclassifier3::StatusOr<const SectionMetadata*> GetSectionMetadata(
       SchemaTypeId schema_type_id, SectionId section_id) const;
 
-  // Extracts all sections from the given document, sections are sorted by
-  // section id in increasing order. Section ids start from 0. Sections with
-  // empty content won't be returned.
+  // Extracts all sections of different types from the given document and group
+  // them by type.
+  // - Each Section vector is sorted by section Id in ascending order. The
+  //   sorted section Ids may not be continuous, since not all section Ids are
+  //   present in the document.
+  // - Sections with empty content won't be returned.
+  // - For example, we may extract:
+  //   string_sections: [2, 7, 10]
+  //   integer_sections: [3, 5, 8]
   //
   // Returns:
-  //   A list of sections on success
+  //   A SectionGroup instance on success
   //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<std::vector<Section>> ExtractSections(
+  libtextclassifier3::StatusOr<SectionGroup> ExtractSections(
       const DocumentProto& document) const;
 
   // Syncs all the data changes to disk.

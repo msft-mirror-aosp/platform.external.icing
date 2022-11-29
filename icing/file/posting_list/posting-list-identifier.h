@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_POSTING_LIST_IDENTIFIER_H_
-#define ICING_INDEX_POSTING_LIST_IDENTIFIER_H_
+#ifndef ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
+#define ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_
 
-#include "icing/index/main/index-block.h"
-#include "icing/index/main/posting-list-free.h"
+#include <cstdint>
+
+#include "icing/file/posting_list/posting-list-common.h"
 #include "icing/legacy/index/icing-bit-util.h"
 
 namespace icing {
@@ -62,9 +63,9 @@ class PostingListIdentifier {
   // 2. posting_list_index - the index of this posting list within the block
   // 3. posting_list_index_bits - the number of bits needed to encode the
   //    largest posting_list_index that this block can have.
-  PostingListIdentifier(uint32_t block_index,
-                        PostingListIndex posting_list_index,
-                        int posting_list_index_bits) {
+  explicit PostingListIdentifier(uint32_t block_index,
+                                 PostingListIndex posting_list_index,
+                                 int posting_list_index_bits) {
     val_ = 0;
     BITFIELD_OR(val_, /*offset=*/0, /*len=*/posting_list_index_bits,
                 /*val=*/static_cast<uint64_t>(posting_list_index));
@@ -113,4 +114,4 @@ class PostingListIdentifier {
 }  //  namespace lib
 }  //  namespace icing
 
-#endif  // ICING_INDEX_POSTING_LIST_IDENTIFIER_H_
+#endif  // ICING_FILE_POSTING_LIST_POSTING_LIST_IDENTIFIER_H_

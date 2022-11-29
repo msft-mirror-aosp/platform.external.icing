@@ -32,6 +32,7 @@ namespace icing {
 namespace lib {
 
 namespace {
+
 using ::testing::HasSubstr;
 
 // type and property names of EmailMessage
@@ -46,16 +47,6 @@ constexpr char kPropertyEmails[] = "emails";
 // Other values
 constexpr char kDefaultNamespace[] = "icing";
 constexpr char kDefaultString[] = "This is a string.";
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
-    PropertyConfigProto::Cardinality::REQUIRED;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
-    PropertyConfigProto::Cardinality::REPEATED;
-
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
 
 class DocumentValidatorTest : public ::testing::Test {
  protected:

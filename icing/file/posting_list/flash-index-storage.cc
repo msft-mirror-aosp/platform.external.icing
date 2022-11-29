@@ -12,23 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/flash-index-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 
 #include <sys/types.h>
 
 #include <algorithm>
 #include <cerrno>
-#include <cinttypes>
 #include <cstdint>
 #include <memory>
-#include <unordered_set>
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/file/memory-mapped-file.h"
-#include "icing/index/main/index-block.h"
-#include "icing/index/main/posting-list-free.h"
-#include "icing/index/main/posting-list-utils.h"
+#include "icing/file/posting_list/index-block.h"
+#include "icing/file/posting_list/posting-list-common.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
@@ -55,9 +51,9 @@ uint32_t SelectBlockSize() {
 
 libtextclassifier3::StatusOr<FlashIndexStorage> FlashIndexStorage::Create(
     const std::string& index_filename, const Filesystem* filesystem,
-    bool in_memory) {
+    PostingListUsedSerializer* serializer, bool in_memory) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
-  FlashIndexStorage storage(index_filename, filesystem, in_memory);
+  FlashIndexStorage storage(index_filename, filesystem, serializer, in_memory);
   if (!storage.Init()) {
     return absl_ports::InternalError(
         "Unable to successfully read header block!");
@@ -67,10 +63,12 @@ libtextclassifier3::StatusOr<FlashIndexStorage> FlashIndexStorage::Create(
 
 FlashIndexStorage::FlashIndexStorage(const std::string& index_filename,
                                      const Filesystem* filesystem,
+                                     PostingListUsedSerializer* serializer,
                                      bool has_in_memory_freelists)
     : index_filename_(index_filename),
       num_blocks_(0),
       filesystem_(filesystem),
+      serializer_(serializer),
       has_in_memory_freelists_(has_in_memory_freelists) {}
 
 FlashIndexStorage::~FlashIndexStorage() {
@@ -127,13 +125,16 @@ bool FlashIndexStorage::CreateHeader() {
   // Work down from the largest posting list that fits in
   // block_size. We don't care about locality of blocks because this
   // is a flash index.
-  for (uint32_t posting_list_bytes =
-           IndexBlock::CalculateMaxPostingListBytes(block_size);
-       posting_list_bytes >= posting_list_utils::min_posting_list_size();
+  for (uint32_t posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+           block_size, serializer_->GetDataTypeBytes());
+       posting_list_bytes >= serializer_->GetMinPostingListSize();
        posting_list_bytes /= 2) {
     uint32_t aligned_posting_list_bytes =
-        (posting_list_bytes / sizeof(Hit) * sizeof(Hit));
-    ICING_VLOG(1) << "Block size " << header_block_->header()->num_index_block_infos << ": " << aligned_posting_list_bytes;
+        (posting_list_bytes / serializer_->GetDataTypeBytes()) *
+        serializer_->GetDataTypeBytes();
+    ICING_VLOG(1) << "Block size "
+                  << header_block_->header()->num_index_block_infos << ": "
+                  << aligned_posting_list_bytes;
 
     // Initialize free list to empty.
     HeaderBlock::Header::IndexBlockInfo* block_info =
@@ -167,18 +168,22 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
     return false;
   }
   if (file_size % read_header.header()->block_size != 0) {
-    ICING_LOG(ERROR) << "Index size " << file_size << " not a multiple of block size " << read_header.header()->block_size;
+    ICING_LOG(ERROR) << "Index size " << file_size
+                     << " not a multiple of block size "
+                     << read_header.header()->block_size;
     return false;
   }
 
   if (file_size < static_cast<int64_t>(read_header.header()->block_size)) {
-    ICING_LOG(ERROR) << "Index size " << file_size << " shorter than block size " << read_header.header()->block_size;
+    ICING_LOG(ERROR) << "Index size " << file_size
+                     << " shorter than block size "
+                     << read_header.header()->block_size;
     return false;
   }
 
   if (read_header.header()->block_size % getpagesize() != 0) {
     ICING_LOG(ERROR) << "Block size " << read_header.header()->block_size
-        << " is not a multiple of page size " << getpagesize();
+                     << " is not a multiple of page size " << getpagesize();
     return false;
   }
   num_blocks_ = file_size / read_header.header()->block_size;
@@ -207,11 +212,12 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
   for (int i = 0; i < header_block_->header()->num_index_block_infos; ++i) {
     int posting_list_bytes =
         header_block_->header()->index_block_infos[i].posting_list_bytes;
-    if (posting_list_bytes % sizeof(Hit) != 0) {
-      ICING_LOG(ERROR) << "Posting list size misaligned, index " << i
-          << ", size "
+    if (posting_list_bytes % serializer_->GetDataTypeBytes() != 0) {
+      ICING_LOG(ERROR)
+          << "Posting list size misaligned, index " << i << ", size "
           << header_block_->header()->index_block_infos[i].posting_list_bytes
-          << ", hit " << sizeof(Hit) << ", file_size " << file_size;
+          << ", data_type_bytes " << serializer_->GetDataTypeBytes()
+          << ", file_size " << file_size;
       return false;
     }
   }
@@ -270,7 +276,7 @@ libtextclassifier3::StatusOr<IndexBlock> FlashIndexStorage::GetIndexBlock(
   }
   off_t offset = static_cast<off_t>(block_index) * block_size();
   return IndexBlock::CreateFromPreexistingIndexBlockRegion(
-      *filesystem_, index_filename_, offset, block_size());
+      *filesystem_, index_filename_, serializer_, offset, block_size());
 }
 
 libtextclassifier3::StatusOr<IndexBlock> FlashIndexStorage::CreateIndexBlock(
@@ -283,7 +289,8 @@ libtextclassifier3::StatusOr<IndexBlock> FlashIndexStorage::CreateIndexBlock(
   }
   off_t offset = static_cast<off_t>(block_index) * block_size();
   return IndexBlock::CreateFromUninitializedRegion(
-      *filesystem_, index_filename_, offset, block_size(), posting_list_size);
+      *filesystem_, index_filename_, serializer_, offset, block_size(),
+      posting_list_size);
 }
 
 int FlashIndexStorage::FindBestIndexBlockInfo(
@@ -381,7 +388,8 @@ FlashIndexStorage::AllocateNewPostingList(int block_info_index) {
 
 libtextclassifier3::StatusOr<PostingListHolder>
 FlashIndexStorage::AllocatePostingList(uint32_t min_posting_list_bytes) {
-  int max_block_size = IndexBlock::CalculateMaxPostingListBytes(block_size());
+  int max_block_size = IndexBlock::CalculateMaxPostingListBytes(
+      block_size(), serializer_->GetDataTypeBytes());
   if (min_posting_list_bytes > max_block_size) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Requested posting list size %d exceeds max posting list size %d",

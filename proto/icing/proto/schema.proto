@@ -111,6 +111,21 @@ message StringIndexingConfig {
       // original string as an rfc822 token.
       // See more here: https://datatracker.ietf.org/doc/html/rfc822
       RFC822 = 3;
+
+      // Tokenizes text as an url address. This tokenizes a url string into a
+      // token for each component in the url, as well as any significant
+      // url suffixes. For example,
+      // https://www.google.com/path/subpath?query#ref would be tokenizes into a
+      // scheme token "https“; 3 host tokens "www", "google", "com"; 2 path
+      // tokens "path", "subpath"; a query token "query"; a reference token
+      // "ref"; and 3 suffix tokens
+      // "https://www.google.com/path/subpath?query#ref",
+      // "www.google.com/path/subpath?query#ref",
+      // "google.com/path/subpath?query#ref".
+      // Currently only supports tokenization of one url string at a time
+      // i.e. the input string cannot have spaces in the middle, but can have
+      // leading or trailing spaces.
+      URL = 4;
     }
   }
   optional TokenizerType.Code tokenizer_type = 2;
@@ -128,10 +143,31 @@ message DocumentIndexingConfig {
   optional bool index_nested_properties = 1;
 }
 
+// Describes how a int64 property should be indexed.
+// Next tag: 3
+message IntegerIndexingConfig {
+  // OPTIONAL: Indicates how the int64 contents of this property should be
+  // matched.
+  //
+  // The default value is UNKNOWN.
+  message NumericMatchType {
+    enum Code {
+      // Contents in this property will not be indexed. Useful if the int64
+      // property type is not indexable.
+      UNKNOWN = 0;
+
+      // Contents in this property should only be returned for queries matching
+      // the range.
+      RANGE = 1;
+    }
+  }
+  optional NumericMatchType.Code numeric_match_type = 1;
+}
+
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 7
+// Next tag: 8
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -208,6 +244,10 @@ message PropertyConfigProto {
 
   // OPTIONAL: Describes how document properties should be indexed.
   optional DocumentIndexingConfig document_indexing_config = 6;
+
+  // OPTIONAL: Describes how int64 properties should be indexed. Int64
+  // properties that do not set the indexing config will not be indexed.
+  optional IntegerIndexingConfig integer_indexing_config = 7;
 }
 
 // List of all supported types constitutes the schema used by Icing.

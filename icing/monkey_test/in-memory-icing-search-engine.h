@@ -27,6 +27,7 @@
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -46,6 +47,8 @@ class InMemoryIcingSearchEngine {
                             SchemaProto &&schema)
       : random_(random),
         schema_(std::make_unique<SchemaProto>(std::move(schema))) {}
+
+  uint32_t GetNumAliveDocuments() const { return existing_doc_ids_.size(); }
 
   const SchemaProto *GetSchema() const { return schema_.get(); }
 
@@ -81,16 +84,35 @@ class InMemoryIcingSearchEngine {
   // Deletes all Documents belonging to the specified namespace.
   //
   // Returns:
-  //   OK on success
-  //   NOT_FOUND if namespace doesn't exist
-  libtextclassifier3::Status DeleteByNamespace(const std::string &name_space);
+  //   The number of deleted documents on success
+  //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
+  libtextclassifier3::StatusOr<uint32_t> DeleteByNamespace(
+      const std::string &name_space);
 
   // Deletes all Documents belonging to the specified type
   //
   // Returns:
-  //   OK on success
-  //   NOT_FOUND if schema type doesn't exist
-  libtextclassifier3::Status DeleteBySchemaType(const std::string &schema_type);
+  //   The number of deleted documents on success
+  //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
+  libtextclassifier3::StatusOr<uint32_t> DeleteBySchemaType(
+      const std::string &schema_type);
+
+  // Deletes all Documents that match the query specified in search_spec.
+  // Currently, only the "query" and "term_match_type" fields are recognized by
+  // the in-memory Icing, and only single term queries with possible section
+  // restrictions are supported.
+  //
+  // Returns:
+  //   The number of deleted documents on success
+  //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
+  libtextclassifier3::StatusOr<uint32_t> DeleteByQuery(
+      const SearchSpecProto &search_spec);
+
+  // Retrieves documents according to search_spec.
+  // Currently, only the "query" and "term_match_type" fields are recognized by
+  // the in-memory Icing, and only single term queries with possible section
+  // restrictions are supported.
+  std::vector<DocumentProto> Search(const SearchSpecProto &search_spec) const;
 
  private:
   // Does not own.
@@ -113,6 +135,11 @@ class InMemoryIcingSearchEngine {
   //   NOT_FOUND if the key doesn't exist or doc has been deleted
   libtextclassifier3::StatusOr<DocumentId> InternalGet(
       const std::string &name_space, const std::string &uri) const;
+
+  // A helper method for DeleteByQuery and Search to get matched internal doc
+  // ids.
+  std::vector<DocumentId> InternalSearch(
+      const SearchSpecProto &search_spec) const;
 };
 
 }  // namespace lib
