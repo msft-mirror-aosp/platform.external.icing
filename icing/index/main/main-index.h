@@ -22,7 +22,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/main/posting-list-accessor.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
 #include "icing/index/main/posting-list-used-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
@@ -48,27 +48,31 @@ class MainIndex {
       const std::string& index_directory, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
-  // Get a PostingListAccessor that holds the posting list chain for 'term'.
+  // Get a PostingListHitAccessor that holds the posting list chain for 'term'.
   //
   // RETURNS:
-  //  - On success, a valid PostingListAccessor
+  //  - On success, a valid PostingListHitAccessor
   //  - NOT_FOUND if term is not present in the main index.
-  libtextclassifier3::StatusOr<std::unique_ptr<PostingListAccessor>>
+  libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
   GetAccessorForExactTerm(const std::string& term);
 
-  // Get a PostingListAccessor for 'prefix'.
+  // Get a PostingListHitAccessor for 'prefix'.
   //
   // RETURNS:
-  //  - On success, a result containing a valid PostingListAccessor.
+  //  - On success, a result containing a valid PostingListHitAccessor.
   //  - NOT_FOUND if neither 'prefix' nor any terms for which 'prefix' is a
   //    prefix are present in the main index.
   struct GetPrefixAccessorResult {
-    // A PostingListAccessor that holds the posting list chain for the term
+    // A PostingListHitAccessor that holds the posting list chain for the term
     // that best represents 'prefix' in the main index.
-    std::unique_ptr<PostingListAccessor> accessor;
+    std::unique_ptr<PostingListHitAccessor> accessor;
     // True if the returned posting list chain is for 'prefix' or false if the
     // returned posting list chain is for a term for which 'prefix' is a prefix.
     bool exact;
+
+    explicit GetPrefixAccessorResult(
+        std::unique_ptr<PostingListHitAccessor> accessor_in, bool exact_in)
+        : accessor(std::move(accessor_in)), exact(exact_in) {}
   };
   libtextclassifier3::StatusOr<GetPrefixAccessorResult>
   GetAccessorForPrefixTerm(const std::string& prefix);
@@ -302,7 +306,7 @@ class MainIndex {
   //  posting list.
   libtextclassifier3::Status AddPrefixBackfillHits(
       PostingListIdentifier backfill_posting_list_id,
-      PostingListAccessor* hit_accum);
+      PostingListHitAccessor* hit_accum);
 
   // Transfer hits from old_pl_accessor to new_index for term.
   //
@@ -311,7 +315,7 @@ class MainIndex {
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<DocumentId> TransferAndAddHits(
       const std::vector<DocumentId>& document_id_old_to_new, const char* term,
-      PostingListAccessor& old_pl_accessor, MainIndex* new_index);
+      PostingListHitAccessor& old_pl_accessor, MainIndex* new_index);
 
   // Transfer hits from the current main index to new_index.
   //

@@ -60,12 +60,15 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
   Create(const Filesystem& filesystem, std::string_view base_dir,
          int maximum_size_bytes);
 
-  // Deletes all the files associated with the DynamicTrieKeyMapper. Returns
-  // success or any encountered IO errors
+  // Deletes all the files associated with the DynamicTrieKeyMapper.
   //
   // base_dir : Base directory used to save all the files required to persist
   //            DynamicTrieKeyMapper. Should be the same as passed into
   //            Create().
+  //
+  // Returns
+  //   OK on success
+  //   INTERNAL_ERROR on I/O error
   static libtextclassifier3::Status Delete(const Filesystem& filesystem,
                                            std::string_view base_dir);
 

@@ -15,6 +15,7 @@
 #include "icing/scoring/scoring-processor.h"
 
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -25,6 +26,7 @@
 #include "icing/proto/scoring.pb.h"
 #include "icing/scoring/ranker.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/scoring/scorer-factory.h"
 #include "icing/scoring/scorer.h"
 #include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
@@ -50,10 +52,11 @@ ScoringProcessor::Create(const ScoringSpecProto& scoring_spec,
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<Scorer> scorer,
-      Scorer::Create(scoring_spec,
-                     is_descending_order ? kDefaultScoreInDescendingOrder
-                                         : kDefaultScoreInAscendingOrder,
-                     document_store, schema_store));
+      scorer_factory::Create(scoring_spec,
+                             is_descending_order
+                                 ? kDefaultScoreInDescendingOrder
+                                 : kDefaultScoreInAscendingOrder,
+                             document_store, schema_store));
   // Using `new` to access a non-public constructor.
   return std::unique_ptr<ScoringProcessor>(
       new ScoringProcessor(std::move(scorer)));

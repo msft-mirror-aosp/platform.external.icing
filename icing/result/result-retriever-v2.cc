@@ -113,16 +113,17 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
   int32_t num_total_bytes = 0;
   while (results.size() < result_state.num_per_page() &&
          !result_state.scored_document_hits_ranker->empty()) {
-    ScoredDocumentHit next_best_document_hit =
+    JoinedScoredDocumentHit next_best_document_hit =
         result_state.scored_document_hits_ranker->PopNext();
     if (group_result_limiter_->ShouldBeRemoved(
-            next_best_document_hit, result_state.namespace_group_id_map(),
-            doc_store_, result_state.group_result_limits)) {
+            next_best_document_hit.parent_scored_document_hit(),
+            result_state.namespace_group_id_map(), doc_store_,
+            result_state.group_result_limits)) {
       continue;
     }
 
-    libtextclassifier3::StatusOr<DocumentProto> document_or =
-        doc_store_.Get(next_best_document_hit.document_id());
+    libtextclassifier3::StatusOr<DocumentProto> document_or = doc_store_.Get(
+        next_best_document_hit.parent_scored_document_hit().document_id());
     if (!document_or.ok()) {
       // Skip the document if getting errors.
       ICING_LOG(WARNING) << "Fail to fetch document from document store: "
@@ -147,14 +148,38 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       SnippetProto snippet_proto = snippet_retriever_->RetrieveSnippet(
           snippet_context.query_terms, snippet_context.match_type,
           snippet_context.snippet_spec, document,
-          next_best_document_hit.hit_section_id_mask());
+          next_best_document_hit.parent_scored_document_hit()
+              .hit_section_id_mask());
       *result.mutable_snippet() = std::move(snippet_proto);
       ++num_results_with_snippets;
     }
 
     // Add the document, itself.
     *result.mutable_document() = std::move(document);
-    result.set_score(next_best_document_hit.score());
+    result.set_score(next_best_document_hit.final_score());
+
+    // Retrieve child documents
+    for (const ScoredDocumentHit& child_scored_document_hit :
+         next_best_document_hit.child_scored_document_hits()) {
+      libtextclassifier3::StatusOr<DocumentProto> child_document_or =
+          doc_store_.Get(child_scored_document_hit.document_id());
+      if (!child_document_or.ok()) {
+        // Skip the document if getting errors.
+        ICING_LOG(WARNING)
+            << "Fail to fetch child document from document store: "
+            << child_document_or.status().error_message();
+        continue;
+      }
+
+      DocumentProto child_document = std::move(child_document_or).ValueOrDie();
+      // TODO(b/256022027): apply projection and add snippet for child doc
+
+      SearchResultProto::ResultProto* child_result =
+          result.add_joined_results();
+      *child_result->mutable_document() = std::move(child_document);
+      child_result->set_score(child_scored_document_hit.score());
+    }
+
     size_t result_bytes = result.ByteSizeLong();
     results.push_back(std::move(result));
 

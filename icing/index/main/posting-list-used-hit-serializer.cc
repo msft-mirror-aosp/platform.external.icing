@@ -20,7 +20,6 @@
 #include <vector>
 
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/file/posting_list/posting-list-common.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-bit-util.h"

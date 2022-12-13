@@ -26,9 +26,42 @@
 namespace icing {
 namespace lib {
 
+class IcingMonkeyTestRunner;
+
+struct IcingMonkeyTestRunnerConfiguration {
+  explicit IcingMonkeyTestRunnerConfiguration(uint32_t seed, int num_types,
+                                              int num_namespaces, int num_uris,
+                                              int index_merge_size)
+      : seed(seed),
+        num_types(num_types),
+        num_namespaces(num_namespaces),
+        num_uris(num_uris),
+        index_merge_size(index_merge_size) {}
+
+  uint32_t seed;
+  int num_types;
+  int num_namespaces;
+  int num_uris;
+  int index_merge_size;
+
+  // The possible number of properties that may appear in generated schema
+  // types.
+  std::vector<int> possible_num_properties;
+
+  // The possible number of tokens that may appear in generated documents, with
+  // a noise factor from 0.5 to 1 applied.
+  std::vector<int> possible_num_tokens_;
+
+  // An array of pairs of monkey test APIs with frequencies.
+  // If f_sum is the sum of all the frequencies, an operation with frequency f
+  // means for every f_sum iterations, the operation is expected to run f times.
+  std::vector<std::pair<std::function<void(IcingMonkeyTestRunner*)>, uint32_t>>
+      monkey_api_schedules;
+};
+
 class IcingMonkeyTestRunner {
  public:
-  IcingMonkeyTestRunner(uint32_t seed = std::random_device()());
+  IcingMonkeyTestRunner(const IcingMonkeyTestRunnerConfiguration& config);
   IcingMonkeyTestRunner(const IcingMonkeyTestRunner&) = delete;
   IcingMonkeyTestRunner& operator=(const IcingMonkeyTestRunner&) = delete;
 
@@ -54,6 +87,7 @@ class IcingMonkeyTestRunner {
   void DoOptimize();
 
  private:
+  IcingMonkeyTestRunnerConfiguration config_;
   MonkeyTestRandomEngine random_;
   Filesystem filesystem_;
   std::unique_ptr<DestructibleDirectory> icing_dir_;
