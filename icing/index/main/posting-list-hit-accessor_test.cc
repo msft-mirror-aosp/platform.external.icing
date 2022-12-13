@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-accessor.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
 
 #include <cstdint>
 
@@ -40,7 +40,7 @@ using ::testing::Eq;
 using ::testing::Lt;
 using ::testing::SizeIs;
 
-class PostingListAccessorTest : public ::testing::Test {
+class PostingListHitAccessorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/test_dir";
@@ -71,19 +71,19 @@ class PostingListAccessorTest : public ::testing::Test {
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
 };
 
-TEST_F(PostingListAccessorTest, HitsAddAndRetrieveProperly) {
+TEST_F(PostingListHitAccessorTest, HitsAddAndRetrieveProperly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   // Add some hits! Any hits!
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit& hit : hits1) {
-    ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
+    ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
   PostingListAccessor::FinalizeResult result =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result.status);
   EXPECT_THAT(result.id.block_index(), Eq(1));
   EXPECT_THAT(result.id.posting_list_index(), Eq(0));
@@ -96,16 +96,16 @@ TEST_F(PostingListAccessorTest, HitsAddAndRetrieveProperly) {
   EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
 }
 
-TEST_F(PostingListAccessorTest, PreexistingPLKeepOnSameBlock) {
+TEST_F(PostingListHitAccessorTest, PreexistingPLKeepOnSameBlock) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   // Add a single hit. This will fit in a min-sized posting list.
   Hit hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency);
-  ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
+  ICING_ASSERT_OK(pl_accessor->PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result1.status);
   // Should have been allocated to the first block.
   EXPECT_THAT(result1.id.block_index(), Eq(1));
@@ -116,12 +116,12 @@ TEST_F(PostingListAccessorTest, PreexistingPLKeepOnSameBlock) {
   // reallocated.
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_accessor,
-      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
-                                              serializer_.get(), result1.id));
+      PostingListHitAccessor::CreateFromExisting(
+          flash_index_storage_.get(), serializer_.get(), result1.id));
   Hit hit2 = CreateHit(hit1, /*desired_byte_length=*/1);
-  ICING_ASSERT_OK(pl_accessor.PrependHit(hit2));
+  ICING_ASSERT_OK(pl_accessor->PrependHit(hit2));
   PostingListAccessor::FinalizeResult result2 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result2.status);
   // Should have been allocated to the same posting list as the first hit.
   EXPECT_THAT(result2.id, Eq(result1.id));
@@ -134,11 +134,11 @@ TEST_F(PostingListAccessorTest, PreexistingPLKeepOnSameBlock) {
               IsOkAndHolds(ElementsAre(hit2, hit1)));
 }
 
-TEST_F(PostingListAccessorTest, PreexistingPLReallocateToLargerPL) {
+TEST_F(PostingListHitAccessorTest, PreexistingPLReallocateToLargerPL) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   // The smallest posting list size is 15 bytes. The first four hits will be
   // compressed to one byte each and will be able to fit in the 5 byte padded
   // region. The last hit will fit in one of the special hits. The posting list
@@ -146,10 +146,10 @@ TEST_F(PostingListAccessorTest, PreexistingPLReallocateToLargerPL) {
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit& hit : hits1) {
-    ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
+    ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
   PostingListAccessor::FinalizeResult result1 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result1.status);
   // Should have been allocated to the first block.
   EXPECT_THAT(result1.id.block_index(), Eq(1));
@@ -158,8 +158,8 @@ TEST_F(PostingListAccessorTest, PreexistingPLReallocateToLargerPL) {
   // Now let's add some more hits!
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_accessor,
-      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
-                                              serializer_.get(), result1.id));
+      PostingListHitAccessor::CreateFromExisting(
+          flash_index_storage_.get(), serializer_.get(), result1.id));
   // The current posting list can fit at most 2 more hits. Adding 12 more hits
   // should result in these hits being moved to a larger posting list.
   std::vector<Hit> hits2 = CreateHits(
@@ -167,10 +167,10 @@ TEST_F(PostingListAccessorTest, PreexistingPLReallocateToLargerPL) {
       /*desired_byte_length=*/1);
 
   for (const Hit& hit : hits2) {
-    ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
+    ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
   PostingListAccessor::FinalizeResult result2 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result2.status);
   // Should have been allocated to the second (new) block because the posting
   // list should have grown beyond the size that the first block maintains.
@@ -188,19 +188,19 @@ TEST_F(PostingListAccessorTest, PreexistingPLReallocateToLargerPL) {
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 }
 
-TEST_F(PostingListAccessorTest, MultiBlockChainsBlocksProperly) {
+TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   // Add some hits! Any hits!
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
   for (const Hit& hit : hits1) {
-    ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
+    ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
   PostingListAccessor::FinalizeResult result1 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result1.status);
   PostingListIdentifier second_block_id = result1.id;
   // Should have been allocated to the second block, which holds a max-sized
@@ -235,19 +235,19 @@ TEST_F(PostingListAccessorTest, MultiBlockChainsBlocksProperly) {
       IsOkAndHolds(ElementsAreArray(first_block_hits_start, hits1.rend())));
 }
 
-TEST_F(PostingListAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
+TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   // Add some hits! Any hits!
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
   for (const Hit& hit : hits1) {
-    ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
+    ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
   PostingListAccessor::FinalizeResult result1 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result1.status);
   PostingListIdentifier first_add_id = result1.id;
   EXPECT_THAT(first_add_id, Eq(PostingListIdentifier(
@@ -258,17 +258,17 @@ TEST_F(PostingListAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
   // second block.
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_accessor,
-      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
-                                              serializer_.get(), first_add_id));
+      PostingListHitAccessor::CreateFromExisting(
+          flash_index_storage_.get(), serializer_.get(), first_add_id));
   std::vector<Hit> hits2 = CreateHits(
       /*start_docid=*/hits1.back().document_id() + 1, /*num_hits=*/50,
       /*desired_byte_length=*/1);
 
   for (const Hit& hit : hits2) {
-    ICING_ASSERT_OK(pl_accessor.PrependHit(hit));
+    ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
   PostingListAccessor::FinalizeResult result2 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_EXPECT_OK(result2.status);
   PostingListIdentifier second_add_id = result2.id;
   EXPECT_THAT(second_add_id, Eq(first_add_id));
@@ -302,61 +302,61 @@ TEST_F(PostingListAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
       IsOkAndHolds(ElementsAreArray(first_block_hits_start, hits1.rend())));
 }
 
-TEST_F(PostingListAccessorTest, InvalidHitReturnsInvalidArgument) {
+TEST_F(PostingListHitAccessorTest, InvalidHitReturnsInvalidArgument) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   Hit invalid_hit;
-  EXPECT_THAT(pl_accessor.PrependHit(invalid_hit),
+  EXPECT_THAT(pl_accessor->PrependHit(invalid_hit),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(PostingListAccessorTest, HitsNotDecreasingReturnsInvalidArgument) {
+TEST_F(PostingListHitAccessorTest, HitsNotDecreasingReturnsInvalidArgument) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency);
-  ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
+  ICING_ASSERT_OK(pl_accessor->PrependHit(hit1));
 
   Hit hit2(/*section_id=*/6, /*document_id=*/1, Hit::kDefaultTermFrequency);
-  EXPECT_THAT(pl_accessor.PrependHit(hit2),
+  EXPECT_THAT(pl_accessor->PrependHit(hit2),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   Hit hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency);
-  EXPECT_THAT(pl_accessor.PrependHit(hit3),
+  EXPECT_THAT(pl_accessor->PrependHit(hit3),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(PostingListAccessorTest, NewPostingListNoHitsAdded) {
+TEST_F(PostingListHitAccessorTest, NewPostingListNoHitsAdded) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   PostingListAccessor::FinalizeResult result1 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   EXPECT_THAT(result1.status,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(PostingListAccessorTest, PreexistingPostingListNoHitsAdded) {
+TEST_F(PostingListHitAccessorTest, PreexistingPostingListNoHitsAdded) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::Create(flash_index_storage_.get(),
-                                  serializer_.get()));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::Create(flash_index_storage_.get(),
+                                     serializer_.get()));
   Hit hit1(/*section_id=*/3, /*document_id=*/1, Hit::kDefaultTermFrequency);
-  ICING_ASSERT_OK(pl_accessor.PrependHit(hit1));
+  ICING_ASSERT_OK(pl_accessor->PrependHit(hit1));
   PostingListAccessor::FinalizeResult result1 =
-      PostingListAccessor::Finalize(std::move(pl_accessor));
+      std::move(*pl_accessor).Finalize();
   ICING_ASSERT_OK(result1.status);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      PostingListAccessor pl_accessor2,
-      PostingListAccessor::CreateFromExisting(flash_index_storage_.get(),
-                                              serializer_.get(), result1.id));
+      std::unique_ptr<PostingListHitAccessor> pl_accessor2,
+      PostingListHitAccessor::CreateFromExisting(
+          flash_index_storage_.get(), serializer_.get(), result1.id));
   PostingListAccessor::FinalizeResult result2 =
-      PostingListAccessor::Finalize(std::move(pl_accessor2));
+      std::move(*pl_accessor2).Finalize();
   ICING_ASSERT_OK(result2.status);
 }
 

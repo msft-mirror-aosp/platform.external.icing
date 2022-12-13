@@ -579,7 +579,7 @@ TEST(PostingListUsedHitSerializerTest,
     ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
   }
 
-  EXPECT_THAT(serializer.MoveFrom(&pl_used1, /*other=*/nullptr),
+  EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used1, /*src=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(serializer.GetHits(&pl_used1),
               IsOkAndHolds(ElementsAreArray(hits.rbegin(), hits.rend())));
@@ -625,7 +625,7 @@ TEST(PostingListUsedHitSerializerTest,
 }
 
 TEST(PostingListUsedHitSerializerTest,
-     MoveToInvalidPostingListReturnsInvalidArgument) {
+     MoveToInvalidPostingListReturnsFailedPrecondition) {
   PostingListUsedHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
@@ -657,7 +657,7 @@ TEST(PostingListUsedHitSerializerTest,
   *first_hit = invalid_hit;
   ++first_hit;
   *first_hit = invalid_hit;
-  EXPECT_THAT(serializer.MoveFrom(&pl_used2, &pl_used1),
+  EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(serializer.GetHits(&pl_used1),
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));

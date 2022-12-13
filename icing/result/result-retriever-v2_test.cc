@@ -289,7 +289,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   result5.set_score(1);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
@@ -366,7 +367,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   result2.set_score(4);
 
   ResultStateV2 result_state1(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -383,7 +385,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       {document_id1, hit_section_id_mask, /*score=*/12},
       {document_id2, hit_section_id_mask, /*score=*/4}};
   ResultStateV2 result_state2(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -432,7 +435,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   result1.set_score(0);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -479,7 +483,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
                                 language_segmenter_.get(), normalizer_.get()));
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -550,7 +555,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
       {document_id2, hit_section_id_mask, /*score=*/0}};
   std::shared_ptr<ResultStateV2> result_state1 =
       std::make_shared<ResultStateV2>(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1),
               /*is_descending=*/true),
           /*query_terms=*/SectionRestrictQueryTermsMap{},
@@ -576,7 +582,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
       {document_id5, hit_section_id_mask, /*score=*/0}};
   std::shared_ptr<ResultStateV2> result_state2 =
       std::make_shared<ResultStateV2>(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
           /*query_terms=*/SectionRestrictQueryTermsMap{},
@@ -662,7 +669,8 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
   result_spec.set_num_total_bytes_per_page_threshold(result1.ByteSizeLong());
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -723,7 +731,8 @@ TEST_F(ResultRetrieverV2Test,
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
   result_spec.set_num_total_bytes_per_page_threshold(threshold);
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -783,7 +792,8 @@ TEST_F(ResultRetrieverV2Test,
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
   result_spec.set_num_total_bytes_per_page_threshold(threshold);
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),

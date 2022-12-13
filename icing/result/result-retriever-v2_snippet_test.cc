@@ -37,12 +37,12 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
-#include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/snippet-helpers.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -225,7 +225,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
                                 language_segmenter_.get(), normalizer_.get()));
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
@@ -267,7 +268,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
   *result_spec.mutable_snippet_spec() = CreateSnippetSpec();
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/{{"", {"foo", "bar"}}},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -368,7 +370,8 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
   *result_spec.mutable_snippet_spec() = std::move(snippet_spec);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/{{"", {"foo", "bar"}}},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -437,7 +440,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllResults) {
   *result_spec.mutable_snippet_spec() = std::move(snippet_spec);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/{{"", {"foo", "bar"}}},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -483,7 +487,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
   *result_spec.mutable_snippet_spec() = std::move(snippet_spec);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/{{"", {"foo", "bar"}}},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -534,7 +539,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   *result_spec.mutable_snippet_spec() = std::move(snippet_spec);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/{{"", {"foo", "bar"}}},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
