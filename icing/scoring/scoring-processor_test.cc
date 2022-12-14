@@ -24,6 +24,8 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -34,14 +36,10 @@ namespace lib {
 
 namespace {
 using ::testing::ElementsAre;
+using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
-
-constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
-    PropertyConfigProto_DataType_Code_STRING;
-
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto_Cardinality_Code_OPTIONAL;
 
 class ScoringProcessorTest : public testing::Test {
  protected:
@@ -58,7 +56,7 @@ class ScoringProcessorTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -327,19 +325,19 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/50));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
 
   SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  SectionIdMask section_id_mask = UINT64_C(1) << section_id;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -396,19 +394,19 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/10));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
 
   SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  SectionIdMask section_id_mask = UINT64_C(1) << section_id;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -464,13 +462,13 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/10));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   // Document 1 contains the query term "foo" 5 times
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/5);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   // Document 1 contains the query term "foo" 1 time
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   // Document 1 contains the query term "foo" 3 times
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
   doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/2);
@@ -480,8 +478,8 @@ TEST_F(ScoringProcessorTest,
   SectionIdMask section_id_mask3 = 0b00000011;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -526,11 +524,11 @@ TEST_F(ScoringProcessorTest,
       document_store()->Put(document1, /*num_tokens=*/10));
 
   // Document 1 contains the term "foo" 0 times in the "subject" property
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/0);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -578,16 +576,17 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -649,16 +648,17 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -717,11 +717,11 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
@@ -787,6 +787,78 @@ TEST_F(ScoringProcessorTest,
                   std::move(doc_hit_info_iterator),
                   /*num_to_score=*/1, &query_term_iterators),
               ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit)));
+}
+
+TEST_F(ScoringProcessorTest,
+       ShouldScoreByRelevanceScore_WithZeroPropertyWeight) {
+  DocumentProto document1 =
+      CreateDocument("icing", "email/1", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+  DocumentProto document2 =
+      CreateDocument("icing", "email/2", kDefaultScore,
+                     /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store()->Put(document1, /*num_tokens=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store()->Put(document2, /*num_tokens=*/1));
+
+  // Document 1 contains the term "foo" 1 time in the "body" property
+  SectionId body_section_id = 0;
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
+  doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
+
+  // Document 2 contains the term "foo" 1 time in the "subject" property
+  SectionId subject_section_id = 1;
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
+  doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
+
+  // Creates input doc_hit_infos and expected output scored_document_hits
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
+
+  // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
+  std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  ScoringSpecProto spec_proto;
+  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+
+  // Sets property weight for "body" to 0.0.
+  PropertyWeight body_property_weight =
+      CreatePropertyWeight(/*path=*/"body", /*weight=*/0.0);
+  // Sets property weight for "subject" to 1.0.
+  PropertyWeight subject_property_weight =
+      CreatePropertyWeight(/*path=*/"subject", /*weight=*/1.0);
+  *spec_proto.add_type_property_weights() = CreateTypePropertyWeights(
+      /*schema_type=*/"email", {body_property_weight, subject_property_weight});
+
+  // Creates a ScoringProcessor
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoringProcessor> scoring_processor,
+      ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
+
+  std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
+      query_term_iterators;
+  query_term_iterators["foo"] =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
+
+  std::vector<ScoredDocumentHit> scored_document_hits =
+      scoring_processor->Score(std::move(doc_hit_info_iterator),
+                               /*num_to_score=*/2, &query_term_iterators);
+
+  // We expect document1 to have a score of 0.0 as the query term "foo" matches
+  // in the "body" property which has a weight of 0.0. This is a result of the
+  // weighted term frequency being scaled down to 0.0 for the hit. We expect
+  // document2 to have a positive score as the query term "foo" matches in the
+  // "subject" property which has a weight of 1.0.
+  EXPECT_THAT(scored_document_hits, SizeIs(2));
+  EXPECT_THAT(scored_document_hits.at(0).document_id(), Eq(document_id1));
+  EXPECT_THAT(scored_document_hits.at(0).score(), Eq(0.0));
+  EXPECT_THAT(scored_document_hits.at(1).document_id(), Eq(document_id2));
+  EXPECT_THAT(scored_document_hits.at(1).score(), Gt(0.0));
 }
 
 TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {

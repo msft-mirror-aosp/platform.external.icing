@@ -22,9 +22,52 @@
 #include <utility>
 
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/term.pb.h"
 
 namespace icing {
 namespace lib {
+
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_UNKNOWN =
+    PropertyConfigProto::Cardinality::UNKNOWN;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
+    PropertyConfigProto::Cardinality::REPEATED;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto::Cardinality::OPTIONAL;
+constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
+    PropertyConfigProto::Cardinality::REQUIRED;
+
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_NONE =
+    StringIndexingConfig::TokenizerType::NONE;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
+    StringIndexingConfig::TokenizerType::PLAIN;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
+    StringIndexingConfig::TokenizerType::VERBATIM;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
+    StringIndexingConfig::TokenizerType::RFC822;
+
+constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
+constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
+constexpr TermMatchType::Code TERM_MATCH_PREFIX = TermMatchType::PREFIX;
+
+constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_UNKNOWN =
+    IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+constexpr IntegerIndexingConfig::NumericMatchType::Code NUMERIC_MATCH_RANGE =
+    IntegerIndexingConfig::NumericMatchType::RANGE;
+
+constexpr PropertyConfigProto::DataType::Code TYPE_UNKNOWN =
+    PropertyConfigProto::DataType::UNKNOWN;
+constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
+    PropertyConfigProto::DataType::STRING;
+constexpr PropertyConfigProto::DataType::Code TYPE_INT64 =
+    PropertyConfigProto::DataType::INT64;
+constexpr PropertyConfigProto::DataType::Code TYPE_DOUBLE =
+    PropertyConfigProto::DataType::DOUBLE;
+constexpr PropertyConfigProto::DataType::Code TYPE_BOOLEAN =
+    PropertyConfigProto::DataType::BOOLEAN;
+constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
+    PropertyConfigProto::DataType::BYTES;
+constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
+    PropertyConfigProto::DataType::DOCUMENT;
 
 class PropertyConfigBuilder {
  public:
@@ -49,6 +92,14 @@ class PropertyConfigBuilder {
     property_.set_data_type(PropertyConfigProto::DataType::STRING);
     property_.mutable_string_indexing_config()->set_term_match_type(match_type);
     property_.mutable_string_indexing_config()->set_tokenizer_type(tokenizer);
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDataTypeInt64(
+      IntegerIndexingConfig::NumericMatchType::Code numeric_match_type) {
+    property_.set_data_type(PropertyConfigProto::DataType::INT64);
+    property_.mutable_integer_indexing_config()->set_numeric_match_type(
+        numeric_match_type);
     return *this;
   }
 

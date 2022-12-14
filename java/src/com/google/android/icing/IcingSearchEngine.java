@@ -16,6 +16,9 @@ package com.google.android.icing;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import com.google.android.icing.proto.DebugInfoResultProto;
+import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
@@ -29,6 +32,7 @@ import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -74,7 +78,9 @@ public class IcingSearchEngine implements Closeable {
     System.loadLibrary("icing");
   }
 
-  /** @throws IllegalStateException if IcingSearchEngine fails to be created */
+  /**
+   * @throws IllegalStateException if IcingSearchEngine fails to be created
+   */
   public IcingSearchEngine(@NonNull IcingSearchEngineOptions options) {
     nativePointer = nativeCreate(options.toByteArray());
     if (nativePointer == 0) {
@@ -300,9 +306,21 @@ public class IcingSearchEngine implements Closeable {
       @NonNull ResultSpecProto resultSpec) {
     throwIfClosed();
 
+    // Note that on Android System.currentTimeMillis() is the standard "wall" clock and can be set
+    // by the user or the phone network so the time may jump backwards or forwards unpredictably.
+    // This could lead to inaccurate final JNI latency calculations or unexpected negative numbers
+    // in the case where the phone time is changed while sending data across JNI layers.
+    // However these occurrences should be very rare, so we will keep usage of
+    // System.currentTimeMillis() due to the lack of better time functions that can provide a
+    // consistent timestamp across all platforms.
+    long javaToNativeStartTimestampMs = System.currentTimeMillis();
     byte[] searchResultBytes =
         nativeSearch(
-            this, searchSpec.toByteArray(), scoringSpec.toByteArray(), resultSpec.toByteArray());
+            this,
+            searchSpec.toByteArray(),
+            scoringSpec.toByteArray(),
+            resultSpec.toByteArray(),
+            javaToNativeStartTimestampMs);
     if (searchResultBytes == null) {
       Log.e(TAG, "Received null SearchResultProto from native.");
       return SearchResultProto.newBuilder()
@@ -311,7 +329,10 @@ public class IcingSearchEngine implements Closeable {
     }
 
     try {
-      return SearchResultProto.parseFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      SearchResultProto.Builder searchResultProtoBuilder =
+          SearchResultProto.newBuilder().mergeFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      setNativeToJavaJniLatency(searchResultProtoBuilder);
+      return searchResultProtoBuilder.build();
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing SearchResultProto.", e);
       return SearchResultProto.newBuilder()
@@ -324,7 +345,7 @@ public class IcingSearchEngine implements Closeable {
   public SearchResultProto getNextPage(long nextPageToken) {
     throwIfClosed();
 
-    byte[] searchResultBytes = nativeGetNextPage(this, nextPageToken);
+    byte[] searchResultBytes = nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
     if (searchResultBytes == null) {
       Log.e(TAG, "Received null SearchResultProto from native.");
       return SearchResultProto.newBuilder()
@@ -333,13 +354,26 @@ public class IcingSearchEngine implements Closeable {
     }
 
     try {
-      return SearchResultProto.parseFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      SearchResultProto.Builder searchResultProtoBuilder =
+          SearchResultProto.newBuilder().mergeFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
+      setNativeToJavaJniLatency(searchResultProtoBuilder);
+      return searchResultProtoBuilder.build();
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing SearchResultProto.", e);
       return SearchResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
+  }
+
+  private void setNativeToJavaJniLatency(SearchResultProto.Builder searchResultProtoBuilder) {
+    int nativeToJavaLatencyMs =
+        (int)
+            (System.currentTimeMillis()
+                - searchResultProtoBuilder.getQueryStats().getNativeToJavaStartTimestampMs());
+    searchResultProtoBuilder.setQueryStats(
+        searchResultProtoBuilder.getQueryStats().toBuilder()
+            .setNativeToJavaJniLatencyMs(nativeToJavaLatencyMs));
   }
 
   @NonNull
@@ -439,9 +473,16 @@ public class IcingSearchEngine implements Closeable {
 
   @NonNull
   public DeleteByQueryResultProto deleteByQuery(@NonNull SearchSpecProto searchSpec) {
+    return deleteByQuery(searchSpec, /*returnDeletedDocumentInfo=*/ false);
+  }
+
+  @NonNull
+  public DeleteByQueryResultProto deleteByQuery(
+      @NonNull SearchSpecProto searchSpec, boolean returnDeletedDocumentInfo) {
     throwIfClosed();
 
-    byte[] deleteResultBytes = nativeDeleteByQuery(this, searchSpec.toByteArray());
+    byte[] deleteResultBytes =
+        nativeDeleteByQuery(this, searchSpec.toByteArray(), returnDeletedDocumentInfo);
     if (deleteResultBytes == null) {
       Log.e(TAG, "Received null DeleteResultProto from native.");
       return DeleteByQueryResultProto.newBuilder()
@@ -539,11 +580,32 @@ public class IcingSearchEngine implements Closeable {
     }
 
     try {
-      return StorageInfoResultProto.parseFrom(
-          storageInfoResultProtoBytes, EXTENSION_REGISTRY_LITE);
+      return StorageInfoResultProto.parseFrom(storageInfoResultProtoBytes, EXTENSION_REGISTRY_LITE);
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing GetOptimizeInfoResultProto.", e);
       return StorageInfoResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
+  public DebugInfoResultProto getDebugInfo(DebugInfoVerbosity.Code verbosity) {
+    throwIfClosed();
+
+    byte[] debugInfoResultProtoBytes = nativeGetDebugInfo(this, verbosity.getNumber());
+    if (debugInfoResultProtoBytes == null) {
+      Log.e(TAG, "Received null DebugInfoResultProto from native.");
+      return DebugInfoResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return DebugInfoResultProto.parseFrom(debugInfoResultProtoBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing DebugInfoResultProto.", e);
+      return DebugInfoResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
@@ -569,6 +631,31 @@ public class IcingSearchEngine implements Closeable {
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
+  }
+
+  public static boolean shouldLog(LogSeverity.Code severity) {
+    return shouldLog(severity, (short) 0);
+  }
+
+  public static boolean shouldLog(LogSeverity.Code severity, short verbosity) {
+    return nativeShouldLog((short) severity.getNumber(), verbosity);
+  }
+
+  public static boolean setLoggingLevel(LogSeverity.Code severity) {
+    return setLoggingLevel(severity, (short) 0);
+  }
+
+  public static boolean setLoggingLevel(LogSeverity.Code severity, short verbosity) {
+    return nativeSetLoggingLevel((short) severity.getNumber(), verbosity);
+  }
+
+  @Nullable
+  public static String getLoggingTag() {
+    String tag = nativeGetLoggingTag();
+    if (tag == null) {
+      Log.e(TAG, "Received null logging tag from native.");
+    }
+    return tag;
   }
 
   private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
@@ -598,9 +685,11 @@ public class IcingSearchEngine implements Closeable {
       IcingSearchEngine instance,
       byte[] searchSpecBytes,
       byte[] scoringSpecBytes,
-      byte[] resultSpecBytes);
+      byte[] resultSpecBytes,
+      long javaToNativeStartTimestampMs);
 
-  private static native byte[] nativeGetNextPage(IcingSearchEngine instance, long nextPageToken);
+  private static native byte[] nativeGetNextPage(
+      IcingSearchEngine instance, long nextPageToken, long javaToNativeStartTimestampMs);
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngine instance, long nextPageToken);
@@ -615,7 +704,7 @@ public class IcingSearchEngine implements Closeable {
       IcingSearchEngine instance, String schemaType);
 
   private static native byte[] nativeDeleteByQuery(
-      IcingSearchEngine instance, byte[] searchSpecBytes);
+      IcingSearchEngine instance, byte[] searchSpecBytes, boolean returnDeletedDocumentInfo);
 
   private static native byte[] nativePersistToDisk(IcingSearchEngine instance, int persistType);
 
@@ -629,4 +718,12 @@ public class IcingSearchEngine implements Closeable {
 
   private static native byte[] nativeSearchSuggestions(
       IcingSearchEngine instance, byte[] suggestionSpecBytes);
+
+  private static native byte[] nativeGetDebugInfo(IcingSearchEngine instance, int verbosity);
+
+  private static native boolean nativeShouldLog(short severity, short verbosity);
+
+  private static native boolean nativeSetLoggingLevel(short severity, short verbosity);
+
+  private static native String nativeGetLoggingTag();
 }

@@ -22,6 +22,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
+#include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -48,19 +49,13 @@ class QueryProcessor {
       const Normalizer* normalizer, const DocumentStore* document_store,
       const SchemaStore* schema_store);
 
-  struct QueryResults {
-    std::unique_ptr<DocHitInfoIterator> root_iterator;
-    // A map from section names to sets of terms restricted to those sections.
-    // Query terms that are not restricted are found at the entry with key "".
-    SectionRestrictQueryTermsMap query_terms;
-    // Hit iterators for the text terms in the query. These query_term_iterators
-    // are completely separate from the iterators that make the iterator tree
-    // beginning with root_iterator.
-    std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>
-        query_term_iterators;
-  };
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
+  //
+  // When ranking_strategy == RELEVANCE_SCORE, the root_iterator and the
+  // query_term_iterators returned will keep term frequency information
+  // internally, so that term frequency stats will be collected when calling
+  // PopulateMatchedTermsStats to the iterators.
   //
   // Returns:
   //   On success,
@@ -69,7 +64,8 @@ class QueryProcessor {
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<QueryResults> ParseSearch(
-      const SearchSpecProto& search_spec);
+      const SearchSpecProto& search_spec,
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy);
 
  private:
   explicit QueryProcessor(Index* index,
@@ -88,12 +84,8 @@ class QueryProcessor {
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<QueryResults> ParseRawQuery(
-      const SearchSpecProto& search_spec);
-
-  // Return the options for the DocHitInfoIteratorFilter based on the
-  // search_spec.
-  DocHitInfoIteratorFilter::Options getFilterOptions(
-      const SearchSpecProto& search_spec);
+      const SearchSpecProto& search_spec,
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy);
 
   // Not const because we could modify/sort the hit buffer in the lite index at
   // query time.
