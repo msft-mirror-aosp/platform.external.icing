@@ -45,6 +45,28 @@ class PostingListUsed;
 //   posting list.
 class PostingListUsedSerializer {
  public:
+  // Special data is either a DataType instance or data_start_offset.
+  template <typename DataType>
+  union SpecialData {
+    explicit SpecialData(const DataType& data) : data_(data) {}
+
+    explicit SpecialData(uint32_t data_start_offset)
+        : data_start_offset_(data_start_offset) {}
+
+    const DataType& data() const { return data_; }
+
+    uint32_t data_start_offset() const { return data_start_offset_; }
+    void set_data_start_offset(uint32_t data_start_offset) {
+      data_start_offset_ = data_start_offset;
+    }
+
+   private:
+    DataType data_;
+    uint32_t data_start_offset_;
+  } __attribute__((packed));
+
+  static constexpr uint32_t kNumSpecialData = 2;
+
   virtual ~PostingListUsedSerializer() = default;
 
   // Returns byte size of the data type.

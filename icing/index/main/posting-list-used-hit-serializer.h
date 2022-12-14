@@ -31,7 +31,7 @@ namespace lib {
 // comments in posting-list-used-hit-serializer.cc.
 class PostingListUsedHitSerializer : public PostingListUsedSerializer {
  public:
-  static constexpr uint32_t kSpecialHitsSize = sizeof(Hit) * kNumSpecialData;
+  static constexpr uint32_t kSpecialHitsSize = kNumSpecialData * sizeof(Hit);
 
   uint32_t GetDataTypeBytes() const override { return sizeof(Hit); }
 
@@ -44,23 +44,14 @@ class PostingListUsedHitSerializer : public PostingListUsedSerializer {
     return kMinPostingListSize;
   }
 
-  // Min size of posting list that can fit these used bytes (see MoveFrom).
   uint32_t GetMinPostingListSizeToFit(
       const PostingListUsed* posting_list_used) const override;
 
-  // Returns bytes used by actual hits.
   uint32_t GetBytesUsed(
       const PostingListUsed* posting_list_used) const override;
 
   void Clear(PostingListUsed* posting_list_used) const override;
 
-  // Moves contents from posting list 'src' to 'dst'. Clears 'src'.
-  //
-  // RETURNS:
-  //   - OK on success
-  //   - INVALID_ARGUMENT if 'src' is not valid or 'src' is too large to fit in
-  //       'dst'.
-  //   - FAILED_PRECONDITION if 'dst' posting list is in a corrupted state.
   libtextclassifier3::Status MoveFrom(PostingListUsed* dst,
                                       PostingListUsed* src) const override;
 
