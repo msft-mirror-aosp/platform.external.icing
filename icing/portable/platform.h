@@ -44,9 +44,9 @@ inline bool IsIcu72PlusTokenization() {
   if (!IsIcuTokenization()) {
     return false;
   }
-  UVersionInfo versionArray;
-  u_getVersion(versionArray);
-  return versionArray[0] >= 72;
+  UVersionInfo version_array;
+  u_getVersion(version_array);
+  return version_array[0] >= 72;
 }
 
 // Whether we're running on android_x86
