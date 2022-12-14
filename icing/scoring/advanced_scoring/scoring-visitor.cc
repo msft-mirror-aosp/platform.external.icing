@@ -35,15 +35,22 @@ void ScoringVisitor::VisitText(const TextNode* node) {
 }
 
 void ScoringVisitor::VisitMember(const MemberNode* node) {
-  std::string value;
-  if (node->children().size() == 1) {
-    // If a member has only one child, then it can be a numeric literal,
-    // or "this" if the member is a reference to a member function.
-    value = node->children()[0]->value();
-    if (value == "this") {
-      stack.push_back(ThisExpression::Create());
+  bool is_member_function = node->function() != nullptr;
+  if (is_member_function) {
+    // If the member node represents a member function, it must have only one
+    // child for "this".
+    if (node->children().size() != 1 ||
+        node->children()[0]->value() != "this") {
+      pending_error_ = absl_ports::InvalidArgumentError(
+          "Member functions can only be called via \"this\".");
       return;
     }
+    return VisitFunctionHelper(node->function(), is_member_function);
+  }
+  std::string value;
+  if (node->children().size() == 1) {
+    // If a member has only one child, then it represents a integer literal.
+    value = node->children()[0]->value();
   } else if (node->children().size() == 2) {
     // If a member has two children, then it can only represent a floating point
     // number, so we need to join them by "." to build the numeric literal.
@@ -68,8 +75,12 @@ void ScoringVisitor::VisitMember(const MemberNode* node) {
   stack.push_back(ConstantScoreExpression::Create(number));
 }
 
-void ScoringVisitor::VisitFunction(const FunctionNode* node) {
+void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
+                                         bool is_member_function) {
   std::vector<std::unique_ptr<ScoreExpression>> children;
+  if (is_member_function) {
+    children.push_back(ThisExpression::Create());
+  }
   for (const auto& arg : node->args()) {
     arg->Accept(this);
     if (has_pending_error()) {
@@ -82,9 +93,20 @@ void ScoringVisitor::VisitFunction(const FunctionNode* node) {
       absl_ports::InvalidArgumentError(
           absl_ports::StrCat("Unknown function: ", function_name));
 
-  // Math functions
-  if (MathFunctionScoreExpression::kFunctionNames.find(function_name) !=
-      MathFunctionScoreExpression::kFunctionNames.end()) {
+  if (DocumentFunctionScoreExpression::kFunctionNames.find(function_name) !=
+      DocumentFunctionScoreExpression::kFunctionNames.end()) {
+    // Document-based function
+    expression = DocumentFunctionScoreExpression::Create(
+        DocumentFunctionScoreExpression::kFunctionNames.at(function_name),
+        std::move(children), &document_store_, default_score_);
+  } else if (function_name ==
+             RelevanceScoreFunctionScoreExpression::kFunctionName) {
+    // relevanceScore function
+    expression = RelevanceScoreFunctionScoreExpression::Create(
+        std::move(children), &bm25f_calculator_, default_score_);
+  } else if (MathFunctionScoreExpression::kFunctionNames.find(function_name) !=
+             MathFunctionScoreExpression::kFunctionNames.end()) {
+    // Math functions
     expression = MathFunctionScoreExpression::Create(
         MathFunctionScoreExpression::kFunctionNames.at(function_name),
         std::move(children));

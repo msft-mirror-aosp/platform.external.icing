@@ -1,6 +1,5 @@
 package com.google.android.icing;
 
-import android.os.RemoteException;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -31,14 +30,10 @@ import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.SuggestionResponse;
 import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.UsageReport;
+import java.io.Closeable;
 
-/**
- * A common user-facing interface to expose the funcationalities provided by Icing Library.
- *
- * <p>All the methods here throw {@link RemoteException} because the implementation for
- * gmscore-appsearch-dynamite will throw it.
- */
-public interface IcingSearchEngineInterface extends AutoCloseable {
+/** A common user-facing interface to expose the funcationalities provided by Icing Library. */
+public interface IcingSearchEngineInterface extends Closeable {
   /**
    * Initializes the current IcingSearchEngine implementation.
    *

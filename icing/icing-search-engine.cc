@@ -54,6 +54,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
 #include "icing/query/suggestion-processor.h"
@@ -64,6 +65,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -433,6 +435,31 @@ bool ShouldRebuildIndex(const OptimizeStatsProto& optimize_stats) {
   // TODO(b/238236206): Try using the number of remaining hits in this
   // condition, and allow clients to configure the threshold.
   return num_invalid_documents >= optimize_stats.num_original_documents() * 0.9;
+}
+
+// Useful method to get RankingStrategy if advanced scoring is enabled. When the
+// "RelevanceScore" function is used in the advanced scoring expression,
+// RankingStrategy will be treated as RELEVANCE_SCORE in order to prepare the
+// necessary information needed for calculating relevance score.
+libtextclassifier3::StatusOr<ScoringSpecProto::RankingStrategy::Code>
+GetRankingStrategyFromScoringSpec(const ScoringSpecProto& scoring_spec) {
+  if (scoring_spec.advanced_scoring_expression().empty()) {
+    return scoring_spec.rank_by();
+  }
+  // TODO(b/261474063) The Lexer will be called again when creating the
+  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
+  // to be called only once.
+  Lexer lexer(scoring_spec.advanced_scoring_expression(),
+              Lexer::Language::SCORING);
+  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
+                         lexer.ExtractTokens());
+  for (const Lexer::LexerToken& token : lexer_tokens) {
+    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
+        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+      return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+    }
+  }
+  return ScoringSpecProto::RankingStrategy::NONE;
 }
 
 }  // namespace
@@ -1842,8 +1869,14 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
-  auto query_results_or =
-      query_processor->ParseSearch(search_spec, scoring_spec.rank_by());
+  auto ranking_strategy_or = GetRankingStrategyFromScoringSpec(scoring_spec);
+  libtextclassifier3::StatusOr<QueryResults> query_results_or;
+  if (ranking_strategy_or.ok()) {
+    query_results_or = query_processor->ParseSearch(
+        search_spec, ranking_strategy_or.ValueOrDie());
+  } else {
+    query_results_or = ranking_strategy_or.status();
+  }
   if (!query_results_or.ok()) {
     return QueryScoringResults(
         std::move(query_results_or).status(), /*query_terms_in=*/{},

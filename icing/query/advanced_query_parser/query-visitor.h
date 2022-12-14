@@ -110,7 +110,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   std::stack<PendingValue> pending_values_;
   libtextclassifier3::Status pending_error_;
 
-  const NumericIndex<int64>& numeric_index_;  // Does not own!
+  const NumericIndex<int64_t>& numeric_index_;  // Does not own!
 };
 
 }  // namespace lib

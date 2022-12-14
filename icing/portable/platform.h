@@ -15,7 +15,7 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
-#include "unicode/uvernum.h"
+#include "unicode/uversion.h"
 
 namespace icing {
 namespace lib {
@@ -41,7 +41,12 @@ inline bool IsIcuTokenization() {
 }
 
 inline bool IsIcu72PlusTokenization() {
-  return IsIcuTokenization() && U_ICU_VERSION_MAJOR_NUM >= 72;
+  if (!IsIcuTokenization()) {
+    return false;
+  }
+  UVersionInfo versionArray;
+  u_getVersion(versionArray);
+  return versionArray[0] >= 72;
 }
 
 // Whether we're running on android_x86
