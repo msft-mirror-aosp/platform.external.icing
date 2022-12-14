@@ -55,9 +55,9 @@
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/random-string.h"
-#include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/snippet-helpers.h"
 
 namespace icing {
 namespace lib {
@@ -9893,6 +9893,423 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFor64Sections) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
+}
+
+TEST_F(IcingSearchEngineTest, SimpleJoin) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subjectId")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first1")
+          .AddStringProperty("lastName", "last1")
+          .AddStringProperty("emailAddress", "email1@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first2")
+          .AddStringProperty("lastName", "last2")
+          .AddStringProperty("emailAddress", "email2@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person3 =
+      DocumentBuilder()
+          .SetKey("pkg$db/name#space\\\\", "person3")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first3")
+          .AddStringProperty("lastName", "last3")
+          .AddStringProperty("emailAddress", "email3@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "email1")
+          .SetSchema("Email")
+          .AddStringProperty("subjectId", "pkg$db/namespace#person1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "email2")
+          .SetSchema("Email")
+          .AddStringProperty("subjectId", "pkg$db/namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto email3 =
+      DocumentBuilder()
+          .SetKey("namespace", "email3")
+          .SetSchema("Email")
+          .AddStringProperty("subjectId", "pkg$db/name\\#space\\\\#person3")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email3).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  // Set max_joined_child_count as 2, so only email 3, email2 will be included
+  // in the nested result and email1 will be truncated.
+  join_spec->set_max_joined_child_count(2);
+  join_spec->set_parent_property_expression("this.fullyQualifiedId()");
+  join_spec->set_child_property_expression("subjectId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(1);
+
+  SearchResultProto expected_result1;
+  expected_result1.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto1 =
+      expected_result1.mutable_results()->Add();
+  *result_proto1->mutable_document() = person3;
+  *result_proto1->mutable_joined_results()->Add()->mutable_document() = email3;
+
+  SearchResultProto expected_result2;
+  expected_result2.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto2 =
+      expected_result2.mutable_results()->Add();
+  *result_proto2->mutable_document() = person2;
+  *result_proto2->mutable_joined_results()->Add()->mutable_document() = email2;
+
+  SearchResultProto expected_result3;
+  expected_result3.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto3 =
+      expected_result3.mutable_results()->Add();
+  *result_proto3->mutable_document() = person1;
+  *result_proto3->mutable_joined_results()->Add()->mutable_document() = email1;
+
+  SearchResultProto result1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  uint64_t next_page_token = result1.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result1.set_next_page_token(next_page_token);
+  EXPECT_THAT(result1,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result1));
+
+  SearchResultProto result2 = icing.GetNextPage(next_page_token);
+  next_page_token = result2.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result2.set_next_page_token(next_page_token);
+  EXPECT_THAT(result2,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result2));
+
+  SearchResultProto result3 = icing.GetNextPage(next_page_token);
+  next_page_token = result3.next_page_token();
+  EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
+  EXPECT_THAT(result3,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result3));
+}
+
+TEST_F(IcingSearchEngineTest, InvalidJoins) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subjectId")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first1")
+          .AddStringProperty("lastName", "last1")
+          .AddStringProperty("emailAddress", "email1@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace\\", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first2")
+          .AddStringProperty("lastName", "last2")
+          .AddStringProperty("emailAddress", "email2@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  // "invalid format" does not refer to any document, so it will not be joined
+  // to any document.
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "email1")
+          .SetSchema("Email")
+          .AddStringProperty("subjectId", "invalid format")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  // This will not be joined because the # in the subjectId is escaped.
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "email2")
+          .SetSchema("Email")
+          .AddStringProperty("subjectId", "pkg$db/namespace\\#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  // Set max_joined_child_count as 2, so only email 3, email2 will be included
+  // in the nested result and email1 will be truncated.
+  join_spec->set_max_joined_child_count(2);
+  join_spec->set_parent_property_expression("this.fullyQualifiedId()");
+  join_spec->set_child_property_expression("subjectId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(1);
+
+  SearchResultProto expected_result1;
+  expected_result1.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto1 =
+      expected_result1.mutable_results()->Add();
+  *result_proto1->mutable_document() = person2;
+
+  SearchResultProto expected_result2;
+  expected_result2.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto2 =
+      expected_result2.mutable_results()->Add();
+  *result_proto2->mutable_document() = person1;
+
+  SearchResultProto result1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  uint64_t next_page_token = result1.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result1.set_next_page_token(next_page_token);
+  EXPECT_THAT(result1,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result1));
+
+  SearchResultProto result2 = icing.GetNextPage(next_page_token);
+  next_page_token = result2.next_page_token();
+  EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
+  EXPECT_THAT(result2,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result2));
+}
+
+TEST_F(IcingSearchEngineTest, NumericFilterAdvancedQuerySucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("price")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("cost")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document_one = DocumentBuilder()
+                                   .SetKey("namespace", "1")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 10)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two = DocumentBuilder()
+                                   .SetKey("namespace", "2")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 25)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  DocumentProto document_three = DocumentBuilder()
+                                     .SetKey("namespace", "3")
+                                     .SetSchema("transaction")
+                                     .SetCreationTimestampMs(1)
+                                     .AddInt64Property("cost", 2)
+                                     .Build();
+  ASSERT_THAT(icing.Put(document_three).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("price < 20");
+  search_spec.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+
+  SearchResultProto results =
+      icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_one));
+
+  search_spec.set_query("price == 25");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_two));
+
+  search_spec.set_query("cost > 2");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.results(), IsEmpty());
+
+  search_spec.set_query("cost >= 2");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_three));
+
+  search_spec.set_query("price <= 25");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_two));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document_one));
+}
+
+TEST_F(IcingSearchEngineTest, NumericFilterOldQueryFails) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("price")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("cost")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document_one = DocumentBuilder()
+                                   .SetKey("namespace", "1")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 10)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two = DocumentBuilder()
+                                   .SetKey("namespace", "2")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 25)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  DocumentProto document_three = DocumentBuilder()
+                                     .SetKey("namespace", "3")
+                                     .SetSchema("transaction")
+                                     .SetCreationTimestampMs(1)
+                                     .AddInt64Property("cost", 2)
+                                     .Build();
+  ASSERT_THAT(icing.Put(document_three).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("price < 20");
+  search_spec.set_search_type(SearchSpecProto::SearchType::ICING_RAW_QUERY);
+
+  SearchResultProto results =
+      icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 }  // namespace

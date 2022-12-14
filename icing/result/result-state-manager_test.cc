@@ -183,9 +183,9 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
       {document_id1, kSectionIdMaskNone, /*score=*/1},
       {document_id2, kSectionIdMaskNone, /*score=*/1},
       {document_id3, kSectionIdMaskNone, /*score=*/1}};
-  std::unique_ptr<ScoredDocumentHitsRanker> ranker =
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
-          std::move(scored_document_hits), /*is_descending=*/true);
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits), /*is_descending=*/true);
 
   ResultStateManager result_state_manager(
       /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
@@ -228,9 +228,9 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
       {document_id3, kSectionIdMaskNone, /*score=*/1},
       {document_id4, kSectionIdMaskNone, /*score=*/1},
       {document_id5, kSectionIdMaskNone, /*score=*/1}};
-  std::unique_ptr<ScoredDocumentHitsRanker> ranker =
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
-          std::move(scored_document_hits), /*is_descending=*/true);
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits), /*is_descending=*/true);
 
   ResultStateManager result_state_manager(
       /*max_total_hits=*/std::numeric_limits<int>::max(), document_store(),
@@ -299,7 +299,8 @@ TEST_F(ResultStateManagerTest, EmptyRankerShouldReturnEmptyFirstPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::vector<ScoredDocumentHit>(), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -333,7 +334,8 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), result_spec, document_store(),
@@ -373,7 +375,8 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), result_spec, document_store(),
@@ -417,7 +420,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           query_terms, search_spec, scoring_spec, result_spec, document_store(),
           result_retriever()));
@@ -428,7 +432,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           query_terms, search_spec, scoring_spec, result_spec, document_store(),
           result_retriever()));
@@ -462,7 +467,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -474,7 +480,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -516,7 +523,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -561,7 +569,8 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -570,7 +579,8 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -607,7 +617,8 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -616,7 +627,8 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -649,7 +661,8 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -658,7 +671,8 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -668,7 +682,8 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -713,7 +728,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -722,7 +738,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -731,7 +748,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -749,7 +767,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info4,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -801,7 +820,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -810,7 +830,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -819,7 +840,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -841,7 +863,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info4,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -850,7 +873,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info5,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits5), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -859,7 +883,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info6,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits6), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -920,7 +945,8 @@ TEST_F(
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -929,7 +955,8 @@ TEST_F(
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -938,7 +965,8 @@ TEST_F(
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -956,7 +984,8 @@ TEST_F(
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info4,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -970,7 +999,8 @@ TEST_F(
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info5,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits5), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1025,7 +1055,8 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1034,7 +1065,8 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1043,7 +1075,8 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1066,7 +1099,8 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info4,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1118,7 +1152,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1127,7 +1162,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1136,7 +1172,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1159,7 +1196,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info4,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1173,7 +1211,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info5,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits5), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1226,7 +1265,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1235,7 +1275,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1251,7 +1292,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info3,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1324,7 +1366,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1337,7 +1380,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/1),
@@ -1374,7 +1418,8 @@ TEST_F(ResultStateManagerTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
           /*query_terms=*/{}, SearchSpecProto::default_instance(),
           CreateScoringSpec(), CreateResultSpec(/*num_per_page=*/2),

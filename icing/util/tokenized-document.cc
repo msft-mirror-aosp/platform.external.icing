@@ -31,29 +31,14 @@
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<TokenizedDocument> TokenizedDocument::Create(
+namespace {
+
+libtextclassifier3::StatusOr<std::vector<TokenizedSection>> Tokenize(
     const SchemaStore* schema_store,
-    const LanguageSegmenter* language_segmenter, DocumentProto document) {
-  TokenizedDocument tokenized_document(std::move(document));
-  ICING_RETURN_IF_ERROR(
-      tokenized_document.Tokenize(schema_store, language_segmenter));
-  return tokenized_document;
-}
-
-TokenizedDocument::TokenizedDocument(DocumentProto document)
-    : document_(std::move(document)) {}
-
-libtextclassifier3::Status TokenizedDocument::Tokenize(
-    const SchemaStore* schema_store,
-    const LanguageSegmenter* language_segmenter) {
-  DocumentValidator validator(schema_store);
-  ICING_RETURN_IF_ERROR(validator.Validate(document_));
-
-  ICING_ASSIGN_OR_RETURN(SectionGroup section_group,
-                         schema_store->ExtractSections(document_));
-  // string sections
-  for (const Section<std::string_view>& section :
-       section_group.string_sections) {
+    const LanguageSegmenter* language_segmenter,
+    const std::vector<Section<std::string_view>>& string_sections) {
+  std::vector<TokenizedSection> tokenized_string_sections;
+  for (const Section<std::string_view>& section : string_sections) {
     ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer> tokenizer,
                            tokenizer_factory::CreateIndexingTokenizer(
                                section.metadata.tokenizer, language_segmenter));
@@ -68,11 +53,34 @@ libtextclassifier3::Status TokenizedDocument::Tokenize(
         }
       }
     }
-    tokenized_sections_.emplace_back(SectionMetadata(section.metadata),
-                                     std::move(token_sequence));
+    tokenized_string_sections.emplace_back(SectionMetadata(section.metadata),
+                                           std::move(token_sequence));
   }
 
-  return libtextclassifier3::Status::OK;
+  return tokenized_string_sections;
+}
+
+}  // namespace
+
+/* static */ libtextclassifier3::StatusOr<TokenizedDocument>
+TokenizedDocument::Create(const SchemaStore* schema_store,
+                          const LanguageSegmenter* language_segmenter,
+                          DocumentProto document) {
+  DocumentValidator validator(schema_store);
+  ICING_RETURN_IF_ERROR(validator.Validate(document));
+
+  ICING_ASSIGN_OR_RETURN(SectionGroup section_group,
+                         schema_store->ExtractSections(document));
+
+  // Tokenize string sections
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<TokenizedSection> tokenized_string_sections,
+      Tokenize(schema_store, language_segmenter,
+               section_group.string_sections));
+
+  return TokenizedDocument(std::move(document),
+                           std::move(tokenized_string_sections),
+                           std::move(section_group.integer_sections));
 }
 
 }  // namespace lib
