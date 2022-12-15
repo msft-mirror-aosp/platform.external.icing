@@ -27,6 +27,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/join-processor.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -5103,6 +5104,70 @@ TEST_F(IcingSearchEngineTest, Bm25fRelevanceScoringOneNamespace) {
                           "namespace1/uri6"));  // 'food' 1 time
 }
 
+TEST_F(IcingSearchEngineTest, Bm25fRelevanceScoringOneNamespaceAdvanced) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+
+  // Create and index documents in namespace "namespace1".
+  DocumentProto document = CreateEmailDocument(
+      "namespace1", "namespace1/uri0", /*score=*/10, "sushi belmont",
+      "fresh fish. inexpensive. good sushi.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument(
+      "namespace1", "namespace1/uri1", /*score=*/13, "peacock koriander",
+      "indian food. buffet. spicy food. kadai chicken.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri2", /*score=*/4,
+                                 "panda express",
+                                 "chinese food. cheap. inexpensive. kung pao.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri3", /*score=*/23,
+                                 "speederia pizza",
+                                 "thin-crust pizza. good and fast.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri4", /*score=*/8,
+                                 "whole foods",
+                                 "salads. pizza. organic food. expensive.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument(
+      "namespace1", "namespace1/uri5", /*score=*/18, "peets coffee",
+      "espresso. decaf. brewed coffee. whole beans. excellent coffee.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument(
+      "namespace1", "namespace1/uri6", /*score=*/4, "costco",
+      "bulk. cheap whole beans. frozen fish. food samples.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri7", /*score=*/4,
+                                 "starbucks coffee",
+                                 "habit. birthday rewards. good coffee");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("coffee OR food");
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_advanced_scoring_expression("this.relevanceScore() * 2 + 1");
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+
+  // Result should be in descending score order
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+  // Both doc5 and doc7 have "coffee" in name and text sections.
+  // However, doc5 has more matches in the text section.
+  // Documents with "food" are ranked lower as the term "food" is commonly
+  // present in this corpus, and thus, has a lower IDF.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("namespace1/uri5",    // 'coffee' 3 times
+                          "namespace1/uri7",    // 'coffee' 2 times
+                          "namespace1/uri1",    // 'food' 2 times
+                          "namespace1/uri4",    // 'food' 2 times
+                          "namespace1/uri2",    // 'food' 1 time
+                          "namespace1/uri6"));  // 'food' 1 time
+}
+
 TEST_F(IcingSearchEngineTest, Bm25fRelevanceScoringOneNamespaceNotOperator) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -9895,7 +9960,7 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFor64Sections) {
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
 }
 
-TEST_F(IcingSearchEngineTest, SimpleJoin) {
+TEST_F(IcingSearchEngineTest, JoinByQualifiedId) {
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -9915,11 +9980,18 @@ TEST_F(IcingSearchEngineTest, SimpleJoin) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("subjectId")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   DocumentProto person1 =
@@ -9942,7 +10014,7 @@ TEST_F(IcingSearchEngineTest, SimpleJoin) {
           .Build();
   DocumentProto person3 =
       DocumentBuilder()
-          .SetKey("pkg$db/name#space\\\\", "person3")
+          .SetKey(R"(pkg$db/name#space\\)", "person3")
           .SetSchema("Person")
           .AddStringProperty("firstName", "first3")
           .AddStringProperty("lastName", "last3")
@@ -9954,21 +10026,25 @@ TEST_F(IcingSearchEngineTest, SimpleJoin) {
       DocumentBuilder()
           .SetKey("namespace", "email1")
           .SetSchema("Email")
-          .AddStringProperty("subjectId", "pkg$db/namespace#person1")
+          .AddStringProperty("subject", "test subject 1")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person1")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
   DocumentProto email2 =
       DocumentBuilder()
           .SetKey("namespace", "email2")
           .SetSchema("Email")
-          .AddStringProperty("subjectId", "pkg$db/namespace#person2")
+          .AddStringProperty("subject", "test subject 2")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person2")
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
   DocumentProto email3 =
       DocumentBuilder()
           .SetKey("namespace", "email3")
           .SetSchema("Email")
-          .AddStringProperty("subjectId", "pkg$db/name\\#space\\\\#person3")
+          .AddStringProperty("subject", "test subject 3")
+          .AddStringProperty("personQualifiedId",
+                             R"(pkg$db/name\#space\\\\#person3)")  // escaped
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
@@ -9985,20 +10061,21 @@ TEST_F(IcingSearchEngineTest, SimpleJoin) {
   // Parent SearchSpec
   SearchSpecProto search_spec;
   search_spec.set_term_match_type(TermMatchType::PREFIX);
-  search_spec.set_query("first");
+  search_spec.set_query("firstName:first");
 
   // JoinSpec
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
   // Set max_joined_child_count as 2, so only email 3, email2 will be included
   // in the nested result and email1 will be truncated.
   join_spec->set_max_joined_child_count(2);
-  join_spec->set_parent_property_expression("this.fullyQualifiedId()");
-  join_spec->set_child_property_expression("subjectId");
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kFullyQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
   JoinSpecProto::NestedSpecProto* nested_spec =
       join_spec->mutable_nested_spec();
   SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
   nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
-  nested_search_spec->set_query("");
+  nested_search_spec->set_query("subject:test");
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 

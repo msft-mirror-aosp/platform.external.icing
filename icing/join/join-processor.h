@@ -15,6 +15,8 @@
 #ifndef ICING_JOIN_JOIN_PROCESSOR_H_
 #define ICING_JOIN_JOIN_PROCESSOR_H_
 
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -39,14 +41,21 @@ class JoinProcessor {
       std::vector<ScoredDocumentHit>&& child_scored_document_hits);
 
  private:
+  // Loads a document and uses a property expression to fetch the value of the
+  // property from the document. The property expression may refer to nested
+  // document properties.
+  // Note: currently we only support single joining, so we use the first element
+  // (index 0) for any repeated values.
+  //
+  // TODO(b/256022027): validate joinable property (and its upper-level) should
+  //                    not have REPEATED cardinality.
+  //
+  // Returns:
+  //   "" on document load error.
+  //   "" if the property path is not found in the document.
   std::string FetchPropertyExpressionValue(
       const DocumentId& document_id,
       const std::string& property_expression) const;
-
-  void UnescapeSeparator(std::string& property, const std::string& separator);
-
-  std::vector<int> GetSeparatorLocations(const std::string& content,
-                                         const std::string& separator) const;
 
   const DocumentStore* doc_store_;  // Does not own.
 };
