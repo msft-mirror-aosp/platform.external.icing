@@ -162,7 +162,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 2 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -219,7 +220,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 2 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -292,7 +294,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 4 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -376,7 +379,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 4 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -433,7 +437,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 2 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -534,7 +539,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 6 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -592,7 +598,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 2 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -687,7 +694,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,

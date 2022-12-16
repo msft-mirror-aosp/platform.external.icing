@@ -299,7 +299,7 @@ message SearchResultProto {
     // determined by ScoringSpecProto.rank_by.
     optional double score = 3;
 
-    // The documents that were joined to a parent document.
+    // The child documents that were joined to a parent document.
     repeated ResultProto joined_results = 4;
   }
   repeated ResultProto results = 2;
@@ -430,37 +430,53 @@ message SuggestionResponse {
 //
 // Next tag: 7
 message JoinSpecProto {
-  // A nested SearchSpec that will be used to retrieve joined documents. If you
-  // are only looking to join on Action type documents, you could set a schema
-  // filter in this SearchSpec. This includes the nested search query. See
-  // SearchSpecProto.
-  optional SearchSpecProto nested_search_spec = 1;
+  // Collection of several specs that will be used for searching and joining
+  // child documents.
+  //
+  // Next tag: 4
+  message NestedSpecProto {
+    // A nested SearchSpec that will be used to retrieve child documents. If you
+    // are only looking to join on a specific type documents, you could set a
+    // schema filter in this SearchSpec. This includes the nested search query.
+    // See SearchSpecProto.
+    optional SearchSpecProto search_spec = 1;
+
+    // A nested ScoringSpec that will be used to score child documents.
+    // See ScoringSpecProto.
+    optional ScoringSpecProto scoring_spec = 2;
+
+    // A nested ResultSpec that will be used to format child documents in the
+    // result joined documents, e.g. snippeting, projection.
+    // See ResultSpecProto.
+    optional ResultSpecProto result_spec = 3;
+  }
+  optional NestedSpecProto nested_spec = 1;
 
   // The equivalent of a primary key in SQL. This is an expression that will be
   // used to match child documents from the nested search to this document. One
-  // such expression is qualifiedId(). When used, it means the
-  // child_property_expression in the joined documents must be equal to the
-  // qualified id.
+  // such expression is qualifiedId(). When used, it means the contents of
+  // child_property_expression property in the child documents must be equal to
+  // the qualified id.
   // TODO(b/256022027) allow for parent_property_expression to be any property
   // of the parent document.
   optional string parent_property_expression = 2;
 
   // The equivalent of a foreign key in SQL. This defines an equality constraint
   // between a property in a child document and a property in the parent
-  // document. For example, if you want to join Action documents which an
+  // document. For example, if you want to join child documents which an
   // entityId property containing a fully qualified document id,
   // child_property_expression can be set to "entityId".
   // TODO(b/256022027) figure out how to allow this to refer to documents
   // outside of same pkg+db+ns.
   optional string child_property_expression = 3;
 
-  // The max amount of joined documents to join to a parent document.
-  optional int32 max_joined_result_count = 4;
+  // The max number of child documents to join to a parent document.
+  optional int32 max_joined_child_count = 4;
 
-  // The strategy by which to score the aggregation of joined documents. For
+  // The strategy by which to score the aggregation of child documents. For
   // example, you might want to know which entity document has the most actions
   // taken on it. If JOIN_AGGREGATE_SCORE is used in the base SearchSpecProto,
-  // the COUNT value will rank entity documents based on the number of joined
+  // the COUNT value will rank entity documents based on the number of child
   // documents.
   enum AggregationScore {
     UNDEFINED = 0;

@@ -14,6 +14,7 @@
 
 #include "icing/query/query-processor.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -26,13 +27,14 @@
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/dummy-numeric-index.h"
+#include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
-#include "icing/query/query-processor.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -59,7 +61,6 @@ using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
-using ::testing::Test;
 using ::testing::UnorderedElementsAre;
 
 class QueryProcessorTest
@@ -88,11 +89,22 @@ class QueryProcessorTest
           icu_data_file_helper::SetUpICUDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
+                              schema_store_.get()));
+    document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+    // TODO(b/249829533): switch to use persistent numeric index.
+    numeric_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -102,6 +114,12 @@ class QueryProcessorTest
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/1000));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        query_processor_,
+        QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                               language_segmenter_.get(), normalizer_.get(),
+                               document_store_.get(), schema_store_.get()));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
@@ -111,6 +129,16 @@ class QueryProcessorTest
                                         term_match_type, /*namespace_id=*/0);
     auto status = editor.BufferTerm(token.c_str());
     return status.ok() ? editor.IndexAllBufferedTerms() : status;
+  }
+
+  libtextclassifier3::Status AddToNumericIndex(DocumentId document_id,
+                                               const std::string& property,
+                                               SectionId section_id,
+                                               int64_t value) {
+    std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
+        numeric_index_->Edit(property, document_id, section_id);
+    ICING_RETURN_IF_ERROR(editor->BufferKey(value));
+    return editor->IndexAllBufferedKeys();
   }
 
   void TearDown() override {
@@ -129,35 +157,44 @@ class QueryProcessorTest
 
  protected:
   std::unique_ptr<Index> index_;
+  std::unique_ptr<NumericIndex<int64_t>> numeric_index_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
   FakeClock fake_clock_;
   std::unique_ptr<const JniCache> jni_cache_ = GetTestJniCache();
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> document_store_;
+  std::unique_ptr<QueryProcessor> query_processor_;
 };
 
 TEST_P(QueryProcessorTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
-      QueryProcessor::Create(/*index=*/nullptr, language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()),
+      QueryProcessor::Create(/*index=*/nullptr, numeric_index_.get(),
+                             language_segmenter_.get(), normalizer_.get(),
+                             document_store_.get(), schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), /*language_segmenter=*/nullptr,
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()),
+      QueryProcessor::Create(index_.get(), /*numeric_index_=*/nullptr,
+                             language_segmenter_.get(), normalizer_.get(),
+                             document_store_.get(), schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             /*normalizer=*/nullptr, document_store_.get(),
-                             schema_store_.get()),
+      QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                             /*language_segmenter=*/nullptr, normalizer_.get(),
+                             document_store_.get(), schema_store_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(QueryProcessor::Create(
-                  index_.get(), language_segmenter_.get(), normalizer_.get(),
-                  /*document_store=*/nullptr, schema_store_.get()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(QueryProcessor::Create(index_.get(), language_segmenter_.get(),
+  EXPECT_THAT(
+      QueryProcessor::Create(
+          index_.get(), numeric_index_.get(), language_segmenter_.get(),
+          /*normalizer=*/nullptr, document_store_.get(), schema_store_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                             language_segmenter_.get(), normalizer_.get(),
+                             /*document_store=*/nullptr, schema_store_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                                     language_segmenter_.get(),
                                      normalizer_.get(), document_store_.get(),
                                      /*schema_store=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
@@ -168,17 +205,7 @@ TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
@@ -193,22 +220,14 @@ TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
 
   // We don't need to insert anything in the index since the empty query will
   // match all DocumentIds from the DocumentStore
-
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("()");
   search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
@@ -222,17 +241,7 @@ TEST_P(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
                              document_store_->Put(DocumentBuilder()
@@ -247,22 +256,14 @@ TEST_P(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
 
   // We don't need to insert anything in the index since the empty query will
   // match all DocumentIds from the DocumentStore
-
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("");
   search_spec.set_search_type(GetParam());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
@@ -276,17 +277,7 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -310,13 +301,6 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hElLo WORLD");
   search_spec.set_term_match_type(term_match_type);
@@ -324,7 +308,7 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -354,17 +338,7 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -385,13 +359,6 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("he");
   search_spec.set_term_match_type(term_match_type);
@@ -399,7 +366,7 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -424,17 +391,7 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -456,13 +413,6 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("he");
   search_spec.set_term_match_type(term_match_type);
@@ -470,7 +420,7 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -495,17 +445,7 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -526,13 +466,6 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
   search_spec.set_term_match_type(term_match_type);
@@ -540,7 +473,7 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -565,17 +498,7 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -596,13 +519,6 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hello hello");
   search_spec.set_term_match_type(term_match_type);
@@ -610,7 +526,7 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -637,17 +553,7 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -671,13 +577,6 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hello world");
   search_spec.set_term_match_type(term_match_type);
@@ -685,7 +584,7 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -714,17 +613,7 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -745,13 +634,6 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("he he");
   search_spec.set_term_match_type(term_match_type);
@@ -759,7 +641,7 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -786,17 +668,7 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -820,13 +692,6 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("he wo");
   search_spec.set_term_match_type(term_match_type);
@@ -834,7 +699,7 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -864,17 +729,7 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -898,13 +753,6 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
       AddTokenToIndex(document_id, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hello wo");
   search_spec.set_term_match_type(term_match_type);
@@ -912,7 +760,7 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -942,17 +790,7 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -981,13 +819,6 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR world");
   search_spec.set_term_match_type(term_match_type);
@@ -995,7 +826,7 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1033,17 +864,7 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1072,13 +893,6 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("he OR wo");
   search_spec.set_term_match_type(term_match_type);
@@ -1086,7 +900,7 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1123,17 +937,7 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1161,13 +965,6 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
       AddTokenToIndex(document_id2, section_id, TermMatchType::PREFIX, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("hello OR wo");
   search_spec.set_term_match_type(TermMatchType::PREFIX);
@@ -1175,7 +972,7 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1212,17 +1009,7 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1264,13 +1051,6 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   {
     // OR gets precedence over AND, this is parsed as ((puppy OR kitten) AND
     // dog)
@@ -1281,7 +1061,7 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // Only Document 1 matches since it has puppy AND dog
@@ -1318,7 +1098,7 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // Both Document 1 and 2 match since Document 1 has animal AND puppy, and
@@ -1374,7 +1154,7 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // Only Document 2 matches since it has both kitten and cat
@@ -1407,17 +1187,7 @@ TEST_P(QueryProcessorTest, OneGroup) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1451,13 +1221,6 @@ TEST_P(QueryProcessorTest, OneGroup) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   // Without grouping, this would be parsed as ((puppy OR kitten) AND foo) and
   // no documents would match. But with grouping, Document 1 matches puppy
   SearchSpecProto search_spec;
@@ -1467,7 +1230,7 @@ TEST_P(QueryProcessorTest, OneGroup) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1486,17 +1249,7 @@ TEST_P(QueryProcessorTest, TwoGroups) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1530,12 +1283,6 @@ TEST_P(QueryProcessorTest, TwoGroups) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   // Without grouping, this would be parsed as (puppy AND (dog OR kitten) AND
   // cat) and wouldn't match any documents. But with grouping, Document 1
   // matches (puppy AND dog) and Document 2 matches (kitten and cat).
@@ -1546,7 +1293,7 @@ TEST_P(QueryProcessorTest, TwoGroups) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1567,17 +1314,7 @@ TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1611,13 +1348,6 @@ TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   // Without grouping, this would be parsed as ((puppy OR kitten) AND foo) and
   // no documents would match. But with grouping, Document 1 matches puppy
   SearchSpecProto search_spec;
@@ -1627,7 +1357,7 @@ TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1646,17 +1376,7 @@ TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -1690,13 +1410,6 @@ TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   // Document 1 will match puppy and Document 2 matches (kitten AND (cat))
   SearchSpecProto search_spec;
   // TODO(b/208654892) decide how we want to handle queries of the form foo(...)
@@ -1706,7 +1419,7 @@ TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -1727,17 +1440,7 @@ TEST_P(QueryProcessorTest, ExcludeTerm) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
@@ -1764,13 +1467,6 @@ TEST_P(QueryProcessorTest, ExcludeTerm) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("-hello");
   search_spec.set_term_match_type(term_match_type);
@@ -1778,8 +1474,8 @@ TEST_P(QueryProcessorTest, ExcludeTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE));
 
   // We don't know have the section mask to indicate what section "world"
   // came. It doesn't matter which section it was in since the query doesn't
@@ -1795,17 +1491,7 @@ TEST_P(QueryProcessorTest, ExcludeNonexistentTerm) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
@@ -1831,13 +1517,6 @@ TEST_P(QueryProcessorTest, ExcludeNonexistentTerm) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "world"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("-foo");
   search_spec.set_term_match_type(term_match_type);
@@ -1845,8 +1524,8 @@ TEST_P(QueryProcessorTest, ExcludeNonexistentTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1861,17 +1540,7 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
@@ -1905,13 +1574,6 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   {
     SearchSpecProto search_spec;
     search_spec.set_query("-dog -cat");
@@ -1920,7 +1582,7 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // The query is interpreted as "exclude all documents that have animal,
@@ -1939,7 +1601,7 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // The query is interpreted as "exclude all documents that have animal,
@@ -1957,17 +1619,7 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that they'll bump the
@@ -2001,13 +1653,6 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   {
     SearchSpecProto search_spec;
     search_spec.set_query("-animal OR -cat");
@@ -2016,7 +1661,7 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // We don't have a section mask indicating which sections in this document
@@ -2036,7 +1681,7 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
-        query_processor->ParseSearch(
+        query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
     // Descending order of valid DocumentIds
@@ -2056,17 +1701,7 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // just inserting the documents so that the DocHitInfoIterators will see
@@ -2110,12 +1745,6 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   EXPECT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   // OR gets precedence over AND, this is parsed as (animal AND (puppy OR
   // kitten))
   SearchSpecProto search_spec;
@@ -2125,8 +1754,8 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE));
   // Since need_hit_term_frequency is false, the expected term frequencies
   // should all be 0.
   Hit::TermFrequencyArray exp_term_frequencies{0};
@@ -2175,17 +1804,7 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2220,13 +1839,6 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
@@ -2234,7 +1846,7 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -2252,17 +1864,7 @@ TEST_P(QueryProcessorTest, NamespaceFilter) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2296,13 +1898,6 @@ TEST_P(QueryProcessorTest, NamespaceFilter) {
   ASSERT_THAT(AddTokenToIndex(document_id2, section_id, term_match_type, "cat"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
@@ -2311,7 +1906,7 @@ TEST_P(QueryProcessorTest, NamespaceFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -2331,17 +1926,7 @@ TEST_P(QueryProcessorTest, SchemaTypeFilter) {
           .AddType(SchemaTypeConfigBuilder().SetType("email"))
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2371,13 +1956,6 @@ TEST_P(QueryProcessorTest, SchemaTypeFilter) {
       AddTokenToIndex(document_id2, section_id, term_match_type, "animal"),
       IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   search_spec.set_query("animal");
   search_spec.set_term_match_type(term_match_type);
@@ -2386,7 +1964,7 @@ TEST_P(QueryProcessorTest, SchemaTypeFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -2411,17 +1989,7 @@ TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
           .Build();
   // First and only indexed property, so it gets a section_id of 0
   int subject_section_id = 0;
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2440,13 +2008,6 @@ TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
                               "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("subject:animal");
@@ -2455,7 +2016,7 @@ TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Descending order of valid DocumentIds
@@ -2496,17 +2057,7 @@ TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
   // alphabetically.
   int email_foo_section_id = 1;
   int message_foo_section_id = 0;
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2535,13 +2086,6 @@ TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("foo:animal");
@@ -2550,7 +2094,7 @@ TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Ordered by descending DocumentId, so message comes first since it was
@@ -2582,17 +2126,7 @@ TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
           .Build();
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2621,13 +2155,6 @@ TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
   // within documents of email schema
@@ -2638,7 +2165,7 @@ TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Shouldn't include the message document since we're only looking at email
@@ -2686,17 +2213,7 @@ TEST_P(QueryProcessorTest, NestedPropertyFilter) {
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2715,13 +2232,6 @@ TEST_P(QueryProcessorTest, NestedPropertyFilter) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
   // within documents of email schema
@@ -2731,7 +2241,7 @@ TEST_P(QueryProcessorTest, NestedPropertyFilter) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2763,17 +2273,7 @@ TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
           .Build();
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2804,13 +2304,6 @@ TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
   // within documents of email schema
@@ -2820,7 +2313,7 @@ TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2839,17 +2332,7 @@ TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2868,13 +2351,6 @@ TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
   // within documents of email schema
@@ -2884,7 +2360,7 @@ TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2909,17 +2385,7 @@ TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
                                         .SetDataType(TYPE_STRING)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -2938,13 +2404,6 @@ TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
                               term_match_type, "animal"),
               IsOk());
 
-  // Perform query
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>', but only look
   // within documents of email schema
@@ -2954,7 +2413,7 @@ TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Even though the section id is the same, we should be able to tell that it
@@ -2982,17 +2441,7 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
           .Build();
   int email_foo_section_id = 0;
   int message_foo_section_id = 0;
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                            schema_store_.get()));
-  document_store_ = std::move(create_result.document_store);
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -3024,12 +2473,6 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
                               term_match_type, "animal"),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
-
   SearchSpecProto search_spec;
   // Create a section filter '<section name>:<query term>'
   search_spec.set_query("cat OR foo:animal");
@@ -3038,7 +2481,7 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(
+      query_processor_->ParseSearch(
           search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
 
   // Ordered by descending DocumentId, so message comes first since it was
@@ -3060,10 +2503,6 @@ TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   // Arbitrary value, just has to be less than the document's creation
@@ -3096,10 +2535,10 @@ TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
 
   // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
+      std::unique_ptr<QueryProcessor> local_query_processor,
+      QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                             language_segmenter_.get(), normalizer_.get(),
+                             document_store_.get(), schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -3108,8 +2547,8 @@ TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      local_query_processor->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::NONE));
 
   DocHitInfo expectedDocHitInfo(document_id);
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
@@ -3122,10 +2561,6 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      schema_store_,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
   ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
   // Arbitrary value, just has to be greater than the document's creation
@@ -3158,10 +2593,10 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
 
   // Perform query
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index_.get(), language_segmenter_.get(),
-                             normalizer_.get(), document_store_.get(),
-                             schema_store_.get()));
+      std::unique_ptr<QueryProcessor> local_query_processor,
+      QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                             language_segmenter_.get(), normalizer_.get(),
+                             document_store_.get(), schema_store_.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -3170,21 +2605,117 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
-      query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+      local_query_processor->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::NONE));
 
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 }
 
+TEST_P(QueryProcessorTest, NumericFilter) {
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    GTEST_SKIP() << "Numeric filter is only supported in advanced query.";
+  }
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("price")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("cost")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned alphabetically
+  SectionId cost_section_id = 0;
+  SectionId price_section_id = 1;
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_one_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "1")
+                               .SetSchema("transaction")
+                               .AddInt64Property("price", 10)
+                               .Build()));
+  ICING_ASSERT_OK(
+      AddToNumericIndex(document_one_id, "price", price_section_id, 10));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_two_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "2")
+                               .SetSchema("transaction")
+                               .AddInt64Property("price", 25)
+                               .Build()));
+  ICING_ASSERT_OK(
+      AddToNumericIndex(document_two_id, "price", price_section_id, 25));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_three_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "3")
+                               .SetSchema("transaction")
+                               .AddInt64Property("cost", 2)
+                               .Build()));
+  ICING_ASSERT_OK(
+      AddToNumericIndex(document_three_id, "cost", cost_section_id, 2));
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("price < 20");
+  search_spec.set_search_type(GetParam());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(EqualsDocHitInfo(
+                  document_one_id, std::vector<SectionId>{price_section_id})));
+
+  search_spec.set_query("price == 25");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(EqualsDocHitInfo(
+                  document_two_id, std::vector<SectionId>{price_section_id})));
+
+  search_spec.set_query("cost > 2");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
+
+  search_spec.set_query("cost >= 2");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(EqualsDocHitInfo(
+                  document_three_id, std::vector<SectionId>{cost_section_id})));
+
+  search_spec.set_query("price <= 25");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results, query_processor_->ParseSearch(
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+  EXPECT_THAT(
+      GetDocHitInfos(results.root_iterator.get()),
+      ElementsAre(EqualsDocHitInfo(document_two_id,
+                                   std::vector<SectionId>{price_section_id}),
+                  EqualsDocHitInfo(document_one_id,
+                                   std::vector<SectionId>{price_section_id})));
+}
+
 INSTANTIATE_TEST_SUITE_P(
     QueryProcessorTest, QueryProcessorTest,
-#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
     testing::Values(
         SearchSpecProto::SearchType::ICING_RAW_QUERY,
         SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY));
-#else   // !ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
-    testing::Values(SearchSpecProto::SearchType::ICING_RAW_QUERY));
-#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
 
 }  // namespace
 

@@ -1,0 +1,77 @@
+// Copyright (C) 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef ICING_SCORING_ADVANCED_SCORING_SCORING_VISITOR_H_
+#define ICING_SCORING_ADVANCED_SCORING_SCORING_VISITOR_H_
+
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/scoring.pb.h"
+#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
+
+namespace icing {
+namespace lib {
+
+class ScoringVisitor : public AbstractSyntaxTreeVisitor {
+ public:
+  explicit ScoringVisitor(double default_score)
+      : default_score_(default_score) {}
+
+  void VisitFunctionName(const FunctionNameNode* node) override;
+  void VisitString(const StringNode* node) override;
+  void VisitText(const TextNode* node) override;
+  void VisitMember(const MemberNode* node) override;
+  void VisitFunction(const FunctionNode* node) override;
+  void VisitUnaryOperator(const UnaryOperatorNode* node) override;
+  void VisitNaryOperator(const NaryOperatorNode* node) override;
+
+  // RETURNS:
+  //   - An ScoreExpression instance able to evaluate the expression on success.
+  //   - INVALID_ARGUMENT if the AST does not conform to supported expressions,
+  //   such as type errors.
+  //   - INTERNAL if there are inconsistencies.
+  libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
+  Expression() && {
+    if (has_pending_error()) {
+      return pending_error_;
+    }
+    if (stack.size() != 1) {
+      return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+          "Expect to get only one result from "
+          "ScoringVisitor, but got %zu. There must be inconsistencies.",
+          stack.size()));
+    }
+    return std::move(stack[0]);
+  }
+
+ private:
+  bool has_pending_error() const { return !pending_error_.ok(); }
+
+  std::unique_ptr<ScoreExpression> pop_stack() {
+    std::unique_ptr<ScoreExpression> result = std::move(stack.back());
+    stack.pop_back();
+    return result;
+  }
+
+  double default_score_;
+  libtextclassifier3::Status pending_error_;
+  std::vector<std::unique_ptr<ScoreExpression>> stack;
+};
+
+}  // namespace lib
+}  // namespace icing
+
+#endif  // ICING_SCORING_ADVANCED_SCORING_SCORING_VISITOR_H_

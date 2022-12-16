@@ -1678,8 +1678,8 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      new_document_id_or =
-          new_doc_store->Put(document_to_keep, tokenized_document.num_tokens());
+      new_document_id_or = new_doc_store->Put(
+          document_to_keep, tokenized_document.num_string_tokens());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.

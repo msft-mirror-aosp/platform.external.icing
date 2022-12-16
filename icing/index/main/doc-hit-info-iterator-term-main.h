@@ -23,7 +23,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/main/main-index.h"
-#include "icing/index/main/posting-list-accessor.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
 #include "icing/schema/section.h"
 
 namespace icing {
@@ -91,7 +91,7 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
 
   const std::string term_;
   // The accessor of the posting list chain for the requested term.
-  std::unique_ptr<PostingListAccessor> posting_list_accessor_;
+  std::unique_ptr<PostingListHitAccessor> posting_list_accessor_;
 
   MainIndex* main_index_;
   // Stores hits retrieved from the index. This may only be a subset of the hits

@@ -130,7 +130,8 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
   result_spec.set_num_total_bytes_per_page_threshold(4096);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -152,7 +153,8 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
               Eq(std::numeric_limits<int32_t>::max()));
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -178,7 +180,8 @@ TEST_F(ResultStateV2Test, ShouldReturnSnippetContextAccordingToSpecs) {
   query_terms_map.emplace("term1", std::unordered_set<std::string>());
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       query_terms_map, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -217,7 +220,8 @@ TEST_F(ResultStateV2Test, NoSnippetingShouldReturnNull) {
   query_terms_map.emplace("term1", std::unordered_set<std::string>());
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       query_terms_map, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -253,7 +257,8 @@ TEST_F(ResultStateV2Test, ShouldConstructProjectionTreeMapAccordingToSpecs) {
   wildcard_type_property_mask->add_paths("wild.card");
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -319,7 +324,8 @@ TEST_F(ResultStateV2Test,
                              document_store().GetNamespaceId("namespace3"));
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -352,7 +358,8 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHits) {
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -384,7 +391,8 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
   {
     // Creates a ResultState with 5 ScoredDocumentHits.
     ResultStateV2 result_state1(
-        std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+        std::make_unique<
+            PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
             std::move(scored_document_hits1),
             /*is_descending=*/true),
         /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -399,7 +407,8 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
     {
       // Creates another ResultState with 2 ScoredDocumentHits.
       ResultStateV2 result_state2(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
           /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -428,7 +437,8 @@ TEST_F(ResultStateV2Test, ShouldNotUpdateNumTotalHitsWhenNotRegistered) {
   // Creates a ResultState with 5 ScoredDocumentHits.
   {
     ResultStateV2 result_state(
-        std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+        std::make_unique<
+            PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
             std::move(scored_document_hits),
             /*is_descending=*/true),
         /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -458,7 +468,8 @@ TEST_F(ResultStateV2Test, ShouldDecrementOriginalNumTotalHitsWhenReregister) {
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
