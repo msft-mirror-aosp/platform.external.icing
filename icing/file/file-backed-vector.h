@@ -76,6 +76,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
@@ -147,10 +148,17 @@ class FileBackedVector {
     }
   };
 
-  // Absolute max file size for FileBackedVector. Note that Android has a
-  // (2^31-1)-byte single file size limit, so kMaxFileSize is 2^31-1.
+  // Absolute max file size for FileBackedVector.
+  // - We memory map the whole file, so file size ~= memory size.
+  // - On 32-bit platform, the virtual memory address space is 4GB. To avoid
+  //   exhausting the memory, set smaller file size limit for 32-bit platform.
+#ifdef ICING_ARCH_BIT_64
   static constexpr int32_t kMaxFileSize =
-      std::numeric_limits<int32_t>::max();  // 2^31-1 Bytes, ~2.1 GB;
+      std::numeric_limits<int32_t>::max();  // 2^31-1 Bytes, ~2.1 GB
+#else
+  static constexpr int32_t kMaxFileSize =
+      (1 << 28) + Header::kHeaderSize;  // 2^28 + 12 Bytes, ~256 MiB
+#endif
 
   // Size of element type T. The value is same as sizeof(T), while we should
   // avoid using sizeof(T) in our codebase to prevent unexpected unsigned
@@ -461,7 +469,8 @@ class FileBackedVector {
 
   // Absolute max # of elements allowed. Since we are using int32_t to store
   // num_elements, max value is 2^31-1. Still the actual max # of elements are
-  // determined by max_file_size, kElementTypeSize, and Header::kHeaderSize.
+  // determined by max_file_size, kMaxFileSize, kElementTypeSize, and
+  // Header::kHeaderSize.
   static constexpr int32_t kMaxNumElements =
       std::numeric_limits<int32_t>::max();
 

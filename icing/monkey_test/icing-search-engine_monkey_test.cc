@@ -20,10 +20,70 @@ namespace icing {
 namespace lib {
 
 TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
+  IcingMonkeyTestRunnerConfiguration config(
+      /*seed=*/std::random_device()(),
+      /*num_types=*/30,
+      /*num_namespaces=*/100,
+      /*num_uris=*/1000,
+      /*index_merge_size=*/1024 * 1024);
+  config.possible_num_properties = {0,
+                                    1,
+                                    2,
+                                    4,
+                                    8,
+                                    16,
+                                    kTotalNumSections / 2,
+                                    kTotalNumSections,
+                                    kTotalNumSections + 1,
+                                    kTotalNumSections * 2};
+  config.possible_num_tokens_ = {0, 1, 4, 16, 64, 256};
+  config.monkey_api_schedules = {
+      {&IcingMonkeyTestRunner::DoPut, 500},
+      {&IcingMonkeyTestRunner::DoSearch, 200},
+      {&IcingMonkeyTestRunner::DoGet, 70},
+      {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
+      {&IcingMonkeyTestRunner::DoDelete, 50},
+      {&IcingMonkeyTestRunner::DoDeleteByNamespace, 50},
+      {&IcingMonkeyTestRunner::DoDeleteBySchemaType, 50},
+      {&IcingMonkeyTestRunner::DoDeleteByQuery, 20},
+      {&IcingMonkeyTestRunner::DoOptimize, 5},
+      {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
   uint32_t num_iterations = IsAndroidArm() ? 1000 : 5000;
-  IcingMonkeyTestRunner runner;
+  IcingMonkeyTestRunner runner(config);
   ASSERT_NO_FATAL_FAILURE(runner.CreateIcingSearchEngineWithSchema());
   ASSERT_NO_FATAL_FAILURE(runner.Run(num_iterations));
+}
+
+TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
+  IcingMonkeyTestRunnerConfiguration config(
+      /*seed=*/std::random_device()(),
+      /*num_types=*/30,
+      /*num_namespaces=*/200,
+      /*num_uris=*/100000,
+      /*index_merge_size=*/1024 * 1024);
+
+  // Due to the large amount of documents, we need to make each document smaller
+  // to finish the test.
+  config.possible_num_properties = {0, 1, 2};
+  config.possible_num_tokens_ = {0, 1, 4};
+
+  // No deletion is performed to preserve a large number of documents.
+  config.monkey_api_schedules = {
+      {&IcingMonkeyTestRunner::DoPut, 500},
+      {&IcingMonkeyTestRunner::DoSearch, 200},
+      {&IcingMonkeyTestRunner::DoGet, 70},
+      {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
+      {&IcingMonkeyTestRunner::DoOptimize, 5},
+      {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
+  IcingMonkeyTestRunner runner(config);
+  ASSERT_NO_FATAL_FAILURE(runner.CreateIcingSearchEngineWithSchema());
+  // Pre-fill with 4 million documents
+  SetLoggingLevel(LogSeverity::WARNING);
+  for (int i = 0; i < 4000000; i++) {
+    ASSERT_NO_FATAL_FAILURE(runner.DoPut());
+  }
+  SetLoggingLevel(LogSeverity::INFO);
+  ASSERT_NO_FATAL_FAILURE(runner.Run(1000));
 }
 
 }  // namespace lib

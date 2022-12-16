@@ -22,7 +22,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/main/posting-list-accessor.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
