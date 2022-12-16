@@ -10069,7 +10069,7 @@ TEST_F(IcingSearchEngineTest, JoinByQualifiedId) {
   // in the nested result and email1 will be truncated.
   join_spec->set_max_joined_child_count(2);
   join_spec->set_parent_property_expression(
-      std::string(JoinProcessor::kFullyQualifiedIdExpr));
+      std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("personQualifiedId");
   JoinSpecProto::NestedSpecProto* nested_spec =
       join_spec->mutable_nested_spec();
@@ -10211,7 +10211,8 @@ TEST_F(IcingSearchEngineTest, InvalidJoins) {
   // Set max_joined_child_count as 2, so only email 3, email2 will be included
   // in the nested result and email1 will be truncated.
   join_spec->set_max_joined_child_count(2);
-  join_spec->set_parent_property_expression("this.fullyQualifiedId()");
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("subjectId");
   JoinSpecProto::NestedSpecProto* nested_spec =
       join_spec->mutable_nested_spec();

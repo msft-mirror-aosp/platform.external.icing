@@ -175,7 +175,8 @@ void IcingMonkeyTestRunner::Run(uint32_t num) {
       }
       p -= schedule.second;
     }
-    ICING_LOG(INFO) << "Documents in the in-memory icing: "
+    ICING_LOG(INFO) << "Completed Run #" << num
+                    << ". Documents in the in-memory icing: "
                     << in_memory_icing_->GetNumAliveDocuments();
   }
 }

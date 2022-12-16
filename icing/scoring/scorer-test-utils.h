@@ -24,7 +24,7 @@ enum class ScorerTestingMode { kNormal, kAdvanced };
 
 inline ScoringSpecProto CreateScoringSpecForRankingStrategy(
     ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-    ScorerTestingMode testing_mode = ScorerTestingMode::kNormal) {
+    ScorerTestingMode testing_mode) {
   ScoringSpecProto scoring_spec;
   if (testing_mode != ScorerTestingMode::kAdvanced) {
     scoring_spec.set_rank_by(ranking_strategy);

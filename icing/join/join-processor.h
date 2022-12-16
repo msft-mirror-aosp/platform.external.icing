@@ -29,8 +29,7 @@ namespace lib {
 
 class JoinProcessor {
  public:
-  static constexpr std::string_view kFullyQualifiedIdExpr =
-      "this.fullyQualifiedId()";
+  static constexpr std::string_view kQualifiedIdExpr = "this.qualifiedId()";
 
   explicit JoinProcessor(const DocumentStore* doc_store)
       : doc_store_(doc_store) {}

@@ -487,21 +487,24 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType1) {
       std::unique_ptr<Scorer> scorer1,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE1_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE1_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE2_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE2_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE3_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE3_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
@@ -553,21 +556,24 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType2) {
       std::unique_ptr<Scorer> scorer1,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE1_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE1_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE2_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE2_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE3_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE3_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
@@ -619,21 +625,24 @@ TEST_P(ScorerTest, ShouldGetCorrectUsageTimestampScoreForType3) {
       std::unique_ptr<Scorer> scorer1,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE1_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE1_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer2,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE2_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE2_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer3,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE3_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE3_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
@@ -713,7 +722,8 @@ TEST_P(ScorerTest, ShouldScaleUsageTimestampScoreForMaxTimestamp) {
       std::unique_ptr<Scorer> scorer1,
       scorer_factory::Create(CreateScoringSpecForRankingStrategy(
                                  ScoringSpecProto::RankingStrategy::
-                                     USAGE_TYPE1_LAST_USED_TIMESTAMP),
+                                     USAGE_TYPE1_LAST_USED_TIMESTAMP,
+                                 GetParam()),
                              /*default_score=*/0, document_store(),
                              schema_store()));
   DocHitInfo docHitInfo = DocHitInfo(document_id);
