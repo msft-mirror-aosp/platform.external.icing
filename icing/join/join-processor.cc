@@ -101,13 +101,13 @@ JoinProcessor::Join(
   //         parent_id_to_child_map.
   for (ScoredDocumentHit& parent : parent_scored_document_hits) {
     DocumentId parent_doc_id = kInvalidDocumentId;
-    if (join_spec.parent_property_expression() == kFullyQualifiedIdExpr) {
+    if (join_spec.parent_property_expression() == kQualifiedIdExpr) {
       parent_doc_id = parent.document_id();
     } else {
-      // TODO(b/256022027): So far we only support kFullyQualifiedIdExpr for
+      // TODO(b/256022027): So far we only support kQualifiedIdExpr for
       // parent_property_expression, we could support more.
       return absl_ports::UnimplementedError(absl_ports::StrCat(
-          "Parent property expression must be ", kFullyQualifiedIdExpr));
+          "Parent property expression must be ", kQualifiedIdExpr));
     }
 
     // TODO(b/256022027): Derive final score from

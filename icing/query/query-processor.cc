@@ -190,8 +190,9 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
         document_store_.last_added_document_id());
     return results;
   }
-
-  QueryVisitor query_visitor(&numeric_index_);
+  QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
+                             &schema_store_, &normalizer_,
+                             search_spec.term_match_type());
   tree_root->Accept(&query_visitor);
   ICING_ASSIGN_OR_RETURN(results.root_iterator,
                          std::move(query_visitor).root());
