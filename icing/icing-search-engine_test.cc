@@ -47,6 +47,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -5716,14 +5717,143 @@ TEST_F(IcingSearchEngineTest,
 
   // Specify "namespace1" twice. This should result in an error.
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(1);
-  result_grouping->add_namespaces("namespace1");
-  result_grouping->add_namespaces("namespace2");
+  entry->set_namespace_("namespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace1");
+  result_grouping = result_spec.add_result_groupings();
+  entry = result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingDuplicateSchemaShouldReturnError) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  // Specify "Message" twice. This should result in an error.
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("nonexistentMessage");
   result_grouping = result_spec.add_result_groupings();
   result_grouping->set_max_results(1);
-  result_grouping->add_namespaces("namespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("Message");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingDuplicateNamespaceAndSchemaSchemaShouldReturnError) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  // Specify "namespace1xMessage" twice. This should result in an error.
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
 
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -5771,9 +5901,14 @@ TEST_F(IcingSearchEngineTest,
   ResultSpecProto result_spec;
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(0);
-  result_grouping->add_namespaces("namespace1");
-  result_grouping->add_namespaces("namespace2");
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
 
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -5859,14 +5994,19 @@ TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiNamespaceGrouping) {
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
 
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(1);
-  result_grouping->add_namespaces("namespace1");
+  entry->set_namespace_("namespace1");
   result_grouping = result_spec.add_result_groupings();
   result_grouping->set_max_results(2);
-  result_grouping->add_namespaces("namespace2");
-  result_grouping->add_namespaces("namespace3");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace3");
 
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -5883,6 +6023,427 @@ TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiNamespaceGrouping) {
       document5;
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiSchemaGrouping) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetScore(1)
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "foo")
+          .AddDocumentProperty("sender", DocumentBuilder()
+                                             .SetKey("namespace", "uri1-sender")
+                                             .SetSchema("Person")
+                                             .AddStringProperty("name", "foo")
+                                             .Build())
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("Message")
+                                .SetScore(2)
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace2", "uri3")
+                                .SetSchema("Message")
+                                .SetScore(3)
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  // "f" will match all 3 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("f");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("Email");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Each of the highest scored documents of schema type "Message" (document3)
+  // and "Email" (document1) should be returned.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingMultiNamespaceAndSchemaGrouping) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 3 documents and ensures the relationship in terms of document
+  // score is: document1 < document2 < document3 < document4 < document5 <
+  // document6
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message3")
+          .SetScore(3)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document4 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/4")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(4)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document5 =
+      DocumentBuilder()
+          .SetKey("namespace3", "uri/5")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message3")
+          .SetScore(5)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document6 =
+      DocumentBuilder()
+          .SetKey("namespace3", "uri/6")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(6)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document6).status(), ProtoIsOk());
+
+  // "m" will match all 6 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace3");
+  entry->set_schema("Message");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // The three highest scored documents that fit the criteria of
+  // "namespace1xMessage" (document2), "namespace2xMessage" (document4),
+  // and "namespace3xMessage" (document6) should be returned.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document6;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingNonexistentNamespaceShouldBeIgnored) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("nonexistentNamespace");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Only the top ranked document in "namespace" (document2), should be
+  // returned. The presence of "nonexistentNamespace" in the same result
+  // grouping should have no effect.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingNonexistentSchemaShouldBeIgnored) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("nonexistentMessage");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Only the top ranked document in "Message" (document2), should be
+  // returned. The presence of "nonexistentMessage" in the same result
+  // grouping should have no effect.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingNonexistentNamespaceAndSchemaShouldBeIgnored) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message3")
+          .SetScore(3)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto document4 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/4")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message4")
+          .SetScore(4)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("namespace1");
+  entry->set_schema("nonexistentMessage");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Only the top ranked document in "namespace2xMessage" (document4), should be
+  // returned. The presence of "namespace1xnonexistentMessage" in the same
+  // result grouping should have no effect. If either the namespace or the
+  // schema type is nonexistent, the entire entry will be ignored.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
 
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
@@ -10304,6 +10865,7 @@ TEST_F(IcingSearchEngineTest, NumericFilterAdvancedQuerySucceeds) {
   search_spec.set_query("price < 20");
   search_spec.set_search_type(
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto results =
       icing.Search(search_spec, ScoringSpecProto::default_instance(),
@@ -10383,6 +10945,7 @@ TEST_F(IcingSearchEngineTest, NumericFilterOldQueryFails) {
   SearchSpecProto search_spec;
   search_spec.set_query("price < 20");
   search_spec.set_search_type(SearchSpecProto::SearchType::ICING_RAW_QUERY);
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto results =
       icing.Search(search_spec, ScoringSpecProto::default_instance(),

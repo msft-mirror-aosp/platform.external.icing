@@ -19,6 +19,7 @@
 #include <memory>
 #include <stack>
 #include <string>
+#include <unordered_set>
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/index.h"
@@ -28,6 +29,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/transform/normalizer.h"
+#include "icing/query/query-features.h"
 
 namespace icing {
 namespace lib {
@@ -76,6 +78,9 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
     }
     return std::move(iterator_or).ValueOrDie();
   }
+
+  // Returns the set of features used in the query.
+  const std::unordered_set<Feature>& features() const { return features_; }
 
  private:
   // A holder for intermediate results when processing child nodes.
@@ -186,6 +191,9 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   const SchemaStore& schema_store_;             // Does not own!
   const Normalizer& normalizer_;                // Does not own!
   TermMatchType::Code match_type_;
+  // Set of features invoked in the query.
+  std::unordered_set<Feature> features_;
+
 };
 
 }  // namespace lib
