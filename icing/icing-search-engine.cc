@@ -119,7 +119,7 @@ struct NamespaceTypePairHasher {
 };
 
 libtextclassifier3::Status ValidateResultSpec(
-    const ResultSpecProto& result_spec) {
+    const DocumentStore* document_store, const ResultSpecProto& result_spec) {
   if (result_spec.num_per_page() < 0) {
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_per_page cannot be negative.");
@@ -129,19 +129,31 @@ libtextclassifier3::Status ValidateResultSpec(
         "ResultSpecProto.num_total_bytes_per_page_threshold cannot be "
         "non-positive.");
   }
-  std::unordered_set<std::string> unique_namespaces;
+  // Validate ResultGroupings.
+  std::unordered_set<int32_t> unique_entry_ids;
+  ResultSpecProto::ResultGroupingType result_grouping_type =
+      result_spec.result_group_type();
   for (const ResultSpecProto::ResultGrouping& result_grouping :
        result_spec.result_groupings()) {
     if (result_grouping.max_results() <= 0) {
       return absl_ports::InvalidArgumentError(
           "Cannot specify a result grouping with max results <= 0.");
     }
-    for (const std::string& name_space : result_grouping.namespaces()) {
-      if (unique_namespaces.count(name_space) > 0) {
-        return absl_ports::InvalidArgumentError(
-            "Namespaces must be unique across result groups.");
+    for (const ResultSpecProto::ResultGrouping::Entry& entry :
+         result_grouping.entry_groupings()) {
+      const std::string& name_space = entry.namespace_();
+      const std::string& schema = entry.schema();
+      auto entry_id_or = document_store->GetResultGroupingEntryId(
+          result_grouping_type, name_space, schema);
+      if (!entry_id_or.ok()) {
+        continue;
       }
-      unique_namespaces.insert(name_space);
+      int32_t entry_id = entry_id_or.ValueOrDie();
+      if (unique_entry_ids.find(entry_id) != unique_entry_ids.end()) {
+        return absl_ports::InvalidArgumentError(
+            "Entry Ids must be unique across result groups.");
+      }
+      unique_entry_ids.insert(entry_id);
     }
   }
   return libtextclassifier3::Status::OK;
@@ -1706,7 +1718,8 @@ SearchResultProto IcingSearchEngine::Search(
     return result_proto;
   }
 
-  libtextclassifier3::Status status = ValidateResultSpec(result_spec);
+  libtextclassifier3::Status status =
+      ValidateResultSpec(document_store_.get(), result_spec);
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
