@@ -35,6 +35,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -2876,6 +2877,7 @@ TEST_P(QueryProcessorTest, NumericFilter) {
   SearchSpecProto search_spec;
   search_spec.set_query("price < 20");
   search_spec.set_search_type(GetParam());
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
@@ -2916,6 +2918,46 @@ TEST_P(QueryProcessorTest, NumericFilter) {
                                    std::vector<SectionId>{price_section_id}),
                   EqualsDocHitInfo(document_one_id,
                                    std::vector<SectionId>{price_section_id})));
+}
+
+TEST_P(QueryProcessorTest, NumericFilterWithoutEnablingFeatureFails) {
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    GTEST_SKIP() << "Numeric filter is only supported in advanced query.";
+  }
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("price")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  SectionId price_section_id = 0;
+  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_one_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "1")
+                               .SetSchema("transaction")
+                               .AddInt64Property("price", 10)
+                               .Build()));
+  ICING_ASSERT_OK(
+      AddToNumericIndex(document_one_id, "price", price_section_id, 10));
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("price < 20");
+  search_spec.set_search_type(GetParam());
+
+  libtextclassifier3::StatusOr<QueryResults> result_or =
+      query_processor_->ParseSearch(search_spec,
+                                    ScoringSpecProto::RankingStrategy::NONE);
+  EXPECT_THAT(result_or,
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 INSTANTIATE_TEST_SUITE_P(

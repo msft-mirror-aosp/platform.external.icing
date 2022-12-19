@@ -31,6 +31,7 @@
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/schema-builder.h"
+#include "icing/query/query-features.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
@@ -144,6 +145,8 @@ TEST_F(QueryVisitorTest, SimpleLessThan) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
+
+  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
                              std::move(query_visitor).root());
   EXPECT_THAT(GetDocumentIds(root_iterator.get()),
@@ -173,6 +176,8 @@ TEST_F(QueryVisitorTest, SimpleLessThanEq) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
+
+  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
                              std::move(query_visitor).root());
   EXPECT_THAT(GetDocumentIds(root_iterator.get()),
@@ -202,6 +207,8 @@ TEST_F(QueryVisitorTest, SimpleEqual) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
+
+  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
                              std::move(query_visitor).root());
   EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
@@ -230,6 +237,8 @@ TEST_F(QueryVisitorTest, SimpleGreaterThanEq) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
+
+  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
                              std::move(query_visitor).root());
   EXPECT_THAT(GetDocumentIds(root_iterator.get()),
@@ -259,6 +268,8 @@ TEST_F(QueryVisitorTest, SimpleGreaterThan) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
+
+  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
                              std::move(query_visitor).root());
   EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));

@@ -172,6 +172,8 @@ QueryVisitor::ProcessNumericComparator(const NaryOperatorNode* node) {
   if (!iterator_or.ok()) {
     return std::move(iterator_or).status();
   }
+
+  features_.insert(kNumericSearchFeature);
   std::unique_ptr<DocHitInfoIterator> iterator =
       std::move(iterator_or).ValueOrDie();
   return PendingValue(std::move(iterator));
