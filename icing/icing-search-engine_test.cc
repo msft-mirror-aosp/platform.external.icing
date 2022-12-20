@@ -2614,6 +2614,24 @@ TEST_F(IcingSearchEngineTest, SearchWithNoScoringShouldReturnMultiplePages) {
                                        expected_search_result_proto));
 }
 
+TEST_F(IcingSearchEngineTest,
+       SearchWithUnknownEnabledFeatureShouldReturnError) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+  search_spec.add_enabled_features("BAD_FEATURE");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
 TEST_F(IcingSearchEngineTest, ShouldReturnMultiplePagesWithSnippets) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
