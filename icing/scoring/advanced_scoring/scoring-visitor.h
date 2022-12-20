@@ -21,20 +21,32 @@
 #include "icing/proto/scoring.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
+#include "icing/scoring/bm25f-calculator.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
 
 class ScoringVisitor : public AbstractSyntaxTreeVisitor {
  public:
-  explicit ScoringVisitor(double default_score)
-      : default_score_(default_score) {}
+  explicit ScoringVisitor(double default_score,
+                          const DocumentStore* document_store,
+                          const SchemaStore* schema_store,
+                          Bm25fCalculator* bm25f_calculator)
+      : default_score_(default_score),
+        document_store_(*document_store),
+        schema_store_(*schema_store),
+        bm25f_calculator_(*bm25f_calculator) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
   void VisitText(const TextNode* node) override;
   void VisitMember(const MemberNode* node) override;
-  void VisitFunction(const FunctionNode* node) override;
+
+  void VisitFunction(const FunctionNode* node) override {
+    return VisitFunctionHelper(node, /*is_member_function=*/false);
+  }
+
   void VisitUnaryOperator(const UnaryOperatorNode* node) override;
   void VisitNaryOperator(const NaryOperatorNode* node) override;
 
@@ -58,6 +70,10 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   }
 
  private:
+  // Visit function node. If is_member_function is true, a ThisExpression will
+  // be added as the first function argument.
+  void VisitFunctionHelper(const FunctionNode* node, bool is_member_function);
+
   bool has_pending_error() const { return !pending_error_.ok(); }
 
   std::unique_ptr<ScoreExpression> pop_stack() {
@@ -67,6 +83,10 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   }
 
   double default_score_;
+  const DocumentStore& document_store_;
+  const SchemaStore& schema_store_;
+  Bm25fCalculator& bm25f_calculator_;
+
   libtextclassifier3::Status pending_error_;
   std::vector<std::unique_ptr<ScoreExpression>> stack;
 };
