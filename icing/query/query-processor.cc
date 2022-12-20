@@ -175,8 +175,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
       search_spec.enabled_features().end());
   for (const Feature feature : results.features_in_use) {
     if (enabled_features.find(feature) == enabled_features.end()) {
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Attempted use of unenabled feature ", feature));
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Attempted use of unenabled feature ", feature));
     }
   }
 

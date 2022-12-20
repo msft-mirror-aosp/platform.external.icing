@@ -27,6 +27,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/query/query-features.h"
 #include "icing/schema/section-manager.h"
 #include "icing/util/status-macros.h"
 
@@ -224,6 +225,7 @@ void QueryVisitor::VisitString(const StringNode* node) {
     pending_error_ = std::move(escaped_string_or).status();
     return;
   }
+  features_.insert(kVerbatimSearchFeature);
   std::string escaped_string = std::move(escaped_string_or).ValueOrDie();
   pending_values_.push(PendingValue(std::move(escaped_string)));
 }
