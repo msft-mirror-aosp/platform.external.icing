@@ -43,9 +43,10 @@ class GroupResultLimiterV2 {
   // Returns true if the scored_document_hit should be removed.
   virtual bool ShouldBeRemoved(
       const ScoredDocumentHit& scored_document_hit,
-      const std::unordered_map<NamespaceId, int>& namespace_group_id_map,
+      const std::unordered_map<int32_t, int>& entry_id_group_id_map,
       const DocumentStore& document_store,
-      std::vector<int>& group_result_limits) const;
+      std::vector<int>& group_result_limits,
+      ResultSpecProto::ResultGroupingType result_group_type) const;
 };
 
 class ResultRetrieverV2 {

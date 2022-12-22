@@ -15,6 +15,7 @@
 #include "icing/result/result-state-v2.h"
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -66,8 +67,10 @@ ScoringSpecProto CreateScoringSpec(bool is_descending_order) {
   return scoring_spec;
 }
 
-ResultSpecProto CreateResultSpec(int num_per_page) {
+ResultSpecProto CreateResultSpec(
+    int num_per_page, ResultSpecProto::ResultGroupingType result_group_type) {
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(result_group_type);
   result_spec.set_num_per_page(num_per_page);
   return result_spec;
 }
@@ -126,7 +129,8 @@ class ResultStateV2Test : public ::testing::Test {
 };
 
 TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.set_num_total_bytes_per_page_threshold(4096);
 
   ResultStateV2 result_state(
@@ -171,7 +175,8 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
 }
 
 TEST_F(ResultStateV2Test, ShouldReturnSnippetContextAccordingToSpecs) {
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
   result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
   result_spec.mutable_snippet_spec()->set_max_window_utf32_length(5);
@@ -209,7 +214,8 @@ TEST_F(ResultStateV2Test, ShouldReturnSnippetContextAccordingToSpecs) {
 }
 
 TEST_F(ResultStateV2Test, NoSnippetingShouldReturnNull) {
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   // Setting num_to_snippet to 0 so that snippeting info won't be
   // stored.
   result_spec.mutable_snippet_spec()->set_num_to_snippet(0);
@@ -240,7 +246,8 @@ TEST_F(ResultStateV2Test, NoSnippetingShouldReturnNull) {
 
 TEST_F(ResultStateV2Test, ShouldConstructProjectionTreeMapAccordingToSpecs) {
   // Create a ResultSpec with type property mask.
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   TypePropertyMask* email_type_property_mask =
       result_spec.add_type_property_masks();
   email_type_property_mask->set_schema_type("Email");
@@ -301,27 +308,39 @@ TEST_F(ResultStateV2Test,
   // Create a ResultSpec that limits "namespace1" to 3 results and limits
   // "namespace2"+"namespace3" to a total of 2 results. Also add
   // "nonexistentNamespace1" and "nonexistentNamespace2" to test the behavior.
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/5);
+  ResultSpecProto::ResultGroupingType result_grouping_type =
+      ResultSpecProto::NAMESPACE;
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/5, result_grouping_type);
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(3);
-  result_grouping->add_namespaces("namespace1");
+  entry->set_namespace_("namespace1");
   result_grouping = result_spec.add_result_groupings();
   result_grouping->set_max_results(5);
-  result_grouping->add_namespaces("nonexistentNamespace2");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("nonexistentNamespace2");
   result_grouping = result_spec.add_result_groupings();
   result_grouping->set_max_results(2);
-  result_grouping->add_namespaces("namespace2");
-  result_grouping->add_namespaces("namespace3");
-  result_grouping->add_namespaces("nonexistentNamespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace3");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("nonexistentNamespace1");
 
-  // Get namespace ids.
-  ICING_ASSERT_OK_AND_ASSIGN(NamespaceId namespace_id1,
-                             document_store().GetNamespaceId("namespace1"));
-  ICING_ASSERT_OK_AND_ASSIGN(NamespaceId namespace_id2,
-                             document_store().GetNamespaceId("namespace2"));
-  ICING_ASSERT_OK_AND_ASSIGN(NamespaceId namespace_id3,
-                             document_store().GetNamespaceId("namespace3"));
+  // Get entry ids.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      int32_t entry_id1, document_store().GetResultGroupingEntryId(
+                             result_grouping_type, "namespace1", "Document"));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      int32_t entry_id2, document_store().GetResultGroupingEntryId(
+                             result_grouping_type, "namespace2", "Document"));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      int32_t entry_id3, document_store().GetResultGroupingEntryId(
+                             result_grouping_type, "namespace3", "Document"));
 
   ResultStateV2 result_state(
       std::make_unique<
@@ -337,10 +356,9 @@ TEST_F(ResultStateV2Test,
   // "namespace1" should be in group 0, and "namespace2"+"namespace3" should be
   // in group 2.
   // "nonexistentNamespace1" and "nonexistentNamespace2" shouldn't exist.
-  EXPECT_THAT(
-      result_state.namespace_group_id_map(),
-      UnorderedElementsAre(Pair(namespace_id1, 0), Pair(namespace_id2, 2),
-                           Pair(namespace_id3, 2)));
+  EXPECT_THAT(result_state.entry_id_group_id_map(),
+              UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 2),
+                                   Pair(entry_id3, 2)));
 
   // group_result_limits should contain 3 (at index 0 for group 0), 5 (at index
   // 1 for group 1), 2 (at index 2 for group 2), even though there is no valid
@@ -364,7 +382,8 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHits) {
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/5), document_store());
+      CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
+      document_store());
 
   absl_ports::unique_lock l(&result_state.mutex);
 
@@ -397,7 +416,8 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
             /*is_descending=*/true),
         /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
         CreateScoringSpec(/*is_descending_order=*/true),
-        CreateResultSpec(/*num_per_page=*/5), document_store());
+        CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
+        document_store());
 
     absl_ports::unique_lock l(&result_state1.mutex);
 
@@ -413,7 +433,8 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
               /*is_descending=*/true),
           /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true),
-          CreateResultSpec(/*num_per_page=*/5), document_store());
+          CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
+          document_store());
 
       absl_ports::unique_lock l(&result_state2.mutex);
 
@@ -443,7 +464,8 @@ TEST_F(ResultStateV2Test, ShouldNotUpdateNumTotalHitsWhenNotRegistered) {
             /*is_descending=*/true),
         /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
         CreateScoringSpec(/*is_descending_order=*/true),
-        CreateResultSpec(/*num_per_page=*/5), document_store());
+        CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
+        document_store());
 
     {
       absl_ports::unique_lock l(&result_state.mutex);
@@ -474,7 +496,8 @@ TEST_F(ResultStateV2Test, ShouldDecrementOriginalNumTotalHitsWhenReregister) {
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/5), document_store());
+      CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
+      document_store());
 
   absl_ports::unique_lock l(&result_state.mutex);
 

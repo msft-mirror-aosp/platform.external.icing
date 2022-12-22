@@ -114,6 +114,17 @@ DocumentProto CreateDocument(
       .Build();
 }
 
+UsageReport CreateUsageReport(std::string name_space, std::string uri,
+                              int64 timestamp_ms,
+                              UsageReport::UsageType usage_type) {
+  UsageReport usage_report;
+  usage_report.set_document_namespace(name_space);
+  usage_report.set_document_uri(uri);
+  usage_report.set_usage_timestamp_ms(timestamp_ms);
+  usage_report.set_usage_type(usage_type);
+  return usage_report;
+}
+
 ScoringSpecProto CreateAdvancedScoringSpec(
     const std::string& advanced_scoring_expression) {
   ScoringSpecProto scoring_spec;
@@ -285,6 +296,174 @@ TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(1, kEps));
 }
 
+TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(CreateDocument(
+          "namespace", "uri", /*score=*/123,
+          /*creation_timestamp_ms=*/kDefaultCreationTimestampMs)));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      AdvancedScorer::Create(CreateAdvancedScoringSpec("this.documentScore()"),
+                             /*default_score=*/10, document_store_.get(),
+                             schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(123));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("this.creationTimestamp()"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(kDefaultCreationTimestampMs));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec(
+              "this.documentScore() + this.creationTimestamp()"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo),
+              Eq(123 + kDefaultCreationTimestampMs));
+}
+
+TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(CreateDocument("namespace", "uri")));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("this.usageCount(1) + this.usageCount(2) "
+                                    "+ this.usageLastUsedTimestamp(3)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(0));
+  ICING_ASSERT_OK(document_store_->ReportUsage(
+      CreateUsageReport("namespace", "uri", 100000, UsageReport::USAGE_TYPE1)));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(1));
+  ICING_ASSERT_OK(document_store_->ReportUsage(
+      CreateUsageReport("namespace", "uri", 200000, UsageReport::USAGE_TYPE2)));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(2));
+  ICING_ASSERT_OK(document_store_->ReportUsage(
+      CreateUsageReport("namespace", "uri", 300000, UsageReport::USAGE_TYPE3)));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(300002));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("this.usageLastUsedTimestamp(1)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(100000));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("this.usageLastUsedTimestamp(2)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(200000));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("this.usageLastUsedTimestamp(3)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(300000));
+}
+
+TEST_F(AdvancedScorerTest, DocumentUsageFunctionOutOfRange) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(CreateDocument("namespace", "uri")));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  const double default_score = 123;
+
+  // Should get default score for the following expressions that cause "runtime"
+  // errors.
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      AdvancedScorer::Create(CreateAdvancedScoringSpec("this.usageCount(4)"),
+                             default_score, document_store_.get(),
+                             schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(default_score));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer, AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("this.usageCount(0)"),
+                  default_score, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(default_score));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer, AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("this.usageCount(1.5)"),
+                  default_score, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(default_score));
+}
+
+// scoring-processor_test.cc will help to get better test coverage for relevance
+// score.
+TEST_F(AdvancedScorerTest, RelevanceScoreFunctionScoreExpression) {
+  DocumentProto test_document =
+      DocumentBuilder()
+          .SetScore(5)
+          .SetKey("namespace", "uri")
+          .SetSchema("email")
+          .AddStringProperty("subject", "subject foo")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(test_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(CreateAdvancedScoringSpec("this.relevanceScore()"),
+                             /*default_score=*/10, document_store_.get(),
+                             schema_store_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+
+  // Should get the default score.
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr), Eq(10));
+}
+
+TEST_F(AdvancedScorerTest, ComplexExpression) {
+  const int64_t creation_timestamp_ms = 123;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(CreateDocument("namespace", "uri", /*score=*/123,
+                                          creation_timestamp_ms)));
+  DocHitInfo docHitInfo = DocHitInfo(document_id);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Scorer> scorer,
+      AdvancedScorer::Create(CreateAdvancedScoringSpec(
+                                 "pow(sin(2), 2)"
+                                 // This is this.usageCount(1)
+                                 "+ this.usageCount(this.documentScore() - 122)"
+                                 "/ 12.34"
+                                 "* (10 * pow(2 * 1, sin(2))"
+                                 "+ 10 * (2 + 10 + this.creationTimestamp()))"
+                                 // This should evaluate to default score.
+                                 "+ this.relevanceScore()"),
+                             /*default_score=*/10, document_store_.get(),
+                             schema_store_.get()));
+  scorer->PrepareToScore(/*query_term_iterators=*/{});
+
+  ICING_ASSERT_OK(document_store_->ReportUsage(
+      CreateUsageReport("namespace", "uri", 0, UsageReport::USAGE_TYPE1)));
+  ICING_ASSERT_OK(document_store_->ReportUsage(
+      CreateUsageReport("namespace", "uri", 0, UsageReport::USAGE_TYPE1)));
+  EXPECT_THAT(scorer->GetScore(docHitInfo),
+              DoubleNear(pow(sin(2), 2) +
+                             2 / 12.34 *
+                                 (10 * pow(2 * 1, sin(2)) +
+                                  10 * (2 + 10 + creation_timestamp_ms)) +
+                             10,
+                         kEps));
+}
+
 // Should be a parsing Error
 TEST_F(AdvancedScorerTest, EmptyExpression) {
   EXPECT_THAT(
@@ -393,6 +572,47 @@ TEST_F(AdvancedScorerTest, MathTypeError) {
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("1 + this"),
+                                     default_score, document_store_.get(),
+                                     schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(AdvancedScorerTest, DocumentFunctionTypeError) {
+  const double default_score = 0;
+
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("documentScore(1)"), default_score,
+                  document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("this.creationTimestamp(1)"),
+                  default_score, document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("this.usageCount()"), default_score,
+                  document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("usageLastUsedTimestamp(1, 1)"),
+                  default_score, document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("relevanceScore(1)"), default_score,
+                  document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("documentScore(this)"),
+                  default_score, document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("that.documentScore()"),
+                  default_score, document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("this.this.creationTimestamp()"),
+                  default_score, document_store_.get(), schema_store_.get()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("this.log(2)"),
                                      default_score, document_store_.get(),
                                      schema_store_.get()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
