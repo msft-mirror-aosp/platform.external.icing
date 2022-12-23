@@ -24,8 +24,6 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/scoring/bm25f-calculator.h"
-#include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -148,75 +146,6 @@ class MathFunctionScoreExpression : public ScoreExpression {
 
   FunctionType function_type_;
   std::vector<std::unique_ptr<ScoreExpression>> children_;
-};
-
-class DocumentFunctionScoreExpression : public ScoreExpression {
- public:
-  enum class FunctionType {
-    kDocumentScore,
-    kCreationTimestamp,
-    kUsageCount,
-    kUsageLastUsedTimestamp,
-  };
-
-  static const std::unordered_map<std::string, FunctionType> kFunctionNames;
-
-  // RETURNS:
-  //   - A DocumentFunctionScoreExpression instance on success.
-  //   - FAILED_PRECONDITION on any null pointer in children.
-  //   - INVALID_ARGUMENT on type errors.
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<DocumentFunctionScoreExpression>>
-  Create(FunctionType function_type,
-         std::vector<std::unique_ptr<ScoreExpression>> children,
-         const DocumentStore* document_store, double default_score);
-
-  libtextclassifier3::StatusOr<double> eval(
-      const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) override;
-
- private:
-  explicit DocumentFunctionScoreExpression(
-      FunctionType function_type,
-      std::vector<std::unique_ptr<ScoreExpression>> children,
-      const DocumentStore* document_store, double default_score)
-      : children_(std::move(children)),
-        document_store_(*document_store),
-        default_score_(default_score),
-        function_type_(function_type) {}
-
-  std::vector<std::unique_ptr<ScoreExpression>> children_;
-  const DocumentStore& document_store_;
-  double default_score_;
-  FunctionType function_type_;
-};
-
-class RelevanceScoreFunctionScoreExpression : public ScoreExpression {
- public:
-  static constexpr std::string_view kFunctionName = "relevanceScore";
-
-  // RETURNS:
-  //   - A RelevanceScoreFunctionScoreExpression instance on success.
-  //   - FAILED_PRECONDITION on any null pointer in children.
-  //   - INVALID_ARGUMENT on type errors.
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<RelevanceScoreFunctionScoreExpression>>
-  Create(std::vector<std::unique_ptr<ScoreExpression>> children,
-         Bm25fCalculator* bm25f_calculator, double default_score);
-
-  libtextclassifier3::StatusOr<double> eval(
-      const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) override;
-
- private:
-  explicit RelevanceScoreFunctionScoreExpression(
-      std::vector<std::unique_ptr<ScoreExpression>> children,
-      Bm25fCalculator* bm25f_calculator, double default_score)
-      : children_(std::move(children)),
-        bm25f_calculator_(*bm25f_calculator),
-        default_score_(default_score) {}
-
-  std::vector<std::unique_ptr<ScoreExpression>> children_;
-  Bm25fCalculator& bm25f_calculator_;
-  double default_score_;
 };
 
 }  // namespace lib

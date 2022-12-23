@@ -20,8 +20,6 @@
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/advanced_scoring/scoring-visitor.h"
-#include "icing/scoring/bm25f-calculator.h"
-#include "icing/scoring/section-weights.h"
 
 namespace icing {
 namespace lib {
@@ -42,13 +40,7 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> tree_root,
                          parser.ConsumeScoring());
 
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<SectionWeights> section_weights,
-                         SectionWeights::Create(schema_store, scoring_spec));
-  std::unique_ptr<Bm25fCalculator> bm25f_calculator =
-      std::make_unique<Bm25fCalculator>(document_store,
-                                        std::move(section_weights));
-  ScoringVisitor visitor(default_score, document_store, schema_store,
-                         bm25f_calculator.get());
+  ScoringVisitor visitor(default_score);
   tree_root->Accept(&visitor);
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<ScoreExpression> expression,
@@ -58,8 +50,8 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
         "The root scoring expression will always be evaluated to a document, "
         "but a number is expected.");
   }
-  return std::unique_ptr<AdvancedScorer>(new AdvancedScorer(
-      std::move(expression), std::move(bm25f_calculator), default_score));
+  return std::unique_ptr<AdvancedScorer>(
+      new AdvancedScorer(std::move(expression), default_score));
 }
 
 }  // namespace lib

@@ -22,7 +22,6 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
-#include "icing/scoring/bm25f-calculator.h"
 #include "icing/scoring/scorer.h"
 #include "icing/store/document-store.h"
 
@@ -51,25 +50,13 @@ class AdvancedScorer : public Scorer {
     return std::move(result).ValueOrDie();
   }
 
-  void PrepareToScore(
-      std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
-          query_term_iterators) override {
-    if (query_term_iterators == nullptr || query_term_iterators->empty()) {
-      return;
-    }
-    bm25f_calculator_->PrepareToScore(query_term_iterators);
-  }
-
  private:
   explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,
-                          std::unique_ptr<Bm25fCalculator> bm25f_calculator,
                           double default_score)
       : score_expression_(std::move(score_expression)),
-        bm25f_calculator_(std::move(bm25f_calculator)),
         default_score_(default_score) {}
 
   std::unique_ptr<ScoreExpression> score_expression_;
-  std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   double default_score_;
 };
 

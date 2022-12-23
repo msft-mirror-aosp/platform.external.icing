@@ -16,11 +16,9 @@
 #define ICING_QUERY_QUERY_RESULTS_H_
 
 #include <memory>
-#include <unordered_set>
 
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/query/query-terms.h"
-#include "icing/query/query-features.h"
 
 namespace icing {
 namespace lib {
@@ -35,9 +33,6 @@ struct QueryResults {
   // beginning with root_iterator.
   // This will only be populated when ranking_strategy == RELEVANCE_SCORE.
   QueryTermIteratorsMap query_term_iterators;
-  // Features that are invoked during query execution.
-  // The list of possible features is defined in query_features.h.
-  std::unordered_set<Feature> features_in_use;
 };
 
 }  // namespace lib

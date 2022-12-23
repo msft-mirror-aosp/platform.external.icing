@@ -1161,56 +1161,6 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
   return corpus_mapper_->Get(MakeFingerprint(name_space, schema));
 }
 
-libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
-    ResultSpecProto::ResultGroupingType result_group_type,
-    const std::string_view name_space, const std::string_view schema) const {
-  auto namespace_id = GetNamespaceId(name_space);
-  auto schema_type_id = schema_store_->GetSchemaTypeId(schema);
-  switch (result_group_type) {
-    case ResultSpecProto::NONE:
-      return absl_ports::InvalidArgumentError(
-          "Cannot group by ResultSpecProto::NONE");
-    case ResultSpecProto::SCHEMA_TYPE:
-      if (schema_type_id.ok()) {
-        return schema_type_id.ValueOrDie();
-      }
-      break;
-    case ResultSpecProto::NAMESPACE:
-      if (namespace_id.ok()) {
-        return namespace_id.ValueOrDie();
-      }
-      break;
-    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
-      if (namespace_id.ok() && schema_type_id.ok()) {
-        // TODO(b/258715421): Temporary workaround to get a
-        //                    ResultGroupingEntryId given the Namespace string
-        //                    and Schema string.
-        return namespace_id.ValueOrDie() << 16 | schema_type_id.ValueOrDie();
-      }
-      break;
-  }
-  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
-}
-
-libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
-    ResultSpecProto::ResultGroupingType result_group_type,
-    const NamespaceId namespace_id, const SchemaTypeId schema_type_id) const {
-  switch (result_group_type) {
-    case ResultSpecProto::NONE:
-      return absl_ports::InvalidArgumentError(
-          "Cannot group by ResultSpecProto::NONE");
-    case ResultSpecProto::SCHEMA_TYPE:
-      return schema_type_id;
-    case ResultSpecProto::NAMESPACE:
-      return namespace_id;
-    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
-      // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
-      //                    given the Namespace Id and SchemaType Id.
-      return namespace_id << 16 | schema_type_id;
-  }
-  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
-}
-
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
   if (!GetAliveDocumentFilterData(document_id)) {

@@ -18,8 +18,8 @@
 #include <memory>
 #include <stack>
 #include <string>
+#include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -40,7 +40,6 @@
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/query-visitor.h"
 #include "icing/query/query-processor.h"
-#include "icing/query/query-features.h"
 #include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
 #include "icing/query/query-utils.h"
@@ -168,18 +167,6 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
                            ParseRawQuery(search_spec, ranking_strategy));
   }
 
-  // Check that all new features used in the search have been enabled in the
-  // SearchSpec.
-  const std::unordered_set<Feature> enabled_features(
-      search_spec.enabled_features().begin(),
-      search_spec.enabled_features().end());
-  for (const Feature feature : results.features_in_use) {
-    if (enabled_features.find(feature) == enabled_features.end()) {
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Attempted use of unenabled feature ", feature));
-    }
-  }
-
   DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
@@ -203,11 +190,9 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
         document_store_.last_added_document_id());
     return results;
   }
-  QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
-                             &schema_store_, &normalizer_,
-                             search_spec.term_match_type());
+
+  QueryVisitor query_visitor(&numeric_index_);
   tree_root->Accept(&query_visitor);
-  results.features_in_use = query_visitor.features();
   ICING_ASSIGN_OR_RETURN(results.root_iterator,
                          std::move(query_visitor).root());
   return results;
