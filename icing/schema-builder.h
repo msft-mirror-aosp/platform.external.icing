@@ -69,6 +69,11 @@ constexpr PropertyConfigProto::DataType::Code TYPE_BYTES =
 constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
     PropertyConfigProto::DataType::DOCUMENT;
 
+constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_NONE =
+    JoinableConfig::ValueType::NONE;
+constexpr JoinableConfig::ValueType::Code JOINABLE_VALUE_TYPE_QUALIFIED_ID =
+    JoinableConfig::ValueType::QUALIFIED_ID;
+
 class PropertyConfigBuilder {
  public:
   PropertyConfigBuilder() = default;
@@ -90,6 +95,17 @@ class PropertyConfigBuilder {
       TermMatchType::Code match_type,
       StringIndexingConfig::TokenizerType::Code tokenizer) {
     property_.set_data_type(PropertyConfigProto::DataType::STRING);
+    property_.mutable_string_indexing_config()->set_term_match_type(match_type);
+    property_.mutable_string_indexing_config()->set_tokenizer_type(tokenizer);
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDataTypeJoinableString(
+      JoinableConfig::ValueType::Code join_value_type,
+      TermMatchType::Code match_type = TERM_MATCH_UNKNOWN,
+      StringIndexingConfig::TokenizerType::Code tokenizer = TOKENIZER_NONE) {
+    property_.set_data_type(PropertyConfigProto::DataType::STRING);
+    property_.mutable_joinable_config()->set_value_type(join_value_type);
     property_.mutable_string_indexing_config()->set_term_match_type(match_type);
     property_.mutable_string_indexing_config()->set_tokenizer_type(tokenizer);
     return *this;

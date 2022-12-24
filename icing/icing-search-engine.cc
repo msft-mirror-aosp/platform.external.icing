@@ -54,6 +54,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
 #include "icing/query/suggestion-processor.h"
@@ -64,6 +65,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -117,7 +119,7 @@ struct NamespaceTypePairHasher {
 };
 
 libtextclassifier3::Status ValidateResultSpec(
-    const ResultSpecProto& result_spec) {
+    const DocumentStore* document_store, const ResultSpecProto& result_spec) {
   if (result_spec.num_per_page() < 0) {
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_per_page cannot be negative.");
@@ -127,19 +129,31 @@ libtextclassifier3::Status ValidateResultSpec(
         "ResultSpecProto.num_total_bytes_per_page_threshold cannot be "
         "non-positive.");
   }
-  std::unordered_set<std::string> unique_namespaces;
+  // Validate ResultGroupings.
+  std::unordered_set<int32_t> unique_entry_ids;
+  ResultSpecProto::ResultGroupingType result_grouping_type =
+      result_spec.result_group_type();
   for (const ResultSpecProto::ResultGrouping& result_grouping :
        result_spec.result_groupings()) {
     if (result_grouping.max_results() <= 0) {
       return absl_ports::InvalidArgumentError(
           "Cannot specify a result grouping with max results <= 0.");
     }
-    for (const std::string& name_space : result_grouping.namespaces()) {
-      if (unique_namespaces.count(name_space) > 0) {
-        return absl_ports::InvalidArgumentError(
-            "Namespaces must be unique across result groups.");
+    for (const ResultSpecProto::ResultGrouping::Entry& entry :
+         result_grouping.entry_groupings()) {
+      const std::string& name_space = entry.namespace_();
+      const std::string& schema = entry.schema();
+      auto entry_id_or = document_store->GetResultGroupingEntryId(
+          result_grouping_type, name_space, schema);
+      if (!entry_id_or.ok()) {
+        continue;
       }
-      unique_namespaces.insert(name_space);
+      int32_t entry_id = entry_id_or.ValueOrDie();
+      if (unique_entry_ids.find(entry_id) != unique_entry_ids.end()) {
+        return absl_ports::InvalidArgumentError(
+            "Entry Ids must be unique across result groups.");
+      }
+      unique_entry_ids.insert(entry_id);
     }
   }
   return libtextclassifier3::Status::OK;
@@ -433,6 +447,31 @@ bool ShouldRebuildIndex(const OptimizeStatsProto& optimize_stats) {
   // TODO(b/238236206): Try using the number of remaining hits in this
   // condition, and allow clients to configure the threshold.
   return num_invalid_documents >= optimize_stats.num_original_documents() * 0.9;
+}
+
+// Useful method to get RankingStrategy if advanced scoring is enabled. When the
+// "RelevanceScore" function is used in the advanced scoring expression,
+// RankingStrategy will be treated as RELEVANCE_SCORE in order to prepare the
+// necessary information needed for calculating relevance score.
+libtextclassifier3::StatusOr<ScoringSpecProto::RankingStrategy::Code>
+GetRankingStrategyFromScoringSpec(const ScoringSpecProto& scoring_spec) {
+  if (scoring_spec.advanced_scoring_expression().empty()) {
+    return scoring_spec.rank_by();
+  }
+  // TODO(b/261474063) The Lexer will be called again when creating the
+  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
+  // to be called only once.
+  Lexer lexer(scoring_spec.advanced_scoring_expression(),
+              Lexer::Language::SCORING);
+  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
+                         lexer.ExtractTokens());
+  for (const Lexer::LexerToken& token : lexer_tokens) {
+    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
+        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+      return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+    }
+  }
+  return ScoringSpecProto::RankingStrategy::NONE;
 }
 
 }  // namespace
@@ -1679,7 +1718,8 @@ SearchResultProto IcingSearchEngine::Search(
     return result_proto;
   }
 
-  libtextclassifier3::Status status = ValidateResultSpec(result_spec);
+  libtextclassifier3::Status status =
+      ValidateResultSpec(document_store_.get(), result_spec);
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
@@ -1842,8 +1882,14 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
-  auto query_results_or =
-      query_processor->ParseSearch(search_spec, scoring_spec.rank_by());
+  auto ranking_strategy_or = GetRankingStrategyFromScoringSpec(scoring_spec);
+  libtextclassifier3::StatusOr<QueryResults> query_results_or;
+  if (ranking_strategy_or.ok()) {
+    query_results_or = query_processor->ParseSearch(
+        search_spec, ranking_strategy_or.ValueOrDie());
+  } else {
+    query_results_or = ranking_strategy_or.status();
+  }
   if (!query_results_or.ok()) {
     return QueryScoringResults(
         std::move(query_results_or).status(), /*query_terms_in=*/{},
