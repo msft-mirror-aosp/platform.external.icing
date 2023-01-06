@@ -1191,9 +1191,13 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   // that can support error logging.
   libtextclassifier3::Status status = document_store_->Delete(name_space, uri);
   if (!status.ok()) {
-    ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete Document. namespace: " << name_space
-                     << ", uri: " << uri;
+    LogSeverity::Code severity = ERROR;
+    if (absl_ports::IsNotFound(status)) {
+      severity = DBG;
+    }
+    ICING_LOG(severity) << status.error_message()
+                        << "Failed to delete Document. namespace: "
+                        << name_space << ", uri: " << uri;
     TransformStatus(status, result_status);
     return result_proto;
   }

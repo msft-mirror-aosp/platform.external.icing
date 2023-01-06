@@ -123,8 +123,8 @@ class JoinedScoredDocumentHit {
   };
 
   explicit JoinedScoredDocumentHit(
-      double final_score, ScoredDocumentHit&& parent_scored_document_hit,
-      std::vector<ScoredDocumentHit>&& child_scored_document_hits)
+      double final_score, ScoredDocumentHit parent_scored_document_hit,
+      std::vector<ScoredDocumentHit> child_scored_document_hits)
       : final_score_(final_score),
         parent_scored_document_hit_(std::move(parent_scored_document_hit)),
         child_scored_document_hits_(std::move(child_scored_document_hits)) {}
