@@ -109,7 +109,8 @@ class PostingListIdentifier {
 
  private:
   uint32_t val_;
-};
+} __attribute__((packed));
+static_assert(sizeof(PostingListIdentifier) == 4, "");
 
 }  //  namespace lib
 }  //  namespace icing

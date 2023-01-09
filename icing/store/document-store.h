@@ -628,7 +628,7 @@ class DocumentStore {
   libtextclassifier3::Status UpdateHeader(const Crc32& checksum);
 
   libtextclassifier3::StatusOr<DocumentId> InternalPut(
-      DocumentProto& document,
+      DocumentProto&& document,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
   // Helper function to do batch deletes. Documents with the given

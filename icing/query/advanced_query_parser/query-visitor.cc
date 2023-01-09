@@ -366,5 +366,23 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
   pending_values_.push(std::move(pending_value));
 }
 
+libtextclassifier3::StatusOr<QueryResults> QueryVisitor::ConsumeResults() && {
+  if (has_pending_error()) {
+    return std::move(pending_error_);
+  }
+  if (pending_values_.size() != 1) {
+    return absl_ports::InvalidArgumentError(
+        "Visitor does not contain a single root iterator.");
+  }
+  auto iterator_or = RetrieveIterator();
+  if (!iterator_or.ok()) {
+    return std::move(iterator_or).status();
+  }
+  QueryResults results;
+  results.root_iterator = std::move(iterator_or).ValueOrDie();
+  results.features_in_use = std::move(features_);
+  return results;
+}
+
 }  // namespace lib
 }  // namespace icing

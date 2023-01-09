@@ -146,10 +146,11 @@ TEST_F(QueryVisitorTest, SimpleLessThan) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -176,10 +177,11 @@ TEST_F(QueryVisitorTest, SimpleLessThanEq) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -206,10 +208,12 @@ TEST_F(QueryVisitorTest, SimpleEqual) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 TEST_F(QueryVisitorTest, SimpleGreaterThanEq) {
@@ -235,10 +239,11 @@ TEST_F(QueryVisitorTest, SimpleGreaterThanEq) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2, kDocumentId1));
 }
 
@@ -265,10 +270,12 @@ TEST_F(QueryVisitorTest, SimpleGreaterThan) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 // TODO(b/208654892) Properly handle negative numbers in query expressions.
@@ -296,10 +303,12 @@ TEST_F(QueryVisitorTest, DISABLED_IntMinLessThanEqual) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId0));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId0));
 }
 
 TEST_F(QueryVisitorTest, IntMaxGreaterThanEqual) {
@@ -326,10 +335,12 @@ TEST_F(QueryVisitorTest, IntMaxGreaterThanEqual) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId1));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1));
 }
 
 TEST_F(QueryVisitorTest, NestedPropertyLessThan) {
@@ -357,10 +368,11 @@ TEST_F(QueryVisitorTest, NestedPropertyLessThan) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kNumericSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -372,7 +384,7 @@ TEST_F(QueryVisitorTest, IntParsingError) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -384,7 +396,7 @@ TEST_F(QueryVisitorTest, NotEqualsUnsupported) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
 }
 
@@ -427,7 +439,7 @@ TEST_F(QueryVisitorTest, LessThanTooManyOperandsInvalid) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -449,7 +461,7 @@ TEST_F(QueryVisitorTest, LessThanTooFewOperandsInvalid) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -480,7 +492,7 @@ TEST_F(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -488,7 +500,7 @@ TEST_F(QueryVisitorTest, NeverVisitedReturnsInvalid) {
   QueryVisitor query_visitor(index_.get(), numeric_index_.get(),
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -517,7 +529,7 @@ TEST_F(QueryVisitorTest, DISABLED_IntMinLessThanInvalid) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -545,7 +557,7 @@ TEST_F(QueryVisitorTest, IntMaxGreaterThanInvalid) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).root(),
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -574,9 +586,9 @@ TEST_F(QueryVisitorTest, SingleTerm) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -605,10 +617,11 @@ TEST_F(QueryVisitorTest, SingleVerbatimTerm) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -650,10 +663,12 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingQuote) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 // 2. How does a user represent a escape char (\) that immediately precedes the
@@ -687,10 +702,12 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingEscape) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId1));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1));
 }
 
 // 3. How do we handle other escaped chars?
@@ -726,10 +743,12 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId0));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId0));
 
   // Issue a query for the verbatim token `foobar\y`.
   query = R"("foobar\\y")";
@@ -738,10 +757,12 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
                                  document_store_.get(), schema_store_.get(),
                                  normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(query_visitor_two.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(root_iterator,
-                             std::move(query_visitor_two).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 // This isn't a special case, but is fairly useful for demonstrating. There are
@@ -778,10 +799,12 @@ TEST_F(QueryVisitorTest, VerbatimTermNewLine) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId0));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId0));
 
   // Now, issue a query for the verbatim token `foobar\n`.
   query = R"("foobar\\n")";
@@ -790,10 +813,12 @@ TEST_F(QueryVisitorTest, VerbatimTermNewLine) {
                                  document_store_.get(), schema_store_.get(),
                                  normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(query_visitor_two.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(root_iterator,
-                             std::move(query_visitor_two).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 TEST_F(QueryVisitorTest, VerbatimTermEscapingComplex) {
@@ -824,10 +849,12 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingComplex) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), ElementsAre(kVerbatimSearchFeature));
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId0));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId0));
 }
 
 TEST_F(QueryVisitorTest, SingleMinusTerm) {
@@ -866,10 +893,11 @@ TEST_F(QueryVisitorTest, SingleMinusTerm) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 TEST_F(QueryVisitorTest, SingleNotTerm) {
@@ -908,10 +936,11 @@ TEST_F(QueryVisitorTest, SingleNotTerm) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 TEST_F(QueryVisitorTest, ImplicitAndTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
@@ -937,10 +966,11 @@ TEST_F(QueryVisitorTest, ImplicitAndTerms) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId1));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1));
 }
 
 TEST_F(QueryVisitorTest, ExplicitAndTerms) {
@@ -967,10 +997,11 @@ TEST_F(QueryVisitorTest, ExplicitAndTerms) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId1));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1));
 }
 
 TEST_F(QueryVisitorTest, OrTerms) {
@@ -997,10 +1028,10 @@ TEST_F(QueryVisitorTest, OrTerms) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2, kDocumentId0));
 }
 
@@ -1030,10 +1061,10 @@ TEST_F(QueryVisitorTest, AndOrTermPrecedence) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2, kDocumentId1));
 
   // Should be interpreted like `(bar OR baz) foo`
@@ -1043,10 +1074,10 @@ TEST_F(QueryVisitorTest, AndOrTermPrecedence) {
                                  document_store_.get(), schema_store_.get(),
                                  normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(query_visitor_two.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(root_iterator,
-                             std::move(query_visitor_two).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2, kDocumentId1));
 
   query = "(bar OR baz) foo";
@@ -1055,10 +1086,10 @@ TEST_F(QueryVisitorTest, AndOrTermPrecedence) {
                                    document_store_.get(), schema_store_.get(),
                                    normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor_three);
-  EXPECT_THAT(query_visitor_three.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(root_iterator,
-                             std::move(query_visitor_three).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_three).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2, kDocumentId1));
 }
 
@@ -1103,10 +1134,10 @@ TEST_F(QueryVisitorTest, AndOrNotPrecedence) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2, kDocumentId0));
 
   query = "foo NOT (bar OR baz)";
@@ -1115,10 +1146,11 @@ TEST_F(QueryVisitorTest, AndOrNotPrecedence) {
                                  document_store_.get(), schema_store_.get(),
                                  normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(query_visitor_two.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(root_iterator,
-                             std::move(query_visitor_two).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId0));
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId0));
 }
 
 TEST_F(QueryVisitorTest, PropertyFilter) {
@@ -1169,10 +1201,10 @@ TEST_F(QueryVisitorTest, PropertyFilter) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -1224,10 +1256,10 @@ TEST_F(QueryVisitorTest, PropertyFilterWithGrouping) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()),
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
 
@@ -1279,10 +1311,11 @@ TEST_F(QueryVisitorTest, PropertyFilterWithNot) {
                              document_store_.get(), schema_store_.get(),
                              normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor);
-  EXPECT_THAT(query_visitor.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> root_iterator,
-                             std::move(query_visitor).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 
   query = "NOT prop1:(foo OR bar)";
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
@@ -1290,10 +1323,11 @@ TEST_F(QueryVisitorTest, PropertyFilterWithNot) {
                                  document_store_.get(), schema_store_.get(),
                                  normalizer_.get(), TERM_MATCH_PREFIX);
   root_node->Accept(&query_visitor_two);
-  EXPECT_THAT(query_visitor_two.features(), IsEmpty());
-  ICING_ASSERT_OK_AND_ASSIGN(root_iterator,
-                             std::move(query_visitor_two).root());
-  EXPECT_THAT(GetDocumentIds(root_iterator.get()), ElementsAre(kDocumentId2));
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId2));
 }
 
 }  // namespace

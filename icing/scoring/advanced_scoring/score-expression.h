@@ -31,8 +31,6 @@
 namespace icing {
 namespace lib {
 
-// TODO(b/261474063) Simplify every ScoreExpression node to
-// ConstantScoreExpression if its evaluation does not depend on a document.
 class ScoreExpression {
  public:
   virtual ~ScoreExpression() = default;
@@ -49,6 +47,10 @@ class ScoreExpression {
 
   // Indicate whether the current expression is of document type
   virtual bool is_document_type() const { return false; }
+
+  // Indicate whether the current expression is a constant double.
+  // Returns true if and only if the object is of ConstantScoreExpression type.
+  virtual bool is_constant_double() const { return false; }
 };
 
 class ThisExpression : public ScoreExpression {
@@ -72,7 +74,8 @@ class ThisExpression : public ScoreExpression {
 
 class ConstantScoreExpression : public ScoreExpression {
  public:
-  static std::unique_ptr<ConstantScoreExpression> Create(double c) {
+  static std::unique_ptr<ConstantScoreExpression> Create(
+      libtextclassifier3::StatusOr<double> c) {
     return std::unique_ptr<ConstantScoreExpression>(
         new ConstantScoreExpression(c));
   }
@@ -82,10 +85,13 @@ class ConstantScoreExpression : public ScoreExpression {
     return c_;
   }
 
- private:
-  explicit ConstantScoreExpression(double c) : c_(c) {}
+  bool is_constant_double() const override { return true; }
 
-  double c_;
+ private:
+  explicit ConstantScoreExpression(libtextclassifier3::StatusOr<double> c)
+      : c_(c) {}
+
+  libtextclassifier3::StatusOr<double> c_;
 };
 
 class OperatorScoreExpression : public ScoreExpression {
@@ -93,12 +99,12 @@ class OperatorScoreExpression : public ScoreExpression {
   enum class OperatorType { kPlus, kMinus, kNegative, kTimes, kDiv };
 
   // RETURNS:
-  //   - An OperatorScoreExpression instance on success.
+  //   - An OperatorScoreExpression instance on success if not simplifiable.
+  //   - A ConstantScoreExpression instance on success if simplifiable.
   //   - FAILED_PRECONDITION on any null pointer in children.
   //   - INVALID_ARGUMENT on type errors.
-  static libtextclassifier3::StatusOr<std::unique_ptr<OperatorScoreExpression>>
-  Create(OperatorType op,
-         std::vector<std::unique_ptr<ScoreExpression>> children);
+  static libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> Create(
+      OperatorType op, std::vector<std::unique_ptr<ScoreExpression>> children);
 
   libtextclassifier3::StatusOr<double> eval(
       const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) override;
@@ -129,13 +135,13 @@ class MathFunctionScoreExpression : public ScoreExpression {
   static const std::unordered_map<std::string, FunctionType> kFunctionNames;
 
   // RETURNS:
-  //   - A MathFunctionScoreExpression instance on success.
+  //   - A MathFunctionScoreExpression instance on success if not simplifiable.
+  //   - A ConstantScoreExpression instance on success if simplifiable.
   //   - FAILED_PRECONDITION on any null pointer in children.
   //   - INVALID_ARGUMENT on type errors.
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<MathFunctionScoreExpression>>
-  Create(FunctionType function_type,
-         std::vector<std::unique_ptr<ScoreExpression>> children);
+  static libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> Create(
+      FunctionType function_type,
+      std::vector<std::unique_ptr<ScoreExpression>> children);
 
   libtextclassifier3::StatusOr<double> eval(
       const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) override;
