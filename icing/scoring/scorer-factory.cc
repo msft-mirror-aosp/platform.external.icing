@@ -213,8 +213,9 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
       return AdvancedScorer::Create(scoring_spec, default_score, document_store,
                                     schema_store);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
-      ICING_LOG(WARNING)
-          << "JOIN_AGGREGATE_SCORE not implemented, falling back to NoScorer";
+      // Use join aggregate score to rank. Since the aggregation score is
+      // calculated by child documents after joining (in JoinProcessor), we can
+      // simply use NoScorer for parent documents.
       [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);

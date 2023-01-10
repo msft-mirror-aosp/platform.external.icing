@@ -44,7 +44,6 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
-using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 
@@ -143,13 +142,10 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
             expected_section_id_mask);
 
   section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
-  EXPECT_EQ(matched_terms_stats.at(0).term, "hi");
-  std::array<Hit::TermFrequency, kTotalNumSections> expected_term_frequencies{
-      1};
-  EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-              ElementsAreArray(expected_term_frequencies));
-  EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask,
-            expected_section_id_mask);
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{0, 1}};
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "hi", expected_section_ids_tf_map)));
 
   EXPECT_FALSE(section_restrict_iterator.Advance().ok());
 }

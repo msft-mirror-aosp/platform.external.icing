@@ -207,10 +207,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
                              &schema_store_, &normalizer_,
                              search_spec.term_match_type());
   tree_root->Accept(&query_visitor);
-  results.features_in_use = query_visitor.features();
-  ICING_ASSIGN_OR_RETURN(results.root_iterator,
-                         std::move(query_visitor).root());
-  return results;
+  return std::move(query_visitor).ConsumeResults();
 }
 
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto
