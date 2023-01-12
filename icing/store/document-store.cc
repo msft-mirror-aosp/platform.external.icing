@@ -222,7 +222,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     DocumentProto&& document, int32_t num_tokens,
     PutDocumentStatsProto* put_document_stats) {
   document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
-  return InternalPut(document, put_document_stats);
+  return InternalPut(std::move(document), put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -840,7 +840,7 @@ libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
-    DocumentProto& document, PutDocumentStatsProto* put_document_stats) {
+    DocumentProto&& document, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
@@ -1159,6 +1159,56 @@ libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
 libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
     const std::string_view name_space, const std::string_view schema) const {
   return corpus_mapper_->Get(MakeFingerprint(name_space, schema));
+}
+
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
+    ResultSpecProto::ResultGroupingType result_group_type,
+    const std::string_view name_space, const std::string_view schema) const {
+  auto namespace_id = GetNamespaceId(name_space);
+  auto schema_type_id = schema_store_->GetSchemaTypeId(schema);
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      if (schema_type_id.ok()) {
+        return schema_type_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE:
+      if (namespace_id.ok()) {
+        return namespace_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      if (namespace_id.ok() && schema_type_id.ok()) {
+        // TODO(b/258715421): Temporary workaround to get a
+        //                    ResultGroupingEntryId given the Namespace string
+        //                    and Schema string.
+        return namespace_id.ValueOrDie() << 16 | schema_type_id.ValueOrDie();
+      }
+      break;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
+}
+
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
+    ResultSpecProto::ResultGroupingType result_group_type,
+    const NamespaceId namespace_id, const SchemaTypeId schema_type_id) const {
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      return schema_type_id;
+    case ResultSpecProto::NAMESPACE:
+      return namespace_id;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
+      //                    given the Namespace Id and SchemaType Id.
+      return namespace_id << 16 | schema_type_id;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
 }
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
@@ -1664,7 +1714,7 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
     }
 
     // Guaranteed to have a document now.
-    DocumentProto document_to_keep = document_or.ValueOrDie();
+    DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
 
     libtextclassifier3::StatusOr<DocumentId> new_document_id_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
@@ -1678,12 +1728,13 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      new_document_id_or =
-          new_doc_store->Put(document_to_keep, tokenized_document.num_tokens());
+      new_document_id_or = new_doc_store->Put(
+          std::move(document_to_keep), tokenized_document.num_string_tokens());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      new_document_id_or = new_doc_store->InternalPut(document_to_keep);
+      new_document_id_or =
+          new_doc_store->InternalPut(std::move(document_to_keep));
     }
     if (!new_document_id_or.ok()) {
       ICING_LOG(ERROR) << new_document_id_or.status().error_message()
