@@ -16,14 +16,15 @@
 #define ICING_INDEX_INDEX_PROCESSOR_H_
 
 #include <cstdint>
-#include <string>
+#include <memory>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/index.h"
-#include "icing/proto/document.pb.h"
-#include "icing/schema/section-manager.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/index/section-indexing-handler.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
-#include "icing/tokenization/token.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/tokenized-document.h"
 
@@ -40,7 +41,8 @@ class IndexProcessor {
   //   An IndexProcessor on success
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
-      const Normalizer* normalizer, Index* index, const Clock* clock);
+      const Normalizer* normalizer, Index* index,
+      NumericIndex<int64_t>* integer_index_, const Clock* clock);
 
   // Add tokenized document to the index, associated with document_id. If the
   // number of tokens in the document exceeds max_tokens_per_document, then only
@@ -54,23 +56,21 @@ class IndexProcessor {
   // populated.
   //
   // Returns:
-  //   INVALID_ARGUMENT if document_id is less than the document_id of a
-  //   previously indexed document or tokenization fails.
-  //   RESOURCE_EXHAUSTED if the index is full and can't add anymore content.
-  //   DATA_LOSS if an attempt to merge the index fails and both indices are
-  //       cleared as a result.
-  //   NOT_FOUND if there is no definition for the document's schema type.
-  //   INTERNAL_ERROR if any other errors occur
+  //   - OK on success.
+  //   - Any SectionIndexingHandler errors.
   libtextclassifier3::Status IndexDocument(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
  private:
-  IndexProcessor(const Normalizer* normalizer, Index* index, const Clock* clock)
-      : normalizer_(*normalizer), index_(index), clock_(*clock) {}
+  explicit IndexProcessor(std::vector<std::unique_ptr<SectionIndexingHandler>>&&
+                              section_indexing_handlers,
+                          const Clock* clock)
+      : section_indexing_handlers_(std::move(section_indexing_handlers)),
+        clock_(*clock) {}
 
-  const Normalizer& normalizer_;
-  Index* const index_;
+  std::vector<std::unique_ptr<SectionIndexingHandler>>
+      section_indexing_handlers_;
   const Clock& clock_;
 };
 

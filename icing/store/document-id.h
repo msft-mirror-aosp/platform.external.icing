@@ -26,7 +26,8 @@ using DocumentId = int32_t;
 // We use 22 bits to encode document_ids and use the largest value (2^22 - 1) to
 // represent an invalid document_id.
 inline constexpr int kDocumentIdBits = 22;
-inline constexpr DocumentId kInvalidDocumentId = (1u << kDocumentIdBits) - 1;
+inline constexpr DocumentId kInvalidDocumentId =
+    (INT32_C(1) << kDocumentIdBits) - 1;
 inline constexpr DocumentId kMinDocumentId = 0;
 inline constexpr DocumentId kMaxDocumentId = kInvalidDocumentId - 1;
 

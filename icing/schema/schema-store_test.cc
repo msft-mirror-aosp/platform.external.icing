@@ -26,8 +26,11 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
@@ -54,21 +57,7 @@ using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
-    PropertyConfigProto::Cardinality::REPEATED;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-constexpr PropertyConfigProto::DataType::Code TYPE_DOUBLE =
-    PropertyConfigProto::DataType::DOUBLE;
+constexpr int64_t kDefaultTimestamp = 12345678;
 
 class SchemaStoreTest : public ::testing::Test {
  protected:
@@ -77,15 +66,23 @@ class SchemaStoreTest : public ::testing::Test {
     schema_store_dir_ = test_dir_ + "/schema_store";
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
 
-    schema_ =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
-                // Add an indexed property so we generate section metadata on it
-                PropertyConfigBuilder()
-                    .SetName("subject")
-                    .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                    .SetCardinality(CARDINALITY_OPTIONAL)))
-            .Build();
+    schema_ = SchemaBuilder()
+                  .AddType(SchemaTypeConfigBuilder()
+                               .SetType("email")
+                               .AddProperty(
+                                   // Add an indexed property so we generate
+                                   // section metadata on it
+                                   PropertyConfigBuilder()
+                                       .SetName("subject")
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
+                                                          TOKENIZER_PLAIN)
+                                       .SetCardinality(CARDINALITY_OPTIONAL))
+                               .AddProperty(
+                                   PropertyConfigBuilder()
+                                       .SetName("timestamp")
+                                       .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                       .SetCardinality(CARDINALITY_OPTIONAL)))
+                  .Build();
   }
 
   void TearDown() override {
@@ -120,7 +117,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
           .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop1")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -138,7 +135,8 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
               IsOkAndHolds(Pointee(EqualsProto(schema))));
   EXPECT_THAT(move_constructed_schema_store.ComputeChecksum(),
               IsOkAndHolds(Eq(expected_checksum)));
-  SectionMetadata expected_metadata(/*id_in=*/0, MATCH_EXACT, TOKENIZER_PLAIN,
+  SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
+                                    TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
                                     "prop1");
   EXPECT_THAT(move_constructed_schema_store.GetSectionMetadata("TypeA"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
@@ -151,7 +149,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
           .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop1")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -169,7 +167,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
           .AddType(SchemaTypeConfigBuilder().SetType("TypeB").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop2")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -184,7 +182,8 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
               IsOkAndHolds(Pointee(EqualsProto(schema1))));
   EXPECT_THAT(move_assigned_schema_store->ComputeChecksum(),
               IsOkAndHolds(Eq(expected_checksum)));
-  SectionMetadata expected_metadata(/*id_in=*/0, MATCH_EXACT, TOKENIZER_PLAIN,
+  SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
+                                    TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
                                     "prop1");
   EXPECT_THAT(move_assigned_schema_store->GetSectionMetadata("TypeA"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
@@ -360,9 +359,12 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
 TEST_F(SchemaStoreTest, MultipleCreateOk) {
   DocumentProto document;
   document.set_schema("email");
-  auto properties = document.add_properties();
-  properties->set_name("subject");
-  properties->add_string_values("subject_content");
+  auto subject_property = document.add_properties();
+  subject_property->set_name("subject");
+  subject_property->add_string_values("subject_content");
+  auto timestamp_property = document.add_properties();
+  timestamp_property->set_name("timestamp");
+  timestamp_property->add_int64_values(kDefaultTimestamp);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
@@ -377,9 +379,12 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   // Verify that our in-memory structures are ok
   EXPECT_THAT(schema_store->GetSchemaTypeConfig("email"),
               IsOkAndHolds(Pointee(EqualsProto(schema_.types(0)))));
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Section> sections,
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                              schema_store->ExtractSections(document));
-  EXPECT_THAT(sections[0].content, ElementsAre("subject_content"));
+  EXPECT_THAT(section_group.string_sections[0].content,
+              ElementsAre("subject_content"));
+  EXPECT_THAT(section_group.integer_sections[0].content,
+              ElementsAre(kDefaultTimestamp));
 
   // Verify that our persisted data is ok
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -393,8 +398,12 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   EXPECT_THAT(schema_store->GetSchemaTypeConfig("email"),
               IsOkAndHolds(Pointee(EqualsProto(schema_.types(0)))));
 
-  ICING_ASSERT_OK_AND_ASSIGN(sections, schema_store->ExtractSections(document));
-  EXPECT_THAT(sections[0].content, ElementsAre("subject_content"));
+  ICING_ASSERT_OK_AND_ASSIGN(section_group,
+                             schema_store->ExtractSections(document));
+  EXPECT_THAT(section_group.string_sections[0].content,
+              ElementsAre("subject_content"));
+  EXPECT_THAT(section_group.integer_sections[0].content,
+              ElementsAre(kDefaultTimestamp));
 
   // Verify that our persisted data is ok
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -632,7 +641,7 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
                .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
                    PropertyConfigBuilder()
                        .SetName("subject")
-                       .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                       .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                        .SetCardinality(CARDINALITY_OPTIONAL)))
                .Build();
 
@@ -658,7 +667,7 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto no_nested_index_schema =
@@ -786,10 +795,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
   SchemaTypeConfigBuilder contact_point_repeated_label =
       SchemaTypeConfigBuilder()
           .SetType("ContactPoint")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("label")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_REPEATED));
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED));
   SchemaProto old_schema =
       SchemaBuilder().AddType(contact_point_repeated_label).Build();
   ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
@@ -801,10 +811,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
   SchemaTypeConfigBuilder contact_point_optional_label =
       SchemaTypeConfigBuilder()
           .SetType("ContactPoint")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("label")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL));
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL));
   SchemaTypeConfigBuilder person =
       SchemaTypeConfigBuilder().SetType("Person").AddProperty(
           PropertyConfigBuilder()
@@ -854,10 +865,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
   SchemaTypeConfigBuilder contact_point_prefix_label =
       SchemaTypeConfigBuilder()
           .SetType("ContactPoint")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("label")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_REPEATED));
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED));
   SchemaProto old_schema =
       SchemaBuilder().AddType(contact_point_prefix_label).Build();
   ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
@@ -869,7 +881,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
           .SetType("ContactPoint")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("label")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_REPEATED));
   SchemaTypeConfigBuilder person =
       SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -908,10 +920,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
   SchemaTypeConfigBuilder contact_point_optional_label =
       SchemaTypeConfigBuilder()
           .SetType("ContactPoint")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("label")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL));
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL));
   SchemaProto old_schema =
       SchemaBuilder().AddType(contact_point_optional_label).Build();
   ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
@@ -921,10 +934,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
   SchemaTypeConfigBuilder contact_point_repeated_label =
       SchemaTypeConfigBuilder()
           .SetType("ContactPoint")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("label")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_REPEATED));
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED));
   SchemaTypeConfigBuilder person =
       SchemaTypeConfigBuilder().SetType("Person").AddProperty(
           PropertyConfigBuilder()
@@ -1103,7 +1117,7 @@ TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
   PropertyConfigProto prop =
       PropertyConfigBuilder()
           .SetName("subject")
-          .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
           .SetCardinality(CARDINALITY_OPTIONAL)
           .Build();
   SchemaTypeConfigBuilder full_sections_type_builder =
@@ -1198,8 +1212,12 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
       SchemaTypeConfigBuilder()
           .SetType("Type")
           .AddProperty(PropertyConfigBuilder()
-                           .SetName("prop1")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetName("intProp1")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("stringProp1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   {
@@ -1227,17 +1245,30 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
             .Build();
     EXPECT_THAT(schema_store->SetSchema(std::move(schema)),
                 StatusIs(libtextclassifier3::StatusCode::INTERNAL));
-    DocumentProto document = DocumentBuilder()
-                                 .SetSchema("Type")
-                                 .AddStringProperty("prop1", "foo bar baz")
-                                 .Build();
-    SectionMetadata expected_metadata(/*id_in=*/0, MATCH_EXACT, TOKENIZER_PLAIN,
-                                      "prop1");
-    ICING_ASSERT_OK_AND_ASSIGN(std::vector<Section> sections,
+    DocumentProto document =
+        DocumentBuilder()
+            .SetSchema("Type")
+            .AddInt64Property("intProp1", 1, 2, 3)
+            .AddStringProperty("stringProp1", "foo bar baz")
+            .Build();
+    SectionMetadata expected_int_prop1_metadata(
+        /*id_in=*/0, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
+        NUMERIC_MATCH_RANGE, "intProp1");
+    SectionMetadata expected_string_prop1_metadata(
+        /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+        NUMERIC_MATCH_UNKNOWN, "stringProp1");
+    ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                                schema_store->ExtractSections(document));
-    ASSERT_THAT(sections, SizeIs(1));
-    EXPECT_THAT(sections.at(0).metadata, Eq(expected_metadata));
-    EXPECT_THAT(sections.at(0).content, ElementsAre("foo bar baz"));
+    ASSERT_THAT(section_group.string_sections, SizeIs(1));
+    EXPECT_THAT(section_group.string_sections.at(0).metadata,
+                Eq(expected_string_prop1_metadata));
+    EXPECT_THAT(section_group.string_sections.at(0).content,
+                ElementsAre("foo bar baz"));
+    ASSERT_THAT(section_group.integer_sections, SizeIs(1));
+    EXPECT_THAT(section_group.integer_sections.at(0).metadata,
+                Eq(expected_int_prop1_metadata));
+    EXPECT_THAT(section_group.integer_sections.at(0).content,
+                ElementsAre(1, 2, 3));
   }
 }
 
