@@ -26,10 +26,11 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/query/query-features.h"
+#include "icing/query/query-results.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/transform/normalizer.h"
-#include "icing/query/query-features.h"
 
 namespace icing {
 namespace lib {
@@ -60,27 +61,10 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   void VisitNaryOperator(const NaryOperatorNode* node) override;
 
   // RETURNS:
-  //   - the DocHitInfoIterator that is the root of the query iterator tree
+  //   - the QueryResults reflecting the AST that was visited
   //   - INVALID_ARGUMENT if the AST does not conform to supported expressions
   //   - NOT_FOUND if the AST refers to a property that does not exist
-  libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> root() && {
-    if (has_pending_error()) {
-      return pending_error_;
-    }
-    if (pending_values_.size() != 1) {
-      return absl_ports::InvalidArgumentError(
-          "Visitor does not contain a single root iterator.");
-    }
-    auto iterator_or = RetrieveIterator();
-    if (!iterator_or.ok()) {
-      pending_error_ = std::move(iterator_or).status();
-      return pending_error_;
-    }
-    return std::move(iterator_or).ValueOrDie();
-  }
-
-  // Returns the set of features used in the query.
-  const std::unordered_set<Feature>& features() const { return features_; }
+  libtextclassifier3::StatusOr<QueryResults> ConsumeResults() &&;
 
  private:
   // A holder for intermediate results when processing child nodes.
@@ -185,15 +169,16 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   std::stack<PendingValue> pending_values_;
   libtextclassifier3::Status pending_error_;
 
+  // Set of features invoked in the query.
+  std::unordered_set<Feature> features_;
+
   Index& index_;                                // Does not own!
   const NumericIndex<int64_t>& numeric_index_;  // Does not own!
   const DocumentStore& document_store_;         // Does not own!
   const SchemaStore& schema_store_;             // Does not own!
   const Normalizer& normalizer_;                // Does not own!
-  TermMatchType::Code match_type_;
-  // Set of features invoked in the query.
-  std::unordered_set<Feature> features_;
 
+  TermMatchType::Code match_type_;
 };
 
 }  // namespace lib

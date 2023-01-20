@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -55,6 +56,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/query-features.h"
 #include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
 #include "icing/query/suggestion-processor.h"
@@ -167,6 +169,16 @@ libtextclassifier3::Status ValidateSearchSpec(
         absl_ports::StrCat("SearchSpecProto.query is longer than the maximum "
                            "allowed query length: ",
                            std::to_string(configuration.max_query_length)));
+  }
+  // Check that no unknown features have been enabled in the search spec.
+  std::unordered_set<Feature> query_features_set = GetQueryFeaturesSet();
+  for (const Feature feature : search_spec.enabled_features()) {
+    if (query_features_set.find(feature) == query_features_set.end()) {
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Unknown feature in "
+                             "SearchSpecProto.enabled_features: ",
+                             feature));
+    }
   }
   return libtextclassifier3::Status::OK;
 }
@@ -1179,9 +1191,13 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   // that can support error logging.
   libtextclassifier3::Status status = document_store_->Delete(name_space, uri);
   if (!status.ok()) {
-    ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete Document. namespace: " << name_space
-                     << ", uri: " << uri;
+    LogSeverity::Code severity = ERROR;
+    if (absl_ports::IsNotFound(status)) {
+      severity = DBG;
+    }
+    ICING_LOG(severity) << status.error_message()
+                        << "Failed to delete Document. namespace: "
+                        << name_space << ", uri: " << uri;
     TransformStatus(status, result_status);
     return result_proto;
   }

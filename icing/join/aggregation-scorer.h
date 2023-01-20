@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_AGGREGATE_SCORER_H_
-#define ICING_JOIN_AGGREGATE_SCORER_H_
+#ifndef ICING_JOIN_AGGREGATION_SCORER_H_
+#define ICING_JOIN_AGGREGATION_SCORER_H_
 
 #include <memory>
 #include <vector>
@@ -24,12 +24,12 @@
 namespace icing {
 namespace lib {
 
-class AggregateScorer {
+class AggregationScorer {
  public:
-  static std::unique_ptr<AggregateScorer> Create(
+  static std::unique_ptr<AggregationScorer> Create(
       const JoinSpecProto& join_spec);
 
-  virtual ~AggregateScorer() = default;
+  virtual ~AggregationScorer() = default;
 
   virtual double GetScore(const ScoredDocumentHit& parent,
                           const std::vector<ScoredDocumentHit>& children) = 0;
@@ -38,4 +38,4 @@ class AggregateScorer {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_AGGREGATE_SCORER_H_
+#endif  // ICING_JOIN_AGGREGATION_SCORER_H_

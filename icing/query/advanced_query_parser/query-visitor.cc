@@ -27,6 +27,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/query/query-features.h"
 #include "icing/schema/section-manager.h"
 #include "icing/util/status-macros.h"
 
@@ -224,6 +225,7 @@ void QueryVisitor::VisitString(const StringNode* node) {
     pending_error_ = std::move(escaped_string_or).status();
     return;
   }
+  features_.insert(kVerbatimSearchFeature);
   std::string escaped_string = std::move(escaped_string_or).ValueOrDie();
   pending_values_.push(PendingValue(std::move(escaped_string)));
 }
@@ -362,6 +364,24 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
   pending_values_.pop();
 
   pending_values_.push(std::move(pending_value));
+}
+
+libtextclassifier3::StatusOr<QueryResults> QueryVisitor::ConsumeResults() && {
+  if (has_pending_error()) {
+    return std::move(pending_error_);
+  }
+  if (pending_values_.size() != 1) {
+    return absl_ports::InvalidArgumentError(
+        "Visitor does not contain a single root iterator.");
+  }
+  auto iterator_or = RetrieveIterator();
+  if (!iterator_or.ok()) {
+    return std::move(iterator_or).status();
+  }
+  QueryResults results;
+  results.root_iterator = std::move(iterator_or).ValueOrDie();
+  results.features_in_use = std::move(features_);
+  return results;
 }
 
 }  // namespace lib
