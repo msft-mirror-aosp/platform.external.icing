@@ -23,6 +23,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/join/aggregation-scorer.h"
 #include "icing/join/qualified-id.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
@@ -45,8 +46,6 @@ JoinProcessor::Join(
           ScoringSpecProto::Order::DESC));
 
   // TODO(b/256022027):
-  // - Aggregate scoring
-  //   - Calculate the aggregated score if strategy is AGGREGATION_SCORING.
   // - Optimization
   //   - Cache property to speed up property retrieval.
   //   - If there is no cache, then we still have the flexibility to fetch it
@@ -93,6 +92,9 @@ JoinProcessor::Join(
     }
   }
 
+  std::unique_ptr<AggregationScorer> aggregation_scorer =
+      AggregationScorer::Create(join_spec);
+
   std::vector<JoinedScoredDocumentHit> joined_scored_document_hits;
   joined_scored_document_hits.reserve(parent_scored_document_hits.size());
 
@@ -110,14 +112,15 @@ JoinProcessor::Join(
           "Parent property expression must be ", kQualifiedIdExpr));
     }
 
-    // TODO(b/256022027): Derive final score from
-    // parent_id_to_child_map[parent_doc_id] and
-    // join_spec.aggregation_score_strategy()
-    double final_score = parent.score();
-    joined_scored_document_hits.emplace_back(
-        final_score, std::move(parent),
-        std::vector<ScoredDocumentHit>(
-            std::move(parent_id_to_child_map[parent_doc_id])));
+    std::vector<ScoredDocumentHit> children;
+    if (auto iter = parent_id_to_child_map.find(parent_doc_id);
+        iter != parent_id_to_child_map.end()) {
+      children = std::move(iter->second);
+    }
+
+    double final_score = aggregation_scorer->GetScore(parent, children);
+    joined_scored_document_hits.emplace_back(final_score, std::move(parent),
+                                             std::move(children));
   }
 
   return joined_scored_document_hits;

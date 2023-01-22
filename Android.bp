@@ -106,6 +106,7 @@ filegroup {
         "icing/file/persistent-hash-map.cc",
         "icing/legacy/core/icing-string-util.cc",
         "icing/testing/tmp-directory.cc",
+        "icing/testing/common-matchers.cc",
         "icing/util/crc32.cc",
         "icing/util/logging.cc",
         "icing/util/logging_raw.cc",

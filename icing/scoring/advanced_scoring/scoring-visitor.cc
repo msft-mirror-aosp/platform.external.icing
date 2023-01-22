@@ -132,8 +132,8 @@ void ScoringVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
   std::vector<std::unique_ptr<ScoreExpression>> children;
   children.push_back(pop_stack());
 
-  libtextclassifier3::StatusOr<std::unique_ptr<OperatorScoreExpression>>
-      expression = OperatorScoreExpression::Create(
+  libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> expression =
+      OperatorScoreExpression::Create(
           OperatorScoreExpression::OperatorType::kNegative,
           std::move(children));
   if (!expression.ok()) {
@@ -153,8 +153,8 @@ void ScoringVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
     children.push_back(pop_stack());
   }
 
-  libtextclassifier3::StatusOr<std::unique_ptr<OperatorScoreExpression>>
-      expression = absl_ports::InvalidArgumentError(
+  libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>> expression =
+      absl_ports::InvalidArgumentError(
           absl_ports::StrCat("Unknown Nary operator: ", node->operator_text()));
 
   if (node->operator_text() == "PLUS") {
