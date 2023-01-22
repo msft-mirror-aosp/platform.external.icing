@@ -505,13 +505,16 @@ message JoinSpecProto {
   // taken on it. If JOIN_AGGREGATE_SCORE is used in the base SearchSpecProto,
   // the COUNT value will rank entity documents based on the number of child
   // documents.
-  enum AggregationScore {
-    UNDEFINED = 0;
-    COUNT = 1;
-    MIN = 2;
-    AVG = 3;
-    MAX = 4;
-    SUM = 5;
+  message AggregationScoringStrategy {
+    enum Code {
+      NONE = 0;  // No aggregation strategy for child documents and use parent
+                 // document score.
+      COUNT = 1;
+      MIN = 2;
+      AVG = 3;
+      MAX = 4;
+      SUM = 5;
+    }
   }
-  optional AggregationScore aggregation_score_strategy = 5 [default = COUNT];
+  optional AggregationScoringStrategy.Code aggregation_scoring_strategy = 5;
 }

@@ -17,18 +17,22 @@
 namespace icing {
 namespace lib {
 
-libtextclassifier3::StatusOr<std::unique_ptr<OperatorScoreExpression>>
+libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
 OperatorScoreExpression::Create(
     OperatorType op, std::vector<std::unique_ptr<ScoreExpression>> children) {
   if (children.empty()) {
     return absl_ports::InvalidArgumentError(
         "OperatorScoreExpression must have at least one argument.");
   }
+  bool children_all_constant_double = true;
   for (const auto& child : children) {
     ICING_RETURN_ERROR_IF_NULL(child);
     if (child->is_document_type()) {
       return absl_ports::InvalidArgumentError(
           "Operators are not supported for document type.");
+    }
+    if (!child->is_constant_double()) {
+      children_all_constant_double = false;
     }
   }
   if (op == OperatorType::kNegative) {
@@ -37,8 +41,16 @@ OperatorScoreExpression::Create(
           "Negative operator must have only 1 argument.");
     }
   }
-  return std::unique_ptr<OperatorScoreExpression>(
-      new OperatorScoreExpression(op, std::move(children)));
+  std::unique_ptr<ScoreExpression> expression =
+      std::unique_ptr<OperatorScoreExpression>(
+          new OperatorScoreExpression(op, std::move(children)));
+  if (children_all_constant_double) {
+    // Because all of the children are constants, this expression does not
+    // depend on the DocHitInto or query_it that are passed into it.
+    return ConstantScoreExpression::Create(
+        expression->eval(DocHitInfo(), /*query_it=*/nullptr));
+  }
+  return expression;
 }
 
 libtextclassifier3::StatusOr<double> OperatorScoreExpression::eval(
@@ -85,7 +97,7 @@ const std::unordered_map<std::string, MathFunctionScoreExpression::FunctionType>
         {"sin", FunctionType::kSin},   {"cos", FunctionType::kCos},
         {"tan", FunctionType::kTan}};
 
-libtextclassifier3::StatusOr<std::unique_ptr<MathFunctionScoreExpression>>
+libtextclassifier3::StatusOr<std::unique_ptr<ScoreExpression>>
 MathFunctionScoreExpression::Create(
     FunctionType function_type,
     std::vector<std::unique_ptr<ScoreExpression>> children) {
@@ -93,11 +105,15 @@ MathFunctionScoreExpression::Create(
     return absl_ports::InvalidArgumentError(
         "Math functions must have at least one argument.");
   }
+  bool children_all_constant_double = true;
   for (const auto& child : children) {
     ICING_RETURN_ERROR_IF_NULL(child);
     if (child->is_document_type()) {
       return absl_ports::InvalidArgumentError(
           "Math functions are not supported for document type.");
+    }
+    if (!child->is_constant_double()) {
+      children_all_constant_double = false;
     }
   }
   switch (function_type) {
@@ -143,8 +159,16 @@ MathFunctionScoreExpression::Create(
     case FunctionType::kMin:
       break;
   }
-  return std::unique_ptr<MathFunctionScoreExpression>(
-      new MathFunctionScoreExpression(function_type, std::move(children)));
+  std::unique_ptr<ScoreExpression> expression =
+      std::unique_ptr<MathFunctionScoreExpression>(
+          new MathFunctionScoreExpression(function_type, std::move(children)));
+  if (children_all_constant_double) {
+    // Because all of the children are constants, this expression does not
+    // depend on the DocHitInto or query_it that are passed into it.
+    return ConstantScoreExpression::Create(
+        expression->eval(DocHitInfo(), /*query_it=*/nullptr));
+  }
+  return expression;
 }
 
 libtextclassifier3::StatusOr<double> MathFunctionScoreExpression::eval(

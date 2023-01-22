@@ -437,7 +437,7 @@ TEST_F(AdvancedScorerTest, ComplexExpression) {
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Scorer> scorer,
+      std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec(
                                  "pow(sin(2), 2)"
                                  // This is this.usageCount(1)
@@ -449,19 +449,32 @@ TEST_F(AdvancedScorerTest, ComplexExpression) {
                                  "+ this.relevanceScore()"),
                              /*default_score=*/10, document_store_.get(),
                              schema_store_.get()));
+  EXPECT_FALSE(scorer->is_constant());
   scorer->PrepareToScore(/*query_term_iterators=*/{});
 
   ICING_ASSERT_OK(document_store_->ReportUsage(
       CreateUsageReport("namespace", "uri", 0, UsageReport::USAGE_TYPE1)));
   ICING_ASSERT_OK(document_store_->ReportUsage(
       CreateUsageReport("namespace", "uri", 0, UsageReport::USAGE_TYPE1)));
-  EXPECT_THAT(scorer->GetScore(docHitInfo),
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
               DoubleNear(pow(sin(2), 2) +
                              2 / 12.34 *
                                  (10 * pow(2 * 1, sin(2)) +
                                   10 * (2 + 10 + creation_timestamp_ms)) +
                              10,
                          kEps));
+}
+
+TEST_F(AdvancedScorerTest, ConstantExpression) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(CreateAdvancedScoringSpec(
+                                 "pow(sin(2), 2)"
+                                 "+ log(2, 122) / 12.34"
+                                 "* (10 * pow(2 * 1, sin(2)) + 10 * (2 + 10))"),
+                             /*default_score=*/10, document_store_.get(),
+                             schema_store_.get()));
+  EXPECT_TRUE(scorer->is_constant());
 }
 
 // Should be a parsing Error

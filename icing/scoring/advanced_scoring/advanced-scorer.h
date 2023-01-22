@@ -60,13 +60,20 @@ class AdvancedScorer : public Scorer {
     bm25f_calculator_->PrepareToScore(query_term_iterators);
   }
 
+  bool is_constant() const { return score_expression_->is_constant_double(); }
+
  private:
   explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,
                           std::unique_ptr<Bm25fCalculator> bm25f_calculator,
                           double default_score)
       : score_expression_(std::move(score_expression)),
         bm25f_calculator_(std::move(bm25f_calculator)),
-        default_score_(default_score) {}
+        default_score_(default_score) {
+    if (is_constant()) {
+      ICING_LOG(WARNING)
+          << "The advanced scoring expression will evaluate to a constant.";
+    }
+  }
 
   std::unique_ptr<ScoreExpression> score_expression_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;

@@ -59,7 +59,6 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
-using ::testing::ElementsAreArray;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
@@ -293,7 +292,6 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
   TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
@@ -320,18 +318,14 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-    EXPECT_EQ(matched_terms_stats.at(1).term, "world");
-    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""],
                 UnorderedElementsAre("hello", "world"));
@@ -359,7 +353,6 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
   TermMatchType::Code term_match_type = TermMatchType::PREFIX;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
@@ -383,14 +376,12 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "he");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                         "he", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(1));
@@ -442,14 +433,12 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "he");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                         "he", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(1));
@@ -476,7 +465,6 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
   TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
@@ -500,14 +488,13 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(1));
@@ -534,7 +521,6 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
   TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
@@ -554,18 +540,18 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
+
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
   }
-
   ASSERT_FALSE(results.root_iterator->Advance().ok());
 
   // TODO(b/208654892) Support Query Terms with advanced query
@@ -597,7 +583,6 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
   TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
@@ -624,18 +609,14 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-    EXPECT_EQ(matched_terms_stats.at(1).term, "world");
-    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""],
                 UnorderedElementsAre("hello", "world"));
@@ -663,7 +644,6 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
   TermMatchType::Code term_match_type = TermMatchType::PREFIX;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(
       AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
@@ -687,13 +667,12 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "he");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
+    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                         "he", expected_section_ids_tf_map)));
   }
 
   ASSERT_FALSE(results.root_iterator->Advance().ok());
@@ -726,7 +705,6 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
   // Populate the index
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
   TermMatchType::Code term_match_type = TermMatchType::PREFIX;
 
   EXPECT_THAT(
@@ -755,18 +733,14 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-    EXPECT_EQ(matched_terms_stats.at(0).term, "he");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-    EXPECT_EQ(matched_terms_stats.at(1).term, "wo");
-    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("he", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("wo", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he", "wo"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(2));
@@ -792,7 +766,6 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   // Populate the index
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
   TermMatchType::Code term_match_type = TermMatchType::PREFIX;
 
   EXPECT_THAT(AddTokenToIndex(document_id, section_id,
@@ -821,18 +794,14 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-    EXPECT_EQ(matched_terms_stats.at(1).term, "wo");
-    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("wo", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "wo"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(2));
@@ -863,7 +832,6 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
   // Populate the index
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
   TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
 
   EXPECT_THAT(
@@ -888,33 +856,34 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id2);
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
+
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "world");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
   }
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id1);
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
+
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""],
                 UnorderedElementsAre("hello", "world"));
@@ -946,7 +915,6 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   // Populate the index
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
   TermMatchType::Code term_match_type = TermMatchType::PREFIX;
 
   EXPECT_THAT(
@@ -975,13 +943,12 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "wo");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
+    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                         "wo", expected_section_ids_tf_map)));
   }
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -992,14 +959,12 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "he");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                         "he", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he", "wo"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(2));
@@ -1030,7 +995,6 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   // Populate the index
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
 
   EXPECT_THAT(AddTokenToIndex(document_id1, section_id,
                               TermMatchType::EXACT_ONLY, "hello"),
@@ -1058,13 +1022,12 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "wo");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
+    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                         "wo", expected_section_ids_tf_map)));
   }
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1075,14 +1038,13 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(1));  // 1 term
-    EXPECT_EQ(matched_terms_stats.at(0).term, "hello");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(term_frequencies));
-
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
     EXPECT_THAT(results.query_terms, SizeIs(1));
     EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "wo"));
     EXPECT_THAT(results.query_term_iterators, SizeIs(2));
@@ -1112,7 +1074,6 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
   // Populate the index
   SectionId section_id = 0;
   SectionIdMask section_id_mask = 1U << section_id;
-  std::array<Hit::TermFrequency, kTotalNumSections> term_frequencies{1};
   TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
 
   // Document 1 has content "animal puppy dog"
@@ -1159,17 +1120,14 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     // TODO(b/208654892) Support Query Terms with advanced query
     if (GetParam() !=
         SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+      std::unordered_map<SectionId, Hit::TermFrequency>
+          expected_section_ids_tf_map = {{section_id, 1}};
       std::vector<TermMatchInfo> matched_terms_stats;
       results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-      EXPECT_EQ(matched_terms_stats.at(0).term, "puppy");
-      EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                  ElementsAreArray(term_frequencies));
-      EXPECT_EQ(matched_terms_stats.at(1).term, "dog");
-      EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                  ElementsAreArray(term_frequencies));
+      EXPECT_THAT(
+          matched_terms_stats,
+          ElementsAre(EqualsTermMatchInfo("puppy", expected_section_ids_tf_map),
+                      EqualsTermMatchInfo("dog", expected_section_ids_tf_map)));
 
       EXPECT_THAT(results.query_terms, SizeIs(1));
       EXPECT_THAT(results.query_terms[""],
@@ -1203,17 +1161,15 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     // TODO(b/208654892) Support Query Terms with advanced query
     if (GetParam() !=
         SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+      std::unordered_map<SectionId, Hit::TermFrequency>
+          expected_section_ids_tf_map = {{section_id, 1}};
       std::vector<TermMatchInfo> matched_terms_stats;
       results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-      EXPECT_EQ(matched_terms_stats.at(0).term, "animal");
-      EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                  ElementsAreArray(term_frequencies));
-      EXPECT_EQ(matched_terms_stats.at(1).term, "kitten");
-      EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                  ElementsAreArray(term_frequencies));
+      EXPECT_THAT(
+          matched_terms_stats,
+          ElementsAre(
+              EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+              EqualsTermMatchInfo("kitten", expected_section_ids_tf_map)));
     }
 
     ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1225,18 +1181,15 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     // TODO(b/208654892) Support Query Terms with advanced query
     if (GetParam() !=
         SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+      std::unordered_map<SectionId, Hit::TermFrequency>
+          expected_section_ids_tf_map = {{section_id, 1}};
       std::vector<TermMatchInfo> matched_terms_stats;
       results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-      EXPECT_EQ(matched_terms_stats.at(0).term, "animal");
-      EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                  ElementsAreArray(term_frequencies));
-      EXPECT_EQ(matched_terms_stats.at(1).term, "puppy");
-      EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                  ElementsAreArray(term_frequencies));
-
+      EXPECT_THAT(
+          matched_terms_stats,
+          ElementsAre(
+              EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+              EqualsTermMatchInfo("puppy", expected_section_ids_tf_map)));
       EXPECT_THAT(results.query_terms, SizeIs(1));
       EXPECT_THAT(results.query_terms[""],
                   UnorderedElementsAre("animal", "puppy", "kitten"));
@@ -1267,17 +1220,15 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     // TODO(b/208654892) Support Query Terms with advanced query
     if (GetParam() !=
         SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+      std::unordered_map<SectionId, Hit::TermFrequency>
+          expected_section_ids_tf_map = {{section_id, 1}};
       std::vector<TermMatchInfo> matched_terms_stats;
       results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-      EXPECT_EQ(matched_terms_stats.at(0).term, "kitten");
-      EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                  ElementsAreArray(term_frequencies));
-      EXPECT_EQ(matched_terms_stats.at(1).term, "cat");
-      EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-      EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                  ElementsAreArray(term_frequencies));
+      EXPECT_THAT(
+          matched_terms_stats,
+          ElementsAre(
+              EqualsTermMatchInfo("kitten", expected_section_ids_tf_map),
+              EqualsTermMatchInfo("cat", expected_section_ids_tf_map)));
 
       EXPECT_THAT(results.query_terms, SizeIs(1));
       EXPECT_THAT(results.query_terms[""],
@@ -1901,9 +1852,6 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
                                     ScoringSpecProto::RankingStrategy::NONE));
-  // Since need_hit_term_frequency is false, the expected term frequencies
-  // should all be 0.
-  Hit::TermFrequencyArray exp_term_frequencies{0};
 
   // Descending order of valid DocumentIds
   // The first Document to match (Document 2) matches on 'animal' AND 'kitten'
@@ -1915,17 +1863,17 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    // Since need_hit_term_frequency is false, the expected term frequency for
+    // the section with the hit should be 0.
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 0}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-    EXPECT_EQ(matched_terms_stats.at(0).term, "animal");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(exp_term_frequencies));
-    EXPECT_EQ(matched_terms_stats.at(1).term, "kitten");
-    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                ElementsAreArray(exp_term_frequencies));
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(
+            EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+            EqualsTermMatchInfo("kitten", expected_section_ids_tf_map)));
   }
 
   // The second Document to match (Document 1) matches on 'animal' AND 'puppy'
@@ -1937,17 +1885,14 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 0}};
     std::vector<TermMatchInfo> matched_terms_stats;
     results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    ASSERT_THAT(matched_terms_stats, SizeIs(2));  // 2 terms
-    EXPECT_EQ(matched_terms_stats.at(0).term, "animal");
-    EXPECT_EQ(matched_terms_stats.at(0).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(0).term_frequencies,
-                ElementsAreArray(exp_term_frequencies));
-    EXPECT_EQ(matched_terms_stats.at(1).term, "puppy");
-    EXPECT_EQ(matched_terms_stats.at(1).section_ids_mask, section_id_mask);
-    EXPECT_THAT(matched_terms_stats.at(1).term_frequencies,
-                ElementsAreArray(exp_term_frequencies));
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("puppy", expected_section_ids_tf_map)));
 
     // This should be empty because ranking_strategy != RELEVANCE_SCORE
     EXPECT_THAT(results.query_term_iterators, IsEmpty());
@@ -2009,6 +1954,7 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+
   // TODO(b/208654892) Support Query Terms with advanced query
   if (GetParam() !=
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
