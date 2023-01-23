@@ -23,6 +23,7 @@
 
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/index.h"
+#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
@@ -44,13 +45,18 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
                         const DocumentStore* document_store,
                         const SchemaStore* schema_store,
                         const Normalizer* normalizer,
-                        TermMatchType::Code match_type)
+                        DocHitInfoIteratorFilter::Options filter_options,
+                        TermMatchType::Code match_type,
+                        bool needs_term_frequency_info)
       : index_(*index),
         numeric_index_(*numeric_index),
         document_store_(*document_store),
         schema_store_(*schema_store),
         normalizer_(*normalizer),
-        match_type_(match_type) {}
+        filter_options_(std::move(filter_options)),
+        match_type_(match_type),
+        needs_term_frequency_info_(needs_term_frequency_info),
+        processing_not_(false) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
@@ -166,9 +172,19 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<PendingValue> ProcessHasOperator(
       const NaryOperatorNode* node);
 
+  // RETURNS:
+  //   - the current property restrict or empty string if there is no property
+  //     restrict.
+  //   - INVALID_ARGUMENT if the current restrict is invalid (ie is a chain of
+  //     restricts with different properties such as `subject:(body:foo)`).
+  libtextclassifier3::StatusOr<std::string> GetPropertyRestrict() const;
+
   std::stack<PendingValue> pending_values_;
   libtextclassifier3::Status pending_error_;
 
+  SectionRestrictQueryTermsMap property_query_terms_map_;
+
+  QueryTermIteratorsMap query_term_iterators_;
   // Set of features invoked in the query.
   std::unordered_set<Feature> features_;
 
@@ -178,7 +194,16 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   const SchemaStore& schema_store_;             // Does not own!
   const Normalizer& normalizer_;                // Does not own!
 
+  DocHitInfoIteratorFilter::Options filter_options_;
   TermMatchType::Code match_type_;
+  // Whether or not term_frequency information is needed. This affects:
+  //  - how DocHitInfoIteratorTerms are constructed
+  //  - whether the QueryTermIteratorsMap is populated in the QueryResults.
+  bool needs_term_frequency_info_;
+
+  // The stack of property restricts currently being processed by the visitor.
+  std::vector<std::string> pending_property_restricts_;
+  bool processing_not_;
 };
 
 }  // namespace lib

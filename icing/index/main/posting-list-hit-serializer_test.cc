@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 
 #include <cstdint>
 #include <deque>
@@ -47,8 +47,8 @@ struct HitElt {
   Hit hit;
 };
 
-TEST(PostingListUsedHitSerializerTest, PostingListUsedPrependHitNotFull) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
+  PostingListHitSerializer serializer;
 
   static const int kNumHits = 2551;
   static const size_t kHitsSize = kNumHits * sizeof(Hit);
@@ -98,8 +98,8 @@ TEST(PostingListUsedHitSerializerTest, PostingListUsedPrependHitNotFull) {
               IsOkAndHolds(ElementsAre(hit3, hit2, hit1, hit0)));
 }
 
-TEST(PostingListUsedHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
+  PostingListHitSerializer serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(size);
@@ -168,8 +168,8 @@ TEST(PostingListUsedHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
-TEST(PostingListUsedHitSerializerTest, PostingListUsedMinSize) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
+  PostingListHitSerializer serializer;
 
   std::unique_ptr<char[]> hits_buf =
       std::make_unique<char[]>(serializer.GetMinPostingListSize());
@@ -216,9 +216,9 @@ TEST(PostingListUsedHitSerializerTest, PostingListUsedMinSize) {
               IsOkAndHolds(ElementsAre(hit1, hit0)));
 }
 
-TEST(PostingListUsedHitSerializerTest,
+TEST(PostingListHitSerializerTest,
      PostingListPrependHitArrayMinSizePostingList) {
-  PostingListUsedHitSerializer serializer;
+  PostingListHitSerializer serializer;
 
   constexpr int kFinalSize = 1025;
   std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kFinalSize);
@@ -265,8 +265,8 @@ TEST(PostingListUsedHitSerializerTest,
               IsOkAndHolds(ElementsAreArray(hits_pushed)));
 }
 
-TEST(PostingListUsedHitSerializerTest, PostingListPrependHitArrayPostingList) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
+  PostingListHitSerializer serializer;
 
   // Size = 30
   int size = 3 * serializer.GetMinPostingListSize();
@@ -433,8 +433,8 @@ TEST(PostingListUsedHitSerializerTest, PostingListPrependHitArrayPostingList) {
               IsOkAndHolds(ElementsAreArray(hits_pushed)));
 }
 
-TEST(PostingListUsedHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
+  PostingListHitSerializer serializer;
 
   static constexpr int kNumHits = 128;
   static constexpr int kDeltaSize = 1;
@@ -478,9 +478,9 @@ TEST(PostingListUsedHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
   ASSERT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(IsEmpty()));
 }
 
-TEST(PostingListUsedHitSerializerTest,
+TEST(PostingListHitSerializerTest,
      PostingListStatusJumpFromNotFullToFullAndBack) {
-  PostingListUsedHitSerializer serializer;
+  PostingListHitSerializer serializer;
 
   const uint32_t pl_size = 3 * sizeof(Hit);
   char hits_buf[pl_size];
@@ -491,7 +491,7 @@ TEST(PostingListUsedHitSerializerTest,
   uint32_t bytes_used = serializer.GetBytesUsed(&pl);
   // Status not full.
   ASSERT_THAT(bytes_used,
-              Le(pl_size - PostingListUsedHitSerializer::kSpecialHitsSize));
+              Le(pl_size - PostingListHitSerializer::kSpecialHitsSize));
   ICING_ASSERT_OK(serializer.PrependHit(&pl, Hit(Hit::kInvalidValue >> 2, 0)));
   // Status should jump to full directly.
   ASSERT_THAT(serializer.GetBytesUsed(&pl), Eq(pl_size));
@@ -500,8 +500,8 @@ TEST(PostingListUsedHitSerializerTest,
   ASSERT_THAT(serializer.GetBytesUsed(&pl), Eq(bytes_used));
 }
 
-TEST(PostingListUsedHitSerializerTest, DeltaOverflow) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, DeltaOverflow) {
+  PostingListHitSerializer serializer;
 
   char hits_buf[1000];
   ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl,
@@ -532,8 +532,8 @@ TEST(PostingListUsedHitSerializerTest, DeltaOverflow) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
-TEST(PostingListUsedHitSerializerTest, MoveFrom) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, MoveFrom) {
+  PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
@@ -564,9 +564,8 @@ TEST(PostingListUsedHitSerializerTest, MoveFrom) {
   EXPECT_THAT(serializer.GetHits(&pl_used1), IsOkAndHolds(IsEmpty()));
 }
 
-TEST(PostingListUsedHitSerializerTest,
-     MoveFromNullArgumentReturnsInvalidArgument) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, MoveFromNullArgumentReturnsInvalidArgument) {
+  PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
@@ -585,9 +584,9 @@ TEST(PostingListUsedHitSerializerTest,
               IsOkAndHolds(ElementsAreArray(hits.rbegin(), hits.rend())));
 }
 
-TEST(PostingListUsedHitSerializerTest,
+TEST(PostingListHitSerializerTest,
      MoveFromInvalidPostingListReturnsInvalidArgument) {
-  PostingListUsedHitSerializer serializer;
+  PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
@@ -624,9 +623,9 @@ TEST(PostingListUsedHitSerializerTest,
               IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 }
 
-TEST(PostingListUsedHitSerializerTest,
+TEST(PostingListHitSerializerTest,
      MoveToInvalidPostingListReturnsFailedPrecondition) {
-  PostingListUsedHitSerializer serializer;
+  PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
@@ -663,8 +662,8 @@ TEST(PostingListUsedHitSerializerTest,
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
 }
 
-TEST(PostingListUsedHitSerializerTest, MoveToPostingListTooSmall) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, MoveToPostingListTooSmall) {
+  PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
@@ -699,8 +698,8 @@ TEST(PostingListUsedHitSerializerTest, MoveToPostingListTooSmall) {
               IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 }
 
-TEST(PostingListUsedHitSerializerTest, PopHitsWithScores) {
-  PostingListUsedHitSerializer serializer;
+TEST(PostingListHitSerializerTest, PopHitsWithScores) {
+  PostingListHitSerializer serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);

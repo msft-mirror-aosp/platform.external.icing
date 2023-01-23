@@ -85,7 +85,8 @@ class QueryProcessor {
   //     - One iterator that represents the entire query
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   libtextclassifier3::StatusOr<QueryResults> ParseAdvancedQuery(
-      const SearchSpecProto& search_spec) const;
+      const SearchSpecProto& search_spec,
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy) const;
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.

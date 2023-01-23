@@ -19,13 +19,19 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
-#include "icing/index/numeric/posting-list-used-integer-index-data-serializer.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -91,6 +97,14 @@ class IntegerIndexStorage {
       }
     } __attribute__((packed));
 
+    libtextclassifier3::Status Serialize(const Filesystem& filesystem,
+                                         int fd) const {
+      if (!filesystem.PWrite(fd, kFileOffset, this, sizeof(*this))) {
+        return absl_ports::InternalError("Failed to write crcs into file");
+      }
+      return libtextclassifier3::Status::OK;
+    }
+
     bool operator==(const Crcs& other) const {
       return all_crc == other.all_crc && component_crcs == other.component_crcs;
     }
@@ -108,12 +122,23 @@ class IntegerIndexStorage {
     int32_t magic;
     int32_t num_keys;
 
+    libtextclassifier3::Status Serialize(const Filesystem& filesystem,
+                                         int fd) const {
+      if (!filesystem.PWrite(fd, kFileOffset, this, sizeof(*this))) {
+        return absl_ports::InternalError("Failed to write info into file");
+      }
+      return libtextclassifier3::Status::OK;
+    }
+
     Crc32 ComputeChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
   } __attribute__((packed));
   static_assert(sizeof(Info) == 8, "");
+
+  static constexpr int32_t kMetadataFileSize = sizeof(Crcs) + sizeof(Info);
+  static_assert(kMetadataFileSize == 28);
 
   // Bucket
   class Bucket {
@@ -126,16 +151,25 @@ class IntegerIndexStorage {
     static constexpr int32_t kMaxNumBuckets = 1 << 23;
 
     explicit Bucket(int64_t key_lower, int64_t key_upper,
-                    PostingListIdentifier posting_list_identifier)
+                    PostingListIdentifier posting_list_identifier =
+                        PostingListIdentifier::kInvalid)
         : key_lower_(key_lower),
           key_upper_(key_upper),
           posting_list_identifier_(posting_list_identifier) {}
+
+    bool operator<(const Bucket& other) const {
+      return key_lower_ < other.key_lower_;
+    }
 
     // For FileBackedVector
     bool operator==(const Bucket& other) const {
       return key_lower_ == other.key_lower_ && key_upper_ == other.key_upper_ &&
              posting_list_identifier_ == other.posting_list_identifier_;
     }
+
+    int64_t key_lower() const { return key_lower_; }
+
+    int64_t key_upper() const { return key_upper_; }
 
     PostingListIdentifier posting_list_identifier() const {
       return posting_list_identifier_;
@@ -160,19 +194,185 @@ class IntegerIndexStorage {
                         FileBackedVector<Bucket>::kElementTypeSize,
                 "Max # of buckets cannot fit into FileBackedVector");
 
+  struct Options {
+    explicit Options() {}
+
+    explicit Options(std::vector<Bucket> custom_init_sorted_buckets_in,
+                     std::vector<Bucket> custom_init_unsorted_buckets_in)
+        : custom_init_sorted_buckets(std::move(custom_init_sorted_buckets_in)),
+          custom_init_unsorted_buckets(
+              std::move(custom_init_unsorted_buckets_in)) {}
+
+    bool IsValid() const;
+
+    bool HasCustomInitBuckets() const {
+      return !custom_init_sorted_buckets.empty() ||
+             !custom_init_unsorted_buckets.empty();
+    }
+
+    // Custom buckets when initializing new files. If both are empty, then the
+    // initial bucket is (INT64_MIN, INT64_MAX). Usually we only set them in the
+    // unit test. Note that all buckets in custom_init_sorted_buckets and
+    // custom_init_unsorted_buckets should be disjoint and the range union
+    // should be [INT64_MIN, INT64_MAX].
+    std::vector<Bucket> custom_init_sorted_buckets;
+    std::vector<Bucket> custom_init_unsorted_buckets;
+  };
+
+  static constexpr std::string_view kSubDirectory = "storage_dir";
+  static constexpr std::string_view kFilePrefix = "integer_index_storage";
+
+  // Creates a new IntegerIndexStorage instance to index integers. For directory
+  // management purpose, we define working_dir as "<base_dir>/storage_dir", and
+  // all underlying files will be stored under it. If any of the underlying file
+  // is missing, then delete the whole working_dir and (re)initialize with new
+  // ones. Otherwise initialize and create the instance by existing files.
+  //
+  // filesystem: Object to make system level calls
+  // base_dir: Specifies the base directory for all integer index data related
+  //           files to be stored. As mentioned above, all files will be stored
+  //           under working_dir (which is "<base_dir>/storage_dir").
+  // options: Options instance.
+  // posting_list_serializer: a PostingListIntegerIndexSerializer instance to
+  //                          serialize/deserialize integer index data to/from
+  //                          posting lists.
+  //
+  // Returns:
+  //   - INVALID_ARGUMENT_ERROR if any value in options is invalid.
+  //   - FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
+  //                               checksum.
+  //   - INTERNAL_ERROR on I/O errors.
+  //   - Any FileBackedVector/FlashIndexStorage errors.
+  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
+  Create(const Filesystem& filesystem, std::string_view base_dir,
+         Options options,
+         PostingListIntegerIndexSerializer* posting_list_serializer);
+
+  // Delete copy and move constructor/assignment operator.
+  IntegerIndexStorage(const IntegerIndexStorage&) = delete;
+  IntegerIndexStorage& operator=(const IntegerIndexStorage&) = delete;
+
+  IntegerIndexStorage(IntegerIndexStorage&&) = delete;
+  IntegerIndexStorage& operator=(IntegerIndexStorage&&) = delete;
+
+  ~IntegerIndexStorage();
+
+  // Batch adds new keys (of the same DocumentId and SectionId) into the integer
+  // index storage.
+  // Note that since we separate different property names into different integer
+  // index storages, it is impossible to have keys in a single document across
+  // multiple sections to add into the same integer index storage.
+  //
+  // Returns:
+  //   - OK on success
+  //   - Any FileBackedVector or PostingList errors
+  libtextclassifier3::Status AddKeys(DocumentId document_id,
+                                     SectionId section_id,
+                                     std::vector<int64_t>&& new_keys);
+
+  // Returns a DocHitInfoIteratorNumeric<int64_t> (in DocHitInfoIterator
+  // interface type format) for iterating through all docs which have the
+  // specified (integer) property contents in range [query_key_lower,
+  // query_key_upper].
+  // When iterating through all relevant doc hits, it:
+  // - Merges multiple SectionIds of doc hits with same DocumentId into a single
+  //   SectionIdMask and constructs DocHitInfo.
+  // - Returns DocHitInfo in descending DocumentId order.
+  //
+  // Returns:
+  //   - On success: a DocHitInfoIterator(Numeric)
+  //   - INVALID_ARGUMENT_ERROR if query_key_lower > query_key_upper
+  //   - Any FileBackedVector or PostingList errors
+  libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
+      int64_t query_key_lower, int64_t query_key_upper) const;
+
+  // Flushes content to underlying files.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status PersistToDisk();
+
  private:
+  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
+  InitializeNewFiles(
+      const Filesystem& filesystem, std::string&& working_dir,
+      Options&& options,
+      PostingListIntegerIndexSerializer* posting_list_serializer);
+
+  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
+  InitializeExistingFiles(
+      const Filesystem& filesystem, std::string&& working_dir,
+      Options&& options,
+      PostingListIntegerIndexSerializer* posting_list_serializer);
+
   explicit IntegerIndexStorage(
-      const Filesystem& filesystem, std::string_view base_dir,
-      PostingListUsedIntegerIndexDataSerializer* serializer,
+      const Filesystem& filesystem, std::string&& working_dir,
+      Options&& options,
+      PostingListIntegerIndexSerializer* posting_list_serializer,
       std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
       std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
       std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
-      std::unique_ptr<FlashIndexStorage> flash_index_storage);
+      std::unique_ptr<FlashIndexStorage> flash_index_storage)
+      : filesystem_(filesystem),
+        working_dir_(std::move(working_dir)),
+        options_(std::move(options)),
+        posting_list_serializer_(posting_list_serializer),
+        metadata_mmapped_file_(std::move(metadata_mmapped_file)),
+        sorted_buckets_(std::move(sorted_buckets)),
+        unsorted_buckets_(std::move(unsorted_buckets)),
+        flash_index_storage_(std::move(flash_index_storage)) {}
+
+  // Helper function to add keys in range [it_start, it_end) into the given
+  // bucket. It handles the bucket and its corresponding posting list(s) to make
+  // searching and indexing efficient.
+  //
+  // When the (single) posting list of the bucket is full:
+  // - If the size of posting list hasn't reached the max size, then just simply
+  //   add a new key into it, and PostingListAccessor mechanism will
+  //   automatically double the size of the posting list.
+  // - Else:
+  //   - If the bucket is splittable (i.e. key_lower < key_upper), then split it
+  //     into several new buckets with new ranges, and split the data (according
+  //     to their keys and the range of new buckets) of the original posting
+  //     list into several new posting lists.
+  //     TODO(b/259743562): [Optimization 1] implement split
+  //   - Otherwise, just simply add a new key into it, and PostingListAccessor
+  //     mechanism will automatically create a new max size posting list and
+  //     chain them.
+  //
+  // Returns:
+  //   - On success: a vector of new Buckets (to add into the unsorted bucket
+  //     array later)
+  //   - Any FileBackedVector or PostingList errors
+  libtextclassifier3::StatusOr<std::vector<Bucket>>
+  AddKeysIntoBucketAndSplitIfNecessary(
+      DocumentId document_id, SectionId section_id,
+      const std::vector<int64_t>::const_iterator& it_start,
+      const std::vector<int64_t>::const_iterator& it_end,
+      FileBackedVector<Bucket>::MutableView& mutable_bucket);
+
+  Crcs* crcs() {
+    return reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
+                                   Crcs::kFileOffset);
+  }
+
+  Info* info() {
+    return reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
+                                   Info::kFileOffset);
+  }
+
+  const Info* info() const {
+    return reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
+                                         Info::kFileOffset);
+  }
 
   const Filesystem& filesystem_;
-  std::string base_dir_;
+  std::string working_dir_;
 
-  PostingListUsedIntegerIndexDataSerializer* serializer_;  // Does not own.
+  Options options_;
+
+  PostingListIntegerIndexSerializer* posting_list_serializer_;  // Does not own.
 
   std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_;
   std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets_;

@@ -894,6 +894,14 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         std::move(index_incompatible_type));
   }
 
+  bool join_incompatible =
+      !set_schema_result.schema_types_join_incompatible_by_name.empty();
+  for (const std::string& join_incompatible_type :
+       set_schema_result.schema_types_join_incompatible_by_name) {
+    result_proto.add_join_incompatible_changed_schema_types(
+        std::move(join_incompatible_type));
+  }
+
   libtextclassifier3::Status status;
   if (set_schema_result.success) {
     if (lost_previous_schema) {
@@ -913,6 +921,12 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         TransformStatus(status, result_status);
         return result_proto;
       }
+    }
+
+    if (lost_previous_schema || join_incompatible) {
+      // TODO(b/256022027): rebuild joinable cache if not join compatible. This
+      //   should be done together with index (see RestoreIndexIfNeeded) because
+      //   we want to "replay" documents only once to cover all rebuild.
     }
 
     if (lost_previous_schema || index_incompatible) {
@@ -1779,12 +1793,14 @@ SearchResultProto IcingSearchEngine::Search(
   }
 
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
-  if (search_spec.has_join_spec()) {
+  const JoinSpecProto& join_spec = search_spec.join_spec();
+  if (!join_spec.parent_property_expression().empty() &&
+      !join_spec.child_property_expression().empty()) {
     // Process 2nd query
-    QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
-        search_spec.join_spec().nested_spec().search_spec(),
-        search_spec.join_spec().nested_spec().scoring_spec(),
-        search_spec.join_spec().nested_spec().result_spec());
+    QueryScoringResults nested_query_scoring_results =
+        ProcessQueryAndScore(join_spec.nested_spec().search_spec(),
+                             join_spec.nested_spec().scoring_spec(),
+                             join_spec.nested_spec().result_spec());
     // TOOD(b/256022027): set different kinds of latency for 2nd query.
     if (!nested_query_scoring_results.status.ok()) {
       TransformStatus(nested_query_scoring_results.status, result_status);
@@ -1795,8 +1811,7 @@ SearchResultProto IcingSearchEngine::Search(
     JoinProcessor join_processor(document_store_.get());
     libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
         joined_result_document_hits_or = join_processor.Join(
-            search_spec.join_spec(),
-            std::move(query_scoring_results.scored_document_hits),
+            join_spec, std::move(query_scoring_results.scored_document_hits),
             std::move(nested_query_scoring_results.scored_document_hits));
     if (!joined_result_document_hits_or.ok()) {
       TransformStatus(joined_result_document_hits_or.status(), result_status);

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <limits>
 #include <memory>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -137,9 +138,28 @@ QueryVisitor::RetrieveIterator() {
     return iterator;
   }
   ICING_ASSIGN_OR_RETURN(std::string value, RetrieveStringValue());
+  if (!processing_not_ && needs_term_frequency_info_) {
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<DocHitInfoIterator> term_iterator,
+        index_.GetIterator(value, kSectionIdMaskAll, match_type_,
+                           needs_term_frequency_info_));
+    query_term_iterators_[value] = std::make_unique<DocHitInfoIteratorFilter>(
+        std::move(term_iterator), &document_store_, &schema_store_,
+        filter_options_);
+  }
+  if (!processing_not_) {
+    auto property_restrict_or = GetPropertyRestrict();
+    if (property_restrict_or.ok()) {
+      property_query_terms_map_[std::move(property_restrict_or).ValueOrDie()]
+          .insert(value);
+    } else {
+      ICING_LOG(DBG) << "Unsatisfiable property restrict, "
+                     << property_restrict_or.status().error_message();
+    }
+  }
   // Make it into a term iterator.
   return index_.GetIterator(value, kSectionIdMaskAll, match_type_,
-                            /*need_term_hit_frequency_=*/false);
+                            needs_term_frequency_info_);
 }
 
 libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DocHitInfoIterator>>>
@@ -154,6 +174,9 @@ QueryVisitor::RetrieveIterators() {
     return absl_ports::InvalidArgumentError(
         "Unable to retrieve expected iterators.");
   }
+  // Iterators will be in reverse order because we retrieved them from the
+  // stack. Reverse them to get back to the original ordering.
+  std::reverse(iterators.begin(), iterators.end());
   return iterators;
 }
 
@@ -212,6 +235,22 @@ QueryVisitor::ProcessHasOperator(const NaryOperatorNode* node) {
   return PendingValue(std::make_unique<DocHitInfoIteratorSectionRestrict>(
       std::move(delegate), &document_store_, &schema_store_,
       std::move(property)));
+}
+
+libtextclassifier3::StatusOr<std::string> QueryVisitor::GetPropertyRestrict()
+    const {
+  if (pending_property_restricts_.empty()) {
+    return "";
+  }
+  const std::string& restrict = pending_property_restricts_.at(0);
+  bool valid_restrict = std::all_of(
+      pending_property_restricts_.begin(), pending_property_restricts_.end(),
+      [&restrict](const std::string& s) { return s == restrict; });
+  if (!valid_restrict) {
+    return absl_ports::InvalidArgumentError(
+        "Invalid property restrict provided!");
+  }
+  return pending_property_restricts_.at(0);
 }
 
 void QueryVisitor::VisitFunctionName(const FunctionNameNode* node) {
@@ -284,8 +323,16 @@ void QueryVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
     return;
   }
 
+  // TODO(b/265312785) Consider implementing query optimization when we run into
+  // nested NOTs. This would allow us to simplify a query like "NOT (-foo)" to
+  // just "foo". This would also require more complicate rewrites as we would
+  // need to do things like rewrite "NOT (-a OR b)" as "a AND -b" and
+  // "NOT (price < 5)" as "price >= 5".
   // 1. Put in a placeholder PendingValue
   pending_values_.push(PendingValue());
+  // Toggle whatever the current value of 'processing_not_' is before visiting
+  // the children.
+  processing_not_ = !processing_not_;
 
   // 2. Visit child
   node->child()->Accept(this);
@@ -318,6 +365,10 @@ void QueryVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
 
   pending_values_.push(PendingValue(std::make_unique<DocHitInfoIteratorNot>(
       std::move(delegate), document_store_.last_added_document_id())));
+
+  // Untoggle whatever the current value of 'processing_not_' is now that we've
+  // finished processing this NOT.
+  processing_not_ = !processing_not_;
 }
 
 void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
@@ -331,10 +382,19 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
   pending_values_.push(PendingValue());
 
   // 2. Visit the children.
-  for (const std::unique_ptr<Node>& child : node->children()) {
-    child->Accept(this);
+  bool processing_has = node->operator_text() == ":";
+  for (int i = 0; i < node->children().size(); ++i) {
+    node->children().at(i)->Accept(this);
     if (has_pending_error()) {
       return;
+    }
+    if (processing_has && !processing_not_ && i == 0) {
+      if (!pending_values_.top().holds_text()) {
+        pending_error_ = absl_ports::InvalidArgumentError(
+            "Expected property before ':' operator.");
+        return;
+      }
+      pending_property_restricts_.push_back(pending_values_.top().text);
     }
   }
 
@@ -346,8 +406,11 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
     pending_value_or = ProcessAndOperator(node);
   } else if (node->operator_text() == "OR") {
     pending_value_or = ProcessOrOperator(node);
-  } else if (node->operator_text() == ":") {
+  } else if (processing_has) {
     pending_value_or = ProcessHasOperator(node);
+    if (!processing_not_) {
+      pending_property_restricts_.pop_back();
+    }
   }
   if (!pending_value_or.ok()) {
     pending_error_ = std::move(pending_value_or).status();
@@ -378,8 +441,11 @@ libtextclassifier3::StatusOr<QueryResults> QueryVisitor::ConsumeResults() && {
   if (!iterator_or.ok()) {
     return std::move(iterator_or).status();
   }
+
   QueryResults results;
   results.root_iterator = std::move(iterator_or).ValueOrDie();
+  results.query_term_iterators = std::move(query_term_iterators_);
+  results.query_terms = std::move(property_query_terms_map_);
   results.features_in_use = std::move(features_);
   return results;
 }
