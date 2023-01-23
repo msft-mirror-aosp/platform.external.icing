@@ -113,6 +113,11 @@ class SchemaStore {
     // but invalidated the index. Represented by the `schema_type` field in the
     // SchemaTypeConfigProto.
     std::unordered_set<std::string> schema_types_index_incompatible_by_name;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but invalidated the joinable cache. Represented by the `schema_type`
+    // field in the SchemaTypeConfigProto.
+    std::unordered_set<std::string> schema_types_join_incompatible_by_name;
   };
 
   // Factory function to create a SchemaStore which does not take ownership

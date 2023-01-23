@@ -455,14 +455,21 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
         property_config.property_name(), &property_config);
     if (property_config.cardinality() ==
         PropertyConfigProto::Cardinality::REQUIRED) {
-      parsed_property_configs.num_required_properties++;
+      ++parsed_property_configs.num_required_properties;
     }
 
     // A non-default term_match_type indicates that this property is meant to be
     // indexed.
     if (property_config.string_indexing_config().term_match_type() !=
         TermMatchType::UNKNOWN) {
-      parsed_property_configs.num_indexed_properties++;
+      ++parsed_property_configs.num_indexed_properties;
+    }
+
+    // A non-default value_type indicates that this property is meant to be
+    // joinable.
+    if (property_config.joinable_config().value_type() !=
+        JoinableConfig::ValueType::NONE) {
+      ++parsed_property_configs.num_joinable_properties;
     }
   }
 
@@ -501,6 +508,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // be reindexed.
     int32_t old_required_properties = 0;
     int32_t old_indexed_properties = 0;
+    int32_t old_joinable_properties = 0;
 
     // If there is a different number of properties, then there must have been a
     // change.
@@ -509,6 +517,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         new_schema_type_and_config->second.properties_size();
     bool is_incompatible = false;
     bool is_index_incompatible = false;
+    bool is_join_incompatible = false;
     for (const auto& old_property_config : old_type_config.properties()) {
       if (old_property_config.cardinality() ==
           PropertyConfigProto::Cardinality::REQUIRED) {
@@ -524,6 +533,13 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         ++old_indexed_properties;
       }
 
+      bool is_joinable_property =
+          old_property_config.joinable_config().value_type() !=
+          JoinableConfig::ValueType::NONE;
+      if (is_joinable_property) {
+        ++old_joinable_properties;
+      }
+
       auto new_property_name_and_config =
           new_parsed_property_configs.property_config_map.find(
               old_property_config.property_name());
@@ -537,6 +553,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
             "' was not defined in new schema");
         is_incompatible = true;
         is_index_incompatible |= is_indexed_property;
+        is_join_incompatible |= is_joinable_property;
         continue;
       }
 
@@ -565,6 +582,11 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                   .index_nested_properties()) {
         is_index_incompatible = true;
       }
+
+      if (old_property_config.joinable_config().value_type() !=
+          new_property_config->joinable_config().value_type()) {
+        is_join_incompatible = true;
+      }
     }
 
     // We can't have new properties that are REQUIRED since we won't know how
@@ -586,11 +608,21 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // reindex everything.
     if (new_parsed_property_configs.num_indexed_properties >
         old_indexed_properties) {
-      ICING_VLOG(1) << absl_ports::StrCat(
-          "Set of indexed properties in schema type '",
-          old_type_config.schema_type(),
-          "' has  changed, required reindexing.");
+      ICING_VLOG(1) << "Set of indexed properties in schema type '"
+                    << old_type_config.schema_type()
+                    << "' has changed, required reindexing.";
       is_index_incompatible = true;
+    }
+
+    // If we've gained any new joinable properties, then the joinable property
+    // ids may change. Since the joinable property ids are stored in the cache,
+    // we'll need to reconstruct joinable cache.
+    if (new_parsed_property_configs.num_joinable_properties >
+        old_joinable_properties) {
+      ICING_VLOG(1) << "Set of joinable properties in schema type '"
+                    << old_type_config.schema_type()
+                    << "' has changed, required reconstructing joinable cache.";
+      is_join_incompatible = true;
     }
 
     if (is_incompatible) {
@@ -605,7 +637,14 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                                    old_type_config_map, new_type_config_map);
     }
 
-    if (!is_incompatible && !is_index_incompatible && has_property_changed) {
+    if (is_join_incompatible) {
+      AddIncompatibleChangeToDelta(schema_delta.schema_types_join_incompatible,
+                                   old_type_config, new_schema_dependency_map,
+                                   old_type_config_map, new_type_config_map);
+    }
+
+    if (!is_incompatible && !is_index_incompatible && !is_join_incompatible &&
+        has_property_changed) {
       schema_delta.schema_types_changed_fully_compatible.insert(
           old_type_config.schema_type());
     }

@@ -152,7 +152,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
     ICING_VLOG(1) << "Using EXPERIMENTAL_ICING_ADVANCED_QUERY parser!";
     libtextclassifier3::StatusOr<QueryResults> results_or =
-        ParseAdvancedQuery(search_spec);
+        ParseAdvancedQuery(search_spec, ranking_strategy);
     if (results_or.ok()) {
       results = std::move(results_or).ValueOrDie();
     } else {
@@ -188,7 +188,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
 }
 
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
-    const SearchSpecProto& search_spec) const {
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy) const {
   QueryResults results;
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
@@ -203,9 +204,13 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
         document_store_.last_added_document_id());
     return results;
   }
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
+  bool needs_term_frequency_info =
+      ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
   QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
-                             &schema_store_, &normalizer_,
-                             search_spec.term_match_type());
+                             &schema_store_, &normalizer_, std::move(options),
+                             search_spec.term_match_type(),
+                             needs_term_frequency_info);
   tree_root->Accept(&query_visitor);
   return std::move(query_visitor).ConsumeResults();
 }

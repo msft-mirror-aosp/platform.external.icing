@@ -1703,6 +1703,9 @@ TEST_F(IcingSearchEngineTest, ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
   EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
 }
 
+// TODO(b/256022027): add unit tests for join incompatible schema change to make
+//   sure the joinable cache is rebuilt correctly.
+
 TEST_F(IcingSearchEngineTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());

@@ -290,7 +290,7 @@ message SchemaProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 8
+// Next tag: 9
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -329,6 +329,14 @@ message SetSchemaResultProto {
 
   // Overall time used for the function call.
   optional int32 latency_ms = 7;
+
+  // Schema types that were changed in a way that was backwards compatible, but
+  // invalidated the joinable cache.
+  //
+  // For example, a property was set non joinable in the old schema definition,
+  // but changed to joinable in the new definition. In this case, this property
+  // will be considered join incompatible when setting new schema.
+  repeated string join_incompatible_changed_schema_types = 8;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

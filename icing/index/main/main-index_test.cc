@@ -616,6 +616,39 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
                         std::vector<SectionId>{doc0_hit.section_id()})));
 }
 
+TEST_F(MainIndexTest, OneHitInTheFirstPageForTwoPagesMainIndex) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  SectionId section_id = 0;
+  // Based on debugging logs, 2038 documents in the following setting will
+  // result in two pages in the posting list chain, and the first page only
+  // contains one hit.
+  uint32_t num_docs = 2038;
+  for (DocumentId document_id = 0; document_id < num_docs; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+
+  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> main_index,
+      MainIndex::Create(main_index_file_name, &filesystem_,
+                        &icing_filesystem_));
+
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  std::vector<DocHitInfo> hits = GetExactHits(main_index.get(), "foo");
+  ASSERT_THAT(hits, SizeIs(num_docs));
+  for (DocumentId document_id = num_docs - 1; document_id >= 0; --document_id) {
+    ASSERT_THAT(
+        hits[num_docs - 1 - document_id],
+        EqualsDocHitInfo(document_id, std::vector<SectionId>{section_id}));
+  }
+}
+
 }  // namespace
 
 }  // namespace lib

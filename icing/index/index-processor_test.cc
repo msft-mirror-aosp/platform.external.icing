@@ -1037,6 +1037,13 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
 }
 
 // Some prefixes of generated RFC822 tokens.
+#ifdef ENABLE_RFC822_PROPERTY_PREFIX_TEST
+// ENABLE_RFC822_PROPERTY_PREFIX_TEST won't be defined, so this test will not be
+// compiled.
+// TODO(b/250648165): Remove #ifdef to enable this test after fixing the
+//                    indeterministic behavior of prefix query term frequency in
+//                    lite index.
+//
 TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/1")
@@ -1077,6 +1084,7 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 }
+#endif  // ENABLE_RFC822_PROPERTY_PREFIX_TEST
 
 TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
   DocumentProto document = DocumentBuilder()

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_DATA_ACCESSOR_H_
-#define ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_DATA_ACCESSOR_H_
+#ifndef ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_ACCESSOR_H_
+#define ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_ACCESSOR_H_
 
 #include <cstdint>
 #include <memory>
@@ -26,7 +26,7 @@
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/numeric/integer-index-data.h"
-#include "icing/index/numeric/posting-list-used-integer-index-data-serializer.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
 
 namespace icing {
 namespace lib {
@@ -34,35 +34,35 @@ namespace lib {
 // TODO(b/259743562): Refactor PostingListAccessor derived classes
 
 // This class is used to provide a simple abstraction for adding integer index
-// data to posting lists. PostingListIntegerIndexDataAccessor handles:
+// data to posting lists. PostingListIntegerIndexAccessor handles:
 // 1) selection of properly-sized posting lists for the accumulated integer
 //    index data during Finalize()
 // 2) chaining of max-sized posting lists.
-class PostingListIntegerIndexDataAccessor : public PostingListAccessor {
+class PostingListIntegerIndexAccessor : public PostingListAccessor {
  public:
-  // Creates an empty PostingListIntegerIndexDataAccessor.
+  // Creates an empty PostingListIntegerIndexAccessor.
   //
   // RETURNS:
-  //   - On success, a valid instance of PostingListIntegerIndexDataAccessor
+  //   - On success, a valid instance of PostingListIntegerIndexAccessor
   //   - INVALID_ARGUMENT error if storage has an invalid block_size.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<PostingListIntegerIndexDataAccessor>>
+      std::unique_ptr<PostingListIntegerIndexAccessor>>
   Create(FlashIndexStorage* storage,
-         PostingListUsedIntegerIndexDataSerializer* serializer);
+         PostingListIntegerIndexSerializer* serializer);
 
-  // Create a PostingListIntegerIndexDataAccessor with an existing posting list
+  // Create a PostingListIntegerIndexAccessor with an existing posting list
   // identified by existing_posting_list_id.
   //
   // RETURNS:
-  //   - On success, a valid instance of PostingListIntegerIndexDataAccessor
+  //   - On success, a valid instance of PostingListIntegerIndexAccessor
   //   - INVALID_ARGUMENT if storage has an invalid block_size.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<PostingListIntegerIndexDataAccessor>>
+      std::unique_ptr<PostingListIntegerIndexAccessor>>
   CreateFromExisting(FlashIndexStorage* storage,
-                     PostingListUsedIntegerIndexDataSerializer* serializer,
+                     PostingListIntegerIndexSerializer* serializer,
                      PostingListIdentifier existing_posting_list_id);
 
-  PostingListUsedSerializer* GetSerializer() override { return serializer_; }
+  PostingListSerializer* GetSerializer() override { return serializer_; }
 
   // Retrieve the next batch of data in the posting list chain
   //
@@ -75,7 +75,7 @@ class PostingListIntegerIndexDataAccessor : public PostingListAccessor {
   GetNextDataBatch();
 
   // Prepend one data. This may result in flushing the posting list to disk (if
-  // the PostingListIntegerIndexDataAccessor holds a max-sized posting list that
+  // the PostingListIntegerIndexAccessor holds a max-sized posting list that
   // is full) or freeing a pre-existing posting list if it is too small to fit
   // all data necessary.
   //
@@ -90,19 +90,19 @@ class PostingListIntegerIndexDataAccessor : public PostingListAccessor {
   // TODO(b/259743562): [Optimization 1] add GetAndClear, IsFull for split
 
  private:
-  explicit PostingListIntegerIndexDataAccessor(
+  explicit PostingListIntegerIndexAccessor(
       FlashIndexStorage* storage,
       std::unique_ptr<uint8_t[]> posting_list_buffer_array,
       PostingListUsed posting_list_buffer,
-      PostingListUsedIntegerIndexDataSerializer* serializer)
+      PostingListIntegerIndexSerializer* serializer)
       : PostingListAccessor(storage, std::move(posting_list_buffer_array),
                             std::move(posting_list_buffer)),
         serializer_(serializer) {}
 
-  PostingListUsedIntegerIndexDataSerializer* serializer_;  // Does not own.
+  PostingListIntegerIndexSerializer* serializer_;  // Does not own.
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_DATA_ACCESSOR_H_
+#endif  // ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_ACCESSOR_H_

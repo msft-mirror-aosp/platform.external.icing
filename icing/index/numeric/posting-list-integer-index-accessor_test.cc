@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/numeric/posting-list-integer-index-data-accessor.h"
+#include "icing/index/numeric/posting-list-integer-index-accessor.h"
 
 #include <cstdint>
 #include <memory>
@@ -27,7 +27,7 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/numeric/integer-index-data.h"
-#include "icing/index/numeric/posting-list-used-integer-index-data-serializer.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
@@ -44,7 +44,7 @@ using ::testing::Eq;
 using ::testing::Lt;
 using ::testing::SizeIs;
 
-class PostingListIntegerIndexDataAccessorTest : public ::testing::Test {
+class PostingListIntegerIndexAccessorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/test_dir";
@@ -53,7 +53,7 @@ class PostingListIntegerIndexDataAccessorTest : public ::testing::Test {
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(test_dir_.c_str()));
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
 
-    serializer_ = std::make_unique<PostingListUsedIntegerIndexDataSerializer>();
+    serializer_ = std::make_unique<PostingListIntegerIndexSerializer>();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         FlashIndexStorage flash_index_storage,
@@ -71,7 +71,7 @@ class PostingListIntegerIndexDataAccessorTest : public ::testing::Test {
   Filesystem filesystem_;
   std::string test_dir_;
   std::string file_name_;
-  std::unique_ptr<PostingListUsedIntegerIndexDataSerializer> serializer_;
+  std::unique_ptr<PostingListIntegerIndexSerializer> serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
 };
 
@@ -96,11 +96,11 @@ std::vector<IntegerIndexData> CreateData(int num_data,
   return data;
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest, DataAddAndRetrieveProperly) {
+TEST_F(PostingListIntegerIndexAccessorTest, DataAddAndRetrieveProperly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   // Add some integer index data
   std::vector<IntegerIndexData> data_vec =
       CreateData(/*num_data=*/5, /*start_document_id=*/0, /*start_key=*/819);
@@ -122,11 +122,11 @@ TEST_F(PostingListIntegerIndexDataAccessorTest, DataAddAndRetrieveProperly) {
   EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest, PreexistingPLKeepOnSameBlock) {
+TEST_F(PostingListIntegerIndexAccessorTest, PreexistingPLKeepOnSameBlock) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   // Add a single data. This will fit in a min-sized posting list.
   IntegerIndexData data1(/*section_id=*/1, /*document_id=*/0, /*key=*/12345);
   ICING_ASSERT_OK(pl_accessor->PrependData(data1));
@@ -141,7 +141,7 @@ TEST_F(PostingListIntegerIndexDataAccessorTest, PreexistingPLKeepOnSameBlock) {
   // two data, so this should NOT cause the previous pl to be reallocated.
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_accessor,
-      PostingListIntegerIndexDataAccessor::CreateFromExisting(
+      PostingListIntegerIndexAccessor::CreateFromExisting(
           flash_index_storage_.get(), serializer_.get(), result1.id));
   IntegerIndexData data2(/*section_id=*/1, /*document_id=*/1, /*key=*/23456);
   ICING_ASSERT_OK(pl_accessor->PrependData(data2));
@@ -159,12 +159,11 @@ TEST_F(PostingListIntegerIndexDataAccessorTest, PreexistingPLKeepOnSameBlock) {
               IsOkAndHolds(ElementsAre(data2, data1)));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
-       PreexistingPLReallocateToLargerPL) {
+TEST_F(PostingListIntegerIndexAccessorTest, PreexistingPLReallocateToLargerPL) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   // Adding 3 data should cause Finalize allocating a 48-byte posting list,
   // which can store at most 4 data.
   std::vector<IntegerIndexData> data_vec1 =
@@ -182,7 +181,7 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
   // Now add more data.
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_accessor,
-      PostingListIntegerIndexDataAccessor::CreateFromExisting(
+      PostingListIntegerIndexAccessor::CreateFromExisting(
           flash_index_storage_.get(), serializer_.get(), result1.id));
   // The current posting list can fit 1 more data. Adding 12 more data should
   // result in these data being moved to a larger posting list. Also the total
@@ -217,12 +216,11 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
                                             all_data_vec.rend())));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
-       MultiBlockChainsBlocksProperly) {
+TEST_F(PostingListIntegerIndexAccessorTest, MultiBlockChainsBlocksProperly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   // Block size is 4096, sizeof(BlockHeader) is 12 and sizeof(IntegerIndexData)
   // is 12, so the max size posting list can store (4096 - 12) / 12 = 340 data.
   // Adding 341 data should cause:
@@ -268,12 +266,12 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
       IsOkAndHolds(ElementsAreArray(first_block_data_start, data_vec.rend())));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
+TEST_F(PostingListIntegerIndexAccessorTest,
        PreexistingMultiBlockReusesBlocksProperly) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   // Block size is 4096, sizeof(BlockHeader) is 12 and sizeof(IntegerIndexData)
   // is 12, so the max size posting list can store (4096 - 12) / 12 = 340 data.
   // Adding 341 data will cause:
@@ -296,7 +294,7 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
   // fill it up.
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_accessor,
-      PostingListIntegerIndexDataAccessor::CreateFromExisting(
+      PostingListIntegerIndexAccessor::CreateFromExisting(
           flash_index_storage_.get(), serializer_.get(), first_add_id));
   std::vector<IntegerIndexData> data_vec2 = CreateData(
       /*num_data=*/10,
@@ -342,23 +340,23 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
                                             all_data_vec.rend())));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
+TEST_F(PostingListIntegerIndexAccessorTest,
        InvalidDataShouldReturnInvalidArgument) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   IntegerIndexData invalid_data;
   EXPECT_THAT(pl_accessor->PrependData(invalid_data),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
+TEST_F(PostingListIntegerIndexAccessorTest,
        BasicHitIncreasingShouldReturnInvalidArgument) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   IntegerIndexData data1(/*section_id=*/3, /*document_id=*/1, /*key=*/12345);
   ICING_ASSERT_OK(pl_accessor->PrependData(data1));
 
@@ -371,24 +369,24 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
+TEST_F(PostingListIntegerIndexAccessorTest,
        NewPostingListNoDataAddedShouldReturnInvalidArgument) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   PostingListAccessor::FinalizeResult result =
       std::move(*pl_accessor).Finalize();
   EXPECT_THAT(result.status,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(PostingListIntegerIndexDataAccessorTest,
+TEST_F(PostingListIntegerIndexAccessorTest,
        PreexistingPostingListNoDataAddedShouldSucceed) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor1,
-      PostingListIntegerIndexDataAccessor::Create(flash_index_storage_.get(),
-                                                  serializer_.get()));
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor1,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
   IntegerIndexData data1(/*section_id=*/3, /*document_id=*/1, /*key=*/12345);
   ICING_ASSERT_OK(pl_accessor1->PrependData(data1));
   PostingListAccessor::FinalizeResult result1 =
@@ -396,8 +394,8 @@ TEST_F(PostingListIntegerIndexDataAccessorTest,
   ICING_ASSERT_OK(result1.status);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor2,
-      PostingListIntegerIndexDataAccessor::CreateFromExisting(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor2,
+      PostingListIntegerIndexAccessor::CreateFromExisting(
           flash_index_storage_.get(), serializer_.get(), result1.id));
   PostingListAccessor::FinalizeResult result2 =
       std::move(*pl_accessor2).Finalize();

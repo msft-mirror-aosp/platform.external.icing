@@ -27,7 +27,7 @@ namespace lib {
 
 libtextclassifier3::StatusOr<PostingListUsed>
 PostingListUsed::CreateFromPreexistingPostingListUsedRegion(
-    PostingListUsedSerializer* serializer, void* posting_list_buffer,
+    PostingListSerializer* serializer, void* posting_list_buffer,
     uint32_t size_in_bytes) {
   ICING_RETURN_ERROR_IF_NULL(serializer);
   ICING_RETURN_ERROR_IF_NULL(posting_list_buffer);
@@ -42,9 +42,9 @@ PostingListUsed::CreateFromPreexistingPostingListUsedRegion(
 }
 
 libtextclassifier3::StatusOr<PostingListUsed>
-PostingListUsed::CreateFromUnitializedRegion(
-    PostingListUsedSerializer* serializer, void* posting_list_buffer,
-    uint32_t size_in_bytes) {
+PostingListUsed::CreateFromUnitializedRegion(PostingListSerializer* serializer,
+                                             void* posting_list_buffer,
+                                             uint32_t size_in_bytes) {
   ICING_ASSIGN_OR_RETURN(PostingListUsed posting_list_used,
                          CreateFromPreexistingPostingListUsedRegion(
                              serializer, posting_list_buffer, size_in_bytes));
