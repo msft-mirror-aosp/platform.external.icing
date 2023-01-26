@@ -17,10 +17,9 @@
 //
 #include "icing/legacy/index/icing-mmapper.h"
 
+#include <errno.h>
+#include <string.h>
 #include <sys/mman.h>
-
-#include <cerrno>
-#include <cstring>
 
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -67,7 +66,8 @@ void IcingMMapper::DoMapping(int fd, uint64_t location, size_t size) {
     address_ = reinterpret_cast<uint8_t *>(mmap_result_) + alignment_adjustment;
   } else {
     const char *errstr = strerror(errno);
-    ICING_LOG(ERROR) << "Could not mmap file for reading: " << errstr;
+    ICING_LOG(ERROR) << IcingStringUtil::StringPrintf(
+        "Could not mmap file for reading: %s", errstr);
     mmap_result_ = nullptr;
   }
 }
@@ -94,7 +94,8 @@ IcingMMapper::~IcingMMapper() { Unmap(); }
 bool IcingMMapper::Sync() {
   if (is_valid() && !read_only_) {
     if (msync(mmap_result_, mmap_len_, MS_SYNC) != 0) {
-      ICING_LOG(ERROR) << "msync failed: " << strerror(errno);
+      ICING_LOG(ERROR) << IcingStringUtil::StringPrintf("msync failed: %s",
+                                                        strerror(errno));
       return false;
     }
   }

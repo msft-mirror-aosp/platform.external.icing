@@ -851,12 +851,11 @@ TEST_F(PortableFileBackedProtoLogTest, Iterator) {
 
   {
     // Iterator with bad filesystem
-    ScopedFd sfd(filesystem_.OpenForRead(file_path_.c_str()));
     MockFilesystem mock_filesystem;
-    ON_CALL(mock_filesystem, GetFileSize(A<int>()))
+    ON_CALL(mock_filesystem, GetFileSize(A<const char*>()))
         .WillByDefault(Return(Filesystem::kBadFileSize));
     PortableFileBackedProtoLog<DocumentProto>::Iterator bad_iterator(
-        mock_filesystem, sfd.get(), /*initial_offset=*/0);
+        mock_filesystem, file_path_, /*initial_offset=*/0);
     ASSERT_THAT(bad_iterator.Advance(),
                 StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   }
@@ -927,10 +926,8 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldSetZero) {
 
   // Checks if the erased area is set to 0.
   int64_t file_size = filesystem_.GetFileSize(file_path_.c_str());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      MemoryMappedFile mmapped_file,
-      MemoryMappedFile::Create(filesystem_, file_path_,
-                               MemoryMappedFile::Strategy::READ_ONLY));
+  MemoryMappedFile mmapped_file(filesystem_, file_path_,
+                                MemoryMappedFile::Strategy::READ_ONLY);
 
   // document1_offset + sizeof(int) is the start byte of the proto where
   // sizeof(int) is the size of the proto metadata.

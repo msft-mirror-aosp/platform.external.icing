@@ -27,15 +27,12 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/numeric/dummy-numeric-index.h"
-#include "icing/index/numeric/numeric-index.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
@@ -46,12 +43,11 @@
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
+#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
-#include "icing/testing/random-string.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -82,63 +78,47 @@ constexpr std::string_view kIpsumText =
     "vehicula posuere vitae, convallis eu lorem. Donec semper augue eu nibh "
     "placerat semper.";
 
-// schema types
+// type and property names of FakeType
 constexpr std::string_view kFakeType = "FakeType";
-constexpr std::string_view kNestedType = "NestedType";
-
-// Indexable properties and section Id. Section Id is determined by the
-// lexicographical order of indexable property path.
 constexpr std::string_view kExactProperty = "exact";
-constexpr std::string_view kIndexableIntegerProperty = "indexableInteger";
 constexpr std::string_view kPrefixedProperty = "prefixed";
-constexpr std::string_view kRepeatedProperty = "repeated";
-constexpr std::string_view kRfc822Property = "rfc822";
-constexpr std::string_view kSubProperty = "submessage";  // submessage.nested
-constexpr std::string_view kNestedProperty = "nested";   // submessage.nested
-// TODO (b/246964044): remove ifdef guard when url-tokenizer is ready for export
-// to Android.
-#ifdef ENABLE_URL_TOKENIZER
-constexpr std::string_view kUrlExactProperty = "urlExact";
-constexpr std::string_view kUrlPrefixedProperty = "urlPrefixed";
-#endif  // ENABLE_URL_TOKENIZER
-constexpr std::string_view kVerbatimExactProperty = "verbatimExact";
-constexpr std::string_view kVerbatimPrefixedProperty = "verbatimPrefixed";
-
-constexpr SectionId kExactSectionId = 0;
-constexpr SectionId kIndexableIntegerSectionId = 1;
-constexpr SectionId kPrefixedSectionId = 2;
-constexpr SectionId kRepeatedSectionId = 3;
-constexpr SectionId kRfc822SectionId = 4;
-constexpr SectionId kNestedSectionId = 5;  // submessage.nested
-#ifdef ENABLE_URL_TOKENIZER
-constexpr SectionId kUrlExactSectionId = 6;
-constexpr SectionId kUrlPrefixedSectionId = 7;
-constexpr SectionId kVerbatimExactSectionId = 8;
-constexpr SectionId kVerbatimPrefixedSectionId = 9;
-#else   // !ENABLE_URL_TOKENIZER
-constexpr SectionId kVerbatimExactSectionId = 6;
-constexpr SectionId kVerbatimPrefixedSectionId = 7;
-#endif  // ENABLE_URL_TOKENIZER
-
-// Other non-indexable properties.
 constexpr std::string_view kUnindexedProperty1 = "unindexed1";
 constexpr std::string_view kUnindexedProperty2 = "unindexed2";
+constexpr std::string_view kRepeatedProperty = "repeated";
+constexpr std::string_view kSubProperty = "submessage";
+constexpr std::string_view kNestedType = "NestedType";
+constexpr std::string_view kNestedProperty = "nested";
 
 constexpr DocumentId kDocumentId0 = 0;
 constexpr DocumentId kDocumentId1 = 1;
+
+constexpr SectionId kExactSectionId = 0;
+constexpr SectionId kPrefixedSectionId = 1;
+constexpr SectionId kRepeatedSectionId = 2;
+constexpr SectionId kNestedSectionId = 3;
 
 using Cardinality = PropertyConfigProto::Cardinality;
 using DataType = PropertyConfigProto::DataType;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
-using ::testing::SizeIs;
 using ::testing::Test;
 
-#ifdef ENABLE_URL_TOKENIZER
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
-    StringIndexingConfig::TokenizerType::URL;
-#endif  // ENABLE_URL_TOKENIZER
+constexpr PropertyConfigProto_DataType_Code TYPE_STRING =
+    PropertyConfigProto_DataType_Code_STRING;
+constexpr PropertyConfigProto_DataType_Code TYPE_BYTES =
+    PropertyConfigProto_DataType_Code_BYTES;
+
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REPEATED =
+    PropertyConfigProto_Cardinality_Code_REPEATED;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
 
 class IndexProcessorTest : public Test {
  protected:
@@ -155,8 +135,6 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
-    integer_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
-
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         lang_segmenter_,
@@ -167,27 +145,24 @@ class IndexProcessorTest : public Test {
         normalizer_factory::Create(
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
-    std::string schema_store_dir = GetTestTempDir() + "/schema_store";
-    ASSERT_TRUE(
-        filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+        SchemaStore::Create(&filesystem_, GetTestTempDir(), &fake_clock_));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kFakeType)
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kExactProperty)
-                                     .SetDataTypeString(TERM_MATCH_EXACT,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPrefixedProperty)
-                                     .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kExactProperty)
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPrefixedProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kUnindexedProperty1)
                                      .SetDataType(TYPE_STRING)
@@ -196,42 +171,11 @@ class IndexProcessorTest : public Test {
                                      .SetName(kUnindexedProperty2)
                                      .SetDataType(TYPE_BYTES)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kRepeatedProperty)
-                                     .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_REPEATED))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kVerbatimExactProperty)
-                                     .SetDataTypeString(TERM_MATCH_EXACT,
-                                                        TOKENIZER_VERBATIM)
-                                     .SetCardinality(CARDINALITY_REPEATED))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kVerbatimPrefixedProperty)
-                                     .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                        TOKENIZER_VERBATIM)
-                                     .SetCardinality(CARDINALITY_REPEATED))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kRfc822Property)
-                                     .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                        TOKENIZER_RFC822)
-                                     .SetCardinality(CARDINALITY_REPEATED))
-#ifdef ENABLE_URL_TOKENIZER
                     .AddProperty(
                         PropertyConfigBuilder()
-                            .SetName(kUrlExactProperty)
-                            .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_URL)
+                            .SetName(kRepeatedProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
                             .SetCardinality(CARDINALITY_REPEATED))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName(kUrlPrefixedProperty)
-                            .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_URL)
-                            .SetCardinality(CARDINALITY_REPEATED))
-#endif  // ENABLE_URL_TOKENIZER
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kIndexableIntegerProperty)
-                                     .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                     .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName(kSubProperty)
@@ -241,18 +185,23 @@ class IndexProcessorTest : public Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kNestedType)
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kNestedProperty)
-                                     .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kNestedProperty)
+                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+
+    IndexProcessor::Options processor_options;
+    processor_options.max_tokens_per_document = 1000;
+    processor_options.token_limit_behavior =
+        IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
     ICING_ASSERT_OK_AND_ASSIGN(
         index_processor_,
         IndexProcessor::Create(normalizer_.get(), index_.get(),
-                               integer_index_.get(), &fake_clock_));
+                               processor_options, &fake_clock_));
     mock_icing_filesystem_ = std::make_unique<IcingMockFilesystem>();
   }
 
@@ -270,7 +219,6 @@ class IndexProcessorTest : public Test {
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<Index> index_;
-  std::unique_ptr<NumericIndex<int64_t>> integer_index_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<IndexProcessor> index_processor_;
 };
@@ -283,27 +231,18 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
   return infos;
 }
 
-std::vector<DocHitInfoTermFrequencyPair> GetHitsWithTermFrequency(
-    std::unique_ptr<DocHitInfoIterator> iterator) {
-  std::vector<DocHitInfoTermFrequencyPair> infos;
-  while (iterator->Advance().ok()) {
-    std::vector<TermMatchInfo> matched_terms_stats;
-    iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    for (const TermMatchInfo& term_match_info : matched_terms_stats) {
-      infos.push_back(DocHitInfoTermFrequencyPair(
-          iterator->doc_hit_info(), term_match_info.term_frequencies));
-    }
-  }
-  return infos;
-}
-
 TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
   EXPECT_THAT(IndexProcessor::Create(/*normalizer=*/nullptr, index_.get(),
-                                     integer_index_.get(), &fake_clock_),
+                                     processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(IndexProcessor::Create(normalizer_.get(), /*index=*/nullptr,
-                                     integer_index_.get(), &fake_clock_),
+                                     processor_options, &fake_clock_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -359,8 +298,7 @@ TEST_F(IndexProcessorTest, OneDoc) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("hello", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kExactSectionId, 1}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
@@ -412,8 +350,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
                              index_->GetIterator("world", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
+  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap1{
       {kPrefixedSectionId, 2}};
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap2{
@@ -426,7 +363,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(
       itr, index_->GetIterator("world", 1U << kPrefixedSectionId,
                                TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
+  hits = GetHits(std::move(itr));
   std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
       {kPrefixedSectionId, 2}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
@@ -435,7 +372,7 @@ TEST_F(IndexProcessorTest, MultipleDocs) {
   ICING_ASSERT_OK_AND_ASSIGN(itr,
                              index_->GetIterator("coffee", kSectionIdMaskAll,
                                                  TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
+  hits = GetHits(std::move(itr));
   expectedMap = {{kExactSectionId, Hit::kMaxTermFrequency}};
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId1, expectedMap)));
@@ -497,45 +434,24 @@ TEST_F(IndexProcessorTest, DocWithRepeatedProperty) {
                   kDocumentId0, std::vector<SectionId>{kRepeatedSectionId})));
 }
 
-// TODO(b/196771754) This test is disabled on Android because it takes too long
-// to generate all of the unique terms and the test times out. Try storing these
-// unique terms in a file that the test can read from.
-#ifndef __ANDROID__
+TEST_F(IndexProcessorTest, TooManyTokensReturnError) {
+  // Only allow the first four tokens ("hello", "world", "good", "night") to be
+  // indexed.
+  IndexProcessor::Options options;
+  options.max_tokens_per_document = 4;
+  options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
 
-TEST_F(IndexProcessorTest, HitBufferExhaustedTest) {
-  // Testing has shown that adding ~600,000 hits will fill up the hit buffer.
-  std::vector<std::string> unique_terms_ = GenerateUniqueTerms(200000);
-  std::string content = absl_ports::StrJoin(unique_terms_, " ");
-
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kExactProperty), content)
-          .AddStringProperty(std::string(kPrefixedProperty), content)
-          .AddStringProperty(std::string(kRepeatedProperty), content)
-          .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
-                       testing::HasSubstr("Hit buffer is full!")));
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-}
-
-TEST_F(IndexProcessorTest, LexiconExhaustedTest) {
-  // Testing has shown that adding ~300,000 terms generated this way will
-  // fill up the lexicon.
-  std::vector<std::string> unique_terms_ = GenerateUniqueTerms(300000);
-  std::string content = absl_ports::StrJoin(unique_terms_, " ");
+      index_processor_, IndexProcessor::Create(normalizer_.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kExactProperty), content)
+          .AddStringProperty(std::string(kExactProperty), "hello world")
+          .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
@@ -544,21 +460,77 @@ TEST_F(IndexProcessorTest, LexiconExhaustedTest) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // "night" should have been indexed.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("night", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
+
+  // "moon" should not have been.
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("moon", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
-#endif  // __ANDROID__
+TEST_F(IndexProcessorTest, TooManyTokensSuppressError) {
+  // Only allow the first four tokens ("hello", "world", "good", "night") to be
+  // indexed.
+  IndexProcessor::Options options;
+  options.max_tokens_per_document = 4;
+  options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kSuppressError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_, IndexProcessor::Create(normalizer_.get(), index_.get(),
+                                               options, &fake_clock_));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kExactProperty), "hello world")
+          .AddStringProperty(std::string(kPrefixedProperty), "good night moon!")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
+              IsOk());
+  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  // "night" should have been indexed.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             index_->GetIterator("night", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
+
+  // "moon" should not have been.
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             index_->GetIterator("moon", kSectionIdMaskAll,
+                                                 TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+}
 
 TEST_F(IndexProcessorTest, TooLongTokens) {
   // Only allow the tokens of length four, truncating "hello", "world" and
   // "night".
+  IndexProcessor::Options options;
+  options.max_tokens_per_document = 1000;
+
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
                              normalizer_factory::Create(
                                  /*max_term_byte_size=*/4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_));
+      index_processor_, IndexProcessor::Create(normalizer.get(), index_.get(),
+                                               options, &fake_clock_));
 
   DocumentProto document =
       DocumentBuilder()
@@ -720,6 +692,16 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
       lang_segmenter_,
       language_segmenter_factory::Create(std::move(segmenter_options)));
 
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
@@ -745,13 +727,23 @@ TEST_F(IndexProcessorTest, NonAsciiIndexing) {
 
 TEST_F(IndexProcessorTest,
        LexiconFullIndexesSmallerTokensReturnsResourceExhausted) {
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      index_processor_,
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
+
   // This is the maximum token length that an empty lexicon constructed for a
   // lite index with merge size of 1MiB can support.
   constexpr int kMaxTokenLength = 16777217;
   // Create a string "ppppppp..." with a length that is too large to fit into
   // the lexicon.
   std::string enormous_string(kMaxTokenLength + 1, 'p');
-  DocumentProto document_one =
+  DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
@@ -762,10 +754,24 @@ TEST_F(IndexProcessorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document_one));
+                                document));
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kExactSectionId})));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      itr,
+      index_->GetIterator("baz", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHits(std::move(itr)),
+              ElementsAre(EqualsDocHitInfo(
+                  kDocumentId0, std::vector<SectionId>{kPrefixedSectionId})));
 }
 
 TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
@@ -789,10 +795,15 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_));
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
   DocumentId doc_id = 0;
   // Have determined experimentally that indexing 3373 documents with this text
   // will cause the LiteIndex to fill up. Further indexing will fail unless the
@@ -846,10 +857,15 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
       index_,
       Index::Create(options, &filesystem_, mock_icing_filesystem_.get()));
 
+  IndexProcessor::Options processor_options;
+  processor_options.max_tokens_per_document = 1000;
+  processor_options.token_limit_behavior =
+      IndexProcessor::Options::TokenLimitBehavior::kReturnError;
+
   ICING_ASSERT_OK_AND_ASSIGN(
       index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_));
+      IndexProcessor::Create(normalizer_.get(), index_.get(), processor_options,
+                             &fake_clock_));
 
   // 3. Index one document. This should fit in the LiteIndex without requiring a
   // merge.
@@ -869,480 +885,6 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, doc_id),
               IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(doc_id));
-}
-
-TEST_F(IndexProcessorTest, ExactVerbatimProperty) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kVerbatimExactProperty),
-                             "Hello, world!")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(1));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("Hello, world!", kSectionIdMaskAll,
-                          TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
-      {kVerbatimExactSectionId, 1}};
-
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
-}
-
-TEST_F(IndexProcessorTest, PrefixVerbatimProperty) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kVerbatimPrefixedProperty),
-                             "Hello, world!")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(1));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  // We expect to match the document we indexed as "Hello, w" is a prefix
-  // of "Hello, world!"
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             index_->GetIterator("Hello, w", kSectionIdMaskAll,
-                                                 TermMatchType::PREFIX));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expectedMap{
-      {kVerbatimPrefixedSectionId, 1}};
-
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expectedMap)));
-}
-
-TEST_F(IndexProcessorTest, VerbatimPropertyDoesntMatchSubToken) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kVerbatimPrefixedProperty),
-                             "Hello, world!")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(1));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("world", kSectionIdMaskAll, TermMatchType::PREFIX));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
-
-  // We should not have hits for term "world" as the index processor should
-  // create a sole token "Hello, world! for the document.
-  EXPECT_THAT(hits, IsEmpty());
-}
-
-// Some phrases that should match exactly to RFC822 tokens. We normalize the
-// tokens, so the case of the string property shouldn't matter.
-TEST_F(IndexProcessorTest, Rfc822PropertyExact) {
-  DocumentProto document = DocumentBuilder()
-                               .SetKey("icing", "fake_type/1")
-                               .SetSchema(std::string(kFakeType))
-                               .AddStringProperty(std::string(kRfc822Property),
-                                                  "<AlexSav@GOOGLE.com>")
-                               .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
-      {kRfc822SectionId, 2}};
-
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             index_->GetIterator("alexsav", kSectionIdMaskAll,
-                                                 TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  expected_map = {{kRfc822SectionId, 1}};
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr,
-      index_->GetIterator("com", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("alexsav@google.com", kSectionIdMaskAll,
-                               TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-}
-
-TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
-  DocumentProto document = DocumentBuilder()
-                               .SetKey("icing", "fake_type/1")
-                               .SetSchema(std::string(kFakeType))
-                               .AddStringProperty(std::string(kRfc822Property),
-                                                  "<AlexSav@GOOGLE.com>")
-                               .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
-      {kRfc822SectionId, 2}};
-
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             index_->GetIterator("alexsa", kSectionIdMaskAll,
-                                                 TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-}
-
-// Some prefixes of generated RFC822 tokens.
-TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
-  DocumentProto document = DocumentBuilder()
-                               .SetKey("icing", "fake_type/1")
-                               .SetSchema(std::string(kFakeType))
-                               .AddStringProperty(std::string(kRfc822Property),
-                                                  "<alexsav@google.com>")
-                               .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
-      {kRfc822SectionId, 1}};
-
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             index_->GetIterator("alexsav@", kSectionIdMaskAll,
-                                                 TermMatchType::PREFIX));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("goog", kSectionIdMaskAll,
-                                                      TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("ale", kSectionIdMaskAll,
-                                                      TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-}
-
-TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
-  DocumentProto document = DocumentBuilder()
-                               .SetKey("icing", "fake_type/1")
-                               .SetSchema(std::string(kFakeType))
-                               .AddStringProperty(std::string(kRfc822Property),
-                                                  "<alexsav@google.com>")
-                               .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  std::unordered_map<SectionId, Hit::TermFrequency> expect_map{{}};
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("abc.xyz", kSectionIdMaskAll, TermMatchType::PREFIX));
-  std::vector<DocHitInfo> hits = GetHits(std::move(itr));
-
-  EXPECT_THAT(hits, IsEmpty());
-}
-
-#ifdef ENABLE_URL_TOKENIZER
-TEST_F(IndexProcessorTest, ExactUrlProperty) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kUrlExactProperty),
-                             "http://www.google.com")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             index_->GetIterator("google", kSectionIdMaskAll,
-                                                 TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
-      {kUrlExactSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(itr,
-                             index_->GetIterator("http", kSectionIdMaskAll,
-                                                 TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  expected_map = {{kUrlExactSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("www.google.com", kSectionIdMaskAll,
-                               TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  expected_map = {{kUrlExactSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("http://www.google.com", kSectionIdMaskAll,
-                               TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  expected_map = {{kUrlExactSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-}
-
-TEST_F(IndexProcessorTest, ExactUrlPropertyDoesNotMatchPrefix) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kUrlExactProperty),
-                             "https://mail.google.com/calendar/render")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(8));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("co", kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-
-  ICING_ASSERT_OK_AND_ASSIGN(itr,
-                             index_->GetIterator("mail.go", kSectionIdMaskAll,
-                                                 TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("mail.google.com", kSectionIdMaskAll,
-                               TermMatchType::EXACT_ONLY));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-}
-
-TEST_F(IndexProcessorTest, PrefixUrlProperty) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kUrlPrefixedProperty),
-                             "http://www.google.com")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(7));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  // "goo" is a prefix of "google" and "google.com"
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("goo", kSectionIdMaskAll, TermMatchType::PREFIX));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
-      {kUrlPrefixedSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  // "http" is a prefix of "http" and "http://www.google.com"
-  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator("http", kSectionIdMaskAll,
-                                                      TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  expected_map = {{kUrlPrefixedSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-
-  // "www.go" is a prefix of "www.google.com"
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr,
-      index_->GetIterator("www.go", kSectionIdMaskAll, TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  expected_map = {{kUrlPrefixedSectionId, 1}};
-  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
-                        kDocumentId0, expected_map)));
-}
-
-TEST_F(IndexProcessorTest, PrefixUrlPropertyNoMatch) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kUrlPrefixedProperty),
-                             "https://mail.google.com/calendar/render")
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(8));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-  EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId0));
-
-  // no token starts with "gle", so we should have no hits
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      index_->GetIterator("gle", kSectionIdMaskAll, TermMatchType::PREFIX));
-  std::vector<DocHitInfoTermFrequencyPair> hits =
-      GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr,
-      index_->GetIterator("w.goo", kSectionIdMaskAll, TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-
-  // tokens have separators removed, so no hits here
-  ICING_ASSERT_OK_AND_ASSIGN(itr, index_->GetIterator(".com", kSectionIdMaskAll,
-                                                      TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      itr, index_->GetIterator("calendar/render", kSectionIdMaskAll,
-                               TermMatchType::PREFIX));
-  hits = GetHitsWithTermFrequency(std::move(itr));
-  EXPECT_THAT(hits, IsEmpty());
-}
-#endif  // ENABLE_URL_TOKENIZER
-
-TEST_F(IndexProcessorTest, IndexableIntegerProperty) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddInt64Property(std::string(kIndexableIntegerProperty), 1, 2, 3, 4,
-                            5)
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  // Expected to have 1 integer section.
-  EXPECT_THAT(tokenized_document.integer_sections(), SizeIs(1));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      integer_index_->GetIterator(kIndexableIntegerProperty, /*key_lower=*/1,
-                                  /*key_upper=*/5));
-
-  EXPECT_THAT(
-      GetHits(std::move(itr)),
-      ElementsAre(EqualsDocHitInfo(
-          kDocumentId0, std::vector<SectionId>{kIndexableIntegerSectionId})));
-}
-
-TEST_F(IndexProcessorTest, IndexableIntegerPropertyNoMatch) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddInt64Property(std::string(kIndexableIntegerProperty), 1, 2, 3, 4,
-                            5)
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
-  // Expected to have 1 integer section.
-  EXPECT_THAT(tokenized_document.integer_sections(), SizeIs(1));
-
-  EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
-              IsOk());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      integer_index_->GetIterator(kIndexableIntegerProperty, /*key_lower=*/-1,
-                                  /*key_upper=*/0));
-
-  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
 }  // namespace

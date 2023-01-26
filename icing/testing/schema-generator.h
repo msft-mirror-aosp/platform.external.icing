@@ -19,7 +19,6 @@
 #include <string>
 
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/term.pb.h"
 
 namespace icing {
 namespace lib {

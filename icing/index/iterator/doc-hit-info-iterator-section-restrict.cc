@@ -38,11 +38,11 @@ namespace lib {
 DocHitInfoIteratorSectionRestrict::DocHitInfoIteratorSectionRestrict(
     std::unique_ptr<DocHitInfoIterator> delegate,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    std::string target_section)
+    std::string_view target_section)
     : delegate_(std::move(delegate)),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      target_section_(std::move(target_section)) {}
+      target_section_(target_section) {}
 
 libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
   while (delegate_->Advance().ok()) {
@@ -51,21 +51,21 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
     SectionIdMask section_id_mask =
         delegate_->doc_hit_info().hit_section_ids_mask();
 
-    auto data_optional =
-        document_store_.GetAliveDocumentFilterData(document_id);
-    if (!data_optional) {
+    auto data_or = document_store_.GetDocumentFilterData(document_id);
+    if (!data_or.ok()) {
       // Ran into some error retrieving information on this hit, skip
       continue;
     }
 
     // Guaranteed that the DocumentFilterData exists at this point
-    SchemaTypeId schema_type_id = data_optional.value().schema_type_id();
+    DocumentFilterData data = std::move(data_or).ValueOrDie();
+    SchemaTypeId schema_type_id = data.schema_type_id();
 
     // A hit can be in multiple sections at once, need to check that at least
     // one of the confirmed section ids match the name of the target section
     while (section_id_mask != 0) {
       // There was a hit in this section id
-      SectionId section_id = __builtin_ctzll(section_id_mask);
+      SectionId section_id = __builtin_ctz(section_id_mask);
 
       auto section_metadata_or =
           schema_store_.GetSectionMetadata(schema_type_id, section_id);
@@ -77,13 +77,13 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
         if (section_metadata->path == target_section_) {
           // The hit was in the target section name, return OK/found
           doc_hit_info_ = delegate_->doc_hit_info();
-          hit_intersect_section_ids_mask_ = UINT64_C(1) << section_id;
+          hit_intersect_section_ids_mask_ = 1u << section_id;
           return libtextclassifier3::Status::OK;
         }
       }
 
       // Mark this section as checked
-      section_id_mask &= ~(UINT64_C(1) << section_id);
+      section_id_mask &= ~(1U << section_id);
     }
 
     // Didn't find a matching section name for this hit. Continue.

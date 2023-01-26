@@ -16,18 +16,14 @@
 #include "gmock/gmock.h"
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/index/index.h"
-#include "icing/index/numeric/dummy-numeric-index.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/proto/schema.pb.h"
-#include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-processor.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -41,7 +37,7 @@
 //    //icing/query:query-processor_benchmark
 //
 //    $ blaze-bin/icing/query/query-processor_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 //
 // Run on an Android device:
 //    Make target //icing/tokenization:language-segmenter depend on
@@ -57,7 +53,7 @@
 //    $ adb push blaze-bin/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmark_filter=all
+//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmarks=all
 //    --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
@@ -115,9 +111,6 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
-
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -152,20 +145,17 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryResults results =
-        query_processor
-            ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
-            .ValueOrDie();
+    QueryProcessor::QueryResults results =
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -238,9 +228,6 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
-
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -289,9 +276,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get()));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -302,11 +289,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryResults results =
-        query_processor
-            ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
-            .ValueOrDie();
+    QueryProcessor::QueryResults results =
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -379,9 +363,6 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
-
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -419,20 +400,17 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryResults results =
-        query_processor
-            ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
-            .ValueOrDie();
+    QueryProcessor::QueryResults results =
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }
@@ -505,9 +483,6 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
-
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -545,20 +520,17 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), numeric_index.get(),
-                             language_segmenter.get(), normalizer.get(),
-                             document_store.get(), schema_store.get()));
+      QueryProcessor::Create(index.get(), language_segmenter.get(),
+                             normalizer.get(), document_store.get(),
+                             schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   for (auto _ : state) {
-    QueryResults results =
-        query_processor
-            ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
-            .ValueOrDie();
+    QueryProcessor::QueryResults results =
+        query_processor->ParseSearch(search_spec).ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
     }

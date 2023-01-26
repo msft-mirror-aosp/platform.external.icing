@@ -14,6 +14,7 @@
 
 #include "icing/performance-configuration.h"
 
+#include "icing/result/result-state.h"
 #include "icing/scoring/scored-document-hit.h"
 
 namespace icing {

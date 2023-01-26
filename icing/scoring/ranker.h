@@ -17,8 +17,6 @@
 
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/term-metadata.h"
 #include "icing/scoring/scored-document-hit.h"
 
 // Provides functionality to get the top N results from an unsorted vector.
@@ -33,17 +31,6 @@ void BuildHeapInPlace(
     std::vector<ScoredDocumentHit>* scored_document_hits,
     const ScoredDocumentHitComparator& scored_document_hit_comparator);
 
-// Returns the single next top result (i.e. the current root element) from the
-// given heap and remove it from the heap. The heap structure will be
-// maintained.
-//
-// Returns:
-//   The next top result element on success
-//   RESOURCE_EXHAUSTED_ERROR if heap is empty
-libtextclassifier3::StatusOr<ScoredDocumentHit> PopNextTopResultFromHeap(
-    std::vector<ScoredDocumentHit>* scored_document_hits_heap,
-    const ScoredDocumentHitComparator& scored_document_hit_comparator);
-
 // Returns the top num_results results from the given heap and remove those
 // results from the heap. An empty vector will be returned if heap is empty.
 //
@@ -52,18 +39,6 @@ std::vector<ScoredDocumentHit> PopTopResultsFromHeap(
     std::vector<ScoredDocumentHit>* scored_document_hits_heap, int num_results,
     const ScoredDocumentHitComparator& scored_document_hit_comparator);
 
-// The heap is a min-heap. So that we can avoid some push operations by
-// comparing to the root term, and only pushing if greater than root. The time
-// complexity for a single push is O(lgK) which K is the number_to_return.
-// REQUIRED: scored_terms_heap is not null.
-void PushToTermHeap(TermMetadata term, int number_to_return,
-                    std::vector<TermMetadata>& scored_terms_heap);
-
-// Return all terms from the given terms heap. And since the heap is a min-heap,
-// the output vector will be increasing order.
-// REQUIRED: scored_terms_heap is not null.
-std::vector<TermMetadata> PopAllTermsFromHeap(
-    std::vector<TermMetadata>& scored_terms_heap);
 }  // namespace lib
 }  // namespace icing
 

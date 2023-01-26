@@ -14,7 +14,8 @@
 
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 
-#include <cstddef>
+#include <stddef.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -55,12 +56,11 @@ std::unique_ptr<DocHitInfoIterator> CreateAndIterator(
   if (iterators.size() <= kBinaryAndIteratorPerformanceThreshold &&
       iterators.size() >= kMinBinaryIterators) {
     // Accumulate the iterators that need to be ANDed together.
-    iterator = std::move(iterators.at(iterators.size() - 1));
-    for (int i = iterators.size() - 2; i >= 0; --i) {
+    iterator = std::move(iterators.at(0));
+    for (size_t i = 1; i < iterators.size(); ++i) {
       std::unique_ptr<DocHitInfoIterator> temp_iterator = std::move(iterator);
       iterator = std::make_unique<DocHitInfoIteratorAnd>(
-          /*short_it=*/std::move(iterators[i]),
-          /*long_it=*/std::move(temp_iterator));
+          std::move(temp_iterator), std::move(iterators[i]));
     }
   } else {
     // If the vector is too small, the AndNary iterator can handle it and return
@@ -105,7 +105,7 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
 
   // Guaranteed that short_doc_id and long_doc_id match now
   doc_hit_info_ = short_->doc_hit_info();
-  doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info().hit_section_ids_mask());
+  doc_hit_info_.MergeSectionsFrom(long_->doc_hit_info());
   hit_intersect_section_ids_mask_ = short_->hit_intersect_section_ids_mask() &
                                     long_->hit_intersect_section_ids_mask();
   return libtextclassifier3::Status::OK;
@@ -187,8 +187,7 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
       iterators_.at(0)->hit_intersect_section_ids_mask();
 
   for (size_t i = 1; i < iterators_.size(); i++) {
-    doc_hit_info_.MergeSectionsFrom(
-        iterators_.at(i)->doc_hit_info().hit_section_ids_mask());
+    doc_hit_info_.MergeSectionsFrom(iterators_.at(i)->doc_hit_info());
     hit_intersect_section_ids_mask_ &=
         iterators_.at(i)->hit_intersect_section_ids_mask();
   }

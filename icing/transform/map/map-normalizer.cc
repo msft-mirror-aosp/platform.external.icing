@@ -14,7 +14,8 @@
 
 #include "icing/transform/map/map-normalizer.h"
 
-#include <cctype>
+#include <ctype.h>
+
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -41,16 +42,10 @@ UChar32 NormalizeChar(UChar32 c) {
   }
 
   // The original character can be encoded into a single char16_t.
-  const std::unordered_map<char16_t, char16_t>* normalization_map =
+  const std::unordered_map<char16_t, char16_t>& normalization_map =
       GetNormalizationMap();
-  if (normalization_map == nullptr) {
-    // Normalization map couldn't be properly initialized, append the original
-    // character.
-    ICING_LOG(WARNING) << "Unable to get a valid pointer to normalization map!";
-    return c;
-  }
-  auto iterator = normalization_map->find(static_cast<char16_t>(c));
-  if (iterator == normalization_map->end()) {
+  auto iterator = normalization_map.find(static_cast<char16_t>(c));
+  if (iterator == normalization_map.end()) {
     // Normalization mapping not found, append the original character.
     return c;
   }
@@ -104,7 +99,7 @@ std::string MapNormalizer::NormalizeTerm(std::string_view term) const {
   return normalized_text;
 }
 
-CharacterIterator MapNormalizer::FindNormalizedMatchEndPosition(
+CharacterIterator MapNormalizer::CalculateNormalizedMatchLength(
     std::string_view term, std::string_view normalized_term) const {
   CharacterIterator char_itr(term);
   CharacterIterator normalized_char_itr(normalized_term);

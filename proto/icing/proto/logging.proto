@@ -46,9 +46,6 @@ message InitializeStatsProto {
 
     // Random I/O errors.
     IO_ERROR = 4;
-
-    // The document log is using legacy format.
-    LEGACY_DOCUMENT_LOG_FORMAT = 5;
   }
 
   // Possible recovery causes for document store:
@@ -121,17 +118,19 @@ message PutDocumentStatsProto {
   optional int32 document_size = 5;
 
   message TokenizationStats {
+    // Whether the number of tokens to be indexed exceeded the max number of
+    // tokens per document.
+    optional bool exceeded_max_token_num = 2;
+
     // Number of tokens added to the index.
     optional int32 num_tokens_indexed = 1;
-
-    reserved 2;
   }
   optional TokenizationStats tokenization_stats = 6;
 }
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 21
+// Next tag: 17
 message QueryStatsProto {
   // The UTF-8 length of the query string
   optional int32 query_length = 16;
@@ -181,19 +180,6 @@ message QueryStatsProto {
   // Time used to fetch the document protos. Note that it includes the
   // time to snippet if ‘has_snippets’ is true.
   optional int32 document_retrieval_latency_ms = 14;
-
-  // Time passed while waiting to acquire the lock before query execution.
-  optional int32 lock_acquisition_latency_ms = 17;
-
-  // Timestamp taken just before sending proto across the JNI boundary from
-  // native to java side.
-  optional int64 native_to_java_start_timestamp_ms = 18;
-
-  // Time used to send protos across the JNI boundary from java to native side.
-  optional int32 java_to_native_jni_latency_ms = 19;
-
-  // Time used to send protos across the JNI boundary from native to java side.
-  optional int32 native_to_java_jni_latency_ms = 20;
 
   reserved 9;
 }

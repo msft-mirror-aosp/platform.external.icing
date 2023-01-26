@@ -17,11 +17,11 @@
 #include <memory>
 #include <string_view>
 
+#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/jni/jni-cache.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/jni-test-helpers.h"
@@ -185,7 +185,7 @@ TEST_P(ReverseJniLanguageSegmenterTest, Non_ASCII_Non_Alphabetic) {
   // Full-width (non-ASCII) punctuation marks and special characters are left
   // out.
   EXPECT_THAT(language_segmenter->GetAllTerms("。？·Hello！×"),
-              IsOkAndHolds(ElementsAre("。", "？", "·", "Hello", "！", "×")));
+              IsOkAndHolds(ElementsAre("Hello")));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest, Acronym) {
@@ -246,9 +246,9 @@ TEST_P(ReverseJniLanguageSegmenterTest, WordConnector) {
 
   // Connectors don't connect if one side is an invalid term (？)
   EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:？"),
-              IsOkAndHolds(ElementsAre("bar:baz", ":", "？")));
+              IsOkAndHolds(ElementsAre("bar:baz", ":")));
   EXPECT_THAT(language_segmenter->GetAllTerms("？:bar:baz"),
-              IsOkAndHolds(ElementsAre("？", ":", "bar:baz")));
+              IsOkAndHolds(ElementsAre(":", "bar:baz")));
   EXPECT_THAT(language_segmenter->GetAllTerms("3:14"),
               IsOkAndHolds(ElementsAre("3", ":", "14")));
   EXPECT_THAT(language_segmenter->GetAllTerms("私:は"),
@@ -366,17 +366,6 @@ TEST_P(ReverseJniLanguageSegmenterTest, Number) {
               IsOkAndHolds(ElementsAre("-", "123")));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, FullWidthNumbers) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(
-          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
-
-  EXPECT_THAT(language_segmenter->GetAllTerms("０１２３４５６７８９"),
-              IsOkAndHolds(ElementsAre("０", "１", "２", "３", "４", "５", "６",
-                                       "７", "８", "９")));
-}
-
 TEST_P(ReverseJniLanguageSegmenterTest, ContinuousWhitespaces) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
@@ -413,16 +402,15 @@ TEST_P(ReverseJniLanguageSegmenterTest, CJKT) {
   // have whitespaces as word delimiter.
 
   // Chinese
-  EXPECT_THAT(
-      language_segmenter->GetAllTerms("我每天走路去上班。"),
-      IsOkAndHolds(ElementsAre("我", "每天", "走路", "去", "上班", "。")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("我每天走路去上班。"),
+              IsOkAndHolds(ElementsAre("我", "每天", "走路", "去", "上班")));
   // Japanese
   EXPECT_THAT(language_segmenter->GetAllTerms("私は毎日仕事に歩いています。"),
               IsOkAndHolds(ElementsAre("私", "は", "毎日", "仕事", "に", "歩",
-                                       "い", "てい", "ます", "。")));
+                                       "い", "てい", "ます")));
   // Khmer
   EXPECT_THAT(language_segmenter->GetAllTerms("ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"),
-              IsOkAndHolds(ElementsAre("ញុំ", "ដើរទៅ", "ធ្វើការ", "រាល់ថ្ងៃ", "។")));
+              IsOkAndHolds(ElementsAre("ញុំ", "ដើរទៅ", "ធ្វើការ", "រាល់ថ្ងៃ")));
   // Thai
   EXPECT_THAT(
       language_segmenter->GetAllTerms("ฉันเดินไปทำงานทุกวัน"),
@@ -853,19 +841,16 @@ TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kChinese));
   // String:       "我每天走路去上班。"
-  //                ^ ^  ^   ^^   ^
-  // UTF-8 idx:     0 3  9  15 18 24
-  // UTF-832 idx:   0 1  3   5 6  8
+  //                ^ ^  ^   ^^
+  // UTF-8 idx:     0 3  9  15 18
+  // UTF-832 idx:   0 1  3   5 6
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("每天"));
 
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(2), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("走路"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(7), IsOkAndHolds(Eq(8)));
-  EXPECT_THAT(itr->GetTerm(), Eq("。"));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(8),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(7),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
@@ -880,21 +865,18 @@ TEST_P(ReverseJniLanguageSegmenterTest, JapaneseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kJapanese));
   // String:       "私は毎日仕事に歩いています。"
-  //                ^ ^ ^  ^  ^ ^ ^ ^  ^  ^
-  // UTF-8 idx:     0 3 6  12 18212427 33 39
-  // UTF-32 idx:    0 1 2  4  6 7 8 9  11 13
+  //                ^ ^ ^  ^  ^ ^ ^ ^  ^
+  // UTF-8 idx:     0 3 6  12 18212427 33
+  // UTF-32 idx:    0 1 2  4  6 7 8 9  11
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("は"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(13),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(11),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(3), IsOkAndHolds(Eq(4)));
   EXPECT_THAT(itr->GetTerm(), Eq("仕事"));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(12), IsOkAndHolds(Eq(13)));
-  EXPECT_THAT(itr->GetTerm(), Eq("。"));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermAfterUtf32) {
@@ -906,16 +888,13 @@ TEST_P(ReverseJniLanguageSegmenterTest, KhmerResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kKhmer));
   // String:            "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
-  //                     ^ ^   ^   ^  ^
-  // UTF-8 idx:          0 9   24  45 69
-  // UTF-32 idx:         0 3   8   15 23
+  //                     ^ ^   ^   ^
+  // UTF-8 idx:          0 9   24  45
+  // UTF-32 idx:         0 3   8   15
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("ដើរទៅ"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15), IsOkAndHolds(Eq(23)));
-  EXPECT_THAT(itr->GetTerm(), Eq("។"));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(23),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
