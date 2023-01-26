@@ -28,6 +28,8 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
 #include "icing/schema/schema-store.h"
@@ -86,6 +88,8 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
       [[fallthrough]];
     case Token::Type::RFC822_LOCAL_ADDRESS:
       [[fallthrough]];
+    case Token::Type::RFC822_HOST_ADDRESS:
+      [[fallthrough]];
     case Token::Type::RFC822_ADDRESS:
       [[fallthrough]];
     case Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL:
@@ -93,6 +97,28 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
     case Token::Type::RFC822_ADDRESS_COMPONENT_HOST:
       [[fallthrough]];
     case Token::Type::RFC822_TOKEN:
+      [[fallthrough]];
+    case Token::Type::URL_SCHEME:
+      [[fallthrough]];
+    case Token::Type::URL_USERNAME:
+      [[fallthrough]];
+    case Token::Type::URL_PASSWORD:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_COMMON_PART:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_SIGNIFICANT_PART:
+      [[fallthrough]];
+    case Token::Type::URL_PORT:
+      [[fallthrough]];
+    case Token::Type::URL_PATH_PART:
+      [[fallthrough]];
+    case Token::Type::URL_QUERY:
+      [[fallthrough]];
+    case Token::Type::URL_REF:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX_INNERMOST:
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.NormalizeTerm(token.text);
@@ -140,11 +166,18 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       [[fallthrough]];
     case Token::Type::QUERY_PROPERTY:
       [[fallthrough]];
+    case Token::Type::INVALID:
+      ICING_LOG(WARNING)
+          << "Unexpected Token type " << static_cast<int>(token.type)
+          << " found when finding match end of query term and token.";
+      [[fallthrough]];
     case Token::Type::RFC822_NAME:
       [[fallthrough]];
     case Token::Type::RFC822_COMMENT:
       [[fallthrough]];
     case Token::Type::RFC822_LOCAL_ADDRESS:
+      [[fallthrough]];
+    case Token::Type::RFC822_HOST_ADDRESS:
       [[fallthrough]];
     case Token::Type::RFC822_ADDRESS:
       [[fallthrough]];
@@ -154,10 +187,27 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       [[fallthrough]];
     case Token::Type::RFC822_TOKEN:
       [[fallthrough]];
-    case Token::Type::INVALID:
-      ICING_LOG(WARNING)
-          << "Unexpected Token type " << static_cast<int>(token.type)
-          << " found when finding match end of query term and token.";
+    case Token::Type::URL_SCHEME:
+      [[fallthrough]];
+    case Token::Type::URL_USERNAME:
+      [[fallthrough]];
+    case Token::Type::URL_PASSWORD:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_COMMON_PART:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_SIGNIFICANT_PART:
+      [[fallthrough]];
+    case Token::Type::URL_PORT:
+      [[fallthrough]];
+    case Token::Type::URL_QUERY:
+      [[fallthrough]];
+    case Token::Type::URL_PATH_PART:
+      [[fallthrough]];
+    case Token::Type::URL_REF:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX_INNERMOST:
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.FindNormalizedMatchEndPosition(token.text,
@@ -286,7 +336,9 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowStart(
 CharacterIterator IncludeTrailingPunctuation(
     std::string_view value, CharacterIterator window_end_exclusive,
     int window_end_max_exclusive_utf32) {
-  while (window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
+  size_t max_search_index = value.length() - 1;
+  while (window_end_exclusive.utf8_index() <= max_search_index &&
+         window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
     int char_len = 0;
     if (!i18n_utils::IsPunctuationAt(value, window_end_exclusive.utf8_index(),
                                      &char_len)) {
@@ -323,9 +375,8 @@ struct SectionData {
   std::string_view section_subcontent;
 };
 
-// Creates a snippet match proto for the match pointed to by the iterator and
-// char_iterator
-//
+// Creates a snippet match proto for the match pointed to by the iterator,
+// between start_itr and end_itr
 // Returns:
 //   the position of the window start if successful
 //   INTERNAL_ERROR - if a tokenizer error is encountered and iterator is left
@@ -334,13 +385,8 @@ struct SectionData {
 libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
     const ResultSpecProto::SnippetSpecProto& snippet_spec,
     const SectionData& value, Tokenizer::Iterator* iterator,
-    const CharacterIterator& char_iterator) {
+    const CharacterIterator& start_itr, const CharacterIterator& end_itr) {
   SnippetMatchProto snippet_match;
-  ICING_ASSIGN_OR_RETURN(CharacterIterator start_itr,
-                         iterator->CalculateTokenStart());
-  ICING_ASSIGN_OR_RETURN(CharacterIterator end_itr,
-                         iterator->CalculateTokenEndExclusive());
-
   // When finding boundaries,  we have a few cases:
   //
   // Case 1:
@@ -424,19 +470,8 @@ libtextclassifier3::StatusOr<SnippetMatchProto> RetrieveMatch(
     snippet_match.set_window_utf16_length(window_end.utf16_index() -
                                           window_start.utf16_index());
 
-    // DetermineWindowStart/End may change the position of the iterator. So,
-    // reset the iterator back to the original position.
-    bool success = false;
-    if (match_pos_utf32 > 0) {
-      success = iterator->ResetToTokenStartingAfter(match_pos_utf32 - 1);
-    } else {
-      success = iterator->ResetToStart();
-    }
-
-    if (!success) {
-      return absl_ports::InternalError(
-          "Couldn't reset tokenizer to determine snippet window!");
-    }
+    // DetermineWindowStart/End may change the position of the iterator, but it
+    // will be reset once the entire batch of tokens is checked.
   }
 
   return snippet_match;
@@ -473,54 +508,94 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
     std::string_view value = current_property->string_values(i);
     std::unique_ptr<Tokenizer::Iterator> iterator =
         tokenizer->Tokenize(value).ValueOrDie();
-    CharacterIterator char_iterator(value);
+    CharacterIterator start_itr(value);
+    CharacterIterator end_itr(value);
     while (iterator->Advance()) {
-      Token token = iterator->GetToken();
-      CharacterIterator submatch_end = matcher->Matches(token);
-      // If the token matched a query term, then submatch_end will point to an
-      // actual position within token.text.
-      if (submatch_end.utf8_index() != -1) {
-        if (!char_iterator.AdvanceToUtf8(token.text.data() - value.data())) {
-          // We can't get the char_iterator to a valid position, so there's no
-          // way for us to provide valid utf-16 indices. There's nothing more we
-          // can do here, so just return whatever we've built up so far.
-          if (!snippet_entry.snippet_matches().empty()) {
-            *snippet_proto->add_entries() = std::move(snippet_entry);
-          }
-          return;
-        }
-        SectionData data = {property_path, value};
-        auto match_or = RetrieveMatch(match_options->snippet_spec, data,
-                                      iterator.get(), char_iterator);
-        if (!match_or.ok()) {
-          if (absl_ports::IsAborted(match_or.status())) {
-            // Only an aborted. We can't get this match, but we might be able to
-            // retrieve others. Just continue.
-            continue;
-          } else {
-            // Probably an internal error. The tokenizer iterator is probably in
-            // an invalid state. There's nothing more we can do here, so just
-            // return whatever we've built up so far.
+      std::vector<Token> batch_tokens = iterator->GetTokens();
+      if (batch_tokens.empty()) {
+        continue;
+      }
+
+      // As snippet matching may move iterator around, we save a reset iterator
+      // so that we can reset to the initial iterator state, and continue
+      // Advancing in order in the next round.
+      CharacterIterator reset_itr(value);
+      reset_itr.MoveToUtf8(batch_tokens.at(0).text.begin() - value.begin());
+
+      for (const Token& token : batch_tokens) {
+        CharacterIterator submatch_end = matcher->Matches(token);
+        // If the token matched a query term, then submatch_end will point to an
+        // actual position within token.text.
+        if (submatch_end.utf8_index() != -1) {
+          if (!start_itr.MoveToUtf8(token.text.begin() - value.begin())) {
+            // We can't get the char_iterator to a valid position, so there's no
+            // way for us to provide valid utf-16 indices. There's nothing more
+            // we can do here, so just return whatever we've built up so far.
             if (!snippet_entry.snippet_matches().empty()) {
               *snippet_proto->add_entries() = std::move(snippet_entry);
             }
             return;
           }
-        }
-        SnippetMatchProto match = std::move(match_or).ValueOrDie();
-        // submatch_end refers to a position *within* token.text.
-        // This, conveniently enough, means that index that submatch_end points
-        // to is the length of the submatch (because the submatch starts at 0 in
-        // token.text).
-        match.set_submatch_byte_length(submatch_end.utf8_index());
-        match.set_submatch_utf16_length(submatch_end.utf16_index());
-        // Add the values for the submatch.
-        snippet_entry.mutable_snippet_matches()->Add(std::move(match));
+          if (!end_itr.MoveToUtf8(token.text.end() - value.begin())) {
+            // Same as above
+            if (!snippet_entry.snippet_matches().empty()) {
+              *snippet_proto->add_entries() = std::move(snippet_entry);
+            }
+            return;
+          }
+          SectionData data = {property_path, value};
+          auto match_or = RetrieveMatch(match_options->snippet_spec, data,
+                                        iterator.get(), start_itr, end_itr);
+          if (!match_or.ok()) {
+            if (absl_ports::IsAborted(match_or.status())) {
+              // Only an aborted. We can't get this match, but we might be able
+              // to retrieve others. Just continue.
+              continue;
+            } else {
+              // Probably an internal error. The tokenizer iterator is probably
+              // in an invalid state. There's nothing more we can do here, so
+              // just return whatever we've built up so far.
+              if (!snippet_entry.snippet_matches().empty()) {
+                *snippet_proto->add_entries() = std::move(snippet_entry);
+              }
+              return;
+            }
+          }
+          SnippetMatchProto match = std::move(match_or).ValueOrDie();
+          // submatch_end refers to a position *within* token.text.
+          // This, conveniently enough, means that index that submatch_end
+          // points to is the length of the submatch (because the submatch
+          // starts at 0 in token.text).
+          match.set_submatch_byte_length(submatch_end.utf8_index());
+          match.set_submatch_utf16_length(submatch_end.utf16_index());
+          // Add the values for the submatch.
+          snippet_entry.mutable_snippet_matches()->Add(std::move(match));
 
-        if (--match_options->max_matches_remaining <= 0) {
-          *snippet_proto->add_entries() = std::move(snippet_entry);
-          return;
+          if (--match_options->max_matches_remaining <= 0) {
+            *snippet_proto->add_entries() = std::move(snippet_entry);
+            return;
+          }
         }
+      }
+
+      // RetrieveMatch calls DetermineWindowStart/End, which may change the
+      // position of the iterator. So, reset the iterator back to the original
+      // position. The first token of the token batch will be the token to reset
+      // to.
+
+      bool success = false;
+      if (reset_itr.utf8_index() > 0) {
+        success =
+            iterator->ResetToTokenStartingAfter(reset_itr.utf32_index() - 1);
+      } else {
+        success = iterator->ResetToStart();
+      }
+
+      if (!success) {
+        if (!snippet_entry.snippet_matches().empty()) {
+          *snippet_proto->add_entries() = std::move(snippet_entry);
+        }
+        return;
       }
     }
     if (!snippet_entry.snippet_matches().empty()) {

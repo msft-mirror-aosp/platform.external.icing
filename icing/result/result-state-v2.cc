@@ -19,6 +19,7 @@
 
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -54,7 +55,8 @@ ResultStateV2::ResultStateV2(
       num_per_page_(result_spec.num_per_page()),
       num_total_bytes_per_page_threshold_(
           result_spec.num_total_bytes_per_page_threshold()),
-      num_total_hits_(nullptr) {
+      num_total_hits_(nullptr),
+      result_group_type_(result_spec.result_group_type()) {
   for (const TypePropertyMask& type_field_mask :
        result_spec.type_property_masks()) {
     projection_tree_map_.insert(
@@ -65,12 +67,17 @@ ResultStateV2::ResultStateV2(
        result_spec.result_groupings()) {
     int group_id = group_result_limits.size();
     group_result_limits.push_back(result_grouping.max_results());
-    for (const std::string& name_space : result_grouping.namespaces()) {
-      auto namespace_id_or = document_store.GetNamespaceId(name_space);
-      if (!namespace_id_or.ok()) {
+    for (const ResultSpecProto::ResultGrouping::Entry& entry :
+         result_grouping.entry_groupings()) {
+      const std::string& name_space = entry.namespace_();
+      const std::string& schema = entry.schema();
+      auto entry_id_or = document_store.GetResultGroupingEntryId(
+          result_group_type_, name_space, schema);
+      if (!entry_id_or.ok()) {
         continue;
       }
-      namespace_group_id_map_.insert({namespace_id_or.ValueOrDie(), group_id});
+      int32_t entry_id = entry_id_or.ValueOrDie();
+      entry_id_group_id_map_.insert({entry_id, group_id});
     }
   }
 }

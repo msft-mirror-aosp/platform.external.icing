@@ -81,6 +81,8 @@ libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   lite_index_->AppendHits(
       term_id, section_restrict_mask_,
       /*only_from_prefix_sections=*/false,
+      /*score_by=*/
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE,
       /*namespace_checker=*/nullptr, &cached_hits_,
       need_hit_term_frequency_ ? &cached_hit_term_frequency_ : nullptr);
   cached_hits_idx_ = 0;
@@ -106,6 +108,8 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
     lite_index_->AppendHits(
         term_id, section_restrict_mask_,
         /*only_from_prefix_sections=*/!exact_match,
+        /*score_by=*/
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::NONE,
         /*namespace_checker=*/nullptr, &cached_hits_,
         need_hit_term_frequency_ ? &cached_hit_term_frequency_ : nullptr);
     ++terms_matched;
