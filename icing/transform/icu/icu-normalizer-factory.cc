@@ -44,8 +44,6 @@ libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
   return IcuNormalizer::Create(max_term_byte_size);
 }
 
-std::string_view GetNormalizerName() { return IcuNormalizer::kName; }
-
 }  // namespace normalizer_factory
 
 }  // namespace lib
