@@ -38,11 +38,11 @@ namespace lib {
 DocHitInfoIteratorSectionRestrict::DocHitInfoIteratorSectionRestrict(
     std::unique_ptr<DocHitInfoIterator> delegate,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    std::string_view target_section)
+    std::string target_section)
     : delegate_(std::move(delegate)),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      target_section_(target_section) {}
+      target_section_(std::move(target_section)) {}
 
 libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
   while (delegate_->Advance().ok()) {
@@ -65,7 +65,7 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
     // one of the confirmed section ids match the name of the target section
     while (section_id_mask != 0) {
       // There was a hit in this section id
-      SectionId section_id = __builtin_ctz(section_id_mask);
+      SectionId section_id = __builtin_ctzll(section_id_mask);
 
       auto section_metadata_or =
           schema_store_.GetSectionMetadata(schema_type_id, section_id);
@@ -77,13 +77,13 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
         if (section_metadata->path == target_section_) {
           // The hit was in the target section name, return OK/found
           doc_hit_info_ = delegate_->doc_hit_info();
-          hit_intersect_section_ids_mask_ = 1u << section_id;
+          hit_intersect_section_ids_mask_ = UINT64_C(1) << section_id;
           return libtextclassifier3::Status::OK;
         }
       }
 
       // Mark this section as checked
-      section_id_mask &= ~(1U << section_id);
+      section_id_mask &= ~(UINT64_C(1) << section_id);
     }
 
     // Didn't find a matching section name for this hit. Continue.

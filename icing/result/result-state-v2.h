@@ -16,6 +16,7 @@
 #define ICING_RESULT_RESULT_STATE_V2_H_
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -69,9 +70,9 @@ class ResultStateV2 {
     return projection_tree_map_;
   }
 
-  const std::unordered_map<NamespaceId, int>& namespace_group_id_map() const
+  const std::unordered_map<int32_t, int>& entry_id_group_id_map() const
       ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return namespace_group_id_map_;
+    return entry_id_group_id_map_;
   }
 
   int num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
@@ -81,6 +82,11 @@ class ResultStateV2 {
   int32_t num_total_bytes_per_page_threshold() const
       ICING_SHARED_LOCKS_REQUIRED(mutex) {
     return num_total_bytes_per_page_threshold_;
+  }
+
+  ResultSpecProto::ResultGroupingType result_group_type()
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return result_group_type_;
   }
 
   absl_ports::shared_mutex mutex;
@@ -111,8 +117,9 @@ class ResultStateV2 {
   std::unordered_map<std::string, ProjectionTree> projection_tree_map_
       ICING_GUARDED_BY(mutex);
 
-  // A map between namespace id and the id of the group that it appears in.
-  std::unordered_map<NamespaceId, int> namespace_group_id_map_
+  // A map between result grouping entry id and the id of the group that it
+  // appears in.
+  std::unordered_map<int32_t, int> entry_id_group_id_map_
       ICING_GUARDED_BY(mutex);
 
   // Number of results to return in each page.
@@ -130,6 +137,10 @@ class ResultStateV2 {
   // all ResultStates.
   // Does not own.
   std::atomic<int>* num_total_hits_ ICING_GUARDED_BY(mutex);
+
+  // Value that the search results will get grouped by.
+  ResultSpecProto::ResultGroupingType result_group_type_
+      ICING_GUARDED_BY(mutex);
 };
 
 }  // namespace lib

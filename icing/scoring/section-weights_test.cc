@@ -18,7 +18,9 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"

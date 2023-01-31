@@ -24,7 +24,10 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/scoring/scorer-test-utils.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/tmp-directory.h"
@@ -39,13 +42,8 @@ using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-class ScoringProcessorTest : public testing::Test {
+class ScoringProcessorTest
+    : public ::testing::TestWithParam<ScorerTestingMode> {
  protected:
   ScoringProcessorTest()
       : test_dir_(GetTestTempDir() + "/icing"),
@@ -191,21 +189,21 @@ TEST_F(ScoringProcessorTest, CreationWithNullSchemaStoreShouldFail) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(ScoringProcessorTest, ShouldCreateInstance) {
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+TEST_P(ScoringProcessorTest, ShouldCreateInstance) {
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
   ICING_EXPECT_OK(
       ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 }
 
-TEST_F(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
+TEST_P(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
   // Creates an empty DocHitInfoIterator
   std::vector<DocHitInfo> doc_hit_infos = {};
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -217,7 +215,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleEmptyDocHitIterator) {
               IsEmpty());
 }
 
-TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
+TEST_P(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   // Sets up documents
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id1,
@@ -230,8 +228,8 @@ TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -249,7 +247,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleNonPositiveNumToScore) {
               IsEmpty());
 }
 
-TEST_F(ScoringProcessorTest, ShouldRespectNumToScore) {
+TEST_P(ScoringProcessorTest, ShouldRespectNumToScore) {
   // Sets up documents
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
@@ -260,8 +258,8 @@ TEST_F(ScoringProcessorTest, ShouldRespectNumToScore) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -279,7 +277,7 @@ TEST_F(ScoringProcessorTest, ShouldRespectNumToScore) {
               SizeIs(3));
 }
 
-TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
+TEST_P(ScoringProcessorTest, ShouldScoreByDocumentScore) {
   // Creates input doc_hit_infos and expected output scored_document_hits
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
@@ -292,8 +290,8 @@ TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -307,7 +305,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByDocumentScore) {
                           EqualsScoredDocumentHit(scored_document_hits.at(2))));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_DocumentsWithDifferentLength) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -329,26 +327,26 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/50));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
 
   SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  SectionIdMask section_id_mask = UINT64_C(1) << section_id;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -376,7 +374,7 @@ TEST_F(ScoringProcessorTest,
                   EqualsScoredDocumentHit(expected_scored_doc_hit3)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_DocumentsWithSameLength) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -398,26 +396,26 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/10));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
 
   SectionId section_id = 0;
-  SectionIdMask section_id_mask = 1U << section_id;
+  SectionIdMask section_id_mask = UINT64_C(1) << section_id;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -444,7 +442,7 @@ TEST_F(ScoringProcessorTest,
                   EqualsScoredDocumentHit(expected_scored_doc_hit3)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_DocumentsWithDifferentQueryFrequency) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -466,13 +464,13 @@ TEST_F(ScoringProcessorTest,
       DocumentId document_id3,
       document_store()->Put(document3, /*num_tokens=*/10));
 
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   // Document 1 contains the query term "foo" 5 times
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/5);
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   // Document 1 contains the query term "foo" 1 time
   doc_hit_info2.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
-  DocHitInfo doc_hit_info3(document_id3);
+  DocHitInfoTermFrequencyPair doc_hit_info3 = DocHitInfo(document_id3);
   // Document 1 contains the query term "foo" 3 times
   doc_hit_info3.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/1);
   doc_hit_info3.UpdateSection(/*section_id*/ 1, /*hit_term_frequency=*/2);
@@ -482,15 +480,15 @@ TEST_F(ScoringProcessorTest,
   SectionIdMask section_id_mask3 = 0b00000011;
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2,
-                                           doc_hit_info3};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {
+      doc_hit_info1, doc_hit_info2, doc_hit_info3};
 
   // Creates a dummy DocHitInfoIterator with 3 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -517,7 +515,7 @@ TEST_F(ScoringProcessorTest,
                   EqualsScoredDocumentHit(expected_scored_doc_hit3)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_HitTermWithZeroFrequency) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -528,18 +526,18 @@ TEST_F(ScoringProcessorTest,
       document_store()->Put(document1, /*num_tokens=*/10));
 
   // Document 1 contains the term "foo" 0 times in the "subject" property
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(/*section_id*/ 0, /*hit_term_frequency=*/0);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   // Creates a ScoringProcessor
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -562,7 +560,7 @@ TEST_F(ScoringProcessorTest,
       ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit1)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_SameHitFrequencyDifferentPropertyWeights) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -580,23 +578,24 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   PropertyWeight body_property_weight =
       CreatePropertyWeight(/*path=*/"body", /*weight=*/0.5);
@@ -633,7 +632,7 @@ TEST_F(ScoringProcessorTest,
                   EqualsScoredDocumentHit(expected_scored_doc_hit2)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_WithImplicitPropertyWeight) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -651,23 +650,24 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   PropertyWeight body_property_weight =
       CreatePropertyWeight(/*path=*/"body", /*weight=*/0.5);
@@ -704,7 +704,7 @@ TEST_F(ScoringProcessorTest,
                   EqualsScoredDocumentHit(expected_scored_doc_hit2)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_WithDefaultPropertyWeight) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -719,18 +719,18 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1};
 
   // Creates a dummy DocHitInfoIterator with 1 result for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   *spec_proto.add_type_property_weights() =
       CreateTypePropertyWeights(/*schema_type=*/"email", {});
@@ -740,9 +740,9 @@ TEST_F(ScoringProcessorTest,
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(spec_proto, document_store(), schema_store()));
 
-  ScoringSpecProto spec_proto_with_weights;
-  spec_proto_with_weights.set_rank_by(
-      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto_with_weights =
+      CreateScoringSpecForRankingStrategy(
+          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   PropertyWeight body_property_weight = CreatePropertyWeight(/*path=*/"body",
                                                              /*weight=*/1.0);
@@ -791,7 +791,7 @@ TEST_F(ScoringProcessorTest,
               ElementsAre(EqualsScoredDocumentHit(expected_scored_doc_hit)));
 }
 
-TEST_F(ScoringProcessorTest,
+TEST_P(ScoringProcessorTest,
        ShouldScoreByRelevanceScore_WithZeroPropertyWeight) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
@@ -809,23 +809,24 @@ TEST_F(ScoringProcessorTest,
 
   // Document 1 contains the term "foo" 1 time in the "body" property
   SectionId body_section_id = 0;
-  DocHitInfo doc_hit_info1(document_id1);
+  DocHitInfoTermFrequencyPair doc_hit_info1 = DocHitInfo(document_id1);
   doc_hit_info1.UpdateSection(body_section_id, /*hit_term_frequency=*/1);
 
   // Document 2 contains the term "foo" 1 time in the "subject" property
   SectionId subject_section_id = 1;
-  DocHitInfo doc_hit_info2(document_id2);
+  DocHitInfoTermFrequencyPair doc_hit_info2 = DocHitInfo(document_id2);
   doc_hit_info2.UpdateSection(subject_section_id, /*hit_term_frequency=*/1);
 
   // Creates input doc_hit_infos and expected output scored_document_hits
-  std::vector<DocHitInfo> doc_hit_infos = {doc_hit_info1, doc_hit_info2};
+  std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos = {doc_hit_info1,
+                                                            doc_hit_info2};
 
   // Creates a dummy DocHitInfoIterator with 2 results for the query "foo"
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos, "foo");
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE, GetParam());
 
   // Sets property weight for "body" to 0.0.
   PropertyWeight body_property_weight =
@@ -862,7 +863,7 @@ TEST_F(ScoringProcessorTest,
   EXPECT_THAT(scored_document_hits.at(1).score(), Gt(0.0));
 }
 
-TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
+TEST_P(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
                      /*creation_timestamp_ms=*/1571100001111);
@@ -895,8 +896,8 @@ TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP, GetParam());
 
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -910,7 +911,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByCreationTimestamp) {
                           EqualsScoredDocumentHit(scored_document_hit1)));
 }
 
-TEST_F(ScoringProcessorTest, ShouldScoreByUsageCount) {
+TEST_P(ScoringProcessorTest, ShouldScoreByUsageCount) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
@@ -955,8 +956,8 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageCount) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT, GetParam());
 
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -970,7 +971,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageCount) {
                           EqualsScoredDocumentHit(scored_document_hit3)));
 }
 
-TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
+TEST_P(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   DocumentProto document1 =
       CreateDocument("icing", "email/1", kDefaultScore,
                      /*creation_timestamp_ms=*/kDefaultCreationTimestampMs);
@@ -1014,9 +1015,9 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
   std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(
-      ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP,
+      GetParam());
 
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1030,7 +1031,7 @@ TEST_F(ScoringProcessorTest, ShouldScoreByUsageTimestamp) {
                           EqualsScoredDocumentHit(scored_document_hit3)));
 }
 
-TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {
+TEST_P(ScoringProcessorTest, ShouldHandleNoScores) {
   // Creates input doc_hit_infos and corresponding scored_document_hits
   ICING_ASSERT_OK_AND_ASSIGN(
       auto doc_hit_result_pair,
@@ -1051,8 +1052,8 @@ TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {
   ScoredDocumentHit scored_document_hit_default =
       ScoredDocumentHit(4, kSectionIdMaskNone, /*score=*/0.0);
 
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE, GetParam());
 
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1066,7 +1067,7 @@ TEST_F(ScoringProcessorTest, ShouldHandleNoScores) {
                           EqualsScoredDocumentHit(scored_document_hits.at(2))));
 }
 
-TEST_F(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
+TEST_P(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
   DocumentProto document1 = CreateDocument("icing", "email/1", /*score=*/1,
                                            kDefaultCreationTimestampMs);
   DocumentProto document2 = CreateDocument("icing", "email/2", /*score=*/2,
@@ -1100,8 +1101,8 @@ TEST_F(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
   // A ScoringSpecProto with no scoring strategy
-  ScoringSpecProto spec_proto;
-  spec_proto.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
+  ScoringSpecProto spec_proto = CreateScoringSpecForRankingStrategy(
+      ScoringSpecProto::RankingStrategy::NONE, GetParam());
 
   // Creates a ScoringProcessor which ranks in descending order
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1114,6 +1115,10 @@ TEST_F(ScoringProcessorTest, ShouldWrapResultsWhenNoScoring) {
                           EqualsScoredDocumentHit(scored_document_hit3),
                           EqualsScoredDocumentHit(scored_document_hit1)));
 }
+
+INSTANTIATE_TEST_SUITE_P(ScoringProcessorTest, ScoringProcessorTest,
+                         testing::Values(ScorerTestingMode::kNormal,
+                                         ScorerTestingMode::kAdvanced));
 
 }  // namespace
 
