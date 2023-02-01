@@ -51,15 +51,6 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::SizeIs;
 
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-
 class ResultRetrieverV2ProjectionTest : public testing::Test {
  protected:
   ResultRetrieverV2ProjectionTest() : test_dir_(GetTestTempDir() + "/icing") {
@@ -90,12 +81,12 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
                          .SetType("Email")
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("name")
-                                          .SetDataTypeString(MATCH_PREFIX,
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("body")
-                                          .SetDataTypeString(MATCH_EXACT,
+                                          .SetDataTypeString(TERM_MATCH_EXACT,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(
@@ -107,16 +98,16 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("Person")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("name")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("emailAddress")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("name")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("emailAddress")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
@@ -165,7 +156,7 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
 SectionIdMask CreateSectionIdMask(const std::vector<SectionId>& section_ids) {
   SectionIdMask mask = 0;
   for (SectionId section_id : section_ids) {
-    mask |= (1u << section_id);
+    mask |= (UINT64_C(1) << section_id);
   }
   return mask;
 }
@@ -231,7 +222,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -326,7 +318,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -432,7 +425,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -542,7 +536,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -635,7 +630,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -711,7 +707,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -788,7 +785,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -867,7 +865,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -950,7 +949,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -1037,7 +1037,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -1133,7 +1134,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -1233,7 +1235,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
 
   // 4. Create ResultState with custom ResultSpec.
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
       /*query_terms=*/SectionRestrictQueryTermsMap{},
       CreateSearchSpec(TermMatchType::EXACT_ONLY),

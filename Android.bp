@@ -58,6 +58,8 @@ cc_defaults {
     apex_available: ["com.android.appsearch"],
 }
 
+// TODO(b/193244409): Use the filegroup libicing_test_common along with
+//                    libicing_defaults to build libicing.
 cc_library_shared {
     name: "libicing",
     defaults: ["libicing_defaults"],
@@ -92,13 +94,20 @@ cc_library_shared {
 }
 
 filegroup {
-    // TODO(b/193244409): Implement globs for additional tests.
-    name: "filesystem_common",
+    name: "libicing_test_common",
+    // TODO(b/193244409): Utilize globs once all build errors are fixed.
     srcs: [
-        "icing/absl_ports/str_cat.cc",
+        "icing/absl_ports/*.cc",
+        "icing/text_classifier/lib3/utils/base/*.cc",
+        "icing/portable/*.cc",
+        "icing/file/file-backed-bitmap.cc",
         "icing/file/filesystem.cc",
+        "icing/file/memory-mapped-file.cc",
+        "icing/file/persistent-hash-map.cc",
         "icing/legacy/core/icing-string-util.cc",
         "icing/testing/tmp-directory.cc",
+        "icing/testing/common-matchers.cc",
+        "icing/util/crc32.cc",
         "icing/util/logging.cc",
         "icing/util/logging_raw.cc",
     ],
@@ -108,9 +117,10 @@ cc_test {
     name: "libicing_tests",
     defaults: ["libicing_defaults"],
     test_suites: ["device_tests"],
+    // TODO(b/193244409): Implement globs for additional tests.
     srcs: [
-        ":filesystem_common",
-        "icing/file/filesystem_test.cc",
+        ":libicing_test_common",
+        "icing/file/*_test.cc",
     ],
     static_libs: [
         "icing-c-proto",
@@ -118,7 +128,9 @@ cc_test {
         "libgtest",
     ],
     shared_libs: [
+        "libicu",
         "liblog",
+        "libprotobuf-cpp-lite",
         "libz",
     ],
 }

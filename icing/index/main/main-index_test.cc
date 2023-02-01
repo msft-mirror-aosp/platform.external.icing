@@ -22,7 +22,6 @@
 #include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
 #include "icing/index/main/main-index-merger.h"
-#include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
@@ -56,7 +55,7 @@ std::vector<DocHitInfo> GetExactHits(
     MainIndex* main_index, const std::string& term,
     SectionIdMask section_mask = kSectionIdMaskAll) {
   auto iterator = std::make_unique<DocHitInfoIteratorTermMainExact>(
-      main_index, term, section_mask);
+      main_index, term, section_mask, /*need_hit_term_frequency=*/true);
   return GetHits(std::move(iterator));
 }
 
@@ -64,7 +63,7 @@ std::vector<DocHitInfo> GetPrefixHits(
     MainIndex* main_index, const std::string& term,
     SectionIdMask section_mask = kSectionIdMaskAll) {
   auto iterator = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-      main_index, term, section_mask);
+      main_index, term, section_mask, /*need_hit_term_frequency=*/true);
   return GetHits(std::move(iterator));
 }
 

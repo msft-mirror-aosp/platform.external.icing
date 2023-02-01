@@ -927,8 +927,10 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldSetZero) {
 
   // Checks if the erased area is set to 0.
   int64_t file_size = filesystem_.GetFileSize(file_path_.c_str());
-  MemoryMappedFile mmapped_file(filesystem_, file_path_,
-                                MemoryMappedFile::Strategy::READ_ONLY);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      MemoryMappedFile mmapped_file,
+      MemoryMappedFile::Create(filesystem_, file_path_,
+                               MemoryMappedFile::Strategy::READ_ONLY));
 
   // document1_offset + sizeof(int) is the start byte of the proto where
   // sizeof(int) is the size of the proto metadata.
