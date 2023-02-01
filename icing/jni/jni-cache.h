@@ -15,16 +15,6 @@
 #ifndef ICING_JNI_JNI_CACHE_H_
 #define ICING_JNI_JNI_CACHE_H_
 
-#ifndef ICING_REVERSE_JNI_SEGMENTATION
-namespace icing {
-namespace lib {
-
-class JniCache {};  // Declare an empty class definition for non-Android builds.
-
-}  // namespace lib
-}  // namespace icing
-#else  // ICING_REVERSE_JNI_SEGMENTATION
-
 #include <jni.h>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -84,7 +74,5 @@ struct JniCache {
 
 }  // namespace lib
 }  // namespace icing
-
-#endif  // !ICING_REVERSE_JNI_SEGMENTATION
 
 #endif  // ICING_JNI_JNI_CACHE_H_

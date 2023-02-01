@@ -22,28 +22,6 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// The type of persistence guarantee that PersistToDisk should provide.
-// Next tag: 3
-message PersistType {
-  enum Code {
-    // Default. Should never be used.
-    UNKNOWN = 0;
-
-    // Only persist the ground truth. A successful PersistToDisk(LITE) should
-    // ensure that no data is lost the next time Icing initializes. This
-    // should be called after each batch of mutations.
-    LITE = 1;
-
-    // Persists all data in internal Icing components. A successful
-    // PersistToDisk(FULL) should not only ensure no data loss like
-    // PersistToDisk(LITE), but also prevent the need to recover internal data
-    // structures the next time Icing initializes. This should be called at
-    // some point before the app terminates.
-    FULL = 2;
-  }
-  optional Code code = 1;
-}
-
 // Result of a call to IcingSearchEngine.Persist
 // Next tag: 2
 message PersistToDiskResultProto {

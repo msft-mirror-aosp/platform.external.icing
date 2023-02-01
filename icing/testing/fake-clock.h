@@ -24,7 +24,7 @@ namespace lib {
 // every time it's requested.
 class FakeTimer : public Timer {
  public:
-  int64_t GetElapsedMilliseconds() const override {
+  int64_t GetElapsedMilliseconds() override {
     return fake_elapsed_milliseconds_;
   }
 

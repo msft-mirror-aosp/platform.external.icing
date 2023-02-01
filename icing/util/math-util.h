@@ -37,7 +37,7 @@ inline double SafeDivide(double first, double second) {
 template <typename IntType>
 static IntType RoundDownTo(IntType input_value, IntType rounding_value) {
   static_assert(std::numeric_limits<IntType>::is_integer,
-                "RoundDownTo() operation type is not integer");
+                "RoundUpTo() operation type is not integer");
 
   if (input_value <= 0) {
     return 0;

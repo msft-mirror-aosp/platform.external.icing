@@ -30,22 +30,17 @@
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/lite/lite-index-header.h"
-#include "icing/index/lite/lite-index-options.h"
 #include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/term-id-codec.h"
 #include "icing/legacy/index/icing-array-storage.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-lite-index-header.h"
+#include "icing/legacy/index/icing-lite-index-options.h"
 #include "icing/legacy/index/icing-mmapper.h"
-#include "icing/proto/debug.pb.h"
-#include "icing/proto/scoring.pb.h"
-#include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
-#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/bit-util.h"
 #include "icing/util/crc32.h"
 
@@ -55,7 +50,7 @@ namespace lib {
 class LiteIndex {
  public:
   // An entry in the hit buffer.
-  using Options = LiteIndexOptions;
+  using Options = IcingLiteIndexOptions;
 
   // Updates checksum of subcomponents.
   ~LiteIndex();
@@ -142,29 +137,15 @@ class LiteIndex {
 
   // Add all hits with term_id from the sections specified in section_id_mask,
   // skipping hits in non-prefix sections if only_from_prefix_sections is true,
-  // to hits_out. If hits_out is nullptr, no hits will be added. The
-  // corresponding hit term frequencies will also be added if term_frequency_out
-  // is nullptr.
+  // to hits_out. If hits_out is nullptr, no hits will be added.
   //
-  // Only those hits which belongs to the given namespaces will be counted and
-  // appended. A nullptr namespace checker will disable this check.
-  //
-  // Returns the score of hits that would be added to hits_out according the
-  // given score_by.
-  int AppendHits(
-      uint32_t term_id, SectionIdMask section_id_mask,
-      bool only_from_prefix_sections,
-      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
-      const SuggestionResultChecker* suggestion_result_checker,
-      std::vector<DocHitInfo>* hits_out,
-      std::vector<Hit::TermFrequencyArray>* term_frequency_out = nullptr);
+  // Returns the number of hits that would be added to hits_out.
+  int AppendHits(uint32_t term_id, SectionIdMask section_id_mask,
+                 bool only_from_prefix_sections,
+                 std::vector<DocHitInfo>* hits_out);
 
   // Returns the hit count of the term.
-  // Only those hits which belongs to the given namespaces will be counted.
-  libtextclassifier3::StatusOr<int> ScoreHits(
-      uint32_t term_id,
-      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
-      const SuggestionResultChecker* suggestion_result_checker);
+  int CountHits(uint32_t term_id);
 
   // Check if buffer has reached its capacity.
   bool is_full() const;
@@ -243,16 +224,13 @@ class LiteIndex {
   DocumentId last_added_document_id() const {
     return header_->last_added_docid();
   }
-  void set_last_added_document_id(DocumentId document_id) const {
-    header_->set_last_added_docid(document_id);
-  }
 
   const IcingDynamicTrie& lexicon() const { return lexicon_; }
 
   // Returns debug information for the index in out.
-  // verbosity = BASIC, simplest debug information - size of lexicon, hit buffer
-  // verbosity = DETAILED, more detailed debug information from the lexicon.
-  std::string GetDebugInfo(DebugInfoVerbosity::Code verbosity);
+  // verbosity <= 0, simplest debug information - size of lexicon, hit buffer
+  // verbosity > 0, more detailed debug information from the lexicon.
+  void GetDebugInfo(int verbosity, std::string* out) const;
 
   // Returns the byte size of all the elements held in the index. This excludes
   // the size of any internal metadata of the index, e.g. the index's header.
@@ -261,27 +239,6 @@ class LiteIndex {
   //   Byte size on success
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
-
-  // Takes the provided storage_info, populates the fields related to the lite
-  // index and returns that storage_info.
-  //
-  // If an IO error occurs while trying to calculate the value for a field, then
-  // that field will be set to -1.
-  IndexStorageInfoProto GetStorageInfo(
-      IndexStorageInfoProto storage_info) const;
-
-  // Reduces internal file sizes by reclaiming space of deleted documents.
-  //
-  // This method also sets the last_added_docid of the index to
-  // new_last_added_document_id.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL_ERROR on IO error, this indicates that the index may be in an
-  //                               invalid state and should be cleared.
-  libtextclassifier3::Status Optimize(
-      const std::vector<DocumentId>& document_id_old_to_new,
-      const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id);
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
@@ -301,9 +258,6 @@ class LiteIndex {
 
   // Sets the computed checksum in the header
   void UpdateChecksum();
-
-  // Sort hits stored in the index.
-  void SortHits();
 
   // Returns the position of the first element with term_id, or the size of the
   // hit buffer if term_id is not present.
@@ -327,7 +281,7 @@ class LiteIndex {
   IcingMMapper header_mmap_;
 
   // Wrapper around the mmapped header that contains stats on the lite index.
-  std::unique_ptr<LiteIndex_Header> header_;
+  std::unique_ptr<IcingLiteIndex_Header> header_;
 
   // Options used to initialize the LiteIndex.
   const Options options_;

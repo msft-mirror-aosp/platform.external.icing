@@ -26,11 +26,9 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
-#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/storage.pb.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
@@ -69,6 +67,9 @@ class SchemaStore {
     // to file.
     bool success = false;
 
+    // Whether the new schema changes invalidate the index.
+    bool index_incompatible = false;
+
     // SchemaTypeIds of schema types can be reassigned new SchemaTypeIds if:
     //   1. Schema types are added in the middle of the SchemaProto
     //   2. Schema types are removed from the middle of the SchemaProto
@@ -98,21 +99,6 @@ class SchemaStore {
     // SchemaUtil::ComputeCompatibilityDelta. Represented by the SchemaTypeId
     // assigned to this SchemaTypeConfigProto in the *old* schema.
     std::unordered_set<SchemaTypeId> schema_types_incompatible_by_id;
-
-    // Schema types that were added in the new schema. Represented by the
-    // `schema_type` field in the SchemaTypeConfigProto.
-    std::unordered_set<std::string> schema_types_new_by_name;
-
-    // Schema types that were changed in a way that was backwards compatible and
-    // didn't invalidate the index. Represented by the `schema_type` field in
-    // the SchemaTypeConfigProto.
-    std::unordered_set<std::string>
-        schema_types_changed_fully_compatible_by_name;
-
-    // Schema types that were changed in a way that was backwards compatible,
-    // but invalidated the index. Represented by the `schema_type` field in the
-    // SchemaTypeConfigProto.
-    std::unordered_set<std::string> schema_types_index_incompatible_by_name;
   };
 
   // Factory function to create a SchemaStore which does not take ownership
@@ -129,18 +115,18 @@ class SchemaStore {
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
       const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock, InitializeStatsProto* initialize_stats = nullptr);
+      const Clock* clock, NativeInitializeStats* initialize_stats = nullptr);
 
-  SchemaStore(SchemaStore&&) = default;
-  SchemaStore& operator=(SchemaStore&&) = default;
-
+  // Not copyable
   SchemaStore(const SchemaStore&) = delete;
   SchemaStore& operator=(const SchemaStore&) = delete;
 
   // Persists and updates checksum of subcomponents.
   ~SchemaStore();
 
-  // Retrieve the current schema if it exists.
+  // Retrieve the current schema if it exists. Caller does not get ownership of
+  // the schema proto and modifying the returned pointer does not affect the
+  // underlying schema proto.
   //
   // Returns:
   //   SchemaProto* if exists
@@ -181,7 +167,6 @@ class SchemaStore {
   //
   // Returns:
   //   SchemaTypeId on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND_ERROR if we don't know about the schema type
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<SchemaTypeId> GetSchemaTypeId(
@@ -191,7 +176,6 @@ class SchemaStore {
   //
   // Returns:
   //   A string of content on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if:
   //     1. Property is optional and not found in the document
   //     2. section_path is invalid
@@ -204,7 +188,6 @@ class SchemaStore {
   //
   // Returns:
   //   A string of content on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
   //   INVALID_ARGUMENT if section id is invalid
   //   NOT_FOUND if type config name of document not found
   libtextclassifier3::StatusOr<std::vector<std::string_view>>
@@ -216,26 +199,18 @@ class SchemaStore {
   //
   // Returns:
   //   pointer to SectionMetadata on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
   //   INVALID_ARGUMENT if schema type id or section is invalid
   libtextclassifier3::StatusOr<const SectionMetadata*> GetSectionMetadata(
       SchemaTypeId schema_type_id, SectionId section_id) const;
 
-  // Extracts all sections of different types from the given document and group
-  // them by type.
-  // - Each Section vector is sorted by section Id in ascending order. The
-  //   sorted section Ids may not be continuous, since not all section Ids are
-  //   present in the document.
-  // - Sections with empty content won't be returned.
-  // - For example, we may extract:
-  //   string_sections: [2, 7, 10]
-  //   integer_sections: [3, 5, 8]
+  // Extracts all sections from the given document, sections are sorted by
+  // section id in increasing order. Section ids start from 0. Sections with
+  // empty content won't be returned.
   //
   // Returns:
-  //   A SectionGroup instance on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   A list of sections on success
   //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<SectionGroup> ExtractSections(
+  libtextclassifier3::StatusOr<std::vector<Section>> ExtractSections(
       const DocumentProto& document) const;
 
   // Syncs all the data changes to disk.
@@ -253,69 +228,18 @@ class SchemaStore {
   //   INTERNAL_ERROR on compute error
   libtextclassifier3::StatusOr<Crc32> ComputeChecksum() const;
 
-  // Returns:
-  //   - On success, the section metadata list for the specified schema type
-  //   - NOT_FOUND if the schema type is not present in the schema
-  libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
-  GetSectionMetadata(const std::string& schema_type) const;
-
-  // Calculates the StorageInfo for the Schema Store.
-  //
-  // If an IO error occurs while trying to calculate the value for a field, then
-  // that field will be set to -1.
-  SchemaStoreStorageInfoProto GetStorageInfo() const;
-
-  // Get debug information for the schema store.
-  //
-  // Returns:
-  //   SchemaDebugInfoProto on success
-  //   INTERNAL_ERROR on IO errors, crc compute error
-  libtextclassifier3::StatusOr<SchemaDebugInfoProto> GetDebugInfo() const;
-
  private:
-  // Factory function to create a SchemaStore and set its schema. The created
-  // instance does not take ownership of any input components and all pointers
-  // must refer to valid objects that outlive the created SchemaStore instance.
-  // The base_dir must already exist. No schema must have set in base_dir prior
-  // to this.
-  //
-  // Returns:
-  //   A SchemaStore on success
-  //   FAILED_PRECONDITION on any null pointer input or if there has already
-  //       been a schema set for this path.
-  //   INTERNAL_ERROR on any IO errors
-  static libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> Create(
-      const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock, SchemaProto schema);
-
   // Use SchemaStore::Create instead.
   explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,
                        const Clock* clock);
-
-  // Verifies that there is no error retrieving a previously set schema. Then
-  // initializes like normal.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status Initialize(InitializeStatsProto* initialize_stats);
-
-  // First, blindly writes new_schema to the schema_file. Then initializes like
-  // normal.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL_ERROR on IO error
-  //   FAILED_PRECONDITION if there is already a schema set for the schema_file.
-  libtextclassifier3::Status Initialize(SchemaProto new_schema);
 
   // Handles initializing the SchemaStore and regenerating any data if needed.
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::Status InitializeInternal(
-      InitializeStatsProto* initialize_stats);
+  libtextclassifier3::Status Initialize(
+      NativeInitializeStats* initialize_stats);
 
   // Creates sub-components and verifies the integrity of each sub-component.
   //
@@ -351,33 +275,19 @@ class SchemaStore {
   // Returns any IO errors.
   libtextclassifier3::Status ResetSchemaTypeMapper();
 
-  // Creates a new schema store with new_schema and then swaps that new schema
-  // store with the existing one. This function guarantees that either: this
-  // instance will be fully updated to the new schema or no changes will take
-  // effect.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL on I/O error.
-  libtextclassifier3::Status ApplySchemaChange(SchemaProto new_schema);
+  const Filesystem& filesystem_;
+  const std::string base_dir_;
+  const Clock& clock_;
 
-  libtextclassifier3::Status CheckSchemaSet() const {
-    return has_schema_successfully_set_
-               ? libtextclassifier3::Status::OK
-               : absl_ports::FailedPreconditionError("Schema not set yet.");
-  }
-
-  const Filesystem* filesystem_;
-  std::string base_dir_;
-  const Clock* clock_;
-
-  // Used internally to indicate whether the class has been successfully
-  // initialized with a valid schema. Will be false if Initialize failed or no
-  // schema has ever been set.
-  bool has_schema_successfully_set_ = false;
+  // Used internally to indicate whether the class has been initialized. This is
+  // to guard against cases where the object has been created, but Initialize
+  // fails in the constructor. If we have successfully exited the constructor,
+  // then this field can be ignored. Clients of SchemaStore should not need to
+  // worry about this field.
+  bool initialized_ = false;
 
   // Cached schema
-  std::unique_ptr<FileBackedProto<SchemaProto>> schema_file_;
+  FileBackedProto<SchemaProto> schema_file_;
 
   // A hash map of (type config name -> type config), allows faster lookup of
   // type config in schema. The O(1) type config access makes schema-related and

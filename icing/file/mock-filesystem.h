@@ -44,17 +44,6 @@ class MockFilesystem : public Filesystem {
           return real_filesystem_.DeleteDirectoryRecursively(dir_name);
         });
 
-    ON_CALL(*this, CopyFile)
-        .WillByDefault([this](const char* src, const char* dst) {
-          return real_filesystem_.CopyFile(src, dst);
-        });
-
-    ON_CALL(*this, CopyDirectory)
-        .WillByDefault(
-            [this](const char* src, const char* dst, bool recursive) {
-              return real_filesystem_.CopyDirectory(src, dst, recursive);
-            });
-
     ON_CALL(*this, FileExists).WillByDefault([this](const char* file_name) {
       return real_filesystem_.FileExists(file_name);
     });
@@ -237,9 +226,6 @@ class MockFilesystem : public Filesystem {
               (const));
 
   MOCK_METHOD(bool, CopyFile, (const char* src, const char* dst), (const));
-
-  MOCK_METHOD(bool, CopyDirectory,
-              (const char* src, const char* dst, bool recursive), (const));
 
   MOCK_METHOD(bool, FileExists, (const char* file_name), (const));
 

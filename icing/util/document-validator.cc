@@ -19,8 +19,6 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/proto/document.pb.h"
-#include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-util.h"
 #include "icing/util/status-macros.h"
 

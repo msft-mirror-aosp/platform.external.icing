@@ -14,15 +14,15 @@
 
 #include <vector>
 
-#include "testing/base/public/benchmark.h"
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "testing/base/public/benchmark.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace icing {
 namespace lib {
@@ -35,7 +35,7 @@ namespace {
 //
 //    $
 //    blaze-bin/icing/index/iterator/doc-hit-info-iterator_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 //
 // Run on an Android device:
 //    $ blaze build --config=android_arm64 -c opt --dynamic_mode=off
@@ -47,7 +47,7 @@ namespace {
 //    /data/local/tmp/
 //
 //    $ adb shell /data/local/tmp/doc-hit-info-iterator_benchmark
-//    --benchmark_filter=all
+//    --benchmarks=all
 
 // Functor to be used with std::generate to create a container of DocHitInfos.
 // DocHitInfos are generated starting at docid starting_docid and continuing at

@@ -18,8 +18,8 @@
 #include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/result/page-result-state.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"
@@ -107,7 +107,6 @@ ResultRetriever::RetrieveResults(
 
     // Add the document, itself.
     *result.mutable_document() = std::move(document);
-    result.set_score(scored_document_hit.score());
     search_results.push_back(std::move(result));
   }
   return search_results;

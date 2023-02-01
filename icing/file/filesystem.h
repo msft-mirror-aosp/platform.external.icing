@@ -17,9 +17,11 @@
 #ifndef ICING_FILE_FILESYSTEM_H_
 #define ICING_FILE_FILESYSTEM_H_
 
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
 #include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -84,12 +86,8 @@ class Filesystem {
   // Copies the src file to the dst file.
   virtual bool CopyFile(const char* src, const char* dst) const;
 
-  // Copies the src directory and its contents to the dst dir.
-  virtual bool CopyDirectory(const char* src_dir, const char* dst_dir,
-                             bool recursive) const;
-
   // Returns true if a file exists.  False if the file doesn't exist.
-  // If there is an error getting stat on the file, it logs the error and
+  // If there is an error getting stat on the file, it logs the error and //
   // asserts.
   virtual bool FileExists(const char* file_name) const;
 
@@ -233,11 +231,6 @@ class Filesystem {
   // Increments to_increment by size if size is valid, or sets to_increment
   // to kBadFileSize if either size or to_increment is kBadFileSize.
   static void IncrementByOrSetInvalid(int64_t size, int64_t* to_increment);
-
-  // Return -1 if file_size is invalid. Otherwise, return file_size.
-  static int64_t SanitizeFileSize(int64_t file_size) {
-    return (file_size != kBadFileSize) ? file_size : -1;
-  }
 };
 // LINT.ThenChange(//depot/google3/icing/file/mock-filesystem.h)
 

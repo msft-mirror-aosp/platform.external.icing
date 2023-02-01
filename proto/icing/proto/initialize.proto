@@ -16,11 +16,12 @@ syntax = "proto2";
 
 package icing.lib;
 
-import "icing/proto/logging.proto";
 import "icing/proto/status.proto";
+import "icing/proto/logging.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
+
 option objc_class_prefix = "ICNG";
 
 // Next tag: 5
@@ -29,6 +30,19 @@ message IcingSearchEngineOptions {
   // If Icing was previously initialized with this directory, it will reload
   // the index saved by the last instance.
   optional string base_dir = 1;
+
+  // The maximum number of tokens to be allowed per document. If a document
+  // exceeds this number of tokens, then only the first max_tokens_per_doc
+  // will be indexed.
+  //
+  // Clients may use this value to prevent the possibility of a select few
+  // documents from exhausting limits in the index that are shared between all
+  // documents (ie max allowed index size).
+  //
+  // Valid values: [1, INT_MAX], Current default is 1/5 of the default of
+  // max_document_size.
+  // Optional.
+  optional int32 max_tokens_per_doc = 2 [default = 13107];
 
   // The maximum allowable token length. All tokens in excess of this size
   // will be truncated to max_token_length before being indexed.
@@ -57,8 +71,6 @@ message IcingSearchEngineOptions {
   // Valid values: [1, INT_MAX]
   // Optional.
   optional int32 index_merge_size = 4 [default = 1048576];  // 1 MiB
-
-  reserved 2;
 }
 
 // Result of a call to IcingSearchEngine.Initialize
@@ -77,11 +89,11 @@ message InitializeResultProto {
   // go/icing-library-apis.
   optional StatusProto status = 1;
 
-  // Stats of the function call. Inside InitializeStatsProto, the function call
+  // Stats of the function call. Inside NativeInitializeStats, the function call
   // latency 'latency_ms' will always be populated. The other fields will be
   // accurate only when the status above is OK or WARNING_DATA_LOSS. See
   // logging.proto for details.
-  optional InitializeStatsProto initialize_stats = 2;
+  optional NativeInitializeStats native_initialize_stats = 2;
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.

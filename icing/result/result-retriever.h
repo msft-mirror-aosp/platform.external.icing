@@ -20,6 +20,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
 #include "icing/result/page-result-state.h"
 #include "icing/result/snippet-context.h"

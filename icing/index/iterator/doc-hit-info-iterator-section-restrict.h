@@ -42,7 +42,7 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   explicit DocHitInfoIteratorSectionRestrict(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      std::string target_section);
+      std::string_view target_section);
 
   libtextclassifier3::Status Advance() override;
 
@@ -52,21 +52,13 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  // Note that the DocHitInfoIteratorSectionRestrict is the only iterator that
-  // should set filtering_section_mask, hence the received
-  // filtering_section_mask is ignored and the filtering_section_mask passed to
-  // the delegate will be set to hit_intersect_section_ids_mask_. This will
-  // allow to filter the matching sections in the delegate.
+  // NOTE: currently, section restricts does decide which documents to
+  // return, but doesn't impact the relevance score of a document.
+  // TODO(b/173156803): decide whether we want to filter the matched_terms_stats
+  // for the restricted sections.
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats,
-      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
-    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
-      // Current hit isn't valid, return.
-      return;
-    }
-    delegate_->PopulateMatchedTermsStats(
-        matched_terms_stats,
-        /*filtering_section_mask=*/hit_intersect_section_ids_mask_);
+      std::vector<TermMatchInfo>* matched_terms_stats) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats);
   }
 
  private:
@@ -75,7 +67,7 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   const SchemaStore& schema_store_;
 
   // Ensure that this does not outlive the underlying string value.
-  std::string target_section_;
+  std::string_view target_section_;
 };
 
 }  // namespace lib

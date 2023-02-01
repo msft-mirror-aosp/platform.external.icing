@@ -110,11 +110,11 @@ message PutResultProto {
   // go/icing-library-apis.
   optional StatusProto status = 1;
 
-  // Stats of the function call. Inside PutDocumentStatsProto, the function
+  // Stats of the function call. Inside NativePutDocumentStats, the function
   // call latency 'latency_ms' will always be populated. The other fields will
   // be accurate only when the status above is OK. See logging.proto for
   // details.
-  optional PutDocumentStatsProto put_document_stats = 2;
+  optional NativePutDocumentStats native_put_document_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.Get
@@ -167,7 +167,7 @@ message DeleteResultProto {
   optional StatusProto status = 1;
 
   // Stats for delete execution performance.
-  optional DeleteStatsProto delete_stats = 2;
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
@@ -186,7 +186,7 @@ message DeleteByNamespaceResultProto {
   optional StatusProto status = 1;
 
   // Stats for delete execution performance.
-  optional DeleteStatsProto delete_stats = 2;
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
@@ -205,11 +205,11 @@ message DeleteBySchemaTypeResultProto {
   optional StatusProto status = 1;
 
   // Stats for delete execution performance.
-  optional DeleteStatsProto delete_stats = 2;
+  optional NativeDeleteStats delete_stats = 2;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByQuery
-// Next tag: 5
+// Next tag: 3
 message DeleteByQueryResultProto {
   // Status code can be one of:
   //   OK
@@ -224,20 +224,5 @@ message DeleteByQueryResultProto {
   optional StatusProto status = 1;
 
   // Stats for delete execution performance.
-  optional DeleteByQueryStatsProto delete_by_query_stats = 3;
-
-  // Used by DeleteByQueryResultProto to return information about deleted
-  // documents.
-  message DocumentGroupInfo {
-    optional string namespace = 1;
-    optional string schema = 2;
-    repeated string uris = 3;
-  }
-
-  // Additional return message that shows the uris of the deleted documents, if
-  // users set return_deleted_document_info to true.
-  // The result is grouped by the corresponding namespace and type.
-  repeated DocumentGroupInfo deleted_documents = 4;
-
-  reserved 2;
+  optional NativeDeleteStats delete_stats = 2;
 }

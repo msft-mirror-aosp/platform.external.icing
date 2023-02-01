@@ -15,7 +15,6 @@
 #ifndef ICING_TESTING_RANDOM_STRING_H_
 #define ICING_TESTING_RANDOM_STRING_H_
 
-#include <algorithm>
 #include <random>
 #include <string>
 
@@ -36,10 +35,6 @@ std::string RandomString(const std::string_view alphabet, size_t len,
 
   return result;
 }
-
-// Returns a vector containing num_terms unique terms. Terms are created in
-// non-random order starting with "a" to "z" to "aa" to "zz", etc.
-std::vector<std::string> GenerateUniqueTerms(int num_terms);
 
 }  // namespace lib
 }  // namespace icing

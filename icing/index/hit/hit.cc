@@ -35,20 +35,9 @@ enum FlagOffset {
   kHasTermFrequency = 2,
   kNumFlags = 3,
 };
-
-static_assert(kDocumentIdBits + kSectionIdBits + kNumFlags <
-                  sizeof(Hit::Value) * 8,
-              "Hit::kInvalidValue contains risky value and we should have at "
-              "least one unused bit to avoid potential bugs. Please follow the "
-              "process mentioned in hit.h to correct the value of "
-              "Hit::kInvalidValue and remove this static_assert afterwards.");
-
 static_assert(kDocumentIdBits + kSectionIdBits + kNumFlags <=
                   sizeof(Hit::Value) * 8,
               "HitOverflow");
-static_assert(kDocumentIdBits == 22, "");
-static_assert(kSectionIdBits == 6, "");
-static_assert(kNumFlags == 3, "");
 
 inline DocumentId InvertDocumentId(DocumentId document_id) {
   static_assert(kMaxDocumentId <= (std::numeric_limits<DocumentId>::max() - 1),
@@ -62,31 +51,6 @@ inline DocumentId InvertDocumentId(DocumentId document_id) {
 }
 
 }  // namespace
-
-BasicHit::BasicHit(SectionId section_id, DocumentId document_id) {
-  // Values are stored so that when sorted, they appear in document_id
-  // descending, section_id ascending, order. So inverted document_id appears in
-  // the most significant bits, followed by (uninverted) section_id.
-  Value temp_value = 0;
-  bit_util::BitfieldSet(/*new_value=*/InvertDocumentId(document_id),
-                        /*lsb_offset=*/kSectionIdBits, /*len=*/kDocumentIdBits,
-                        /*value_out=*/&temp_value);
-  bit_util::BitfieldSet(/*new_value=*/section_id, /*lsb_offset=*/0,
-                        /*len=*/kSectionIdBits, /*value_out=*/&temp_value);
-  value_ = temp_value;
-}
-
-DocumentId BasicHit::document_id() const {
-  DocumentId inverted_document_id = bit_util::BitfieldGet(
-      value_, /*lsb_offset=*/kSectionIdBits, /*len=*/kDocumentIdBits);
-  // Undo the document_id inversion.
-  return InvertDocumentId(inverted_document_id);
-}
-
-SectionId BasicHit::section_id() const {
-  return bit_util::BitfieldGet(value_, /*lsb_offset=*/0,
-                               /*len=*/kSectionIdBits);
-}
 
 Hit::Hit(SectionId section_id, DocumentId document_id,
          Hit::TermFrequency term_frequency, bool is_in_prefix_section,
@@ -103,10 +67,9 @@ Hit::Hit(SectionId section_id, DocumentId document_id,
                         &temp_value);
   bit_util::BitfieldSet(section_id, kNumFlags, kSectionIdBits, &temp_value);
   bit_util::BitfieldSet(term_frequency != kDefaultTermFrequency,
-                        kHasTermFrequency, /*len=*/1, &temp_value);
-  bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, /*len=*/1, &temp_value);
-  bit_util::BitfieldSet(is_in_prefix_section, kInPrefixSection,
-                        /*len=*/1, &temp_value);
+                        kHasTermFrequency, 1, &temp_value);
+  bit_util::BitfieldSet(is_prefix_hit, kPrefixHit, 1, &temp_value);
+  bit_util::BitfieldSet(is_in_prefix_section, kInPrefixSection, 1, &temp_value);
   value_ = temp_value;
 }
 
@@ -131,11 +94,6 @@ bool Hit::is_prefix_hit() const {
 
 bool Hit::is_in_prefix_section() const {
   return bit_util::BitfieldGet(value(), kInPrefixSection, 1);
-}
-
-Hit Hit::TranslateHit(Hit old_hit, DocumentId new_document_id) {
-  return Hit(old_hit.section_id(), new_document_id, old_hit.term_frequency(),
-             old_hit.is_in_prefix_section(), old_hit.is_prefix_hit());
 }
 
 bool Hit::EqualsDocumentIdAndSectionId::operator()(const Hit& hit1,

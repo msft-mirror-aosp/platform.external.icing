@@ -15,6 +15,7 @@
  */
 
 import static androidx.build.SupportConfig.*
+import static androidx.build.dependencies.DependenciesKt.*
 
 buildscript {
     dependencies {
@@ -42,13 +43,13 @@ android {
     sourceSets {
         main {
             java.srcDir 'java/src/'
+            manifest.srcFile 'AndroidManifest.xml'
             proto.srcDir 'proto/'
         }
         // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
         //  inside appsearch:appsearch.
         //androidTest.java.srcDir 'java/tests/instrumentation/'
     }
-    namespace "com.google.android.icing"
 }
 
 dependencies {
@@ -56,21 +57,18 @@ dependencies {
 
     implementation('com.google.protobuf:protobuf-javalite:3.10.0')
 
-    androidTestImplementation(libs.testCore)
-    androidTestImplementation(libs.testRules)
-    androidTestImplementation(libs.truth)
+    androidTestImplementation(ANDROIDX_TEST_CORE)
+    androidTestImplementation(ANDROIDX_TEST_RULES)
+    androidTestImplementation(TRUTH)
 }
 
 protobuf {
     protoc {
-        artifact = libs.protobufCompiler.get()
+        artifact = 'com.google.protobuf:protoc:3.10.0'
     }
 
     generateProtoTasks {
         all().each { task ->
-            project.tasks.named("extractReleaseAnnotations").configure {
-                it.dependsOn(task)
-            }
             task.builtins {
                 java {
                     option 'lite'
@@ -92,7 +90,7 @@ android.libraryVariants.all { variant ->
         // only renames the java classes. Remove them here since they are unused.
         // Expand the jar and remove any .proto files.
         from(zipTree(configurations.detachedConfiguration(
-                dependencies.create(libs.protobufLite.get())).getSingleFile())) {
+                dependencies.create(PROTOBUF_LITE)).getSingleFile())) {
             exclude("**/*.proto")
         }
 

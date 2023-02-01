@@ -30,9 +30,7 @@
 namespace icing {
 namespace lib {
 
-inline constexpr std::string_view kPropertySeparator = ".";
-inline constexpr std::string_view kLBracket = "[";
-inline constexpr std::string_view kRBracket = "]";
+inline constexpr char kPropertySeparator[] = ".";
 
 // This class provides section-related operations. It assigns sections according
 // to type configs and extracts section / sections from documents.
@@ -55,36 +53,27 @@ class SectionManager {
       const SchemaUtil::TypeConfigMap& type_config_map,
       const KeyMapper<SchemaTypeId>* schema_type_mapper);
 
-  // Finds contents of a section by section path (e.g. property1.property2)
-  // according to the template type T.
-  //
-  // Types of supported T:
-  // - std::string, std::string_view: return property.string_values()
-  // - int64_t                      : return property.int64_values()
+  // Finds content of a section by section path (e.g. property1.property2)
   //
   // Returns:
-  //   A vector of contents with the specified type on success
+  //   A string of content on success
   //   NOT_FOUND if:
   //     1. Property is optional and not found in the document
   //     2. section_path is invalid
-  //     3. Content is empty (could be caused by incorrect type T)
-  template <typename T>
-  libtextclassifier3::StatusOr<std::vector<T>> GetSectionContent(
-      const DocumentProto& document, std::string_view section_path) const;
+  //     3. Content is empty
+  libtextclassifier3::StatusOr<std::vector<std::string_view>>
+  GetStringSectionContent(const DocumentProto& document,
+                          std::string_view section_path) const;
 
-  // Finds contents of a section by id according to the template type T.
-  //
-  // Types of supported T:
-  // - std::string, std::string_view: return property.string_values()
-  // - int64_t                      : return property.int64_values()
+  // Finds content of a section by id
   //
   // Returns:
-  //   A vector of contents on success
+  //   A string of content on success
   //   INVALID_ARGUMENT if section id is invalid
   //   NOT_FOUND if type config name of document not found
-  template <typename T>
-  libtextclassifier3::StatusOr<std::vector<T>> GetSectionContent(
-      const DocumentProto& document, SectionId section_id) const;
+  libtextclassifier3::StatusOr<std::vector<std::string_view>>
+  GetStringSectionContent(const DocumentProto& document,
+                          SectionId section_id) const;
 
   // Returns the SectionMetadata associated with the SectionId that's in the
   // SchemaTypeId.
@@ -95,23 +84,15 @@ class SectionManager {
   libtextclassifier3::StatusOr<const SectionMetadata*> GetSectionMetadata(
       SchemaTypeId schema_type_id, SectionId section_id) const;
 
-  // Extracts all sections of different types from the given document and group
-  // them by type.
-  // - Sections are sorted by section id in ascending order.
-  // - Section ids start from 0.
-  // - Sections with empty content won't be returned.
+  // Extracts all sections from the given document, sections are sorted by
+  // section id in increasing order. Section ids start from 0. Sections with
+  // empty content won't be returned.
   //
   // Returns:
-  //   A SectionGroup instance on success
+  //   A list of sections on success
   //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<SectionGroup> ExtractSections(
+  libtextclassifier3::StatusOr<std::vector<Section>> ExtractSections(
       const DocumentProto& document) const;
-
-  // Returns:
-  //   - On success, the section metadatas for the specified type
-  //   - NOT_FOUND if the type config name is not present in the schema
-  libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
-  GetMetadataList(const std::string& type_config_name) const;
 
  private:
   // Use SectionManager::Create() to instantiate
