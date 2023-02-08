@@ -26,6 +26,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -70,65 +71,13 @@ namespace lib {
 //     choose sorted/unsorted bucket array.
 //   - Then we do binary search on the sorted bucket array and sequential search
 //     on the unsorted bucket array.
-class IntegerIndexStorage {
+class IntegerIndexStorage : public PersistentStorage {
  public:
-  // Crcs and Info will be written into the metadata file.
-  // File layout: <Crcs><Info>
-  // Crcs
-  struct Crcs {
-    static constexpr int32_t kFileOffset = 0;
-
-    struct ComponentCrcs {
-      uint32_t info_crc;
-      uint32_t sorted_buckets_crc;
-      uint32_t unsorted_buckets_crc;
-      uint32_t flash_index_storage_crc;
-
-      bool operator==(const ComponentCrcs& other) const {
-        return info_crc == other.info_crc &&
-               sorted_buckets_crc == other.sorted_buckets_crc &&
-               unsorted_buckets_crc == other.unsorted_buckets_crc &&
-               flash_index_storage_crc == other.flash_index_storage_crc;
-      }
-
-      Crc32 ComputeChecksum() const {
-        return Crc32(std::string_view(reinterpret_cast<const char*>(this),
-                                      sizeof(ComponentCrcs)));
-      }
-    } __attribute__((packed));
-
-    libtextclassifier3::Status Serialize(const Filesystem& filesystem,
-                                         int fd) const {
-      if (!filesystem.PWrite(fd, kFileOffset, this, sizeof(*this))) {
-        return absl_ports::InternalError("Failed to write crcs into file");
-      }
-      return libtextclassifier3::Status::OK;
-    }
-
-    bool operator==(const Crcs& other) const {
-      return all_crc == other.all_crc && component_crcs == other.component_crcs;
-    }
-
-    uint32_t all_crc;
-    ComponentCrcs component_crcs;
-  } __attribute__((packed));
-  static_assert(sizeof(Crcs) == 20, "");
-
-  // Info
   struct Info {
-    static constexpr int32_t kFileOffset = static_cast<int32_t>(sizeof(Crcs));
     static constexpr int32_t kMagic = 0xc4bf0ccc;
 
     int32_t magic;
     int32_t num_keys;
-
-    libtextclassifier3::Status Serialize(const Filesystem& filesystem,
-                                         int fd) const {
-      if (!filesystem.PWrite(fd, kFileOffset, this, sizeof(*this))) {
-        return absl_ports::InternalError("Failed to write info into file");
-      }
-      return libtextclassifier3::Status::OK;
-    }
 
     Crc32 ComputeChecksum() const {
       return Crc32(
@@ -136,9 +85,6 @@ class IntegerIndexStorage {
     }
   } __attribute__((packed));
   static_assert(sizeof(Info) == 8, "");
-
-  static constexpr int32_t kMetadataFileSize = sizeof(Crcs) + sizeof(Info);
-  static_assert(kMetadataFileSize == 28);
 
   // Bucket
   class Bucket {
@@ -219,19 +165,34 @@ class IntegerIndexStorage {
     std::vector<Bucket> custom_init_unsorted_buckets;
   };
 
-  static constexpr std::string_view kSubDirectory = "storage_dir";
+  // Metadata file layout: <Crcs><Info>
+  static constexpr int32_t kCrcsMetadataFileOffset = 0;
+  static constexpr int32_t kInfoMetadataFileOffset =
+      static_cast<int32_t>(sizeof(Crcs));
+  static constexpr int32_t kMetadataFileSize = sizeof(Crcs) + sizeof(Info);
+  static_assert(kMetadataFileSize == 20, "");
+
+  static constexpr WorkingPathType kWorkingPathType =
+      WorkingPathType::kDirectory;
   static constexpr std::string_view kFilePrefix = "integer_index_storage";
 
-  // Creates a new IntegerIndexStorage instance to index integers. For directory
-  // management purpose, we define working_dir as "<base_dir>/storage_dir", and
-  // all underlying files will be stored under it. If any of the underlying file
-  // is missing, then delete the whole working_dir and (re)initialize with new
-  // ones. Otherwise initialize and create the instance by existing files.
+  // Creates a new IntegerIndexStorage instance to index integers (for a single
+  // property). If any of the underlying file is missing, then delete the whole
+  // working_path and (re)initialize with new ones. Otherwise initialize and
+  // create the instance by existing files.
   //
   // filesystem: Object to make system level calls
-  // base_dir: Specifies the base directory for all integer index data related
-  //           files to be stored. As mentioned above, all files will be stored
-  //           under working_dir (which is "<base_dir>/storage_dir").
+  // working_path: Specifies the working path for PersistentStorage.
+  //               IntegerIndexStorage uses working path as working directory
+  //               and all related files will be stored under this directory. It
+  //               takes full ownership and of working_path_, including
+  //               creation/deletion. It is the caller's responsibility to
+  //               specify correct working path and avoid mixing different
+  //               persistent storages together under the same path. Also the
+  //               caller has the ownership for the parent directory of
+  //               working_path_, and it is responsible for parent directory
+  //               creation/deletion. See PersistentStorage for more details
+  //               about the concept of working_path.
   // options: Options instance.
   // posting_list_serializer: a PostingListIntegerIndexSerializer instance to
   //                          serialize/deserialize integer index data to/from
@@ -244,9 +205,20 @@ class IntegerIndexStorage {
   //   - INTERNAL_ERROR on I/O errors.
   //   - Any FileBackedVector/FlashIndexStorage errors.
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-  Create(const Filesystem& filesystem, std::string_view base_dir,
+  Create(const Filesystem& filesystem, std::string working_path,
          Options options,
          PostingListIntegerIndexSerializer* posting_list_serializer);
+
+  // Deletes IntegerIndexStorage under working_path.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  static libtextclassifier3::Status Discard(const Filesystem& filesystem,
+                                            const std::string& working_path) {
+    return PersistentStorage::Discard(filesystem, working_path,
+                                      kWorkingPathType);
+  }
 
   // Delete copy and move constructor/assignment operator.
   IntegerIndexStorage(const IntegerIndexStorage&) = delete;
@@ -255,7 +227,7 @@ class IntegerIndexStorage {
   IntegerIndexStorage(IntegerIndexStorage&&) = delete;
   IntegerIndexStorage& operator=(IntegerIndexStorage&&) = delete;
 
-  ~IntegerIndexStorage();
+  ~IntegerIndexStorage() override;
 
   // Batch adds new keys (of the same DocumentId and SectionId) into the integer
   // index storage.
@@ -286,42 +258,63 @@ class IntegerIndexStorage {
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
       int64_t query_key_lower, int64_t query_key_upper) const;
 
-  // Flushes content to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistToDisk();
-
  private:
-  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-  InitializeNewFiles(
-      const Filesystem& filesystem, std::string&& working_dir,
-      Options&& options,
-      PostingListIntegerIndexSerializer* posting_list_serializer);
-
-  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-  InitializeExistingFiles(
-      const Filesystem& filesystem, std::string&& working_dir,
-      Options&& options,
-      PostingListIntegerIndexSerializer* posting_list_serializer);
-
   explicit IntegerIndexStorage(
-      const Filesystem& filesystem, std::string&& working_dir,
+      const Filesystem& filesystem, std::string&& working_path,
       Options&& options,
       PostingListIntegerIndexSerializer* posting_list_serializer,
       std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
       std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
       std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
       std::unique_ptr<FlashIndexStorage> flash_index_storage)
-      : filesystem_(filesystem),
-        working_dir_(std::move(working_dir)),
+      : PersistentStorage(filesystem, std::move(working_path),
+                          kWorkingPathType),
         options_(std::move(options)),
         posting_list_serializer_(posting_list_serializer),
         metadata_mmapped_file_(std::move(metadata_mmapped_file)),
         sorted_buckets_(std::move(sorted_buckets)),
         unsorted_buckets_(std::move(unsorted_buckets)),
         flash_index_storage_(std::move(flash_index_storage)) {}
+
+  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
+  InitializeNewFiles(
+      const Filesystem& filesystem, std::string&& working_path,
+      Options&& options,
+      PostingListIntegerIndexSerializer* posting_list_serializer);
+
+  static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
+  InitializeExistingFiles(
+      const Filesystem& filesystem, std::string&& working_path,
+      Options&& options,
+      PostingListIntegerIndexSerializer* posting_list_serializer);
+
+  // Flushes contents of all storages to underlying files.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status PersistStoragesToDisk() override;
+
+  // Flushes contents of metadata file.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status PersistMetadataToDisk() override;
+
+  // Computes and returns Info checksum.
+  //
+  // Returns:
+  //   - Crc of the Info on success
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+
+  // Computes and returns all storages checksum. Checksums of bucket_storage_,
+  // entry_storage_ and kv_storage_ will be combined together by XOR.
+  //
+  // Returns:
+  //   - Crc of all storages on success
+  //   - INTERNAL_ERROR if any data inconsistency
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
 
   // Helper function to add keys in range [it_start, it_end) into the given
   // bucket. It handles the bucket and its corresponding posting list(s) to make
@@ -352,23 +345,25 @@ class IntegerIndexStorage {
       const std::vector<int64_t>::const_iterator& it_end,
       FileBackedVector<Bucket>::MutableView& mutable_bucket);
 
-  Crcs* crcs() {
-    return reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
-                                   Crcs::kFileOffset);
+  Crcs& crcs() override {
+    return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
+                                    kCrcsMetadataFileOffset);
   }
 
-  Info* info() {
-    return reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
-                                   Info::kFileOffset);
+  const Crcs& crcs() const override {
+    return *reinterpret_cast<const Crcs*>(metadata_mmapped_file_->region() +
+                                          kCrcsMetadataFileOffset);
   }
 
-  const Info* info() const {
-    return reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
-                                         Info::kFileOffset);
+  Info& info() {
+    return *reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
+                                    kInfoMetadataFileOffset);
   }
 
-  const Filesystem& filesystem_;
-  std::string working_dir_;
+  const Info& info() const {
+    return *reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
+                                          kInfoMetadataFileOffset);
+  }
 
   Options options_;
 

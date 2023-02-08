@@ -25,6 +25,8 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/file-backed-vector.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -48,9 +50,10 @@ using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Ne;
+using ::testing::Not;
 
 using Bucket = IntegerIndexStorage::Bucket;
-using Crcs = IntegerIndexStorage::Crcs;
+using Crcs = PersistentStorage::Crcs;
 using Info = IntegerIndexStorage::Info;
 using Options = IntegerIndexStorage::Options;
 
@@ -61,7 +64,11 @@ static constexpr SectionId kDefaultSectionId = 31;
 class IntegerIndexStorageTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    base_dir_ = GetTestTempDir() + "/integer_index_storage_test";
+    base_dir_ = GetTestTempDir() + "/icing";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
+                IsTrue());
+
+    working_path_ = base_dir_ + "/integer_index_storage_test";
 
     serializer_ = std::make_unique<PostingListIntegerIndexSerializer>();
   }
@@ -73,6 +80,7 @@ class IntegerIndexStorageTest : public ::testing::Test {
 
   Filesystem filesystem_;
   std::string base_dir_;
+  std::string working_path_;
   std::unique_ptr<PostingListIntegerIndexSerializer> serializer_;
 };
 
@@ -191,9 +199,10 @@ TEST_F(IntegerIndexStorageTest, OptionsInvalidCustomInitBucketsUnion) {
               IsFalse());
 }
 
-TEST_F(IntegerIndexStorageTest, InvalidBaseDir) {
-  EXPECT_THAT(IntegerIndexStorage::Create(filesystem_, "/dev/null", Options(),
-                                          serializer_.get()),
+TEST_F(IntegerIndexStorageTest, InvalidWorkingPath) {
+  EXPECT_THAT(IntegerIndexStorage::Create(
+                  filesystem_, "/dev/null/integer_index_storage_test",
+                  Options(), serializer_.get()),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
@@ -205,7 +214,7 @@ TEST_F(IntegerIndexStorageTest, CreateWithInvalidOptionsShouldFail) {
           Bucket(std::numeric_limits<int64_t>::min(), -100)});
   ASSERT_THAT(invalid_options.IsValid(), IsFalse());
 
-  EXPECT_THAT(IntegerIndexStorage::Create(filesystem_, base_dir_,
+  EXPECT_THAT(IntegerIndexStorage::Create(filesystem_, working_path_,
                                           invalid_options, serializer_.get()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -213,10 +222,10 @@ TEST_F(IntegerIndexStorageTest, CreateWithInvalidOptionsShouldFail) {
 TEST_F(IntegerIndexStorageTest, InitializeNewFiles) {
   {
     // Create new integer index storage
-    ASSERT_FALSE(filesystem_.DirectoryExists(base_dir_.c_str()));
+    ASSERT_FALSE(filesystem_.DirectoryExists(working_path_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
 
     ICING_ASSERT_OK(storage->PersistToDisk());
@@ -224,29 +233,25 @@ TEST_F(IntegerIndexStorageTest, InitializeNewFiles) {
 
   // Metadata file should be initialized correctly for both info and crcs
   // sections.
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", IntegerIndexStorage::kSubDirectory,
-                         "/", IntegerIndexStorage::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", IntegerIndexStorage::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   // Check info section
   Info info;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                Info::kFileOffset));
+                                IntegerIndexStorage::kInfoMetadataFileOffset));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.num_keys, Eq(0));
 
   // Check crcs section
   Crcs crcs;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
+                                IntegerIndexStorage::kCrcsMetadataFileOffset));
   // # of elements in sorted_buckets should be 1, so it should have non-zero
-  // crc value.
-  EXPECT_THAT(crcs.component_crcs.sorted_buckets_crc, Ne(0));
-  // Other empty file backed vectors should have 0 crc value.
-  EXPECT_THAT(crcs.component_crcs.unsorted_buckets_crc, Eq(0));
-  EXPECT_THAT(crcs.component_crcs.flash_index_storage_crc, Eq(0));
+  // all storages crc value.
+  EXPECT_THAT(crcs.component_crcs.storages_crc, Ne(0));
   EXPECT_THAT(crcs.component_crcs.info_crc,
               Eq(Crc32(std::string_view(reinterpret_cast<const char*>(&info),
                                         sizeof(Info)))
@@ -263,7 +268,7 @@ TEST_F(IntegerIndexStorageTest,
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+      IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                   serializer_.get()));
 
   // Insert some data.
@@ -276,7 +281,7 @@ TEST_F(IntegerIndexStorageTest,
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
-  EXPECT_THAT(IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+  EXPECT_THAT(IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                           serializer_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
@@ -285,7 +290,7 @@ TEST_F(IntegerIndexStorageTest, InitializationShouldSucceedWithPersistToDisk) {
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage1,
-      IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+      IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                   serializer_.get()));
 
   // Insert some data.
@@ -308,7 +313,7 @@ TEST_F(IntegerIndexStorageTest, InitializationShouldSucceedWithPersistToDisk) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage2,
-      IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+      IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                   serializer_.get()));
   EXPECT_THAT(
       Query(storage2.get(), /*key_lower=*/std::numeric_limits<int64_t>::min(),
@@ -323,7 +328,7 @@ TEST_F(IntegerIndexStorageTest, InitializationShouldSucceedAfterDestruction) {
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -340,7 +345,7 @@ TEST_F(IntegerIndexStorageTest, InitializationShouldSucceedAfterDestruction) {
     // we should be able to get the same contents.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
     EXPECT_THAT(
         Query(storage.get(), /*key_lower=*/std::numeric_limits<int64_t>::min(),
@@ -356,7 +361,7 @@ TEST_F(IntegerIndexStorageTest,
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
@@ -364,32 +369,32 @@ TEST_F(IntegerIndexStorageTest,
     ICING_ASSERT_OK(storage->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", IntegerIndexStorage::kSubDirectory,
-                         "/", IntegerIndexStorage::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", IntegerIndexStorage::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
+                                IntegerIndexStorage::kCrcsMetadataFileOffset));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
+                                 IntegerIndexStorage::kCrcsMetadataFileOffset,
+                                 &crcs, sizeof(Crcs)));
   metadata_sfd.reset();
 
   {
     // Attempt to create the integer index storage with metadata containing
     // corrupted all_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-        storage_or = IntegerIndexStorage::Create(filesystem_, base_dir_,
+        storage_or = IntegerIndexStorage::Create(filesystem_, working_path_,
                                                  Options(), serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(storage_or.status().error_message(),
-                HasSubstr("Invalid all crc for IntegerIndexStorage"));
+                HasSubstr("Invalid all crc"));
   }
 }
 
@@ -399,7 +404,7 @@ TEST_F(IntegerIndexStorageTest,
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
@@ -407,41 +412,41 @@ TEST_F(IntegerIndexStorageTest,
     ICING_ASSERT_OK(storage->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", IntegerIndexStorage::kSubDirectory,
-                         "/", IntegerIndexStorage::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", IntegerIndexStorage::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                Info::kFileOffset));
+                                IntegerIndexStorage::kInfoMetadataFileOffset));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
   info.num_keys += kCorruptedValueOffset;
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Info::kFileOffset, &info,
-                                 sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
+                                 IntegerIndexStorage::kInfoMetadataFileOffset,
+                                 &info, sizeof(Info)));
   {
     // Attempt to create the integer index storage with info that doesn't match
     // its checksum and confirm that it fails.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-        storage_or = IntegerIndexStorage::Create(filesystem_, base_dir_,
+        storage_or = IntegerIndexStorage::Create(filesystem_, working_path_,
                                                  Options(), serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(storage_or.status().error_message(),
-                HasSubstr("Invalid info crc for IntegerIndexStorage"));
+                HasSubstr("Invalid info crc"));
   }
 }
 
 TEST_F(IntegerIndexStorageTest,
-       InitializeExistingFilesWithWrongSortedBucketsCrcShouldFail) {
+       InitializeExistingFilesWithCorruptedSortedBucketsShouldFail) {
   {
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
@@ -449,42 +454,45 @@ TEST_F(IntegerIndexStorageTest,
     ICING_ASSERT_OK(storage->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", IntegerIndexStorage::kSubDirectory,
-                         "/", IntegerIndexStorage::kFilePrefix, ".m");
-  ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  ASSERT_TRUE(metadata_sfd.is_valid());
+  {
+    // Corrupt sorted buckets manually.
+    const std::string sorted_buckets_file_path = absl_ports::StrCat(
+        working_path_, "/", IntegerIndexStorage::kFilePrefix, ".s");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, sorted_buckets_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
+                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK(sorted_buckets->Append(Bucket(
+        /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
+    ICING_ASSERT_OK(sorted_buckets->PersistToDisk());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
+                               sorted_buckets->ComputeChecksum());
+    ASSERT_THAT(old_crc, Not(Eq(new_crc)));
+  }
 
-  Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
-
-  // Manually corrupt sorted_buckets_crc
-  crcs.component_crcs.sorted_buckets_crc += kCorruptedValueOffset;
-  crcs.all_crc = crcs.component_crcs.ComputeChecksum().Get();
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
   {
     // Attempt to create the integer index storage with metadata containing
     // corrupted sorted_buckets_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-        storage_or = IntegerIndexStorage::Create(filesystem_, base_dir_,
+        storage_or = IntegerIndexStorage::Create(filesystem_, working_path_,
                                                  Options(), serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-    EXPECT_THAT(
-        storage_or.status().error_message(),
-        HasSubstr("Mismatch crc with IntegerIndexStorage sorted buckets"));
+    EXPECT_THAT(storage_or.status().error_message(),
+                HasSubstr("Invalid storages crc"));
   }
 }
 
 TEST_F(IntegerIndexStorageTest,
-       InitializeExistingFilesWithWrongUnsortedBucketsCrcShouldFail) {
+       InitializeExistingFilesWithCorruptedUnsortedBucketsShouldFail) {
   {
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+        IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                     serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
@@ -492,42 +500,47 @@ TEST_F(IntegerIndexStorageTest,
     ICING_ASSERT_OK(storage->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", IntegerIndexStorage::kSubDirectory,
-                         "/", IntegerIndexStorage::kFilePrefix, ".m");
-  ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  ASSERT_TRUE(metadata_sfd.is_valid());
+  {
+    // Corrupt unsorted buckets manually.
+    const std::string unsorted_buckets_file_path = absl_ports::StrCat(
+        working_path_, "/", IntegerIndexStorage::kFilePrefix, ".u");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, unsorted_buckets_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+            /*max_file_size=*/sizeof(Bucket) * 100 +
+                FileBackedVector<Bucket>::Header::kHeaderSize));
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
+                               unsorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK(unsorted_buckets->Append(Bucket(
+        /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
+    ICING_ASSERT_OK(unsorted_buckets->PersistToDisk());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
+                               unsorted_buckets->ComputeChecksum());
+    ASSERT_THAT(old_crc, Not(Eq(new_crc)));
+  }
 
-  Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
-
-  // Manually corrupt unsorted_buckets_crc
-  crcs.component_crcs.unsorted_buckets_crc += kCorruptedValueOffset;
-  crcs.all_crc = crcs.component_crcs.ComputeChecksum().Get();
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
   {
     // Attempt to create the integer index storage with metadata containing
     // corrupted unsorted_buckets_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
-        storage_or = IntegerIndexStorage::Create(filesystem_, base_dir_,
+        storage_or = IntegerIndexStorage::Create(filesystem_, working_path_,
                                                  Options(), serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-    EXPECT_THAT(
-        storage_or.status().error_message(),
-        HasSubstr("Mismatch crc with IntegerIndexStorage unsorted buckets"));
+    EXPECT_THAT(storage_or.status().error_message(),
+                HasSubstr("Invalid storages crc"));
   }
 }
 
-// TODO(b/259744228): add test for corrupted flash_index_storage_crc
+// TODO(b/259744228): add test for corrupted flash_index_storage
 
 TEST_F(IntegerIndexStorageTest, InvalidQuery) {
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, base_dir_, Options(),
+      IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
                                   serializer_.get()));
   EXPECT_THAT(
       storage->GetIterator(/*query_key_lower=*/0, /*query_key_upper=*/-1),
@@ -546,7 +559,7 @@ TEST_F(IntegerIndexStorageTest, ExactQuerySortedBuckets) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -599,7 +612,7 @@ TEST_F(IntegerIndexStorageTest, ExactQueryUnsortedBuckets) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -658,7 +671,7 @@ TEST_F(IntegerIndexStorageTest, ExactQueryIdenticalKeys) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -699,7 +712,7 @@ TEST_F(IntegerIndexStorageTest, RangeQueryEmptyIntegerIndexStorage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -722,7 +735,7 @@ TEST_F(IntegerIndexStorageTest, RangeQuerySingleEntireSortedBucket) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -775,7 +788,7 @@ TEST_F(IntegerIndexStorageTest, RangeQuerySingleEntireUnsortedBucket) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -831,7 +844,7 @@ TEST_F(IntegerIndexStorageTest, RangeQuerySinglePartialSortedBucket) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -881,7 +894,7 @@ TEST_F(IntegerIndexStorageTest, RangeQuerySinglePartialUnsortedBucket) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -931,7 +944,7 @@ TEST_F(IntegerIndexStorageTest, RangeQueryMultipleBuckets) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -1018,7 +1031,7 @@ TEST_F(IntegerIndexStorageTest, BatchAdd) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -1059,7 +1072,7 @@ TEST_F(IntegerIndexStorageTest, MultipleKeysShouldMergeAndDedupeDocHitInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));
@@ -1093,7 +1106,7 @@ TEST_F(IntegerIndexStorageTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets)),
           serializer_.get()));

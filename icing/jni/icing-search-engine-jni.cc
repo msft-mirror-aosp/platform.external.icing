@@ -17,7 +17,6 @@
 #include <string>
 #include <utility>
 
-#include <google/protobuf/message_lite.h>
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/jni/scoped-primitive-array-critical.h"
@@ -33,6 +32,7 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include <google/protobuf/message_lite.h>
 
 namespace {
 
@@ -46,8 +46,8 @@ bool ParseProtoFromJniByteArray(JNIEnv* env, jbyteArray bytes,
   return protobuf->ParseFromArray(scoped_array.data(), scoped_array.size());
 }
 
-jbyteArray SerializeProtoToJniByteArray(
-    JNIEnv* env, const google::protobuf::MessageLite& protobuf) {
+jbyteArray SerializeProtoToJniByteArray(JNIEnv* env,
+                                        const google::protobuf::MessageLite& protobuf) {
   int size = protobuf.ByteSizeLong();
   jbyteArray ret = env->NewByteArray(size);
   if (ret == nullptr) {

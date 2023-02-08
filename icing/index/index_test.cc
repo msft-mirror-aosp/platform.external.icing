@@ -79,6 +79,7 @@ class IndexTest : public Test {
   }
 
   void TearDown() override {
+    index_.reset();
     icing_filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
   }
 

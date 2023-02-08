@@ -730,8 +730,8 @@ class DocumentStore {
   // Returns:
   //   - on success, a RepeatedPtrField for CorpusInfo collected.
   //   - OUT_OF_RANGE, this should never happen.
-  libtextclassifier3::StatusOr<google::protobuf::RepeatedPtrField<
-      DocumentDebugInfoProto::CorpusInfo>>
+  libtextclassifier3::StatusOr<
+      google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
   CollectCorpusInfo() const;
 };
 

@@ -70,7 +70,8 @@ class QueryProcessorTest
       : test_dir_(GetTestTempDir() + "/icing"),
         store_dir_(test_dir_ + "/store"),
         schema_store_dir_(test_dir_ + "/schema_store"),
-        index_dir_(test_dir_ + "/index") {}
+        index_dir_(test_dir_ + "/index"),
+        numeric_index_dir_(test_dir_ + "/numeric_index") {}
 
   void SetUp() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
@@ -104,7 +105,9 @@ class QueryProcessorTest
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
     // TODO(b/249829533): switch to use persistent numeric index.
-    numeric_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        numeric_index_,
+        DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -154,6 +157,7 @@ class QueryProcessorTest
  private:
   IcingFilesystem icing_filesystem_;
   const std::string index_dir_;
+  const std::string numeric_index_dir_;
 
  protected:
   std::unique_ptr<Index> index_;
@@ -223,17 +227,25 @@ TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   SearchSpecProto search_spec;
   search_spec.set_query("()");
   search_spec.set_search_type(GetParam());
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        QueryResults results,
+        query_processor_->ParseSearch(search_spec,
+                                      ScoringSpecProto::RankingStrategy::NONE));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      QueryResults results,
-      query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
-
-  // Descending order of valid DocumentIds
-  EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
-              ElementsAre(document_id2, document_id1));
-  EXPECT_THAT(results.query_terms, IsEmpty());
-  EXPECT_THAT(results.query_term_iterators, IsEmpty());
+    // Descending order of valid DocumentIds
+    EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
+                ElementsAre(document_id2, document_id1));
+    EXPECT_THAT(results.query_terms, IsEmpty());
+    EXPECT_THAT(results.query_term_iterators, IsEmpty());
+  } else {
+    // TODO(b/208654892): Resolve the difference between RAW_QUERY and ADVANCED
+    // regarding empty composite expressions.
+    EXPECT_THAT(query_processor_->ParseSearch(
+                    search_spec, ScoringSpecProto::RankingStrategy::NONE),
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  }
 }
 
 TEST_P(QueryProcessorTest, EmptyQueryMatchAllDocuments) {

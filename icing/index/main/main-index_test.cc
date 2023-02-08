@@ -100,6 +100,8 @@ class MainIndexTest : public testing::Test {
   }
 
   void TearDown() override {
+    term_id_codec_.reset();
+    lite_index_.reset();
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(index_dir_.c_str()));
   }
 

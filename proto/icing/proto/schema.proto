@@ -166,7 +166,7 @@ message IntegerIndexingConfig {
 
 // Describes how a property can be used to join this document with another
 // document. See JoinSpecProto (in search.proto) for more details.
-// Next tag: 2
+// Next tag: 3
 message JoinableConfig {
   // OPTIONAL: Indicates what joinable type the content value of this property
   // is.
@@ -185,6 +185,11 @@ message JoinableConfig {
     }
   }
   optional ValueType.Code value_type = 1;
+
+  // If the parent document a child document is joined to is deleted, delete the
+  // child document as well. This will only apply to children joined through
+  // QUALIFIED_ID, other (future) joinable value types won't use it.
+  optional bool propagate_delete = 2 [default = false];
 }
 
 // Describes the schema of a single property of Documents that belong to a

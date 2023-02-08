@@ -48,102 +48,26 @@ namespace lib {
 
 namespace {
 
-// Helper function to PWrite crcs and info to metadata_file_path.
-libtextclassifier3::Status WriteMetadata(
-    const Filesystem& filesystem, const std::string& metadata_file_path,
-    const IntegerIndexStorage::Crcs* crcs,
-    const IntegerIndexStorage::Info* info) {
-  ScopedFd sfd(filesystem.OpenForWrite(metadata_file_path.c_str()));
-  if (!sfd.is_valid()) {
-    return absl_ports::InternalError("Failed to create metadata file");
-  }
-
-  // Write crcs and info. File layout: <Crcs><Info>
-  ICING_RETURN_IF_ERROR(crcs->Serialize(filesystem, sfd.get()));
-  ICING_RETURN_IF_ERROR(info->Serialize(filesystem, sfd.get()));
-
-  return libtextclassifier3::Status::OK;
-}
-
-// Helper function to update checksums from info and storages to a Crcs
-// instance.
-libtextclassifier3::Status UpdateChecksums(
-    IntegerIndexStorage::Crcs* crcs, IntegerIndexStorage::Info* info,
-    FileBackedVector<IntegerIndexStorage::Bucket>* sorted_buckets,
-    FileBackedVector<IntegerIndexStorage::Bucket>* unsorted_buckets,
-    FlashIndexStorage* flash_index_storage) {
-  // Compute crcs
-  ICING_ASSIGN_OR_RETURN(Crc32 sorted_buckets_crc,
-                         sorted_buckets->ComputeChecksum());
-  ICING_ASSIGN_OR_RETURN(Crc32 unsorted_buckets_crc,
-                         unsorted_buckets->ComputeChecksum());
-
-  crcs->component_crcs.info_crc = info->ComputeChecksum().Get();
-  crcs->component_crcs.sorted_buckets_crc = sorted_buckets_crc.Get();
-  crcs->component_crcs.unsorted_buckets_crc = unsorted_buckets_crc.Get();
-  // TODO(b/259744228): implement and update flash_index_storage checksum
-  crcs->component_crcs.flash_index_storage_crc = 0;
-  crcs->all_crc = crcs->component_crcs.ComputeChecksum().Get();
-
-  return libtextclassifier3::Status::OK;
-}
-
-// Helper function to validate checksums.
-libtextclassifier3::Status ValidateChecksums(
-    const IntegerIndexStorage::Crcs* crcs,
-    const IntegerIndexStorage::Info* info,
-    FileBackedVector<IntegerIndexStorage::Bucket>* sorted_buckets,
-    FileBackedVector<IntegerIndexStorage::Bucket>* unsorted_buckets,
-    FlashIndexStorage* flash_index_storage) {
-  if (crcs->all_crc != crcs->component_crcs.ComputeChecksum().Get()) {
-    return absl_ports::FailedPreconditionError(
-        "Invalid all crc for IntegerIndexStorage");
-  }
-
-  if (crcs->component_crcs.info_crc != info->ComputeChecksum().Get()) {
-    return absl_ports::FailedPreconditionError(
-        "Invalid info crc for IntegerIndexStorage");
-  }
-
-  ICING_ASSIGN_OR_RETURN(Crc32 sorted_buckets_crc,
-                         sorted_buckets->ComputeChecksum());
-  if (crcs->component_crcs.sorted_buckets_crc != sorted_buckets_crc.Get()) {
-    return absl_ports::FailedPreconditionError(
-        "Mismatch crc with IntegerIndexStorage sorted buckets");
-  }
-
-  ICING_ASSIGN_OR_RETURN(Crc32 unsorted_buckets_crc,
-                         unsorted_buckets->ComputeChecksum());
-  if (crcs->component_crcs.unsorted_buckets_crc != unsorted_buckets_crc.Get()) {
-    return absl_ports::FailedPreconditionError(
-        "Mismatch crc with IntegerIndexStorage unsorted buckets");
-  }
-
-  // TODO(b/259744228): implement and verify flash_index_storage checksum
-
-  return libtextclassifier3::Status::OK;
-}
-
 // The following 4 methods are helper functions to get the correct file path of
 // metadata/sorted_buckets/unsorted_buckets/flash_index_storage, according to
 // the given working directory.
-std::string GetMetadataFilePath(std::string_view working_dir) {
-  return absl_ports::StrCat(working_dir, "/", IntegerIndexStorage::kFilePrefix,
+std::string GetMetadataFilePath(std::string_view working_path) {
+  return absl_ports::StrCat(working_path, "/", IntegerIndexStorage::kFilePrefix,
                             ".m");
 }
 
-std::string GetSortedBucketsFilePath(std::string_view working_dir) {
-  return absl_ports::StrCat(working_dir, "/", IntegerIndexStorage::kFilePrefix,
+std::string GetSortedBucketsFilePath(std::string_view working_path) {
+  return absl_ports::StrCat(working_path, "/", IntegerIndexStorage::kFilePrefix,
                             ".s");
 }
 
-std::string GetUnsortedBucketsFilePath(std::string_view working_dir) {
-  return absl_ports::StrCat(working_dir, "/", IntegerIndexStorage::kFilePrefix,
+std::string GetUnsortedBucketsFilePath(std::string_view working_path) {
+  return absl_ports::StrCat(working_path, "/", IntegerIndexStorage::kFilePrefix,
                             ".u");
 }
 
-std::string GetFlashIndexStorageFilePath(std::string_view working_dir) {
-  return absl_ports::StrCat(working_dir, "/", IntegerIndexStorage::kFilePrefix,
+std::string GetFlashIndexStorageFilePath(std::string_view working_path) {
+  return absl_ports::StrCat(working_path, "/", IntegerIndexStorage::kFilePrefix,
                             ".f");
 }
 
@@ -358,7 +282,7 @@ bool IntegerIndexStorage::Options::IsValid() const {
     return false;
   }
   std::sort(buckets.begin(), buckets.end());
-  int64_t expected_lower = std::numeric_limits<int64_t>::min();
+  int64_t prev_upper = std::numeric_limits<int64_t>::min();
   for (int i = 0; i < buckets.size(); ++i) {
     // key_lower should not be greater than key_upper and init bucket should
     // have invalid posting list identifier.
@@ -367,46 +291,46 @@ bool IntegerIndexStorage::Options::IsValid() const {
       return false;
     }
 
+    // Previous upper bound should not be INT64_MAX since it is not the last
+    // bucket.
+    if (prev_upper == std::numeric_limits<int64_t>::max()) {
+      return false;
+    }
+
+    int64_t expected_lower =
+        (i == 0 ? std::numeric_limits<int64_t>::min() : prev_upper + 1);
     if (buckets[i].key_lower() != expected_lower) {
       return false;
     }
 
-    // If it is the last bucket, then key_upper should be INT64_MAX. Otherwise
-    // it should not be INT64_MAX. Use XOR for this logic.
-    if ((buckets[i].key_upper() == std::numeric_limits<int64_t>::max()) ^
-        (i == buckets.size() - 1)) {
-      return false;
-    }
-    expected_lower = buckets[i].key_upper() + 1;
+    prev_upper = buckets[i].key_upper();
   }
 
-  return true;
+  return prev_upper == std::numeric_limits<int64_t>::max();
 }
 
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
 IntegerIndexStorage::Create(
-    const Filesystem& filesystem, std::string_view base_dir, Options options,
+    const Filesystem& filesystem, std::string working_path, Options options,
     PostingListIntegerIndexSerializer* posting_list_serializer) {
   if (!options.IsValid()) {
     return absl_ports::InvalidArgumentError(
         "Invalid IntegerIndexStorage options");
   }
 
-  std::string working_dir = absl_ports::StrCat(base_dir, "/", kSubDirectory);
-  if (!filesystem.FileExists(GetMetadataFilePath(working_dir).c_str()) ||
-      !filesystem.FileExists(GetSortedBucketsFilePath(working_dir).c_str()) ||
-      !filesystem.FileExists(GetUnsortedBucketsFilePath(working_dir).c_str()) ||
+  if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str()) ||
+      !filesystem.FileExists(GetSortedBucketsFilePath(working_path).c_str()) ||
       !filesystem.FileExists(
-          GetFlashIndexStorageFilePath(working_dir).c_str())) {
-    // Delete working_dir if any of them is missing, and reinitialize.
-    if (!filesystem.DeleteDirectoryRecursively(working_dir.c_str())) {
-      return absl_ports::InternalError(
-          absl_ports::StrCat("Failed to delete directory: ", working_dir));
-    }
-    return InitializeNewFiles(filesystem, std::move(working_dir),
+          GetUnsortedBucketsFilePath(working_path).c_str()) ||
+      !filesystem.FileExists(
+          GetFlashIndexStorageFilePath(working_path).c_str())) {
+    // Discard working_path if any of them is missing, and reinitialize.
+    ICING_RETURN_IF_ERROR(
+        PersistentStorage::Discard(filesystem, working_path, kWorkingPathType));
+    return InitializeNewFiles(filesystem, std::move(working_path),
                               std::move(options), posting_list_serializer);
   }
-  return InitializeExistingFiles(filesystem, std::move(working_dir),
+  return InitializeExistingFiles(filesystem, std::move(working_path),
                                  std::move(options), posting_list_serializer);
 }
 
@@ -414,7 +338,7 @@ IntegerIndexStorage::~IntegerIndexStorage() {
   if (!PersistToDisk().ok()) {
     ICING_LOG(WARNING)
         << "Failed to persist hash map to disk while destructing "
-        << working_dir_;
+        << working_path_;
   }
 }
 
@@ -645,33 +569,15 @@ IntegerIndexStorage::GetIterator(int64_t query_key_lower,
           query_key_lower, query_key_upper, std::move(bucket_pl_iters)));
 }
 
-libtextclassifier3::Status IntegerIndexStorage::PersistToDisk() {
-  ICING_RETURN_IF_ERROR(sorted_buckets_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(unsorted_buckets_->PersistToDisk());
-  if (!flash_index_storage_->PersistToDisk()) {
-    return absl_ports::InternalError(
-        "Fail to persist FlashIndexStorage to disk");
-  }
-
-  ICING_RETURN_IF_ERROR(UpdateChecksums(crcs(), info(), sorted_buckets_.get(),
-                                        unsorted_buckets_.get(),
-                                        flash_index_storage_.get()));
-  // Changes should have been applied to the underlying file when using
-  // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
-  // extra safety step to ensure they are written out.
-  ICING_RETURN_IF_ERROR(metadata_mmapped_file_->PersistToDisk());
-
-  return libtextclassifier3::Status::OK;
-}
-
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
 IntegerIndexStorage::InitializeNewFiles(
-    const Filesystem& filesystem, std::string&& working_dir, Options&& options,
+    const Filesystem& filesystem, std::string&& working_path, Options&& options,
     PostingListIntegerIndexSerializer* posting_list_serializer) {
+  // IntegerIndexStorage uses working_path as working directory path.
   // Create working directory.
-  if (!filesystem.CreateDirectoryRecursively(working_dir.c_str())) {
+  if (!filesystem.CreateDirectory(working_path.c_str())) {
     return absl_ports::InternalError(
-        absl_ports::StrCat("Failed to create directory: ", working_dir));
+        absl_ports::StrCat("Failed to create directory: ", working_path));
   }
 
   // TODO(b/259743562): [Optimization 1] decide max # buckets, unsorted buckets
@@ -683,7 +589,7 @@ IntegerIndexStorage::InitializeNewFiles(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
       FileBackedVector<Bucket>::Create(
-          filesystem, GetSortedBucketsFilePath(working_dir),
+          filesystem, GetSortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
           pre_mapping_mmap_size));
 
@@ -694,14 +600,14 @@ IntegerIndexStorage::InitializeNewFiles(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
       FileBackedVector<Bucket>::Create(
-          filesystem, GetUnsortedBucketsFilePath(working_dir),
+          filesystem, GetUnsortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
           pre_mapping_mmap_size));
 
   // Initialize flash_index_storage
   ICING_ASSIGN_OR_RETURN(
       FlashIndexStorage flash_index_storage,
-      FlashIndexStorage::Create(GetFlashIndexStorageFilePath(working_dir),
+      FlashIndexStorage::Create(GetFlashIndexStorageFilePath(working_path),
                                 &filesystem, posting_list_serializer));
 
   if (options.HasCustomInitBuckets()) {
@@ -736,47 +642,45 @@ IntegerIndexStorage::InitializeNewFiles(
   }
   ICING_RETURN_IF_ERROR(sorted_buckets->PersistToDisk());
 
-  // Create and initialize new info
-  Info new_info;
-  new_info.magic = Info::kMagic;
-  new_info.num_keys = 0;
-
-  // Compute checksums
-  Crcs new_crcs;
-  ICING_RETURN_IF_ERROR(
-      UpdateChecksums(&new_crcs, &new_info, sorted_buckets.get(),
-                      unsorted_buckets.get(), &flash_index_storage));
-
-  const std::string metadata_file_path = GetMetadataFilePath(working_dir);
-  // Write new metadata file
-  ICING_RETURN_IF_ERROR(
-      WriteMetadata(filesystem, metadata_file_path, &new_crcs, &new_info));
-
-  // Mmap the content of the crcs and info.
+  // Initialize metadata file. Create MemoryMappedFile with pre-mapping, and
+  // call GrowAndRemapIfNecessary to grow the underlying file.
   ICING_ASSIGN_OR_RETURN(
       MemoryMappedFile metadata_mmapped_file,
-      MemoryMappedFile::Create(filesystem, metadata_file_path,
+      MemoryMappedFile::Create(filesystem, GetMetadataFilePath(working_path),
                                MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
                                /*max_file_size=*/kMetadataFileSize,
                                /*pre_mapping_file_offset=*/0,
                                /*pre_mapping_mmap_size=*/kMetadataFileSize));
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file.GrowAndRemapIfNecessary(
+      /*file_offset=*/0, /*mmap_size=*/kMetadataFileSize));
 
-  return std::unique_ptr<IntegerIndexStorage>(new IntegerIndexStorage(
-      filesystem, std::move(working_dir), std::move(options),
-      posting_list_serializer,
-      std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
-      std::move(sorted_buckets), std::move(unsorted_buckets),
-      std::make_unique<FlashIndexStorage>(std::move(flash_index_storage))));
+  // Create instance.
+  auto new_integer_index_storage =
+      std::unique_ptr<IntegerIndexStorage>(new IntegerIndexStorage(
+          filesystem, std::move(working_path), std::move(options),
+          posting_list_serializer,
+          std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
+          std::move(sorted_buckets), std::move(unsorted_buckets),
+          std::make_unique<FlashIndexStorage>(std::move(flash_index_storage))));
+  // Initialize info content by writing mapped memory directly.
+  Info& info_ref = new_integer_index_storage->info();
+  info_ref.magic = Info::kMagic;
+  info_ref.num_keys = 0;
+  // Initialize new PersistentStorage. The initial checksums will be computed
+  // and set via InitializeNewStorage.
+  ICING_RETURN_IF_ERROR(new_integer_index_storage->InitializeNewStorage());
+
+  return new_integer_index_storage;
 }
 
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
 IntegerIndexStorage::InitializeExistingFiles(
-    const Filesystem& filesystem, std::string&& working_dir, Options&& options,
+    const Filesystem& filesystem, std::string&& working_path, Options&& options,
     PostingListIntegerIndexSerializer* posting_list_serializer) {
   // Mmap the content of the crcs and info.
   ICING_ASSIGN_OR_RETURN(
       MemoryMappedFile metadata_mmapped_file,
-      MemoryMappedFile::Create(filesystem, GetMetadataFilePath(working_dir),
+      MemoryMappedFile::Create(filesystem, GetMetadataFilePath(working_path),
                                MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
                                /*max_file_size=*/kMetadataFileSize,
                                /*pre_mapping_file_offset=*/0,
@@ -791,7 +695,7 @@ IntegerIndexStorage::InitializeExistingFiles(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
       FileBackedVector<Bucket>::Create(
-          filesystem, GetSortedBucketsFilePath(working_dir),
+          filesystem, GetSortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
           pre_mapping_mmap_size));
 
@@ -802,31 +706,67 @@ IntegerIndexStorage::InitializeExistingFiles(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
       FileBackedVector<Bucket>::Create(
-          filesystem, GetUnsortedBucketsFilePath(working_dir),
+          filesystem, GetUnsortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
           pre_mapping_mmap_size));
 
   // Initialize flash_index_storage
   ICING_ASSIGN_OR_RETURN(
       FlashIndexStorage flash_index_storage,
-      FlashIndexStorage::Create(GetFlashIndexStorageFilePath(working_dir),
+      FlashIndexStorage::Create(GetFlashIndexStorageFilePath(working_path),
                                 &filesystem, posting_list_serializer));
 
-  Crcs* crcs_ptr = reinterpret_cast<Crcs*>(
-      metadata_mmapped_file.mutable_region() + Crcs::kFileOffset);
-  Info* info_ptr = reinterpret_cast<Info*>(
-      metadata_mmapped_file.mutable_region() + Info::kFileOffset);
-  // Validate checksums of info and 3 storages.
-  ICING_RETURN_IF_ERROR(
-      ValidateChecksums(crcs_ptr, info_ptr, sorted_buckets.get(),
-                        unsorted_buckets.get(), &flash_index_storage));
+  // Create instance.
+  auto integer_index_storage =
+      std::unique_ptr<IntegerIndexStorage>(new IntegerIndexStorage(
+          filesystem, std::move(working_path), std::move(options),
+          posting_list_serializer,
+          std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
+          std::move(sorted_buckets), std::move(unsorted_buckets),
+          std::make_unique<FlashIndexStorage>(std::move(flash_index_storage))));
+  // Initialize existing PersistentStorage. Checksums will be validated.
+  ICING_RETURN_IF_ERROR(integer_index_storage->InitializeExistingStorage());
 
-  return std::unique_ptr<IntegerIndexStorage>(new IntegerIndexStorage(
-      filesystem, std::move(working_dir), std::move(options),
-      posting_list_serializer,
-      std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
-      std::move(sorted_buckets), std::move(unsorted_buckets),
-      std::make_unique<FlashIndexStorage>(std::move(flash_index_storage))));
+  // Validate other values of info and options.
+  // Magic should be consistent with the codebase.
+  if (integer_index_storage->info().magic != Info::kMagic) {
+    return absl_ports::FailedPreconditionError("Incorrect magic value");
+  }
+
+  return integer_index_storage;
+}
+
+libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk() {
+  ICING_RETURN_IF_ERROR(sorted_buckets_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(unsorted_buckets_->PersistToDisk());
+  if (!flash_index_storage_->PersistToDisk()) {
+    return absl_ports::InternalError(
+        "Fail to persist FlashIndexStorage to disk");
+  }
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status IntegerIndexStorage::PersistMetadataToDisk() {
+  // Changes should have been applied to the underlying file when using
+  // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
+  // extra safety step to ensure they are written out.
+  return metadata_mmapped_file_->PersistToDisk();
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndexStorage::ComputeInfoChecksum() {
+  return info().ComputeChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32>
+IntegerIndexStorage::ComputeStoragesChecksum() {
+  // Compute crcs
+  ICING_ASSIGN_OR_RETURN(Crc32 sorted_buckets_crc,
+                         sorted_buckets_->ComputeChecksum());
+  ICING_ASSIGN_OR_RETURN(Crc32 unsorted_buckets_crc,
+                         unsorted_buckets_->ComputeChecksum());
+
+  // TODO(b/259744228): implement and include flash_index_storage checksum
+  return Crc32(sorted_buckets_crc.Get() ^ unsorted_buckets_crc.Get());
 }
 
 libtextclassifier3::StatusOr<std::vector<IntegerIndexStorage::Bucket>>
