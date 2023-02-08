@@ -78,7 +78,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {
   ICING_ASSIGN_OR_RETURN(uint32_t tvi, lite_index_->GetTermId(term_));
   ICING_ASSIGN_OR_RETURN(uint32_t term_id,
                          term_id_codec_->EncodeTvi(tvi, TviType::LITE));
-  lite_index_->AppendHits(
+  lite_index_->FetchHits(
       term_id, section_restrict_mask_,
       /*only_from_prefix_sections=*/false,
       /*score_by=*/
@@ -105,7 +105,7 @@ DocHitInfoIteratorTermLitePrefix::RetrieveMoreHits() {
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id,
         term_id_codec_->EncodeTvi(it.GetValueIndex(), TviType::LITE));
-    lite_index_->AppendHits(
+    lite_index_->FetchHits(
         term_id, section_restrict_mask_,
         /*only_from_prefix_sections=*/!exact_match,
         /*score_by=*/

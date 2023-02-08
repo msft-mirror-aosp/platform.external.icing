@@ -27,6 +27,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/platform.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
@@ -36,10 +37,16 @@
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-data-file-helper.h"
+#include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/tokenizer-factory.h"
+#include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -73,12 +80,15 @@ class QueryVisitorTest : public ::testing::Test {
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
+    numeric_index_dir_ = test_dir_ + "/numeric_index";
     store_dir_ = test_dir_ + "/store";
     schema_store_dir_ = test_dir_ + "/schema_store";
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(index_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(store_dir_.c_str());
     filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+
+    jni_cache_ = GetTestJniCache();
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       // If we've specified using the reverse-JNI method for segmentation (i.e.
@@ -107,10 +117,23 @@ class QueryVisitorTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
-    numeric_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        numeric_index_,
+        DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/1000));
+
+    language_segmenter_factory::SegmenterOptions segmenter_options(
+        ULOC_US, jni_cache_.get());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        language_segmenter_,
+        language_segmenter_factory::Create(segmenter_options));
+
+    ICING_ASSERT_OK_AND_ASSIGN(tokenizer_,
+                               tokenizer_factory::CreateIndexingTokenizer(
+                                   StringIndexingConfig::TokenizerType::PLAIN,
+                                   language_segmenter_.get()));
   }
 
   libtextclassifier3::StatusOr<std::unique_ptr<Node>> ParseQueryHelper(
@@ -126,6 +149,7 @@ class QueryVisitorTest : public ::testing::Test {
   IcingFilesystem icing_filesystem_;
   std::string test_dir_;
   std::string index_dir_;
+  std::string numeric_index_dir_;
   std::string schema_store_dir_;
   std::string store_dir_;
   Clock clock_;
@@ -134,6 +158,9 @@ class QueryVisitorTest : public ::testing::Test {
   std::unique_ptr<Index> index_;
   std::unique_ptr<DummyNumericIndex<int64_t>> numeric_index_;
   std::unique_ptr<Normalizer> normalizer_;
+  std::unique_ptr<LanguageSegmenter> language_segmenter_;
+  std::unique_ptr<Tokenizer> tokenizer_;
+  std::unique_ptr<const JniCache> jni_cache_;
 };
 
 TEST_F(QueryVisitorTest, SimpleLessThan) {
@@ -157,7 +184,7 @@ TEST_F(QueryVisitorTest, SimpleLessThan) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -194,7 +221,7 @@ TEST_F(QueryVisitorTest, SimpleLessThanEq) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -231,7 +258,7 @@ TEST_F(QueryVisitorTest, SimpleEqual) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -268,7 +295,7 @@ TEST_F(QueryVisitorTest, SimpleGreaterThanEq) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -305,7 +332,7 @@ TEST_F(QueryVisitorTest, SimpleGreaterThan) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -344,7 +371,7 @@ TEST_F(QueryVisitorTest, DISABLED_IntMinLessThanEqual) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -382,7 +409,7 @@ TEST_F(QueryVisitorTest, IntMaxGreaterThanEqual) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -421,7 +448,7 @@ TEST_F(QueryVisitorTest, NestedPropertyLessThan) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -443,7 +470,7 @@ TEST_F(QueryVisitorTest, IntParsingError) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -457,7 +484,7 @@ TEST_F(QueryVisitorTest, NotEqualsUnsupported) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -502,7 +529,7 @@ TEST_F(QueryVisitorTest, LessThanTooManyOperandsInvalid) {
   auto root_node = std::make_unique<NaryOperatorNode>("<", std::move(args));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -526,7 +553,7 @@ TEST_F(QueryVisitorTest, LessThanTooFewOperandsInvalid) {
   auto root_node = std::make_unique<NaryOperatorNode>("<", std::move(args));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -559,7 +586,7 @@ TEST_F(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -570,7 +597,7 @@ TEST_F(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
 TEST_F(QueryVisitorTest, NeverVisitedReturnsInvalid) {
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
@@ -600,7 +627,7 @@ TEST_F(QueryVisitorTest, DISABLED_IntMinLessThanInvalid) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -630,7 +657,7 @@ TEST_F(QueryVisitorTest, IntMaxGreaterThanInvalid) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -638,41 +665,19 @@ TEST_F(QueryVisitorTest, IntMaxGreaterThanInvalid) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(QueryVisitorTest, SingleTerm) {
-  // Setup the index with docs 0, 1 and 2 holding the values "foo", "foo" and
-  // "bar" respectively.
-  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  editor.BufferTerm("foo");
-  editor.IndexAllBufferedTerms();
-
-  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
-                        /*namespace_id=*/0);
-  editor.BufferTerm("foo");
-  editor.IndexAllBufferedTerms();
-
-  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
-                        /*namespace_id=*/0);
-  editor.BufferTerm("bar");
-  editor.IndexAllBufferedTerms();
-
-  std::string query = "foo";
+TEST_F(QueryVisitorTest, NumericComparisonPropertyStringIsInvalid) {
+  // "price" is a STRING token, which cannot be a property name.
+  std::string query = R"("price" > 7)";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
-              UnorderedElementsAre("foo"));
-  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
-  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("foo"));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              ElementsAre(kDocumentId1, kDocumentId0));
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
@@ -698,7 +703,7 @@ TEST_F(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -750,7 +755,7 @@ TEST_F(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/false);
   root_node->Accept(&query_visitor);
@@ -801,7 +806,7 @@ TEST_F(QueryVisitorTest, SingleVerbatimTerm) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -854,7 +859,7 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingQuote) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -900,7 +905,7 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingEscape) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -948,7 +953,7 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -969,7 +974,7 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1018,7 +1023,7 @@ TEST_F(QueryVisitorTest, VerbatimTermNewLine) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1038,7 +1043,7 @@ TEST_F(QueryVisitorTest, VerbatimTermNewLine) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1081,7 +1086,7 @@ TEST_F(QueryVisitorTest, VerbatimTermEscapingComplex) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1132,7 +1137,7 @@ TEST_F(QueryVisitorTest, SingleMinusTerm) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1179,7 +1184,7 @@ TEST_F(QueryVisitorTest, SingleNotTerm) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1231,7 +1236,7 @@ TEST_F(QueryVisitorTest, NestedNotTerms) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1297,7 +1302,7 @@ TEST_F(QueryVisitorTest, DeeplyNestedNotTerms) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1335,7 +1340,7 @@ TEST_F(QueryVisitorTest, ImplicitAndTerms) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1373,7 +1378,7 @@ TEST_F(QueryVisitorTest, ExplicitAndTerms) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1411,7 +1416,7 @@ TEST_F(QueryVisitorTest, OrTerms) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1451,7 +1456,7 @@ TEST_F(QueryVisitorTest, AndOrTermPrecedence) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1471,7 +1476,7 @@ TEST_F(QueryVisitorTest, AndOrTermPrecedence) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1490,7 +1495,7 @@ TEST_F(QueryVisitorTest, AndOrTermPrecedence) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_three(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_three);
@@ -1545,7 +1550,7 @@ TEST_F(QueryVisitorTest, AndOrNotPrecedence) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1564,7 +1569,7 @@ TEST_F(QueryVisitorTest, AndOrNotPrecedence) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1625,7 +1630,7 @@ TEST_F(QueryVisitorTest, PropertyFilter) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1634,6 +1639,99 @@ TEST_F(QueryVisitorTest, PropertyFilter) {
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("foo"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo"));
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1, kDocumentId0));
+}
+
+TEST_F(QueryVisitorTest, PropertyFilterStringIsInvalid) {
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build()));
+
+  // "prop1" is a STRING token, which cannot be a property name.
+  std::string query = R"("prop1":foo)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(QueryVisitorTest, PropertyFilterNonNormalized) {
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("PROP1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("PROP2")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build()));
+  // Section ids are assigned alphabetically.
+  SectionId prop1_section_id = 0;
+  SectionId prop2_section_id = 1;
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
+  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  std::string query = "PROP1:foo";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(ExtractKeys(query_results.query_terms),
+              UnorderedElementsAre("PROP1"));
+  EXPECT_THAT(query_results.query_terms["PROP1"], UnorderedElementsAre("foo"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("foo"));
   EXPECT_THAT(query_results.features_in_use, IsEmpty());
@@ -1687,7 +1785,7 @@ TEST_F(QueryVisitorTest, PropertyFilterWithGrouping) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1750,7 +1848,7 @@ TEST_F(QueryVisitorTest, ValidNestedPropertyFilter) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1769,7 +1867,7 @@ TEST_F(QueryVisitorTest, ValidNestedPropertyFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1831,7 +1929,7 @@ TEST_F(QueryVisitorTest, InvalidNestedPropertyFilter) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1847,7 +1945,7 @@ TEST_F(QueryVisitorTest, InvalidNestedPropertyFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1906,7 +2004,7 @@ TEST_F(QueryVisitorTest, PropertyFilterWithNot) {
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor);
@@ -1922,7 +2020,7 @@ TEST_F(QueryVisitorTest, PropertyFilterWithNot) {
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
       index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
       /*needs_term_frequency_info_=*/true);
   root_node->Accept(&query_visitor_two);
@@ -1933,6 +2031,91 @@ TEST_F(QueryVisitorTest, PropertyFilterWithNot) {
   EXPECT_THAT(query_results.query_term_iterators, IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2));
+}
+
+TEST_F(QueryVisitorTest, SegmentationTest) {
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build()));
+  // Section ids are assigned alphabetically.
+  SectionId prop1_section_id = 0;
+  SectionId prop2_section_id = 1;
+
+  // ICU segmentation will break this into "每天" and "上班".
+  // CFStringTokenizer (ios) will break this into "每", "天" and "上班"
+  std::string query = "每天上班";
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("上班");
+  editor.IndexAllBufferedTerms();
+  editor = index_->Edit(kDocumentId0, prop2_section_id, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  if (IsCfStringTokenization()) {
+    editor.BufferTerm("每");
+    editor.BufferTerm("天");
+  } else {
+    editor.BufferTerm("每天");
+  }
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+  editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("上班");
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
+  editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  if (IsCfStringTokenization()) {
+    editor.BufferTerm("每");
+    editor.BufferTerm("天");
+  } else {
+    editor.BufferTerm("每天");
+  }
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  if (IsCfStringTokenization()) {
+    EXPECT_THAT(query_results.query_terms[""],
+                UnorderedElementsAre("每", "天", "上班"));
+    EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+                UnorderedElementsAre("每", "天", "上班"));
+  } else {
+    EXPECT_THAT(query_results.query_terms[""],
+                UnorderedElementsAre("每天", "上班"));
+    EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+                UnorderedElementsAre("每天", "上班"));
+  }
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId0));
 }
 
 }  // namespace

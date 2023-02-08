@@ -1873,8 +1873,7 @@ libtextclassifier3::Status DocumentStore::SetUsageScores(
 libtextclassifier3::StatusOr<
     google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
-  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
-      corpus_info;
+  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
       schema_store_->GetSchema();
   if (!schema_proto_or.ok()) {
@@ -1919,10 +1918,10 @@ DocumentStore::GetDebugInfo(int verbosity) const {
   ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
   debug_info.set_crc(crc.Get());
   if (verbosity > 0) {
-    ICING_ASSIGN_OR_RETURN(google::protobuf::RepeatedPtrField<
-                               DocumentDebugInfoProto::CorpusInfo>
-                               corpus_info,
-                           CollectCorpusInfo());
+    ICING_ASSIGN_OR_RETURN(
+        google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
+            corpus_info,
+        CollectCorpusInfo());
     *debug_info.mutable_corpus_info() = std::move(corpus_info);
   }
   return debug_info;
