@@ -62,7 +62,7 @@ class PostingListAccessor {
   // second-to-last posting list.
   FinalizeResult Finalize() &&;
 
-  virtual PostingListUsedSerializer* GetSerializer() = 0;
+  virtual PostingListSerializer* GetSerializer() = 0;
 
  protected:
   explicit PostingListAccessor(

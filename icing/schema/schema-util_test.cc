@@ -32,6 +32,7 @@ namespace {
 
 using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 
 // Properties/fields in a schema type
 constexpr char kEmailType[] = "EmailMessage";
@@ -927,7 +928,7 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
   // New schema gained a new indexed property.
   SchemaUtil::DependencyMap no_dependencies_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  schema_with_indexed_property, schema_with_unindexed_property,
+                  schema_with_unindexed_property, schema_with_indexed_property,
                   no_dependencies_map),
               Eq(schema_delta));
 
@@ -974,6 +975,123 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
                                                     no_dependencies_map),
               Eq(schema_delta));
+}
+
+TEST(SchemaUtilTest, ChangingJoinablePropertiesMakesJoinIncompatible) {
+  // Configure old schema
+  SchemaProto schema_with_joinable_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto schema_with_non_joinable_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta expected_schema_delta;
+  expected_schema_delta.schema_types_join_incompatible.insert(kPersonType);
+
+  // New schema gained a new joinable property.
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_non_joinable_property,
+                  schema_with_joinable_property, no_dependencies_map),
+              Eq(expected_schema_delta));
+
+  // New schema lost a joinable property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_joinable_property,
+                  schema_with_non_joinable_property, no_dependencies_map),
+              Eq(expected_schema_delta));
+}
+
+TEST(SchemaUtilTest, AddingNewJoinablePropertyMakesJoinIncompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewJoinableProperty")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta expected_schema_delta;
+  expected_schema_delta.schema_types_join_incompatible.insert(kPersonType);
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map),
+              Eq(expected_schema_delta));
+}
+
+TEST(SchemaUtilTest, AddingNewNonJoinablePropertyShouldRemainJoinCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("JoinableProperty")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("JoinableProperty")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewProperty")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependencyMap no_dependencies_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependencies_map)
+                  .schema_types_join_incompatible,
+              IsEmpty());
 }
 
 TEST(SchemaUtilTest, AddingTypeIsCompatible) {

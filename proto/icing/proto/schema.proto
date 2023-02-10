@@ -166,7 +166,7 @@ message IntegerIndexingConfig {
 
 // Describes how a property can be used to join this document with another
 // document. See JoinSpecProto (in search.proto) for more details.
-// Next tag: 2
+// Next tag: 3
 message JoinableConfig {
   // OPTIONAL: Indicates what joinable type the content value of this property
   // is.
@@ -185,6 +185,11 @@ message JoinableConfig {
     }
   }
   optional ValueType.Code value_type = 1;
+
+  // If the parent document a child document is joined to is deleted, delete the
+  // child document as well. This will only apply to children joined through
+  // QUALIFIED_ID, other (future) joinable value types won't use it.
+  optional bool propagate_delete = 2 [default = false];
 }
 
 // Describes the schema of a single property of Documents that belong to a
@@ -290,7 +295,7 @@ message SchemaProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 8
+// Next tag: 9
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -329,6 +334,14 @@ message SetSchemaResultProto {
 
   // Overall time used for the function call.
   optional int32 latency_ms = 7;
+
+  // Schema types that were changed in a way that was backwards compatible, but
+  // invalidated the joinable cache.
+  //
+  // For example, a property was set non joinable in the old schema definition,
+  // but changed to joinable in the new definition. In this case, this property
+  // will be considered join incompatible when setting new schema.
+  repeated string join_incompatible_changed_schema_types = 8;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

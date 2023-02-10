@@ -24,7 +24,9 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/crc32.h"
@@ -34,6 +36,7 @@ using ::testing::Eq;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::IsTrue;
 using ::testing::Key;
 using ::testing::Lt;
 using ::testing::Not;
@@ -48,7 +51,7 @@ namespace lib {
 namespace {
 
 using Bucket = PersistentHashMap::Bucket;
-using Crcs = PersistentHashMap::Crcs;
+using Crcs = PersistentStorage::Crcs;
 using Entry = PersistentHashMap::Entry;
 using Info = PersistentHashMap::Info;
 using Options = PersistentHashMap::Options;
@@ -59,7 +62,11 @@ static constexpr int32_t kTestInitNumBuckets = 1;
 class PersistentHashMapTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    base_dir_ = GetTestTempDir() + "/persistent_hash_map_test";
+    base_dir_ = GetTestTempDir() + "/icing";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
+                IsTrue());
+
+    working_path_ = base_dir_ + "/persistent_hash_map_test";
   }
 
   void TearDown() override {
@@ -93,6 +100,7 @@ class PersistentHashMapTest : public ::testing::Test {
 
   Filesystem filesystem_;
   std::string base_dir_;
+  std::string working_path_;
 };
 
 TEST_F(PersistentHashMapTest, OptionsInvalidValueTypeSize) {
@@ -185,11 +193,11 @@ TEST_F(PersistentHashMapTest,
   EXPECT_FALSE(options.IsValid());
 }
 
-TEST_F(PersistentHashMapTest, InvalidBaseDir) {
-  EXPECT_THAT(
-      PersistentHashMap::Create(filesystem_, "/dev/null",
-                                Options(/*value_type_size_in=*/sizeof(int))),
-      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+TEST_F(PersistentHashMapTest, InvalidWorkingPath) {
+  EXPECT_THAT(PersistentHashMap::Create(
+                  filesystem_, "/dev/null/persistent_hash_map_test",
+                  Options(/*value_type_size_in=*/sizeof(int))),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 TEST_F(PersistentHashMapTest, CreateWithInvalidOptionsShouldFail) {
@@ -197,16 +205,16 @@ TEST_F(PersistentHashMapTest, CreateWithInvalidOptionsShouldFail) {
   ASSERT_FALSE(invalid_options.IsValid());
 
   EXPECT_THAT(
-      PersistentHashMap::Create(filesystem_, base_dir_, invalid_options),
+      PersistentHashMap::Create(filesystem_, working_path_, invalid_options),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(PersistentHashMapTest, InitializeNewFiles) {
   {
-    ASSERT_FALSE(filesystem_.DirectoryExists(base_dir_.c_str()));
+    ASSERT_FALSE(filesystem_.DirectoryExists(working_path_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_,
+        PersistentHashMap::Create(filesystem_, working_path_,
                                   Options(/*value_type_size_in=*/sizeof(int))));
     EXPECT_THAT(persistent_hash_map, Pointee(IsEmpty()));
 
@@ -215,17 +223,16 @@ TEST_F(PersistentHashMapTest, InitializeNewFiles) {
 
   // Metadata file should be initialized correctly for both info and crcs
   // sections.
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", PersistentHashMap::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   // Check info section
   Info info;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                Info::kFileOffset));
-  EXPECT_THAT(info.version, Eq(PersistentHashMap::kVersion));
+                                PersistentHashMap::kInfoMetadataFileOffset));
+  EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.value_type_size, Eq(sizeof(int)));
   EXPECT_THAT(info.max_load_factor_percent,
               Eq(Options::kDefaultMaxLoadFactorPercent));
@@ -235,13 +242,10 @@ TEST_F(PersistentHashMapTest, InitializeNewFiles) {
   // Check crcs section
   Crcs crcs;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
+                                PersistentHashMap::kCrcsMetadataFileOffset));
   // # of elements in bucket_storage should be 1, so it should have non-zero
-  // crc value.
-  EXPECT_THAT(crcs.component_crcs.bucket_storage_crc, Not(Eq(0)));
-  // Other empty file backed vectors should have 0 crc value.
-  EXPECT_THAT(crcs.component_crcs.entry_storage_crc, Eq(0));
-  EXPECT_THAT(crcs.component_crcs.kv_storage_crc, Eq(0));
+  // all storages crc value.
+  EXPECT_THAT(crcs.component_crcs.storages_crc, Not(Eq(0)));
   EXPECT_THAT(crcs.component_crcs.info_crc,
               Eq(Crc32(std::string_view(reinterpret_cast<const char*>(&info),
                                         sizeof(Info)))
@@ -260,7 +264,7 @@ TEST_F(PersistentHashMapTest, InitializeNewFilesWithCustomInitNumBuckets) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -279,7 +283,7 @@ TEST_F(PersistentHashMapTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/1,
@@ -301,7 +305,7 @@ TEST_F(PersistentHashMapTest, InitNumBucketsShouldNotAffectExistingFiles) {
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     EXPECT_THAT(persistent_hash_map->num_buckets(),
                 Eq(original_init_num_buckets));
 
@@ -314,7 +318,7 @@ TEST_F(PersistentHashMapTest, InitNumBucketsShouldNotAffectExistingFiles) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
-      PersistentHashMap::Create(filesystem_, base_dir_, options));
+      PersistentHashMap::Create(filesystem_, working_path_, options));
   // # of buckets should still be the original value.
   EXPECT_THAT(persistent_hash_map->num_buckets(),
               Eq(original_init_num_buckets));
@@ -327,7 +331,7 @@ TEST_F(PersistentHashMapTest,
   // Create new persistent hash map
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
-      PersistentHashMap::Create(filesystem_, base_dir_, options));
+      PersistentHashMap::Create(filesystem_, working_path_, options));
 
   // Put some key value pairs.
   ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
@@ -343,7 +347,7 @@ TEST_F(PersistentHashMapTest,
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
-  EXPECT_THAT(PersistentHashMap::Create(filesystem_, base_dir_, options),
+  EXPECT_THAT(PersistentHashMap::Create(filesystem_, working_path_, options),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -353,7 +357,7 @@ TEST_F(PersistentHashMapTest, InitializationShouldSucceedWithPersistToDisk) {
   // Create new persistent hash map
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map1,
-      PersistentHashMap::Create(filesystem_, base_dir_, options));
+      PersistentHashMap::Create(filesystem_, working_path_, options));
 
   // Put some key value pairs.
   ICING_ASSERT_OK(persistent_hash_map1->Put("a", Serialize(1).data()));
@@ -374,7 +378,7 @@ TEST_F(PersistentHashMapTest, InitializationShouldSucceedWithPersistToDisk) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map2,
-      PersistentHashMap::Create(filesystem_, base_dir_, options));
+      PersistentHashMap::Create(filesystem_, working_path_, options));
   EXPECT_THAT(persistent_hash_map2, Pointee(SizeIs(2)));
   EXPECT_THAT(GetValueByKey(persistent_hash_map2.get(), "a"), IsOkAndHolds(1));
   EXPECT_THAT(GetValueByKey(persistent_hash_map2.get(), "b"), IsOkAndHolds(2));
@@ -387,7 +391,7 @@ TEST_F(PersistentHashMapTest, InitializationShouldSucceedAfterDestruction) {
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("c", Serialize(3).data()));
@@ -407,10 +411,64 @@ TEST_F(PersistentHashMapTest, InitializationShouldSucceedAfterDestruction) {
     // we should be able to get the same contents.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     EXPECT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
     EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
     EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "b"), IsOkAndHolds(2));
+  }
+}
+
+TEST_F(PersistentHashMapTest,
+       InitializeExistingFilesWithDifferentMagicShouldFail) {
+  Options options(/*value_type_size_in=*/sizeof(int));
+
+  {
+    // Create new persistent hash map
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<PersistentHashMap> persistent_hash_map,
+        PersistentHashMap::Create(filesystem_, working_path_, options));
+    ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
+
+    ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
+  }
+
+  {
+    // Manually change kMagic and update checksum
+    const std::string metadata_file_path = absl_ports::StrCat(
+        working_path_, "/", PersistentHashMap::kFilePrefix, ".m");
+    ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
+    ASSERT_TRUE(metadata_sfd.is_valid());
+
+    Crcs crcs;
+    ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                  PersistentHashMap::kCrcsMetadataFileOffset));
+
+    Info info;
+    ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                  PersistentHashMap::kInfoMetadataFileOffset));
+
+    // Manually change magic and update checksums.
+    info.magic += kCorruptedValueOffset;
+    crcs.component_crcs.info_crc = info.ComputeChecksum().Get();
+    crcs.all_crc = crcs.component_crcs.ComputeChecksum().Get();
+    ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
+                                   PersistentHashMap::kCrcsMetadataFileOffset,
+                                   &crcs, sizeof(Crcs)));
+    ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
+                                   PersistentHashMap::kInfoMetadataFileOffset,
+                                   &info, sizeof(Info)));
+  }
+
+  {
+    // Attempt to create the persistent hash map with different magic. This
+    // should fail.
+    libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
+        persistent_hash_map_or =
+            PersistentHashMap::Create(filesystem_, working_path_, options);
+    EXPECT_THAT(persistent_hash_map_or,
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+    EXPECT_THAT(persistent_hash_map_or.status().error_message(),
+                HasSubstr("PersistentHashMap header magic mismatch"));
   }
 }
 
@@ -420,7 +478,7 @@ TEST_F(PersistentHashMapTest,
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_,
+        PersistentHashMap::Create(filesystem_, working_path_,
                                   Options(/*value_type_size_in=*/sizeof(int))));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
 
@@ -433,7 +491,7 @@ TEST_F(PersistentHashMapTest,
     ASSERT_THAT(sizeof(char), Not(Eq(sizeof(int))));
     libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
         persistent_hash_map_or = PersistentHashMap::Create(
-            filesystem_, base_dir_,
+            filesystem_, working_path_,
             Options(/*value_type_size_in=*/sizeof(char)));
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
@@ -449,7 +507,7 @@ TEST_F(PersistentHashMapTest,
   // Create new persistent hash map
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
-      PersistentHashMap::Create(filesystem_, base_dir_, options));
+      PersistentHashMap::Create(filesystem_, working_path_, options));
   ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
   ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
 
@@ -461,7 +519,7 @@ TEST_F(PersistentHashMapTest,
     options.max_num_entries = 1;
     ASSERT_TRUE(options.IsValid());
 
-    EXPECT_THAT(PersistentHashMap::Create(filesystem_, base_dir_, options),
+    EXPECT_THAT(PersistentHashMap::Create(filesystem_, working_path_, options),
                 StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   }
 
@@ -478,7 +536,7 @@ TEST_F(PersistentHashMapTest,
     options.max_num_entries = 1;
     ASSERT_TRUE(options.IsValid());
 
-    EXPECT_THAT(PersistentHashMap::Create(filesystem_, base_dir_, options),
+    EXPECT_THAT(PersistentHashMap::Create(filesystem_, working_path_, options),
                 StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   }
 }
@@ -490,26 +548,26 @@ TEST_F(PersistentHashMapTest, InitializeExistingFilesWithWrongAllCrc) {
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", PersistentHashMap::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
+                                PersistentHashMap::kCrcsMetadataFileOffset));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
+  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
+                                 PersistentHashMap::kCrcsMetadataFileOffset,
+                                 &crcs, sizeof(Crcs)));
   metadata_sfd.reset();
 
   {
@@ -517,11 +575,11 @@ TEST_F(PersistentHashMapTest, InitializeExistingFilesWithWrongAllCrc) {
     // corrupted all_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
         persistent_hash_map_or =
-            PersistentHashMap::Create(filesystem_, base_dir_, options);
+            PersistentHashMap::Create(filesystem_, working_path_, options);
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(persistent_hash_map_or.status().error_message(),
-                HasSubstr("Invalid all crc for PersistentHashMap"));
+                HasSubstr("Invalid all crc"));
   }
 }
 
@@ -533,173 +591,169 @@ TEST_F(PersistentHashMapTest,
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", PersistentHashMap::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                Info::kFileOffset));
+                                PersistentHashMap::kInfoMetadataFileOffset));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
   info.num_deleted_entries += kCorruptedValueOffset;
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Info::kFileOffset, &info,
-                                 sizeof(Info)));
+  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(),
+                                 PersistentHashMap::kInfoMetadataFileOffset,
+                                 &info, sizeof(Info)));
   {
     // Attempt to create the persistent hash map with info that doesn't match
     // its checksum and confirm that it fails.
     libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
         persistent_hash_map_or =
-            PersistentHashMap::Create(filesystem_, base_dir_, options);
+            PersistentHashMap::Create(filesystem_, working_path_, options);
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(persistent_hash_map_or.status().error_message(),
-                HasSubstr("Invalid info crc for PersistentHashMap"));
+                HasSubstr("Invalid info crc"));
   }
 }
 
 TEST_F(PersistentHashMapTest,
-       InitializeExistingFilesWithWrongBucketStorageCrc) {
+       InitializeExistingFilesWithCorruptedBucketStorage) {
   Options options(/*value_type_size_in=*/sizeof(int));
 
   {
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
-  ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  ASSERT_TRUE(metadata_sfd.is_valid());
+  {
+    // Update bucket storage manually.
+    const std::string bucket_storage_file_path = absl_ports::StrCat(
+        working_path_, "/", PersistentHashMap::kFilePrefix, ".b");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> bucket_storage,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, bucket_storage_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
+                               bucket_storage->ComputeChecksum());
+    ICING_ASSERT_OK(bucket_storage->Append(Bucket()));
+    ICING_ASSERT_OK(bucket_storage->PersistToDisk());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
+                               bucket_storage->ComputeChecksum());
+    ASSERT_THAT(old_crc, Not(Eq(new_crc)));
+  }
 
-  Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
-
-  // Manually corrupt bucket_storage_crc
-  crcs.component_crcs.bucket_storage_crc += kCorruptedValueOffset;
-  crcs.all_crc = Crc32(std::string_view(
-                           reinterpret_cast<const char*>(&crcs.component_crcs),
-                           sizeof(Crcs::ComponentCrcs)))
-                     .Get();
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
   {
     // Attempt to create the persistent hash map with metadata containing
     // corrupted bucket_storage_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
         persistent_hash_map_or =
-            PersistentHashMap::Create(filesystem_, base_dir_, options);
+            PersistentHashMap::Create(filesystem_, working_path_, options);
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-    EXPECT_THAT(
-        persistent_hash_map_or.status().error_message(),
-        HasSubstr("Mismatch crc with PersistentHashMap bucket storage"));
+    EXPECT_THAT(persistent_hash_map_or.status().error_message(),
+                HasSubstr("Invalid storages crc"));
   }
 }
 
-TEST_F(PersistentHashMapTest, InitializeExistingFilesWithWrongEntryStorageCrc) {
+TEST_F(PersistentHashMapTest,
+       InitializeExistingFilesWithCorruptedEntryStorage) {
   Options options(/*value_type_size_in=*/sizeof(int));
 
   {
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
-  ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  ASSERT_TRUE(metadata_sfd.is_valid());
+  {
+    // Update entry storage manually.
+    const std::string entry_storage_file_path = absl_ports::StrCat(
+        working_path_, "/", PersistentHashMap::kFilePrefix, ".e");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Entry>> entry_storage,
+        FileBackedVector<Entry>::Create(
+            filesystem_, entry_storage_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, entry_storage->ComputeChecksum());
+    ICING_ASSERT_OK(entry_storage->Append(
+        Entry(/*key_value_index=*/-1, /*next_entry_index=*/-1)));
+    ICING_ASSERT_OK(entry_storage->PersistToDisk());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, entry_storage->ComputeChecksum());
+    ASSERT_THAT(old_crc, Not(Eq(new_crc)));
+  }
 
-  Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
-
-  // Manually corrupt entry_storage_crc
-  crcs.component_crcs.entry_storage_crc += kCorruptedValueOffset;
-  crcs.all_crc = Crc32(std::string_view(
-                           reinterpret_cast<const char*>(&crcs.component_crcs),
-                           sizeof(Crcs::ComponentCrcs)))
-                     .Get();
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
   {
     // Attempt to create the persistent hash map with metadata containing
     // corrupted entry_storage_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
         persistent_hash_map_or =
-            PersistentHashMap::Create(filesystem_, base_dir_, options);
+            PersistentHashMap::Create(filesystem_, working_path_, options);
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(persistent_hash_map_or.status().error_message(),
-                HasSubstr("Mismatch crc with PersistentHashMap entry storage"));
+                HasSubstr("Invalid storages crc"));
   }
 }
 
 TEST_F(PersistentHashMapTest,
-       InitializeExistingFilesWithWrongKeyValueStorageCrc) {
+       InitializeExistingFilesWithCorruptedKeyValueStorage) {
   Options options(/*value_type_size_in=*/sizeof(int));
 
   {
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
-  ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
-  ASSERT_TRUE(metadata_sfd.is_valid());
+  {
+    // Update kv storage manually.
+    const std::string kv_storage_file_path = absl_ports::StrCat(
+        working_path_, "/", PersistentHashMap::kFilePrefix, ".k");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> kv_storage,
+        FileBackedVector<char>::Create(
+            filesystem_, kv_storage_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, kv_storage->ComputeChecksum());
+    ICING_ASSERT_OK(kv_storage->Append('z'));
+    ICING_ASSERT_OK(kv_storage->PersistToDisk());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, kv_storage->ComputeChecksum());
+    ASSERT_THAT(old_crc, Not(Eq(new_crc)));
+  }
 
-  Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                Crcs::kFileOffset));
-
-  // Manually corrupt kv_storage_crc
-  crcs.component_crcs.kv_storage_crc += kCorruptedValueOffset;
-  crcs.all_crc = Crc32(std::string_view(
-                           reinterpret_cast<const char*>(&crcs.component_crcs),
-                           sizeof(Crcs::ComponentCrcs)))
-                     .Get();
-  ASSERT_TRUE(filesystem_.PWrite(metadata_sfd.get(), Crcs::kFileOffset, &crcs,
-                                 sizeof(Crcs)));
   {
     // Attempt to create the persistent hash map with metadata containing
     // corrupted kv_storage_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
         persistent_hash_map_or =
-            PersistentHashMap::Create(filesystem_, base_dir_, options);
+            PersistentHashMap::Create(filesystem_, working_path_, options);
     EXPECT_THAT(persistent_hash_map_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-    EXPECT_THAT(
-        persistent_hash_map_or.status().error_message(),
-        HasSubstr("Mismatch crc with PersistentHashMap key value storage"));
+    EXPECT_THAT(persistent_hash_map_or.status().error_message(),
+                HasSubstr("Invalid storages crc"));
   }
 }
 
@@ -716,7 +770,7 @@ TEST_F(PersistentHashMapTest,
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
 
@@ -739,7 +793,7 @@ TEST_F(PersistentHashMapTest,
     // Also verify all entries should remain unchanged.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
 
     EXPECT_THAT(persistent_hash_map, Pointee(SizeIs(2)));
     EXPECT_THAT(GetValueByKey(persistent_hash_map.get(), "a"), IsOkAndHolds(1));
@@ -748,15 +802,14 @@ TEST_F(PersistentHashMapTest,
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
 
-  const std::string metadata_file_path =
-      absl_ports::StrCat(base_dir_, "/", PersistentHashMap::kSubDirectory, "/",
-                         PersistentHashMap::kFilePrefix, ".m");
+  const std::string metadata_file_path = absl_ports::StrCat(
+      working_path_, "/", PersistentHashMap::kFilePrefix, ".m");
   ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
   ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                Info::kFileOffset));
+                                PersistentHashMap::kInfoMetadataFileOffset));
   EXPECT_THAT(info.max_load_factor_percent,
               Eq(options.max_load_factor_percent));
 
@@ -765,7 +818,7 @@ TEST_F(PersistentHashMapTest,
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
 
     ICING_ASSERT_OK(persistent_hash_map->PersistToDisk());
   }
@@ -786,7 +839,7 @@ TEST_F(PersistentHashMapTest,
     // Create new persistent hash map
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
     ICING_ASSERT_OK(persistent_hash_map->Put("a", Serialize(1).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("b", Serialize(2).data()));
     ICING_ASSERT_OK(persistent_hash_map->Put("c", Serialize(3).data()));
@@ -816,7 +869,7 @@ TEST_F(PersistentHashMapTest,
     // should remain the same.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
 
     EXPECT_THAT(persistent_hash_map->num_buckets(), Eq(prev_num_buckets));
 
@@ -834,7 +887,7 @@ TEST_F(PersistentHashMapTest,
     // exceeds the limit.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<PersistentHashMap> persistent_hash_map,
-        PersistentHashMap::Create(filesystem_, base_dir_, options));
+        PersistentHashMap::Create(filesystem_, working_path_, options));
 
     // After changing max_load_factor_percent, there should be rehashing and the
     // new loading should not be greater than the new max load factor.
@@ -856,7 +909,7 @@ TEST_F(PersistentHashMapTest, PutAndGet) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -892,7 +945,7 @@ TEST_F(PersistentHashMapTest, PutShouldOverwriteValueIfKeyExists) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -925,7 +978,7 @@ TEST_F(PersistentHashMapTest, ShouldRehash) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -961,7 +1014,7 @@ TEST_F(PersistentHashMapTest, GetOrPutShouldPutIfKeyDoesNotExist) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -987,7 +1040,7 @@ TEST_F(PersistentHashMapTest, GetOrPutShouldGetIfKeyExists) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1016,7 +1069,7 @@ TEST_F(PersistentHashMapTest, Delete) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1067,7 +1120,7 @@ TEST_F(PersistentHashMapTest, DeleteMultiple) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1125,7 +1178,7 @@ TEST_F(PersistentHashMapTest, DeleteBucketHeadElement) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1163,7 +1216,7 @@ TEST_F(PersistentHashMapTest, DeleteBucketIntermediateElement) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1200,7 +1253,7 @@ TEST_F(PersistentHashMapTest, DeleteBucketTailElement) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1238,7 +1291,7 @@ TEST_F(PersistentHashMapTest, DeleteBucketOnlySingleElement) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1262,7 +1315,7 @@ TEST_F(PersistentHashMapTest, OperationsWhenReachingMaxNumEntries) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/1,
@@ -1297,7 +1350,7 @@ TEST_F(PersistentHashMapTest, ShouldFailIfKeyContainsTerminationCharacter) {
   // Create new persistent hash map
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
-      PersistentHashMap::Create(filesystem_, base_dir_,
+      PersistentHashMap::Create(filesystem_, working_path_,
                                 Options(/*value_type_size_in=*/sizeof(int))));
 
   const char invalid_key[] = "a\0bc";
@@ -1319,7 +1372,7 @@ TEST_F(PersistentHashMapTest, EmptyHashMapIterator) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1336,7 +1389,7 @@ TEST_F(PersistentHashMapTest, Iterator) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1363,7 +1416,7 @@ TEST_F(PersistentHashMapTest, IteratorAfterDeletingFirstKeyValuePair) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1392,7 +1445,7 @@ TEST_F(PersistentHashMapTest, IteratorAfterDeletingIntermediateKeyValuePair) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1421,7 +1474,7 @@ TEST_F(PersistentHashMapTest, IteratorAfterDeletingLastKeyValuePair) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,
@@ -1450,7 +1503,7 @@ TEST_F(PersistentHashMapTest, IteratorAfterDeletingAllKeyValuePairs) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
       PersistentHashMap::Create(
-          filesystem_, base_dir_,
+          filesystem_, working_path_,
           Options(
               /*value_type_size_in=*/sizeof(int),
               /*max_num_entries_in=*/Entry::kMaxNumEntries,

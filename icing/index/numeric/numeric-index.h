@@ -21,6 +21,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -29,7 +30,7 @@ namespace icing {
 namespace lib {
 
 template <typename T>
-class NumericIndex {
+class NumericIndex : public PersistentStorage {
  public:
   using value_type = T;
 
@@ -46,9 +47,9 @@ class NumericIndex {
   // add these records into numeric index.
   class Editor {
    public:
-    explicit Editor(std::string_view property_name, DocumentId document_id,
+    explicit Editor(std::string_view property_path, DocumentId document_id,
                     SectionId section_id)
-        : property_name_(property_name),
+        : property_path_(property_path),
           document_id_(document_id),
           section_id_(section_id) {}
 
@@ -69,7 +70,7 @@ class NumericIndex {
     virtual libtextclassifier3::Status IndexAllBufferedKeys() = 0;
 
    protected:
-    std::string property_name_;
+    std::string property_path_;
     DocumentId document_id_;
     SectionId section_id_;
   };
@@ -106,7 +107,7 @@ class NumericIndex {
 
   // Returns an Editor instance for adding new records into numeric index for a
   // given property, DocumentId and SectionId. See Editor for more details.
-  virtual std::unique_ptr<Editor> Edit(std::string_view property_name,
+  virtual std::unique_ptr<Editor> Edit(std::string_view property_path,
                                        DocumentId document_id,
                                        SectionId section_id) = 0;
 
@@ -121,23 +122,36 @@ class NumericIndex {
   //
   // Returns:
   //   - std::unique_ptr<DocHitInfoIterator> on success
-  //   - NOT_FOUND_ERROR if there is no numeric index for property_name
+  //   - NOT_FOUND_ERROR if there is no numeric index for property_path
   //   - INVALID_ARGUMENT_ERROR if key_lower > key_upper
   //   - Any other errors, depending on the actual implementation
   virtual libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-  GetIterator(std::string_view property_name, T key_lower,
+  GetIterator(std::string_view property_path, T key_lower,
               T key_upper) const = 0;
 
   // Clears all files created by the index. Returns OK if all files were
   // cleared.
   virtual libtextclassifier3::Status Reset() = 0;
 
-  // Syncs all the data and metadata changes to disk.
-  //
-  // Returns:
-  //   OK on success
-  //   INTERNAL_ERROR on I/O errors
-  virtual libtextclassifier3::Status PersistToDisk() = 0;
+ protected:
+  explicit NumericIndex(const Filesystem& filesystem,
+                        std::string&& working_path,
+                        PersistentStorage::WorkingPathType working_path_type)
+      : PersistentStorage(filesystem, std::move(working_path),
+                          working_path_type) {}
+
+  virtual libtextclassifier3::Status PersistStoragesToDisk() override = 0;
+
+  virtual libtextclassifier3::Status PersistMetadataToDisk() override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum()
+      override = 0;
+
+  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum()
+      override = 0;
+
+  virtual Crcs& crcs() override = 0;
+  virtual const Crcs& crcs() const override = 0;
 };
 
 }  // namespace lib

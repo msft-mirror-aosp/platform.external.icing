@@ -23,12 +23,14 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
@@ -37,6 +39,7 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
+using ::testing::IsTrue;
 using ::testing::NotNull;
 
 constexpr static std::string_view kDefaultTestPropertyName = "test";
@@ -49,14 +52,27 @@ class NumericIndexTest : public ::testing::Test {
   using INDEX_IMPL_TYPE = T;
 
   void SetUp() override {
+    base_dir_ = GetTestTempDir() + "/icing";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
+                IsTrue());
+
+    working_path_ = base_dir_ + "/numeric_index_integer_test";
+
     if (std::is_same_v<
             INDEX_IMPL_TYPE,
             DummyNumericIndex<typename INDEX_IMPL_TYPE::value_type>>) {
-      numeric_index_ = std::make_unique<
-          DummyNumericIndex<typename INDEX_IMPL_TYPE::value_type>>();
+      ICING_ASSERT_OK_AND_ASSIGN(
+          numeric_index_,
+          DummyNumericIndex<typename INDEX_IMPL_TYPE::value_type>::Create(
+              filesystem_, working_path_));
     }
 
     ASSERT_THAT(numeric_index_, NotNull());
+  }
+
+  void TearDown() override {
+    numeric_index_.reset();
+    filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
   void Index(std::string_view property_name, DocumentId document_id,
@@ -86,6 +102,9 @@ class NumericIndexTest : public ::testing::Test {
     return result;
   }
 
+  Filesystem filesystem_;
+  std::string base_dir_;
+  std::string working_path_;
   std::unique_ptr<NumericIndex<typename INDEX_IMPL_TYPE::value_type>>
       numeric_index_;
 };

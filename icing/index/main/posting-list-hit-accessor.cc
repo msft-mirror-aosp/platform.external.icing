@@ -23,7 +23,7 @@
 #include "icing/file/posting_list/index-block.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -31,7 +31,7 @@ namespace lib {
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
 PostingListHitAccessor::Create(FlashIndexStorage *storage,
-                               PostingListUsedHitSerializer *serializer) {
+                               PostingListHitSerializer *serializer) {
   uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
       storage->block_size(), serializer->GetDataTypeBytes());
   std::unique_ptr<uint8_t[]> posting_list_buffer_array =
@@ -47,7 +47,7 @@ PostingListHitAccessor::Create(FlashIndexStorage *storage,
 
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
 PostingListHitAccessor::CreateFromExisting(
-    FlashIndexStorage *storage, PostingListUsedHitSerializer *serializer,
+    FlashIndexStorage *storage, PostingListHitSerializer *serializer,
     PostingListIdentifier existing_posting_list_id) {
   // Our posting_list_buffer_ will start as empty.
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<PostingListHitAccessor> pl_accessor,

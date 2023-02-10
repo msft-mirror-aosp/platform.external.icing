@@ -408,6 +408,8 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
         std::move(schema_delta.schema_types_changed_fully_compatible);
     result.schema_types_index_incompatible_by_name =
         std::move(schema_delta.schema_types_index_incompatible);
+    result.schema_types_join_incompatible_by_name =
+        std::move(schema_delta.schema_types_join_incompatible);
 
     for (const auto& schema_type : schema_delta.schema_types_deleted) {
       // We currently don't support deletions, so mark this as not possible.

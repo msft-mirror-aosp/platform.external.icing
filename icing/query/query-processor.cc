@@ -151,18 +151,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
   if (search_spec.search_type() ==
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
     ICING_VLOG(1) << "Using EXPERIMENTAL_ICING_ADVANCED_QUERY parser!";
-    libtextclassifier3::StatusOr<QueryResults> results_or =
-        ParseAdvancedQuery(search_spec);
-    if (results_or.ok()) {
-      results = std::move(results_or).ValueOrDie();
-    } else {
-      ICING_VLOG(1)
-          << "Unable to parse query using advanced query parser. Error: "
-          << results_or.status().error_message()
-          << ". Falling back to old query parser.";
-      ICING_ASSIGN_OR_RETURN(results,
-                             ParseRawQuery(search_spec, ranking_strategy));
-    }
+    ICING_ASSIGN_OR_RETURN(results,
+                           ParseAdvancedQuery(search_spec, ranking_strategy));
   } else {
     ICING_ASSIGN_OR_RETURN(results,
                            ParseRawQuery(search_spec, ranking_strategy));
@@ -188,7 +178,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
 }
 
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
-    const SearchSpecProto& search_spec) const {
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy) const {
   QueryResults results;
   Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
@@ -203,9 +194,17 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
         document_store_.last_added_document_id());
     return results;
   }
-  QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
-                             &schema_store_, &normalizer_,
-                             search_spec.term_match_type());
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<Tokenizer> plain_tokenizer,
+      tokenizer_factory::CreateIndexingTokenizer(
+          StringIndexingConfig::TokenizerType::PLAIN, &language_segmenter_));
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
+  bool needs_term_frequency_info =
+      ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+  QueryVisitor query_visitor(
+      &index_, &numeric_index_, &document_store_, &schema_store_, &normalizer_,
+      plain_tokenizer.get(), std::move(options), search_spec.term_match_type(),
+      needs_term_frequency_info);
   tree_root->Accept(&query_visitor);
   return std::move(query_visitor).ConsumeResults();
 }

@@ -114,7 +114,7 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
   // merge.
   if ((status.ok() || absl_ports::IsResourceExhausted(status)) &&
       index_.WantsMerge()) {
-    ICING_LOG(ERROR) << "Merging the index at docid " << document_id << ".";
+    ICING_LOG(INFO) << "Merging the index at docid " << document_id << ".";
 
     std::unique_ptr<Timer> merge_timer = clock_.GetNewTimer();
     libtextclassifier3::Status merge_status = index_.Merge();

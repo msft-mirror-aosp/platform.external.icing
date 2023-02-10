@@ -63,6 +63,11 @@ class SchemaUtil {
     // SchemaTypeConfigProto.
     std::unordered_set<std::string> schema_types_index_incompatible;
 
+    // Schema types that were changed in a way that was backwards compatible,
+    // but invalidated the joinable cache. Represented by the `schema_type`
+    // field in the SchemaTypeConfigProto.
+    std::unordered_set<std::string> schema_types_join_incompatible;
+
     bool operator==(const SchemaDelta& other) const {
       return schema_types_deleted == other.schema_types_deleted &&
              schema_types_incompatible == other.schema_types_incompatible &&
@@ -70,7 +75,9 @@ class SchemaUtil {
              schema_types_changed_fully_compatible ==
                  other.schema_types_changed_fully_compatible &&
              schema_types_index_incompatible ==
-                 other.schema_types_index_incompatible;
+                 other.schema_types_index_incompatible &&
+             schema_types_join_incompatible ==
+                 other.schema_types_join_incompatible;
     }
   };
 
@@ -84,6 +91,9 @@ class SchemaUtil {
 
     // Total number of properties that were REQUIRED
     int32_t num_required_properties = 0;
+
+    // Total number of properties that have joinable config
+    int32_t num_joinable_properties = 0;
   };
 
   // This function validates:
