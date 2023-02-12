@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_NUMERIC_POSTING_LIST_USED_INTEGER_INDEX_DATA_SERIALIZER_H_
-#define ICING_INDEX_NUMERIC_POSTING_LIST_USED_INTEGER_INDEX_DATA_SERIALIZER_H_
+#ifndef ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_SERIALIZER_H_
+#define ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_SERIALIZER_H_
 
 #include <cstdint>
 #include <vector>
@@ -28,8 +28,7 @@ namespace icing {
 namespace lib {
 
 // A serializer class to serialize IntegerIndexData to PostingListUsed.
-class PostingListUsedIntegerIndexDataSerializer
-    : public PostingListUsedSerializer {
+class PostingListIntegerIndexSerializer : public PostingListSerializer {
  public:
   using SpecialDataType = SpecialData<IntegerIndexData>;
   static_assert(sizeof(SpecialDataType) == sizeof(IntegerIndexData), "");
@@ -335,4 +334,4 @@ class PostingListUsedIntegerIndexDataSerializer
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_NUMERIC_POSTING_LIST_USED_INTEGER_INDEX_DATA_SERIALIZER_H_
+#endif  // ICING_INDEX_NUMERIC_POSTING_LIST_INTEGER_INDEX_SERIALIZER_H_

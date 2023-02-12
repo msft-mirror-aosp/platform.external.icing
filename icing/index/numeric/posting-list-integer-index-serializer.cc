@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/numeric/posting-list-used-integer-index-data-serializer.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
 
 #include <cstdint>
 #include <vector>
@@ -29,7 +29,7 @@
 namespace icing {
 namespace lib {
 
-uint32_t PostingListUsedIntegerIndexDataSerializer::GetBytesUsed(
+uint32_t PostingListIntegerIndexSerializer::GetBytesUsed(
     const PostingListUsed* posting_list_used) const {
   // The special data will be included if they represent actual data. If they
   // represent the data start offset or the invalid data sentinel, they are not
@@ -38,7 +38,7 @@ uint32_t PostingListUsedIntegerIndexDataSerializer::GetBytesUsed(
          GetStartByteOffset(posting_list_used);
 }
 
-uint32_t PostingListUsedIntegerIndexDataSerializer::GetMinPostingListSizeToFit(
+uint32_t PostingListIntegerIndexSerializer::GetMinPostingListSizeToFit(
     const PostingListUsed* posting_list_used) const {
   if (IsFull(posting_list_used) || IsAlmostFull(posting_list_used)) {
     // If in either the FULL state or ALMOST_FULL state, this posting list *is*
@@ -57,7 +57,7 @@ uint32_t PostingListUsedIntegerIndexDataSerializer::GetMinPostingListSizeToFit(
   return GetBytesUsed(posting_list_used) + GetDataTypeBytes();
 }
 
-void PostingListUsedIntegerIndexDataSerializer::Clear(
+void PostingListIntegerIndexSerializer::Clear(
     PostingListUsed* posting_list_used) const {
   // Safe to ignore return value because posting_list_used->size_in_bytes() is
   // a valid argument.
@@ -65,7 +65,7 @@ void PostingListUsedIntegerIndexDataSerializer::Clear(
                      /*offset=*/posting_list_used->size_in_bytes());
 }
 
-libtextclassifier3::Status PostingListUsedIntegerIndexDataSerializer::MoveFrom(
+libtextclassifier3::Status PostingListIntegerIndexSerializer::MoveFrom(
     PostingListUsed* dst, PostingListUsed* src) const {
   ICING_RETURN_ERROR_IF_NULL(dst);
   ICING_RETURN_ERROR_IF_NULL(src);
@@ -121,7 +121,7 @@ libtextclassifier3::Status PostingListUsedIntegerIndexDataSerializer::MoveFrom(
 }
 
 libtextclassifier3::Status
-PostingListUsedIntegerIndexDataSerializer::PrependDataToAlmostFull(
+PostingListIntegerIndexSerializer::PrependDataToAlmostFull(
     PostingListUsed* posting_list_used, const IntegerIndexData& data) const {
   SpecialDataType special_data = GetSpecialData(posting_list_used, /*index=*/1);
   if (special_data.data().basic_hit() < data.basic_hit()) {
@@ -139,7 +139,7 @@ PostingListUsedIntegerIndexDataSerializer::PrependDataToAlmostFull(
   return libtextclassifier3::Status::OK;
 }
 
-void PostingListUsedIntegerIndexDataSerializer::PrependDataToEmpty(
+void PostingListIntegerIndexSerializer::PrependDataToEmpty(
     PostingListUsed* posting_list_used, const IntegerIndexData& data) const {
   // First data to be added. Just add verbatim, no compression.
   if (posting_list_used->size_in_bytes() == kSpecialDataSize) {
@@ -165,7 +165,7 @@ void PostingListUsedIntegerIndexDataSerializer::PrependDataToEmpty(
 }
 
 libtextclassifier3::Status
-PostingListUsedIntegerIndexDataSerializer::PrependDataToNotFull(
+PostingListIntegerIndexSerializer::PrependDataToNotFull(
     PostingListUsed* posting_list_used, const IntegerIndexData& data,
     uint32_t offset) const {
   IntegerIndexData cur;
@@ -193,8 +193,7 @@ PostingListUsedIntegerIndexDataSerializer::PrependDataToNotFull(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status
-PostingListUsedIntegerIndexDataSerializer::PrependData(
+libtextclassifier3::Status PostingListIntegerIndexSerializer::PrependData(
     PostingListUsed* posting_list_used, const IntegerIndexData& data) const {
   static_assert(
       sizeof(BasicHit::Value) <= sizeof(uint64_t),
@@ -223,7 +222,7 @@ PostingListUsedIntegerIndexDataSerializer::PrependData(
   }
 }
 
-uint32_t PostingListUsedIntegerIndexDataSerializer::PrependDataArray(
+uint32_t PostingListIntegerIndexSerializer::PrependDataArray(
     PostingListUsed* posting_list_used, const IntegerIndexData* array,
     uint32_t num_data, bool keep_prepended) const {
   if (!IsPostingListValid(posting_list_used)) {
@@ -248,14 +247,14 @@ uint32_t PostingListUsedIntegerIndexDataSerializer::PrependDataArray(
 }
 
 libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
-PostingListUsedIntegerIndexDataSerializer::GetData(
+PostingListIntegerIndexSerializer::GetData(
     const PostingListUsed* posting_list_used) const {
   std::vector<IntegerIndexData> data_arr_out;
   ICING_RETURN_IF_ERROR(GetData(posting_list_used, &data_arr_out));
   return data_arr_out;
 }
 
-libtextclassifier3::Status PostingListUsedIntegerIndexDataSerializer::GetData(
+libtextclassifier3::Status PostingListIntegerIndexSerializer::GetData(
     const PostingListUsed* posting_list_used,
     std::vector<IntegerIndexData>* data_arr_out) const {
   return GetDataInternal(posting_list_used,
@@ -263,8 +262,7 @@ libtextclassifier3::Status PostingListUsedIntegerIndexDataSerializer::GetData(
                          /*pop=*/false, data_arr_out);
 }
 
-libtextclassifier3::Status
-PostingListUsedIntegerIndexDataSerializer::PopFrontData(
+libtextclassifier3::Status PostingListIntegerIndexSerializer::PopFrontData(
     PostingListUsed* posting_list_used, uint32_t num_data) const {
   if (num_data == 1 && IsFull(posting_list_used)) {
     // The PL is in FULL state which means that we save 2 uncompressed data in
@@ -345,8 +343,7 @@ PostingListUsedIntegerIndexDataSerializer::PopFrontData(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status
-PostingListUsedIntegerIndexDataSerializer::GetDataInternal(
+libtextclassifier3::Status PostingListIntegerIndexSerializer::GetDataInternal(
     const PostingListUsed* posting_list_used, uint32_t limit, bool pop,
     std::vector<IntegerIndexData>* out) const {
   // TODO(b/259743562): [Optimization 2] handle compressed data
@@ -404,8 +401,8 @@ PostingListUsedIntegerIndexDataSerializer::GetDataInternal(
   return libtextclassifier3::Status::OK;
 }
 
-PostingListUsedIntegerIndexDataSerializer::SpecialDataType
-PostingListUsedIntegerIndexDataSerializer::GetSpecialData(
+PostingListIntegerIndexSerializer::SpecialDataType
+PostingListIntegerIndexSerializer::GetSpecialData(
     const PostingListUsed* posting_list_used, uint32_t index) const {
   // It is ok to temporarily construct a SpecialData with offset = 0 since we're
   // going to overwrite it by memcpy.
@@ -417,7 +414,7 @@ PostingListUsedIntegerIndexDataSerializer::GetSpecialData(
   return special_data;
 }
 
-void PostingListUsedIntegerIndexDataSerializer::SetSpecialData(
+void PostingListIntegerIndexSerializer::SetSpecialData(
     PostingListUsed* posting_list_used, uint32_t index,
     const SpecialDataType& special_data) const {
   memcpy(posting_list_used->posting_list_buffer() +
@@ -425,7 +422,7 @@ void PostingListUsedIntegerIndexDataSerializer::SetSpecialData(
          &special_data, sizeof(SpecialDataType));
 }
 
-bool PostingListUsedIntegerIndexDataSerializer::IsPostingListValid(
+bool PostingListIntegerIndexSerializer::IsPostingListValid(
     const PostingListUsed* posting_list_used) const {
   if (IsAlmostFull(posting_list_used)) {
     // Special data 1 should hold a valid data.
@@ -449,7 +446,7 @@ bool PostingListUsedIntegerIndexDataSerializer::IsPostingListValid(
   return true;
 }
 
-uint32_t PostingListUsedIntegerIndexDataSerializer::GetStartByteOffset(
+uint32_t PostingListIntegerIndexSerializer::GetStartByteOffset(
     const PostingListUsed* posting_list_used) const {
   if (IsFull(posting_list_used)) {
     return 0;
@@ -460,7 +457,7 @@ uint32_t PostingListUsedIntegerIndexDataSerializer::GetStartByteOffset(
   }
 }
 
-bool PostingListUsedIntegerIndexDataSerializer::SetStartByteOffset(
+bool PostingListIntegerIndexSerializer::SetStartByteOffset(
     PostingListUsed* posting_list_used, uint32_t offset) const {
   if (offset > posting_list_used->size_in_bytes()) {
     ICING_LOG(ERROR) << "offset cannot be a value greater than size "
@@ -497,7 +494,7 @@ bool PostingListUsedIntegerIndexDataSerializer::SetStartByteOffset(
 }
 
 libtextclassifier3::StatusOr<uint32_t>
-PostingListUsedIntegerIndexDataSerializer::PrependDataUncompressed(
+PostingListIntegerIndexSerializer::PrependDataUncompressed(
     PostingListUsed* posting_list_used, const IntegerIndexData& data,
     uint32_t offset) const {
   if (offset < kSpecialDataSize + sizeof(IntegerIndexData)) {

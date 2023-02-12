@@ -508,8 +508,16 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
     std::string_view value = current_property->string_values(i);
     std::unique_ptr<Tokenizer::Iterator> iterator =
         tokenizer->Tokenize(value).ValueOrDie();
+    // All iterators are moved through positions sequentially. Constructing them
+    // each time resets them to the beginning of the string. This means that,
+    // for t tokens and in a string of n chars, each MoveToUtf8 call from the
+    // beginning of the string is on average O(n/2), whereas calling MoveToUtf8
+    // from the token immediately prior to the desired one is O(n/t).
+    // Constructing each outside of the while-loop ensures that performance will
+    // be O(t * (n/t)) = O(n) rather than O(t * n / 2).
     CharacterIterator start_itr(value);
     CharacterIterator end_itr(value);
+    CharacterIterator reset_itr(value);
     while (iterator->Advance()) {
       std::vector<Token> batch_tokens = iterator->GetTokens();
       if (batch_tokens.empty()) {
@@ -519,7 +527,6 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
       // As snippet matching may move iterator around, we save a reset iterator
       // so that we can reset to the initial iterator state, and continue
       // Advancing in order in the next round.
-      CharacterIterator reset_itr(value);
       reset_itr.MoveToUtf8(batch_tokens.at(0).text.begin() - value.begin());
 
       for (const Token& token : batch_tokens) {

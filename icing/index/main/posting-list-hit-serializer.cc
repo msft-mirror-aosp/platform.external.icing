@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 
 #include <cstdint>
 #include <cstring>
@@ -37,7 +37,7 @@ uint32_t GetTermFrequencyByteSize(const Hit& hit) {
 
 }  // namespace
 
-uint32_t PostingListUsedHitSerializer::GetBytesUsed(
+uint32_t PostingListHitSerializer::GetBytesUsed(
     const PostingListUsed* posting_list_used) const {
   // The special hits will be included if they represent actual hits. If they
   // represent the hit offset or the invalid hit sentinel, they are not
@@ -46,7 +46,7 @@ uint32_t PostingListUsedHitSerializer::GetBytesUsed(
          GetStartByteOffset(posting_list_used);
 }
 
-uint32_t PostingListUsedHitSerializer::GetMinPostingListSizeToFit(
+uint32_t PostingListHitSerializer::GetMinPostingListSizeToFit(
     const PostingListUsed* posting_list_used) const {
   if (IsFull(posting_list_used) || IsAlmostFull(posting_list_used)) {
     // If in either the FULL state or ALMOST_FULL state, this posting list *is*
@@ -65,15 +65,14 @@ uint32_t PostingListUsedHitSerializer::GetMinPostingListSizeToFit(
   return GetBytesUsed(posting_list_used) + sizeof(Hit);
 }
 
-void PostingListUsedHitSerializer::Clear(
-    PostingListUsed* posting_list_used) const {
+void PostingListHitSerializer::Clear(PostingListUsed* posting_list_used) const {
   // Safe to ignore return value because posting_list_used->size_in_bytes() is
   // a valid argument.
   SetStartByteOffset(posting_list_used,
                      /*offset=*/posting_list_used->size_in_bytes());
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::MoveFrom(
+libtextclassifier3::Status PostingListHitSerializer::MoveFrom(
     PostingListUsed* dst, PostingListUsed* src) const {
   ICING_RETURN_ERROR_IF_NULL(dst);
   ICING_RETURN_ERROR_IF_NULL(src);
@@ -128,7 +127,7 @@ libtextclassifier3::Status PostingListUsedHitSerializer::MoveFrom(
   return libtextclassifier3::Status::OK;
 }
 
-uint32_t PostingListUsedHitSerializer::GetPadEnd(
+uint32_t PostingListHitSerializer::GetPadEnd(
     const PostingListUsed* posting_list_used, uint32_t offset) const {
   Hit::Value pad;
   uint32_t pad_end = offset;
@@ -144,9 +143,8 @@ uint32_t PostingListUsedHitSerializer::GetPadEnd(
   return pad_end;
 }
 
-bool PostingListUsedHitSerializer::PadToEnd(PostingListUsed* posting_list_used,
-                                            uint32_t start,
-                                            uint32_t end) const {
+bool PostingListHitSerializer::PadToEnd(PostingListUsed* posting_list_used,
+                                        uint32_t start, uint32_t end) const {
   if (end > posting_list_used->size_in_bytes()) {
     ICING_LOG(ERROR) << "Cannot pad a region that ends after size!";
     return false;
@@ -156,7 +154,7 @@ bool PostingListUsedHitSerializer::PadToEnd(PostingListUsed* posting_list_used,
   return true;
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::PrependHitToAlmostFull(
+libtextclassifier3::Status PostingListHitSerializer::PrependHitToAlmostFull(
     PostingListUsed* posting_list_used, const Hit& hit) const {
   // Get delta between first hit and the new hit. Try to fit delta
   // in the padded area and put new hit at the special position 1.
@@ -199,7 +197,7 @@ libtextclassifier3::Status PostingListUsedHitSerializer::PrependHitToAlmostFull(
   return libtextclassifier3::Status::OK;
 }
 
-void PostingListUsedHitSerializer::PrependHitToEmpty(
+void PostingListHitSerializer::PrependHitToEmpty(
     PostingListUsed* posting_list_used, const Hit& hit) const {
   // First hit to be added. Just add verbatim, no compression.
   if (posting_list_used->size_in_bytes() == kSpecialHitsSize) {
@@ -221,7 +219,7 @@ void PostingListUsedHitSerializer::PrependHitToEmpty(
   }
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::PrependHitToNotFull(
+libtextclassifier3::Status PostingListHitSerializer::PrependHitToNotFull(
     PostingListUsed* posting_list_used, const Hit& hit, uint32_t offset) const {
   // First hit in compressed area. It is uncompressed. See if delta
   // between the first hit and new hit will still fit in the
@@ -315,7 +313,7 @@ libtextclassifier3::Status PostingListUsedHitSerializer::PrependHitToNotFull(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::PrependHit(
+libtextclassifier3::Status PostingListHitSerializer::PrependHit(
     PostingListUsed* posting_list_used, const Hit& hit) const {
   static_assert(sizeof(Hit::Value) <= sizeof(uint64_t),
                 "Hit::Value cannot be larger than 8 bytes because the delta "
@@ -343,14 +341,14 @@ libtextclassifier3::Status PostingListUsedHitSerializer::PrependHit(
 }
 
 libtextclassifier3::StatusOr<std::vector<Hit>>
-PostingListUsedHitSerializer::GetHits(
+PostingListHitSerializer::GetHits(
     const PostingListUsed* posting_list_used) const {
   std::vector<Hit> hits_out;
   ICING_RETURN_IF_ERROR(GetHits(posting_list_used, &hits_out));
   return hits_out;
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::GetHits(
+libtextclassifier3::Status PostingListHitSerializer::GetHits(
     const PostingListUsed* posting_list_used,
     std::vector<Hit>* hits_out) const {
   return GetHitsInternal(posting_list_used,
@@ -358,7 +356,7 @@ libtextclassifier3::Status PostingListUsedHitSerializer::GetHits(
                          /*pop=*/false, hits_out);
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::PopFrontHits(
+libtextclassifier3::Status PostingListHitSerializer::PopFrontHits(
     PostingListUsed* posting_list_used, uint32_t num_hits) const {
   if (num_hits == 1 && IsFull(posting_list_used)) {
     // The PL is in full status which means that we save 2 uncompressed hits in
@@ -429,7 +427,7 @@ libtextclassifier3::Status PostingListUsedHitSerializer::PopFrontHits(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status PostingListUsedHitSerializer::GetHitsInternal(
+libtextclassifier3::Status PostingListHitSerializer::GetHitsInternal(
     const PostingListUsed* posting_list_used, uint32_t limit, bool pop,
     std::vector<Hit>* out) const {
   // Put current uncompressed val here.
@@ -563,7 +561,7 @@ libtextclassifier3::Status PostingListUsedHitSerializer::GetHitsInternal(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Hit> PostingListUsedHitSerializer::GetSpecialHit(
+libtextclassifier3::StatusOr<Hit> PostingListHitSerializer::GetSpecialHit(
     const PostingListUsed* posting_list_used, uint32_t index) const {
   static_assert(sizeof(Hit::Value) >= sizeof(uint32_t), "HitTooSmall");
   if (index >= kNumSpecialData || index < 0) {
@@ -576,8 +574,9 @@ libtextclassifier3::StatusOr<Hit> PostingListUsedHitSerializer::GetSpecialHit(
   return val;
 }
 
-bool PostingListUsedHitSerializer::SetSpecialHit(
-    PostingListUsed* posting_list_used, uint32_t index, const Hit& val) const {
+bool PostingListHitSerializer::SetSpecialHit(PostingListUsed* posting_list_used,
+                                             uint32_t index,
+                                             const Hit& val) const {
   if (index >= kNumSpecialData || index < 0) {
     ICING_LOG(ERROR) << "Special hits only exist at indices 0 and 1";
     return false;
@@ -587,7 +586,7 @@ bool PostingListUsedHitSerializer::SetSpecialHit(
   return true;
 }
 
-bool PostingListUsedHitSerializer::IsPostingListValid(
+bool PostingListHitSerializer::IsPostingListValid(
     const PostingListUsed* posting_list_used) const {
   if (IsAlmostFull(posting_list_used)) {
     // Special Hit 1 should hold a Hit. Calling ValueOrDie is safe because we
@@ -617,7 +616,7 @@ bool PostingListUsedHitSerializer::IsPostingListValid(
   return true;
 }
 
-uint32_t PostingListUsedHitSerializer::GetStartByteOffset(
+uint32_t PostingListHitSerializer::GetStartByteOffset(
     const PostingListUsed* posting_list_used) const {
   if (IsFull(posting_list_used)) {
     return 0;
@@ -630,7 +629,7 @@ uint32_t PostingListUsedHitSerializer::GetStartByteOffset(
   }
 }
 
-bool PostingListUsedHitSerializer::SetStartByteOffset(
+bool PostingListHitSerializer::SetStartByteOffset(
     PostingListUsed* posting_list_used, uint32_t offset) const {
   if (offset > posting_list_used->size_in_bytes()) {
     ICING_LOG(ERROR) << "offset cannot be a value greater than size "
@@ -665,7 +664,7 @@ bool PostingListUsedHitSerializer::SetStartByteOffset(
 }
 
 libtextclassifier3::StatusOr<uint32_t>
-PostingListUsedHitSerializer::PrependHitUncompressed(
+PostingListHitSerializer::PrependHitUncompressed(
     PostingListUsed* posting_list_used, const Hit& hit, uint32_t offset) const {
   if (hit.has_term_frequency()) {
     if (offset < kSpecialHitsSize + sizeof(Hit)) {
@@ -689,7 +688,7 @@ PostingListUsedHitSerializer::PrependHitUncompressed(
 }
 
 libtextclassifier3::Status
-PostingListUsedHitSerializer::ConsumeTermFrequencyIfPresent(
+PostingListHitSerializer::ConsumeTermFrequencyIfPresent(
     const PostingListUsed* posting_list_used, Hit* hit,
     uint32_t* offset) const {
   if (!hit->has_term_frequency()) {

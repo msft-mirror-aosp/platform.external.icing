@@ -28,6 +28,7 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::IsNull;
+using ::testing::SizeIs;
 
 TEST(ParserIntegrationTest, EmptyQuery) {
   std::string query = "";
@@ -937,6 +938,72 @@ TEST(ParserTest, QueryComplexMemberFunction) {
                           EqualsNodeInfo("", NodeType::kMember),
                           EqualsNodeInfo("", NodeType::kFunction),
                           EqualsNodeInfo("", NodeType::kMember)));
+}
+
+TEST(ParserTest, QueryShouldNotStackOverflowAtMaxNumTokens) {
+  // query = "(( ... (foo bar) ... ))"
+  std::string query;
+  for (int i = 0; i < Lexer::kMaxNumTokens / 2 - 1; ++i) {
+    query.push_back('(');
+  }
+  query.append("foo bar");
+  for (int i = 0; i < Lexer::kMaxNumTokens / 2 - 1; ++i) {
+    query.push_back(')');
+  }
+
+  Lexer lexer(query, Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
+                             lexer.ExtractTokens());
+  EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
+  Parser parser = Parser::Create(std::move(lexer_tokens));
+  EXPECT_THAT(parser.ConsumeQuery(), IsOk());
+}
+
+TEST(ParserTest, ScoringShouldNotStackOverflowAtMaxNumTokens) {
+  // scoring = "(( ... (-1) ... ))"
+  std::string scoring;
+  for (int i = 0; i < Lexer::kMaxNumTokens / 2 - 1; ++i) {
+    scoring.push_back('(');
+  }
+  scoring.append("-1");
+  for (int i = 0; i < Lexer::kMaxNumTokens / 2 - 1; ++i) {
+    scoring.push_back(')');
+  }
+
+  Lexer lexer(scoring, Lexer::Language::SCORING);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
+                             lexer.ExtractTokens());
+  EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
+  Parser parser = Parser::Create(std::move(lexer_tokens));
+  EXPECT_THAT(parser.ConsumeScoring(), IsOk());
+}
+
+TEST(ParserTest, InvalidQueryShouldNotStackOverflowAtMaxNumTokens) {
+  std::string query;
+  for (int i = 0; i < Lexer::kMaxNumTokens; ++i) {
+    query.push_back('(');
+  }
+  Lexer lexer(query, Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
+                             lexer.ExtractTokens());
+  EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
+  Parser parser = Parser::Create(std::move(lexer_tokens));
+  EXPECT_THAT(parser.ConsumeQuery(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(ParserTest, InvalidScoringShouldNotStackOverflowAtMaxNumTokens) {
+  std::string scoring;
+  for (int i = 0; i < Lexer::kMaxNumTokens; ++i) {
+    scoring.push_back('(');
+  }
+  Lexer lexer(scoring, Lexer::Language::SCORING);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> lexer_tokens,
+                             lexer.ExtractTokens());
+  EXPECT_THAT(lexer_tokens, SizeIs(Lexer::kMaxNumTokens));
+  Parser parser = Parser::Create(std::move(lexer_tokens));
+  EXPECT_THAT(parser.ConsumeScoring(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace

@@ -47,8 +47,9 @@ std::string SectionIdMaskToString(SectionIdMask section_id_mask) {
 }  // namespace
 
 libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
-  if (posting_list_accessor_ == nullptr ||
-      cached_doc_hit_infos_idx_ == (cached_doc_hit_infos_.size() - 2)) {
+  ++cached_doc_hit_infos_idx_;
+  while (posting_list_accessor_ == nullptr ||
+         (!all_pages_consumed_ && cached_doc_hit_info_count() == 1)) {
     // If we haven't retrieved any hits before or we've already returned all but
     // the last cached hit, then go get some more!
     // We hold back the last cached hit because it could have more hits on the
@@ -65,8 +66,6 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
       return absl_ports::ResourceExhaustedError(
           "No more DocHitInfos in iterator");
     }
-  } else {
-    ++cached_doc_hit_infos_idx_;
   }
   if (cached_doc_hit_infos_idx_ == -1 ||
       cached_doc_hit_infos_idx_ >= cached_doc_hit_infos_.size()) {
@@ -101,6 +100,9 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
 
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
                          posting_list_accessor_->GetNextHitsBatch());
+  if (hits.empty()) {
+    all_pages_consumed_ = true;
+  }
   ++num_blocks_inspected_;
   cached_doc_hit_infos_.reserve(hits.size() + 1);
   cached_hit_term_frequency_.reserve(hits.size() + 1);
@@ -152,6 +154,9 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
   }
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
                          posting_list_accessor_->GetNextHitsBatch());
+  if (hits.empty()) {
+    all_pages_consumed_ = true;
+  }
   cached_doc_hit_infos_.reserve(hits.size());
   if (need_hit_term_frequency_) {
     cached_hit_term_frequency_.reserve(hits.size());

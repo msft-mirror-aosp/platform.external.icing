@@ -29,6 +29,10 @@ class Lexer {
  public:
   enum class Language { QUERY, SCORING };
 
+  // The maximum number of tokens allowed, in order to prevent stack overflow
+  // issues in the parsers or visitors.
+  static constexpr uint32_t kMaxNumTokens = 2048;
+
   enum class TokenType {
     COMMA,       // ','
     DOT,         // '.'

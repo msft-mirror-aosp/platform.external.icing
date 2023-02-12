@@ -14,6 +14,8 @@
 
 #include "icing/query/advanced_query_parser/lexer.h"
 
+#include <string>
+
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/util/i18n-utils.h"
@@ -220,6 +222,12 @@ Lexer::ExtractTokens() {
   if (!error_.empty()) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("Syntax Error: ", error_));
+  }
+  if (tokens_.size() > kMaxNumTokens) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("The maximum number of tokens allowed is ",
+                           std::to_string(kMaxNumTokens), ", but got ",
+                           std::to_string(tokens_.size()), " tokens."));
   }
   return tokens_;
 }

@@ -56,6 +56,8 @@ class LiteIndexTest : public testing::Test {
   }
 
   void TearDown() override {
+    term_id_codec_.reset();
+    lite_index_.reset();
     ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(index_dir_.c_str()));
   }
 
@@ -82,7 +84,7 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
   ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit1));
 
   std::vector<DocHitInfo> hits1;
-  lite_index_->AppendHits(
+  lite_index_->FetchHits(
       foo_term_id, kSectionIdMaskAll,
       /*only_from_prefix_sections=*/false,
       SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
@@ -94,7 +96,7 @@ TEST_F(LiteIndexTest, LiteIndexAppendHits) {
 
   std::vector<DocHitInfo> hits2;
   AlwaysFalseSuggestionResultCheckerImpl always_false_suggestion_result_checker;
-  lite_index_->AppendHits(
+  lite_index_->FetchHits(
       foo_term_id, kSectionIdMaskAll,
       /*only_from_prefix_sections=*/false,
       SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
