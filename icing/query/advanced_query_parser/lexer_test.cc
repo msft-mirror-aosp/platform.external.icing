@@ -609,5 +609,25 @@ TEST(LexerTest, ComplexScoring) {
           EqualsLexerToken(Lexer::TokenType::RPAREN)));
 }
 
+TEST(LexerTest, QueryShouldRejectTokensBeyondLimit) {
+  std::string query;
+  for (int i = 0; i < Lexer::kMaxNumTokens + 1; ++i) {
+    query.push_back('(');
+  }
+  Lexer lexer(query, Lexer::Language::QUERY);
+  EXPECT_THAT(lexer.ExtractTokens(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(LexerTest, ScoringShouldRejectTokensBeyondLimit) {
+  std::string scoring;
+  for (int i = 0; i < Lexer::kMaxNumTokens + 1; ++i) {
+    scoring.push_back('(');
+  }
+  Lexer lexer(scoring, Lexer::Language::SCORING);
+  EXPECT_THAT(lexer.ExtractTokens(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
 }  // namespace lib
 }  // namespace icing

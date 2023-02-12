@@ -17,6 +17,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
@@ -32,11 +33,13 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   explicit ScoringVisitor(double default_score,
                           const DocumentStore* document_store,
                           const SchemaStore* schema_store,
-                          Bm25fCalculator* bm25f_calculator)
+                          Bm25fCalculator* bm25f_calculator,
+                          const JoinChildrenFetcher* join_children_fetcher)
       : default_score_(default_score),
         document_store_(*document_store),
         schema_store_(*schema_store),
-        bm25f_calculator_(*bm25f_calculator) {}
+        bm25f_calculator_(*bm25f_calculator),
+        join_children_fetcher_(join_children_fetcher) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
@@ -86,6 +89,8 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
   Bm25fCalculator& bm25f_calculator_;
+  // A non-null join_children_fetcher_ indicates scoring in a join.
+  const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
 
   libtextclassifier3::Status pending_error_;
   std::vector<std::unique_ptr<ScoreExpression>> stack;

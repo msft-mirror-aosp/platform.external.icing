@@ -30,7 +30,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>>
 AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
                        double default_score,
                        const DocumentStore* document_store,
-                       const SchemaStore* schema_store) {
+                       const SchemaStore* schema_store,
+                       const JoinChildrenFetcher* join_children_fetcher) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -48,15 +49,14 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
       std::make_unique<Bm25fCalculator>(document_store,
                                         std::move(section_weights));
   ScoringVisitor visitor(default_score, document_store, schema_store,
-                         bm25f_calculator.get());
+                         bm25f_calculator.get(), join_children_fetcher);
   tree_root->Accept(&visitor);
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<ScoreExpression> expression,
                          std::move(visitor).Expression());
-  if (expression->is_document_type()) {
+  if (expression->type() != ScoreExpressionType::kDouble) {
     return absl_ports::InvalidArgumentError(
-        "The root scoring expression will always be evaluated to a document, "
-        "but a number is expected.");
+        "The root scoring expression is not of double type.");
   }
   return std::unique_ptr<AdvancedScorer>(new AdvancedScorer(
       std::move(expression), std::move(bm25f_calculator), default_score));

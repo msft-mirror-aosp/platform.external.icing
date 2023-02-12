@@ -70,6 +70,8 @@ namespace lib {
 
 namespace {
 
+using ::testing::IsTrue;
+
 // Creates a fake type config with 10 properties (p0 - p9)
 void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
   type_config->set_schema_type("Fake_Type");
@@ -79,7 +81,7 @@ void CreateFakeTypeConfig(SchemaTypeConfigProto* type_config) {
     property->set_property_name(
         IcingStringUtil::StringPrintf("p%d", i));  //  p0 - p9
     property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
     property->mutable_string_indexing_config()->set_term_match_type(
         TermMatchType::EXACT_ONLY);
     property->mutable_string_indexing_config()->set_tokenizer_type(
@@ -151,10 +153,14 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
       .ValueOrDie();
 }
 
-std::unique_ptr<SchemaStore> CreateSchemaStore(const Clock* clock) {
-  Filesystem filesystem;
+std::unique_ptr<SchemaStore> CreateSchemaStore(const Filesystem& filesystem,
+                                               const Clock* clock,
+                                               const std::string& base_dir) {
+  std::string schema_store_dir = base_dir + "/schema_store_test";
+  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+
   std::unique_ptr<SchemaStore> schema_store =
-      SchemaStore::Create(&filesystem, GetTestTempDir(), clock).ValueOrDie();
+      SchemaStore::Create(&filesystem, schema_store_dir, clock).ValueOrDie();
 
   SchemaProto schema;
   CreateFakeTypeConfig(schema.add_types());
@@ -167,8 +173,8 @@ std::unique_ptr<SchemaStore> CreateSchemaStore(const Clock* clock) {
   return schema_store;
 }
 
-void CleanUp(const Filesystem& filesystem, const std::string& index_dir) {
-  filesystem.DeleteDirectoryRecursively(index_dir.c_str());
+void CleanUp(const Filesystem& filesystem, const std::string& base_dir) {
+  filesystem.DeleteDirectoryRecursively(base_dir.c_str());
 }
 
 void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
@@ -180,20 +186,26 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  std::unique_ptr<NumericIndex<int64_t>> integer_index =
-      std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, integer_index_dir));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IndexProcessor> index_processor,
       IndexProcessor::Create(normalizer.get(), index.get(), integer_index.get(),
@@ -210,7 +222,14 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
         index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithOneProperty)
     ->Arg(1000)
@@ -237,20 +256,26 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  std::unique_ptr<NumericIndex<int64_t>> integer_index =
-      std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, integer_index_dir));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IndexProcessor> index_processor,
       IndexProcessor::Create(normalizer.get(), index.get(), integer_index.get(),
@@ -269,7 +294,14 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
         index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithTenProperties)
     ->Arg(1000)
@@ -296,20 +328,26 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  std::unique_ptr<NumericIndex<int64_t>> integer_index =
-      std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, integer_index_dir));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IndexProcessor> index_processor,
       IndexProcessor::Create(normalizer.get(), index.get(), integer_index.get(),
@@ -328,7 +366,14 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
         index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithDiacriticLetters)
     ->Arg(1000)
@@ -355,20 +400,26 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
 
   IcingFilesystem icing_filesystem;
   Filesystem filesystem;
-  std::string index_dir = GetTestTempDir() + "/index_test/";
+  std::string base_dir = GetTestTempDir() + "/index_processor_benchmark";
+  std::string index_dir = base_dir + "/index_test/";
+  std::string integer_index_dir = base_dir + "/integer_index_test/";
 
-  CleanUp(filesystem, index_dir);
+  CleanUp(filesystem, base_dir);
+  ASSERT_THAT(filesystem.CreateDirectoryRecursively(base_dir.c_str()),
+              IsTrue());
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
-  std::unique_ptr<NumericIndex<int64_t>> integer_index =
-      std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, integer_index_dir));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
   std::unique_ptr<Normalizer> normalizer = CreateNormalizer();
   Clock clock;
-  std::unique_ptr<SchemaStore> schema_store = CreateSchemaStore(&clock);
+  std::unique_ptr<SchemaStore> schema_store =
+      CreateSchemaStore(filesystem, &clock, base_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IndexProcessor> index_processor,
       IndexProcessor::Create(normalizer.get(), index.get(), integer_index.get(),
@@ -386,7 +437,14 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
         index_processor->IndexDocument(tokenized_document, document_id++));
   }
 
-  CleanUp(filesystem, index_dir);
+  index_processor.reset();
+  schema_store.reset();
+  normalizer.reset();
+  language_segmenter.reset();
+  integer_index.reset();
+  index.reset();
+
+  CleanUp(filesystem, base_dir);
 }
 BENCHMARK(BM_IndexDocumentWithHiragana)
     ->Arg(1000)

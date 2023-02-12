@@ -41,9 +41,9 @@ class PostingListUsed;
 //   related methods to serialize/deserialize Hit data to/from posting lists.
 // - FlashIndexStorage, IndexBlock, PostingListUsed use the serializer created
 //   by MainIndex, but hold the reference/pointer in the interface format
-//   (PostingListUsedSerializer) and only use common interface methods to manage
+//   (PostingListSerializer) and only use common interface methods to manage
 //   posting list.
-class PostingListUsedSerializer {
+class PostingListSerializer {
  public:
   // Special data is either a DataType instance or data_start_offset.
   template <typename DataType>
@@ -67,7 +67,7 @@ class PostingListUsedSerializer {
 
   static constexpr uint32_t kNumSpecialData = 2;
 
-  virtual ~PostingListUsedSerializer() = default;
+  virtual ~PostingListSerializer() = default;
 
   // Returns byte size of the data type.
   virtual uint32_t GetDataTypeBytes() const = 0;
@@ -122,9 +122,9 @@ class PostingListUsed {
   //       fails
   //   - FAILED_PRECONDITION if serializer or posting_list_buffer is null
   static libtextclassifier3::StatusOr<PostingListUsed>
-  CreateFromPreexistingPostingListUsedRegion(
-      PostingListUsedSerializer* serializer, void* posting_list_buffer,
-      uint32_t size_in_bytes);
+  CreateFromPreexistingPostingListUsedRegion(PostingListSerializer* serializer,
+                                             void* posting_list_buffer,
+                                             uint32_t size_in_bytes);
 
   // Creates a PostingListUsed that points to a buffer of size_in_bytes bytes
   // and initializes the content of the buffer so that the returned
@@ -139,7 +139,7 @@ class PostingListUsed {
   //       fails
   //   - FAILED_PRECONDITION if serializer or posting_list_buffer is null
   static libtextclassifier3::StatusOr<PostingListUsed>
-  CreateFromUnitializedRegion(PostingListUsedSerializer* serializer,
+  CreateFromUnitializedRegion(PostingListSerializer* serializer,
                               void* posting_list_buffer,
                               uint32_t size_in_bytes);
 

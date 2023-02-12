@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_INDEX_MAIN_POSTING_LIST_USED_HIT_SERIALIZER_H_
-#define ICING_INDEX_MAIN_POSTING_LIST_USED_HIT_SERIALIZER_H_
+#ifndef ICING_INDEX_MAIN_POSTING_LIST_HIT_SERIALIZER_H_
+#define ICING_INDEX_MAIN_POSTING_LIST_HIT_SERIALIZER_H_
 
 #include <cstdint>
 #include <vector>
@@ -28,8 +28,8 @@ namespace icing {
 namespace lib {
 
 // A serializer class to serialize hits to PostingListUsed. Layout described in
-// comments in posting-list-used-hit-serializer.cc.
-class PostingListUsedHitSerializer : public PostingListUsedSerializer {
+// comments in posting-list-hit-serializer.cc.
+class PostingListHitSerializer : public PostingListSerializer {
  public:
   static constexpr uint32_t kSpecialHitsSize = kNumSpecialData * sizeof(Hit);
 
@@ -312,7 +312,7 @@ class PostingListUsedHitSerializer : public PostingListUsedSerializer {
 
 // Inlined functions. Implementation details below. Avert eyes!
 template <class T, Hit (*GetHit)(const T&)>
-uint32_t PostingListUsedHitSerializer::PrependHitArray(
+uint32_t PostingListHitSerializer::PrependHitArray(
     PostingListUsed* posting_list_used, const T* array, uint32_t num_hits,
     bool keep_prepended) const {
   if (!IsPostingListValid(posting_list_used)) {
@@ -339,4 +339,4 @@ uint32_t PostingListUsedHitSerializer::PrependHitArray(
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_INDEX_MAIN_POSTING_LIST_USED_HIT_SERIALIZER_H_
+#endif  // ICING_INDEX_MAIN_POSTING_LIST_HIT_SERIALIZER_H_

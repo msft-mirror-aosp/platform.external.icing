@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/numeric/posting-list-integer-index-data-accessor.h"
+#include "icing/index/numeric/posting-list-integer-index-accessor.h"
 
 #include <cstdint>
 #include <memory>
@@ -26,17 +26,16 @@
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/numeric/integer-index-data.h"
-#include "icing/index/numeric/posting-list-used-integer-index-data-serializer.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
 /* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<PostingListIntegerIndexDataAccessor>>
-PostingListIntegerIndexDataAccessor::Create(
-    FlashIndexStorage* storage,
-    PostingListUsedIntegerIndexDataSerializer* serializer) {
+    std::unique_ptr<PostingListIntegerIndexAccessor>>
+PostingListIntegerIndexAccessor::Create(
+    FlashIndexStorage* storage, PostingListIntegerIndexSerializer* serializer) {
   uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
       storage->block_size(), serializer->GetDataTypeBytes());
   std::unique_ptr<uint8_t[]> posting_list_buffer_array =
@@ -45,20 +44,19 @@ PostingListIntegerIndexDataAccessor::Create(
       PostingListUsed posting_list_buffer,
       PostingListUsed::CreateFromUnitializedRegion(
           serializer, posting_list_buffer_array.get(), max_posting_list_bytes));
-  return std::unique_ptr<PostingListIntegerIndexDataAccessor>(
-      new PostingListIntegerIndexDataAccessor(
+  return std::unique_ptr<PostingListIntegerIndexAccessor>(
+      new PostingListIntegerIndexAccessor(
           storage, std::move(posting_list_buffer_array),
           std::move(posting_list_buffer), serializer));
 }
 
 /* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<PostingListIntegerIndexDataAccessor>>
-PostingListIntegerIndexDataAccessor::CreateFromExisting(
-    FlashIndexStorage* storage,
-    PostingListUsedIntegerIndexDataSerializer* serializer,
+    std::unique_ptr<PostingListIntegerIndexAccessor>>
+PostingListIntegerIndexAccessor::CreateFromExisting(
+    FlashIndexStorage* storage, PostingListIntegerIndexSerializer* serializer,
     PostingListIdentifier existing_posting_list_id) {
   ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<PostingListIntegerIndexDataAccessor> pl_accessor,
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor,
       Create(storage, serializer));
   ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                          storage->GetPostingList(existing_posting_list_id));
@@ -69,13 +67,13 @@ PostingListIntegerIndexDataAccessor::CreateFromExisting(
 
 // Returns the next batch of integer index data for the provided posting list.
 libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
-PostingListIntegerIndexDataAccessor::GetNextDataBatch() {
+PostingListIntegerIndexAccessor::GetNextDataBatch() {
   if (preexisting_posting_list_ == nullptr) {
     if (has_reached_posting_list_chain_end_) {
       return std::vector<IntegerIndexData>();
     }
     return absl_ports::FailedPreconditionError(
-        "Cannot retrieve data from a PostingListIntegerIndexDataAccessor that "
+        "Cannot retrieve data from a PostingListIntegerIndexAccessor that "
         "was not created from a preexisting posting list.");
   }
   ICING_ASSIGN_OR_RETURN(
@@ -106,7 +104,7 @@ PostingListIntegerIndexDataAccessor::GetNextDataBatch() {
   return batch;
 }
 
-libtextclassifier3::Status PostingListIntegerIndexDataAccessor::PrependData(
+libtextclassifier3::Status PostingListIntegerIndexAccessor::PrependData(
     const IntegerIndexData& data) {
   PostingListUsed& active_pl = (preexisting_posting_list_ != nullptr)
                                    ? preexisting_posting_list_->posting_list

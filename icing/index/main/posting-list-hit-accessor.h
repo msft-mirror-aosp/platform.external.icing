@@ -26,7 +26,7 @@
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 
 namespace icing {
 namespace lib {
@@ -43,7 +43,7 @@ class PostingListHitAccessor : public PostingListAccessor {
   //   - On success, a valid unique_ptr instance of PostingListHitAccessor
   //   - INVALID_ARGUMENT error if storage has an invalid block_size.
   static libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
-  Create(FlashIndexStorage* storage, PostingListUsedHitSerializer* serializer);
+  Create(FlashIndexStorage* storage, PostingListHitSerializer* serializer);
 
   // Create a PostingListHitAccessor with an existing posting list identified by
   // existing_posting_list_id.
@@ -57,10 +57,10 @@ class PostingListHitAccessor : public PostingListAccessor {
   //   - INVALID_ARGUMENT if storage has an invalid block_size.
   static libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
   CreateFromExisting(FlashIndexStorage* storage,
-                     PostingListUsedHitSerializer* serializer,
+                     PostingListHitSerializer* serializer,
                      PostingListIdentifier existing_posting_list_id);
 
-  PostingListUsedSerializer* GetSerializer() override { return serializer_; }
+  PostingListSerializer* GetSerializer() override { return serializer_; }
 
   // Retrieve the next batch of hits for the posting list chain
   //
@@ -87,14 +87,14 @@ class PostingListHitAccessor : public PostingListAccessor {
 
  private:
   explicit PostingListHitAccessor(
-      FlashIndexStorage* storage, PostingListUsedHitSerializer* serializer,
+      FlashIndexStorage* storage, PostingListHitSerializer* serializer,
       std::unique_ptr<uint8_t[]> posting_list_buffer_array,
       PostingListUsed posting_list_buffer)
       : PostingListAccessor(storage, std::move(posting_list_buffer_array),
                             std::move(posting_list_buffer)),
         serializer_(serializer) {}
 
-  PostingListUsedHitSerializer* serializer_;  // Does not own.
+  PostingListHitSerializer* serializer_;  // Does not own.
 };
 
 }  // namespace lib
