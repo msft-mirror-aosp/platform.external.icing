@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/numeric/posting-list-used-integer-index-data-serializer.h"
+#include "icing/index/numeric/posting-list-integer-index-serializer.h"
 
 #include <memory>
 #include <vector>
@@ -39,9 +39,8 @@ namespace {
 //                    without ALMOST_FULL) test cases, including for
 //                    PopFrontData.
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
-     GetMinPostingListSizeToFitNotNull) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, GetMinPostingListSizeToFitNotNull) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 2551 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -65,9 +64,9 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
               Eq(3 * sizeof(IntegerIndexData)));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
+TEST(PostingListIntegerIndexSerializerTest,
      GetMinPostingListSizeToFitAlmostFull) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -87,9 +86,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
   EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used), Eq(size));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
-     GetMinPostingListSizeToFitFull) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, GetMinPostingListSizeToFitFull) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -113,8 +111,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
   EXPECT_THAT(serializer.GetMinPostingListSizeToFit(&pl_used), Eq(size));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest, PrependDataNotFull) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, PrependDataNotFull) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 2551 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -151,8 +149,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest, PrependDataNotFull) {
               IsOkAndHolds(ElementsAre(data2, data1, data0)));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest, PrependDataAlmostFull) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, PrependDataAlmostFull) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 4 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -195,9 +193,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest, PrependDataAlmostFull) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
-     PrependDataPostingListUsedMinSize) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, PrependDataPostingListUsedMinSize) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -233,9 +230,9 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
+TEST(PostingListIntegerIndexSerializerTest,
      PrependDataArrayDoNotKeepPrepended) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 6 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -314,9 +311,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
-     PrependDataArrayKeepPrepended) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, PrependDataArrayKeepPrepended) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 6 * sizeof(IntegerIndexData);
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -371,8 +367,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
       IsOkAndHolds(ElementsAreArray(data_pushed.rbegin(), data_pushed.rend())));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest, MoveFrom) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, MoveFrom) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> buf1 = std::make_unique<char[]>(size);
@@ -412,9 +408,9 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest, MoveFrom) {
   EXPECT_THAT(serializer.GetData(&pl_used1), IsOkAndHolds(IsEmpty()));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest,
+TEST(PostingListIntegerIndexSerializerTest,
      MoveToNullReturnsFailedPrecondition) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
@@ -443,8 +439,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest,
       IsOkAndHolds(ElementsAreArray(data_arr.rbegin(), data_arr.rend())));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest, MoveToPostingListTooSmall) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, MoveToPostingListTooSmall) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size1 = 3 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> buf1 = std::make_unique<char[]>(size1);
@@ -486,8 +482,8 @@ TEST(PostingListUsedIntegerIndexDataSerializerTest, MoveToPostingListTooSmall) {
       IsOkAndHolds(ElementsAreArray(data_arr2.rbegin(), data_arr2.rend())));
 }
 
-TEST(PostingListUsedIntegerIndexDataSerializerTest, PopFrontData) {
-  PostingListUsedIntegerIndexDataSerializer serializer;
+TEST(PostingListIntegerIndexSerializerTest, PopFrontData) {
+  PostingListIntegerIndexSerializer serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
   std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);

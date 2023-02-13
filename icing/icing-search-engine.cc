@@ -93,6 +93,7 @@ namespace {
 
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kIndexSubfolderName = "index_dir";
+constexpr std::string_view kIntegerIndexSubfolderName = "integer_index_dir";
 constexpr std::string_view kSchemaSubfolderName = "schema_dir";
 constexpr std::string_view kSetSchemaMarkerFilename = "set_schema_marker";
 constexpr std::string_view kInitMarkerFilename = "init_marker";
@@ -341,6 +342,14 @@ std::string MakeDocumentTemporaryDirectoryPath(const std::string& base_dir) {
 // else.
 std::string MakeIndexDirectoryPath(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kIndexSubfolderName);
+}
+
+// Working path for integer index. Integer index is derived from
+// PersistentStorage and it will take full ownership of this working path,
+// including creation/deletion. See PersistentStorage for more details about
+// working path.
+std::string MakeIntegerIndexWorkingPath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kIntegerIndexSubfolderName);
 }
 
 // SchemaStore files are in a standalone subfolder for easier file management.
@@ -655,7 +664,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   // TODO(b/249829533): switch to use persistent numeric index after
   //                    implementing and initialize numeric index.
-  integer_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
+  TC3_ASSIGN_OR_RETURN(
+      integer_index_,
+      DummyNumericIndex<int64_t>::Create(
+          *filesystem_, MakeIntegerIndexWorkingPath(options_.base_dir())));
 
   libtextclassifier3::Status index_init_status;
   if (absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
@@ -894,6 +906,14 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         std::move(index_incompatible_type));
   }
 
+  bool join_incompatible =
+      !set_schema_result.schema_types_join_incompatible_by_name.empty();
+  for (const std::string& join_incompatible_type :
+       set_schema_result.schema_types_join_incompatible_by_name) {
+    result_proto.add_join_incompatible_changed_schema_types(
+        std::move(join_incompatible_type));
+  }
+
   libtextclassifier3::Status status;
   if (set_schema_result.success) {
     if (lost_previous_schema) {
@@ -913,6 +933,12 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         TransformStatus(status, result_status);
         return result_proto;
       }
+    }
+
+    if (lost_previous_schema || join_incompatible) {
+      // TODO(b/256022027): rebuild joinable cache if not join compatible. This
+      //   should be done together with index (see RestoreIndexIfNeeded) because
+      //   we want to "replay" documents only once to cover all rebuild.
     }
 
     if (lost_previous_schema || index_incompatible) {
@@ -1724,8 +1750,9 @@ SearchResultProto IcingSearchEngine::Search(
   ScopedTimer overall_timer(clock_->GetNewTimer(), [query_stats](int64_t t) {
     query_stats->set_latency_ms(t);
   });
-  // TODO(b/146008613) Explore ideas to make this function read-only.
-  absl_ports::unique_lock l(&mutex_);
+  // Only an overall read-lock is required here. A finer-grained write-lock is
+  // provided around the LiteIndex.
+  absl_ports::shared_lock l(&mutex_);
   query_stats->set_lock_acquisition_latency_ms(
       overall_timer.timer().GetElapsedMilliseconds());
   if (!initialized_) {
@@ -1754,9 +1781,40 @@ SearchResultProto IcingSearchEngine::Search(
   query_stats->set_is_first_page(true);
   query_stats->set_requested_page_size(result_spec.num_per_page());
 
-  // Process query and score
-  QueryScoringResults query_scoring_results =
-      ProcessQueryAndScore(search_spec, scoring_spec, result_spec);
+  const JoinSpecProto& join_spec = search_spec.join_spec();
+  std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
+  if (!join_spec.parent_property_expression().empty() &&
+      !join_spec.child_property_expression().empty()) {
+    // Process child query
+    QueryScoringResults nested_query_scoring_results =
+        ProcessQueryAndScore(join_spec.nested_spec().search_spec(),
+                             join_spec.nested_spec().scoring_spec(),
+                             join_spec.nested_spec().result_spec(),
+                             /*join_children_fetcher=*/nullptr);
+    // TOOD(b/256022027): set different kinds of latency for 2nd query.
+    if (!nested_query_scoring_results.status.ok()) {
+      TransformStatus(nested_query_scoring_results.status, result_status);
+      return result_proto;
+    }
+
+    JoinProcessor join_processor(document_store_.get());
+    // Building a JoinChildrenFetcher where child documents are grouped by
+    // their joinable values.
+    libtextclassifier3::StatusOr<JoinChildrenFetcher> join_children_fetcher_or =
+        join_processor.GetChildrenFetcher(
+            search_spec.join_spec(),
+            std::move(nested_query_scoring_results.scored_document_hits));
+    if (!join_children_fetcher_or.ok()) {
+      TransformStatus(join_children_fetcher_or.status(), result_status);
+      return result_proto;
+    }
+    join_children_fetcher = std::make_unique<JoinChildrenFetcher>(
+        std::move(join_children_fetcher_or).ValueOrDie());
+  }
+
+  // Process parent query
+  QueryScoringResults query_scoring_results = ProcessQueryAndScore(
+      search_spec, scoring_spec, result_spec, join_children_fetcher.get());
   int term_count = 0;
   for (const auto& section_and_terms : query_scoring_results.query_terms) {
     term_count += section_and_terms.second.size();
@@ -1779,25 +1837,13 @@ SearchResultProto IcingSearchEngine::Search(
   }
 
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
-  if (search_spec.has_join_spec()) {
-    // Process 2nd query
-    QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
-        search_spec.join_spec().nested_spec().search_spec(),
-        search_spec.join_spec().nested_spec().scoring_spec(),
-        search_spec.join_spec().nested_spec().result_spec());
-    // TOOD(b/256022027): set different kinds of latency for 2nd query.
-    if (!nested_query_scoring_results.status.ok()) {
-      TransformStatus(nested_query_scoring_results.status, result_status);
-      return result_proto;
-    }
-
+  if (join_children_fetcher != nullptr) {
     // Join 2 scored document hits
     JoinProcessor join_processor(document_store_.get());
     libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
         joined_result_document_hits_or = join_processor.Join(
-            search_spec.join_spec(),
-            std::move(query_scoring_results.scored_document_hits),
-            std::move(nested_query_scoring_results.scored_document_hits));
+            join_spec, std::move(query_scoring_results.scored_document_hits),
+            *join_children_fetcher);
     if (!joined_result_document_hits_or.ok()) {
       TransformStatus(joined_result_document_hits_or.status(), result_status);
       return result_proto;
@@ -1881,7 +1927,8 @@ SearchResultProto IcingSearchEngine::Search(
 
 IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
-    const ResultSpecProto& result_spec) {
+    const ResultSpecProto& result_spec,
+    const JoinChildrenFetcher* join_children_fetcher) {
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
 
   // Gets unordered results from query processor
@@ -1919,8 +1966,9 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   component_timer = clock_->GetNewTimer();
   // Scores but does not rank the results.
   libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
-      scoring_processor_or = ScoringProcessor::Create(
-          scoring_spec, document_store_.get(), schema_store_.get());
+      scoring_processor_or =
+          ScoringProcessor::Create(scoring_spec, document_store_.get(),
+                                   schema_store_.get(), join_children_fetcher);
   if (!scoring_processor_or.ok()) {
     return QueryScoringResults(std::move(scoring_processor_or).status(),
                                std::move(query_results.query_terms),

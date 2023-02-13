@@ -39,11 +39,37 @@ class NonConstantScoreExpression : public ScoreExpression {
   }
 
   libtextclassifier3::StatusOr<double> eval(
-      const DocHitInfo&, const DocHitInfoIterator*) override {
+      const DocHitInfo &, const DocHitInfoIterator *) const override {
     return 0;
   }
 
+  ScoreExpressionType type() const override {
+    return ScoreExpressionType::kDouble;
+  }
+
   bool is_constant_double() const override { return false; }
+};
+
+class ListScoreExpression : public ScoreExpression {
+ public:
+  static std::unique_ptr<ListScoreExpression> Create(
+      const std::vector<double> &values) {
+    std::unique_ptr<ListScoreExpression> res =
+        std::make_unique<ListScoreExpression>();
+    res->values = values;
+    return res;
+  }
+
+  libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+      const DocHitInfo &, const DocHitInfoIterator *) const override {
+    return values;
+  }
+
+  ScoreExpressionType type() const override {
+    return ScoreExpressionType::kDoubleList;
+  }
+
+  std::vector<double> values;
 };
 
 template <typename... Args>
@@ -178,6 +204,82 @@ TEST(ScoreExpressionTest, CannotSimplifyNonConstant) {
                       MathFunctionScoreExpression::FunctionType::kLog,
                       MakeChildren(NonConstantScoreExpression::Create())));
   ASSERT_FALSE(expression->is_constant_double());
+}
+
+TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgument) {
+  // max({1, 2, 3}) = 3
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoreExpression> expression,
+      MathFunctionScoreExpression::Create(
+          MathFunctionScoreExpression::FunctionType::kMax,
+          MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(3)));
+
+  // min({1, 2, 3}) = 1
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMin,
+                      MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
+
+  // max({4}) = 4
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMax,
+                      MakeChildren(ListScoreExpression::Create({4}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(4)));
+
+  // min({5}) = 5
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kMin,
+                      MakeChildren(ListScoreExpression::Create({5}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(5)));
+}
+
+TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
+  // max({}) = evaluation error, since max on empty list does not produce a
+  // valid result.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ScoreExpression> expression,
+      MathFunctionScoreExpression::Create(
+          MathFunctionScoreExpression::FunctionType::kMax,
+          MakeChildren(ListScoreExpression::Create({}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // max(1, {2}) = type error, since max must take either n > 0 parameters of
+  // type double, or a single parameter of type list.
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kMax,
+                  MakeChildren(ConstantScoreExpression::Create(1),
+                               ListScoreExpression::Create({2}))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // min({1}, {2}) = type error, since min must take either n > 0 parameters of
+  // type double, or a single parameter of type list.
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kMin,
+                  MakeChildren(ListScoreExpression::Create({1}),
+                               ListScoreExpression::Create({2}))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // sin({1}) = type error, since sin does not support list type parameters.
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kSin,
+                  MakeChildren(ListScoreExpression::Create({1}))),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(ScoreExpressionTest, ChildrenCannotBeNull) {
+  EXPECT_THAT(OperatorScoreExpression::Create(
+                  OperatorScoreExpression::OperatorType::kPlus,
+                  MakeChildren(ConstantScoreExpression::Create(1), nullptr)),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(MathFunctionScoreExpression::Create(
+                  MathFunctionScoreExpression::FunctionType::kPow,
+                  MakeChildren(ConstantScoreExpression::Create(2), nullptr)),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 }  // namespace

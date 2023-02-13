@@ -57,8 +57,8 @@
 //    $ adb push blaze-bin/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmark_filter=all
-//    --adb
+//    $ adb shell /data/local/tmp/query-processor_benchmark
+//    --benchmark_filter=all --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
 // the benchmark will set up data files accordingly.
@@ -103,6 +103,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -116,7 +117,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -226,6 +229,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -239,7 +243,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -367,6 +373,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -380,7 +387,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -493,6 +502,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -506,7 +516,9 @@ void BM_QueryHiragana(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =

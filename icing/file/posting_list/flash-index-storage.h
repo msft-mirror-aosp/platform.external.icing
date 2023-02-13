@@ -85,7 +85,7 @@ class FlashIndexStorage {
   //     one from disk.
   static libtextclassifier3::StatusOr<FlashIndexStorage> Create(
       const std::string& index_filename, const Filesystem* filesystem,
-      PostingListUsedSerializer* serializer, bool in_memory = true);
+      PostingListSerializer* serializer, bool in_memory = true);
 
   // Retrieve the PostingList referred to by PostingListIdentifier. This posting
   // list must have been previously allocated by a prior call to
@@ -158,8 +158,8 @@ class FlashIndexStorage {
     return 1.0 - static_cast<double>(num_blocks_) / kMaxBlockIndex;
   }
 
-  const PostingListUsedSerializer* serializer() const { return serializer_; }
-  PostingListUsedSerializer* serializer() { return serializer_; }
+  const PostingListSerializer* serializer() const { return serializer_; }
+  PostingListSerializer* serializer() { return serializer_; }
 
   libtextclassifier3::Status Reset();
 
@@ -169,7 +169,7 @@ class FlashIndexStorage {
  private:
   explicit FlashIndexStorage(const std::string& index_filename,
                              const Filesystem* filesystem,
-                             PostingListUsedSerializer* serializer,
+                             PostingListSerializer* serializer,
                              bool has_in_memory_freelists);
 
   // Init the index from persistence. Create if file does not exist. We do not
@@ -287,7 +287,7 @@ class FlashIndexStorage {
 
   const Filesystem* filesystem_;  // not owned; can't be null
 
-  PostingListUsedSerializer* serializer_;  // not owned; can't be null
+  PostingListSerializer* serializer_;  // not owned; can't be null
 
   bool has_in_memory_freelists_;
 };
