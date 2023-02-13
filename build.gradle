@@ -51,6 +51,13 @@ android {
     namespace "com.google.android.icing"
 }
 
+// This project has no device tests, skip building it
+androidComponents {
+    beforeVariants(selector().withName("debug"), { variantBuilder ->
+        variantBuilder.enableAndroidTest = false
+    })
+}
+
 dependencies {
     api('androidx.annotation:annotation:1.1.0')
 
