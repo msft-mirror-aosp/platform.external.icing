@@ -14,9 +14,22 @@
 
 #include "icing/tokenization/raw-query-tokenizer.h"
 
+#include <cctype>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_join.h"
+#include "icing/schema/schema-util.h"
+#include "icing/schema/section-manager.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/status-macros.h"
@@ -59,7 +72,7 @@ constexpr char kColon = ':';
 constexpr char kLeftParentheses = '(';
 constexpr char kRightParentheses = ')';
 constexpr char kExclusion = '-';
-constexpr char kOrOperator[] = "OR";
+constexpr std::string_view kOrOperator = "OR";
 
 enum State {
   // Ready to process any terms
@@ -89,10 +102,14 @@ enum State {
   // When seeing right parentheses
   CLOSING_PARENTHESES = 8,
 
-  // Valid state count
-  STATE_COUNT = 9,
+  PROCESSING_NON_ASCII_ALPHABETIC_TERM = 9,
 
-  INVALID = 10
+  PROCESSING_PROPERTY_TERM_APPENDING = 10,
+
+  // Valid state count
+  STATE_COUNT = 11,
+
+  INVALID = 12
 };
 
 enum TermType {
@@ -100,27 +117,29 @@ enum TermType {
   WHITESPACE = 0,
 
   // A term that consists of unicode alphabetic and numeric characters
-  ALPHANUMERIC_TERM = 1,
+  ASCII_ALPHANUMERIC_TERM = 1,
+
+  NON_ASCII_ALPHABETIC_TERM = 2,
 
   // "("
-  LEFT_PARENTHESES = 2,
+  LEFT_PARENTHESES = 3,
 
   // ")"
-  RIGHT_PARENTHESES = 3,
+  RIGHT_PARENTHESES = 4,
 
   // "-"
-  EXCLUSION_OPERATOR = 4,
+  EXCLUSION_OPERATOR = 5,
 
   // "OR"
-  OR_OPERATOR = 5,
+  OR_OPERATOR = 6,
 
   // ":"
-  COLON = 6,
+  COLON = 7,
 
   // All the other characters seen that are not the types above
-  OTHER = 7,
+  OTHER = 8,
 
-  TYPE_COUNT = 8
+  TYPE_COUNT = 9
 };
 
 enum ActionOrError {
@@ -134,6 +153,9 @@ enum ActionOrError {
   // Ignore / throw away the current term
   IGNORE = 2,
 
+  // Concatenate with next term
+  CONCATENATE = 3,
+
   // Errors
   ERROR_UNKNOWN = 100,
   ERROR_NO_WHITESPACE_AROUND_OR = 101,
@@ -143,6 +165,7 @@ enum ActionOrError {
   ERROR_EXCLUSION_PROPERTY_TOGETHER = 105,
   ERROR_EXCLUSION_OR_TOGETHER = 106,
   ERROR_PROPERTY_OR_TOGETHER = 107,
+  ERROR_NON_ASCII_AS_PROPERTY_NAME = 108,
 };
 
 std::string_view GetErrorMessage(ActionOrError maybe_error) {
@@ -164,6 +187,8 @@ std::string_view GetErrorMessage(ActionOrError maybe_error) {
       return "Exclusion and OR operators can't be used together";
     case ERROR_PROPERTY_OR_TOGETHER:
       return "Property restriction and OR operators can't be used together";
+    case ERROR_NON_ASCII_AS_PROPERTY_NAME:
+      return "Characters in property name must all be ASCII.";
     default:
       return "";
   }
@@ -175,7 +200,7 @@ std::string_view GetErrorMessage(ActionOrError maybe_error) {
 // States:
 //
 // READY = 0
-// PROCESSING_ALPHANUMERIC_TERM = 1
+// PROCESSING_ASCII_ALPHANUMERIC_TERM = 1
 // PROCESSING_EXCLUSION = 2
 // PROCESSING_EXCLUSION_TERM = 3
 // PROCESSING_PROPERTY_RESTRICT = 4
@@ -183,24 +208,28 @@ std::string_view GetErrorMessage(ActionOrError maybe_error) {
 // PROCESSING_OR = 6
 // OPENING_PARENTHESES = 7
 // CLOSING_PARENTHESES = 8
+// PROCESSING_NON_ASCII_ALPHABETIC_TERM = 9
+// PROCESSING_PROPERTY_TERM_APPENDING = 10
 //
 // Actions:
 //
 // OUTPUT = a
 // KEEP = b
 // IGNORE = c
+// CONCAT = d, concatenate the current term and the new term.
 //
-//                    ========================================================
-//   Transition Table ||  0  |  1  |  2  |  3  |  4  |  5  |  6  |  7  |  8  |
-// ===========================================================================
-//         WHITESPACE || 0,c | 0,a | 0,c | 0,a | 0,a | 0,a | 0,a | 0,a | 0,a |
-//  ALPHANUMERIC_TERM || 1,c | 1,a | 3,a | 1,a | 5,a | 1,a |ERROR| 1,a | 1,a |
-//   LEFT_PARENTHESES || 7,c | 7,a |ERROR| 7,a |ERROR| 7,a | 7,a | 7,a | 7,a |
-//  RIGHT_PARENTHESES || 8,c | 8,a | 8,c | 8,a | 8,a | 8,a | 8,c | 8,a | 8,a |
-// EXCLUSION_OPERATOR || 2,c | 0,a | 2,c | 0,a |ERROR| 0,a |ERROR| 2,a | 2,a |
-//        OR_OPERATOR || 6,c |ERROR|ERROR|ERROR|ERROR|ERROR|ERROR| 7,b | 6,a |
-//              COLON || 0,c | 4,b |ERROR|ERROR| 4,b | 0,a |ERROR| 0,a |ERROR|
-//              OTHER || 0,c | 0,a | 0,c | 0,a | 0,a | 0,a | 0,a | 0,a | 0,a |
+// =============================================================================
+// Transition     ||  0 |  1 |  2 |  3 |  4 |  5 |  6 |  7 |  8 |  9 | 10 |
+// =============================================================================
+//     WHITESPACE || 0,c| 0,a| 0,c| 0,a| 0,a| 0,a| 0,a| 0,a| 0,a| 0,a| 0,a|
+//    ASCII_ALPHA || 1,c| 1,d| 3,a| 1,a| 5,a| 1,a|ERR | 1,a| 1,a| 1,a|10,d|
+// NONASCII_ALPHA || 9,c| 9,a| 3,a| 9,a| 5,a| 9,a|ERR | 9,a| 9,a| 9,a|10,d|
+//     LEFT_PAREN || 7,c| 7,a|ERR | 7,a|ERR | 7,a| 7,a| 7,a| 7,a| 7,a| 7,a|
+//    RIGHT_PAREN || 8,c| 8,a| 8,c| 8,a| 8,a| 8,a| 8,c| 8,a| 8,a| 8,a| 8,a|
+//   EXCLUSION_OP || 2,c| 0,a| 2,c| 0,a|ERR | 0,a|ERR | 2,a| 2,a| 0,a| 0,a|
+//    OR_OPERATOR || 6,c|ERR |ERR |ERR |ERR |ERR |ERR | 7,b| 6,a|ERR |ERR |
+//          COLON || 0,c| 4,b|ERR |ERR | 4,b|10,d|ERR | 0,a|ERR |ERR |10,d|
+//          OTHER || 0,c| 0,a| 0,c| 0,a| 0,a| 0,a| 0,a| 0,a| 0,a| 0,a| 0,a|
 //
 // Each cell is a rule that consists of 4 things:
 // [current state] + [next term type] -> [new state] + [action]
@@ -217,39 +246,52 @@ std::string_view GetErrorMessage(ActionOrError maybe_error) {
 //
 // NOTE: Please update the state transition table above if this is updated.
 //
-// TODO(samzheng): support syntax "-property1:term1", right now we don't allow
+// TODO(tjbarron): support syntax "-property1:term1", right now we don't allow
 // exclusion and property restriction applied on the same term.
 // TODO(b/141007791): figure out how we'd like to support special characters
 // like "+", "&", "@", "#" in indexing and query tokenizers.
 constexpr State state_transition_rules[STATE_COUNT][TYPE_COUNT] = {
     /*State: Ready*/
-    {READY, PROCESSING_ALPHANUMERIC_TERM, OPENING_PARENTHESES,
-     CLOSING_PARENTHESES, PROCESSING_EXCLUSION, PROCESSING_OR, READY, READY},
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, PROCESSING_EXCLUSION,
+     PROCESSING_OR, READY, READY},
     /*State: PROCESSING_ALPHANUMERIC_TERM*/
-    {READY, PROCESSING_ALPHANUMERIC_TERM, OPENING_PARENTHESES,
-     CLOSING_PARENTHESES, READY, INVALID, PROCESSING_PROPERTY_RESTRICT, READY},
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, READY, INVALID,
+     PROCESSING_PROPERTY_RESTRICT, READY},
     /*State: PROCESSING_EXCLUSION*/
-    {READY, PROCESSING_EXCLUSION_TERM, INVALID, CLOSING_PARENTHESES,
-     PROCESSING_EXCLUSION, INVALID, INVALID, READY},
+    {READY, PROCESSING_EXCLUSION_TERM, PROCESSING_EXCLUSION_TERM, INVALID,
+     CLOSING_PARENTHESES, PROCESSING_EXCLUSION, INVALID, INVALID, READY},
     /*State: PROCESSING_EXCLUSION_TERM*/
-    {READY, PROCESSING_ALPHANUMERIC_TERM, OPENING_PARENTHESES,
-     CLOSING_PARENTHESES, READY, INVALID, INVALID, READY},
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, READY, INVALID, INVALID, READY},
     /*State: PROCESSING_PROPERTY_RESTRICT*/
-    {READY, PROCESSING_PROPERTY_TERM, INVALID, CLOSING_PARENTHESES, INVALID,
-     INVALID, PROCESSING_PROPERTY_RESTRICT, READY},
-    /*State: PROCESSING_PROPERTY_TERM*/
-    {READY, PROCESSING_ALPHANUMERIC_TERM, OPENING_PARENTHESES,
-     CLOSING_PARENTHESES, READY, INVALID, READY, READY},
-    /*State: PROCESSING_OR*/
-    {READY, INVALID, OPENING_PARENTHESES, CLOSING_PARENTHESES, INVALID, INVALID,
-     INVALID, READY},
-    /*State: OPENING_PARENTHESES*/
-    {READY, PROCESSING_ALPHANUMERIC_TERM, OPENING_PARENTHESES,
-     CLOSING_PARENTHESES, PROCESSING_EXCLUSION, OPENING_PARENTHESES, READY,
+    {READY, PROCESSING_PROPERTY_TERM, PROCESSING_PROPERTY_TERM, INVALID,
+     CLOSING_PARENTHESES, INVALID, INVALID, PROCESSING_PROPERTY_RESTRICT,
      READY},
+    /*State: PROCESSING_PROPERTY_TERM*/
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, READY, INVALID,
+     PROCESSING_PROPERTY_TERM_APPENDING, READY},
+    /*State: PROCESSING_OR*/
+    {READY, INVALID, INVALID, OPENING_PARENTHESES, CLOSING_PARENTHESES, INVALID,
+     INVALID, INVALID, READY},
+    /*State: OPENING_PARENTHESES*/
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, PROCESSING_EXCLUSION,
+     OPENING_PARENTHESES, READY, READY},
     /*State: CLOSING_PARENTHESES*/
-    {READY, PROCESSING_ALPHANUMERIC_TERM, OPENING_PARENTHESES,
-     CLOSING_PARENTHESES, PROCESSING_EXCLUSION, PROCESSING_OR, INVALID, READY}};
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, PROCESSING_EXCLUSION,
+     PROCESSING_OR, INVALID, READY},
+    /*State: PROCESSING_NON_ASCII_ALPHABETIC_TERM*/
+    {READY, PROCESSING_ALPHANUMERIC_TERM, PROCESSING_NON_ASCII_ALPHABETIC_TERM,
+     OPENING_PARENTHESES, CLOSING_PARENTHESES, READY, INVALID, INVALID, READY},
+    /*State: PROCESSING_PROPERTY_TERM_APPENDING*/
+    {READY, PROCESSING_PROPERTY_TERM_APPENDING,
+     PROCESSING_PROPERTY_TERM_APPENDING, OPENING_PARENTHESES,
+     CLOSING_PARENTHESES, READY, INVALID, PROCESSING_PROPERTY_TERM_APPENDING,
+     READY}};
 
 // We use a 2D array to encode the action rules,
 // The value of action_rules[state1][term_type1] means "what action we need to
@@ -258,62 +300,121 @@ constexpr State state_transition_rules[STATE_COUNT][TYPE_COUNT] = {
 // NOTE: Please update the state transition table above if this is updated.
 constexpr ActionOrError action_rules[STATE_COUNT][TYPE_COUNT] = {
     /*State: Ready*/
-    {IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE},
+    {IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE},
     /*State: PROCESSING_ALPHANUMERIC_TERM*/
-    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, ERROR_NO_WHITESPACE_AROUND_OR,
-     KEEP, OUTPUT},
+    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT,
+     ERROR_NO_WHITESPACE_AROUND_OR, KEEP, OUTPUT},
     /*State: PROCESSING_EXCLUSION*/
-    {IGNORE, OUTPUT, ERROR_GROUP_AFTER_EXCLUSION, IGNORE, IGNORE,
+    {IGNORE, OUTPUT, OUTPUT, ERROR_GROUP_AFTER_EXCLUSION, IGNORE, IGNORE,
      ERROR_EXCLUSION_OR_TOGETHER, ERROR_EXCLUSION_PROPERTY_TOGETHER, IGNORE},
     /*State: PROCESSING_EXCLUSION_TERM*/
-    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, ERROR_NO_WHITESPACE_AROUND_OR,
-     ERROR_EXCLUSION_PROPERTY_TOGETHER, OUTPUT},
+    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT,
+     ERROR_NO_WHITESPACE_AROUND_OR, ERROR_EXCLUSION_PROPERTY_TOGETHER, OUTPUT},
     /*State: PROCESSING_PROPERTY_RESTRICT*/
-    {OUTPUT, OUTPUT, ERROR_GROUP_AFTER_PROPERTY_RESTRICTION, OUTPUT,
+    {OUTPUT, OUTPUT, OUTPUT, ERROR_GROUP_AFTER_PROPERTY_RESTRICTION, OUTPUT,
      ERROR_EXCLUSION_PROPERTY_TOGETHER, ERROR_PROPERTY_OR_TOGETHER, KEEP,
      OUTPUT},
     /*State: PROCESSING_PROPERTY_TERM*/
-    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, ERROR_NO_WHITESPACE_AROUND_OR,
-     OUTPUT, OUTPUT},
-    /*State: PROCESSING_OR*/
-    {OUTPUT, ERROR_NO_WHITESPACE_AROUND_OR, OUTPUT, IGNORE,
-     ERROR_NO_WHITESPACE_AROUND_OR, ERROR_NO_WHITESPACE_AROUND_OR,
-     ERROR_NO_WHITESPACE_AROUND_OR, OUTPUT},
-    /*State: OPENING_PARENTHESES*/
-    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, KEEP, OUTPUT, OUTPUT},
-    /*State: CLOSING_PARENTHESES*/
     {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT,
-     ERROR_GROUP_AS_PROPERTY_NAME, OUTPUT}};
+     ERROR_NO_WHITESPACE_AROUND_OR, CONCATENATE, OUTPUT},
+    /*State: PROCESSING_OR*/
+    {OUTPUT, ERROR_NO_WHITESPACE_AROUND_OR, ERROR_NO_WHITESPACE_AROUND_OR,
+     OUTPUT, IGNORE, ERROR_NO_WHITESPACE_AROUND_OR,
+     ERROR_NO_WHITESPACE_AROUND_OR, ERROR_NO_WHITESPACE_AROUND_OR, OUTPUT},
+    /*State: OPENING_PARENTHESES*/
+    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, KEEP, OUTPUT, OUTPUT},
+    /*State: CLOSING_PARENTHESES*/
+    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT,
+     ERROR_GROUP_AS_PROPERTY_NAME, OUTPUT},
+    /*State: PROCESSING_NON_ASCII_ALPHABETIC_TERM*/
+    {OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT, OUTPUT,
+     ERROR_NO_WHITESPACE_AROUND_OR, ERROR_NON_ASCII_AS_PROPERTY_NAME, OUTPUT},
+    /*State: PROCESSING_PROPERTY_TERM_APPENDING*/
+    {OUTPUT, CONCATENATE, CONCATENATE, OUTPUT, OUTPUT, OUTPUT,
+     ERROR_NO_WHITESPACE_AROUND_OR, CONCATENATE, OUTPUT}};
 
-// Helper function to get the TermType of the input term.
-TermType GetTermType(std::string_view term) {
-  if (term.length() == 1) {
-    // Must be an ASCII char
-    const char& first_term_char = term[0];
-    if (first_term_char == kWhitespace) {
-      return WHITESPACE;
-    } else if (first_term_char == kColon) {
-      return COLON;
-    } else if (first_term_char == kLeftParentheses) {
-      return LEFT_PARENTHESES;
-    } else if (first_term_char == kRightParentheses) {
-      return RIGHT_PARENTHESES;
-    } else if (first_term_char == kExclusion) {
-      return EXCLUSION_OPERATOR;
-    }
-  } else if (term.length() == 2 && term == kOrOperator) {
-    return OR_OPERATOR;
+// Determines the length of the whitespace term beginning at text[pos] and
+// returns a pair with the WHITESPACE TermType and a string_view of the
+// whitespace term.
+std::pair<TermType, std::string_view> GetWhitespaceTerm(std::string_view text,
+                                                        size_t pos) {
+  size_t cur = pos;
+  while (cur < text.length() && text[cur] == kWhitespace) {
+    ++cur;
   }
+  return std::make_pair(WHITESPACE, text.substr(pos, cur - pos));
+}
+
+// Determines the length of the potential content term beginning at text[pos]
+// and returns a pair with the appropriate TermType and a string_view of the
+// content term.
+//
+// NOTE: The potential content term could multiple content terms (segmentation
+// is needed to determine this), a property restrict (depending on other
+// neighboring tokens). It could also be multiple content terms surrounding an
+// OR operator (segmentation is also needed to determine this).
+std::pair<TermType, std::string_view> GetContentTerm(std::string_view text,
+                                                     size_t pos) {
+  size_t len = 0;
   // Checks the first char to see if it's an ASCII term
-  if (i18n_utils::IsAscii(term[0])) {
-    if (u_isalnum(term[0])) {
-      return ALPHANUMERIC_TERM;
-    }
-    return OTHER;
+  TermType type = ASCII_ALPHANUMERIC_TERM;
+  if (!i18n_utils::IsAscii(text[pos])) {
+    type = NON_ASCII_ALPHABETIC_TERM;
+  } else if (std::isalnum(text[pos])) {
+    type = OTHER;
   }
-  // All non-ASCII terms are alphabetic since language segmenter already
-  // filters out non-ASCII and non-alphabetic terms
-  return ALPHANUMERIC_TERM;
+  for (size_t cur = pos; cur < text.length() && len == 0; ++cur) {
+    switch (text[cur]) {
+      case kLeftParentheses:
+        [[fallthrough]];
+      case kRightParentheses:
+        [[fallthrough]];
+      case kExclusion:
+        [[fallthrough]];
+      case kWhitespace:
+        [[fallthrough]];
+      case kColon:
+        // If we reach any of our special characters (colon, exclusion or
+        // parentheses), then we've reached the end of the content term. Set len
+        // and exit the loop.
+        len = cur - pos;
+        break;
+      default:
+        break;
+    }
+  }
+  if (len == 0) {
+    // If len isn't set, then we must have reached the end of the string.
+    len = text.length() - pos;
+  }
+  return std::make_pair(type, text.substr(pos, len));
+}
+
+// Determines the type and length of the term beginning at text[pos].
+std::pair<TermType, std::string_view> GetTerm(std::string_view text,
+                                              size_t pos) {
+  switch (text[pos]) {
+    case kLeftParentheses:
+      return std::make_pair(LEFT_PARENTHESES, text.substr(pos, 1));
+    case kRightParentheses:
+      return std::make_pair(RIGHT_PARENTHESES, text.substr(pos, 1));
+    case kExclusion:
+      return std::make_pair(EXCLUSION_OPERATOR, text.substr(pos, 1));
+    case kWhitespace:
+      // Get length of whitespace
+      return GetWhitespaceTerm(text, pos);
+    case kColon:
+      return std::make_pair(COLON, text.substr(pos, 1));
+    case kOrOperator[0]:
+      if (text.length() >= pos + kOrOperator.length() &&
+          text.substr(pos, kOrOperator.length()) == kOrOperator) {
+        return std::make_pair(OR_OPERATOR,
+                              text.substr(pos, kOrOperator.length()));
+      }
+      [[fallthrough]];
+    default:
+      return GetContentTerm(text, pos);
+  }
 }
 
 // Helper function to remove the last token if it's OR operator. This is used to
@@ -367,12 +468,18 @@ libtextclassifier3::Status OutputToken(State new_state,
                                        TermType current_term_type,
                                        std::vector<Token>* tokens) {
   switch (current_term_type) {
-    case ALPHANUMERIC_TERM:
+    case ASCII_ALPHANUMERIC_TERM:
+      [[fallthrough]];
+    case NON_ASCII_ALPHABETIC_TERM:
       if (new_state == PROCESSING_PROPERTY_TERM) {
-        // Asserts extra rule 1: property name must be in ASCII
-        if (!i18n_utils::IsAscii(current_term[0])) {
-          return absl_ports::InvalidArgumentError(
-              "Characters in property name must all be ASCII.");
+        // Asserts extra rule 1: each property name in the property path is a
+        // valid term.
+        for (std::string_view property :
+             absl_ports::StrSplit(current_term, kPropertySeparator)) {
+          if (!SchemaUtil::ValidatePropertyName(property).ok()) {
+            return absl_ports::InvalidArgumentError(
+                GetErrorMessage(ERROR_NON_ASCII_AS_PROPERTY_NAME));
+          }
         }
         tokens->emplace_back(Token::QUERY_PROPERTY, current_term);
       } else {
@@ -405,13 +512,11 @@ libtextclassifier3::Status OutputToken(State new_state,
 // Returns:
 //   OK on success
 //   INVALID_ARGUMENT with error message on invalid query syntax
-libtextclassifier3::Status ProcessTerm(State* current_state,
-                                       std::string_view* current_term,
-                                       TermType* current_term_type,
-                                       int* unclosed_parentheses_count,
-                                       const std::string_view next_term,
-                                       TermType next_term_type,
-                                       std::vector<Token>* tokens) {
+libtextclassifier3::Status ProcessTerm(
+    State* current_state, std::string_view* current_term,
+    TermType* current_term_type, int* unclosed_parentheses_count,
+    const std::string_view next_term, TermType next_term_type,
+    const LanguageSegmenter* language_segmenter, std::vector<Token>* tokens) {
   // Asserts extra rule 4: parentheses must appear in pairs.
   if (next_term_type == LEFT_PARENTHESES) {
     ++(*unclosed_parentheses_count);
@@ -429,14 +534,36 @@ libtextclassifier3::Status ProcessTerm(State* current_state,
   }
   switch (action_or_error) {
     case OUTPUT:
-      ICING_RETURN_IF_ERROR(
-          OutputToken(new_state, *current_term, *current_term_type, tokens));
-      U_FALLTHROUGH;
+      if (*current_state == PROCESSING_PROPERTY_TERM_APPENDING) {
+        // We appended multiple terms together in case they actually should have
+        // been connected by a colon connector.
+        ICING_ASSIGN_OR_RETURN(std::vector<std::string_view> content_terms,
+                               language_segmenter->GetAllTerms(*current_term));
+        for (std::string_view term : content_terms) {
+          TermType type = ASCII_ALPHANUMERIC_TERM;
+          if (!i18n_utils::IsAscii(term[0])) {
+            type = NON_ASCII_ALPHABETIC_TERM;
+          } else if (!std::isalnum(term[0])) {
+            // Skip OTHER tokens here.
+            continue;
+          }
+          ICING_RETURN_IF_ERROR(OutputToken(new_state, term, type, tokens));
+        }
+      } else {
+        ICING_RETURN_IF_ERROR(
+            OutputToken(new_state, *current_term, *current_term_type, tokens));
+      }
+      [[fallthrough]];
     case IGNORE:
       *current_term = next_term;
       *current_term_type = next_term_type;
       break;
     case KEEP:
+      break;
+    case CONCATENATE:
+      *current_term = std::string_view(
+          current_term->data(),
+          next_term.data() - current_term->data() + next_term.length());
       break;
     default:
       return absl_ports::InvalidArgumentError(GetErrorMessage(ERROR_UNKNOWN));
@@ -452,56 +579,55 @@ libtextclassifier3::Status ProcessTerm(State* current_state,
 //   A list of tokens on success
 //   INVALID_ARGUMENT with error message on invalid query syntax
 libtextclassifier3::StatusOr<std::vector<Token>> ProcessTerms(
-    std::unique_ptr<LanguageSegmenter::Iterator> base_iterator) {
+    const LanguageSegmenter* language_segmenter,
+    std::vector<std::pair<TermType, std::string_view>> prescanned_terms) {
   std::vector<Token> tokens;
   State current_state = READY;
   std::string_view current_term;
   TermType current_term_type;
   int unclosed_parentheses_count = 0;
-  while (base_iterator->Advance()) {
-    const std::string_view next_term = base_iterator->GetTerm();
-    size_t colon_position = next_term.find(kColon);
-    // Since colon ":" is a word connector per ICU's rule
-    // (https://unicode.org/reports/tr29/#Word_Boundaries), strings like
-    // "foo:bar" are returned by LanguageSegmenter as one term. Here we're
-    // trying to find the first colon as it represents property restriction in
-    // raw query.
-    if (colon_position == std::string_view::npos) {
-      // No colon found
-      ICING_RETURN_IF_ERROR(ProcessTerm(&current_state, &current_term,
-                                        &current_term_type,
-                                        &unclosed_parentheses_count, next_term,
-                                        GetTermType(next_term), &tokens));
-    } else if (next_term.size() == 1 && next_term[0] == kColon) {
-      // The whole term is a colon
+  for (int i = 0; i < prescanned_terms.size(); ++i) {
+    const std::pair<TermType, std::string_view>& prescanned_term =
+        prescanned_terms.at(i);
+    if (prescanned_term.first != ASCII_ALPHANUMERIC_TERM &&
+        prescanned_term.first != NON_ASCII_ALPHABETIC_TERM &&
+        prescanned_term.first != OTHER) {
+      // This can't be a property restrict. Just pass it in.
       ICING_RETURN_IF_ERROR(
           ProcessTerm(&current_state, &current_term, &current_term_type,
-                      &unclosed_parentheses_count, next_term, COLON, &tokens));
+                      &unclosed_parentheses_count, prescanned_term.second,
+                      prescanned_term.first, language_segmenter, &tokens));
     } else {
-      // String before the colon is the property name
-      std::string_view property_name = next_term.substr(0, colon_position);
-      ICING_RETURN_IF_ERROR(
-          ProcessTerm(&current_state, &current_term, &current_term_type,
-                      &unclosed_parentheses_count, property_name,
-                      GetTermType(property_name), &tokens));
-      ICING_RETURN_IF_ERROR(
-          ProcessTerm(&current_state, &current_term, &current_term_type,
-                      &unclosed_parentheses_count, std::string_view(&kColon, 1),
-                      COLON, &tokens));
-      // String after the colon is the term that property restriction is applied
-      // on.
-      std::string_view property_term = next_term.substr(colon_position + 1);
-      ICING_RETURN_IF_ERROR(
-          ProcessTerm(&current_state, &current_term, &current_term_type,
-                      &unclosed_parentheses_count, property_term,
-                      GetTermType(property_term), &tokens));
+      // There's no colon after this term. Now, we need to segment this.
+      ICING_ASSIGN_OR_RETURN(
+          std::vector<std::string_view> content_terms,
+          language_segmenter->GetAllTerms(prescanned_term.second));
+      for (std::string_view term : content_terms) {
+        TermType type = ASCII_ALPHANUMERIC_TERM;
+        if (term == kOrOperator) {
+          // TODO(tjbarron) Decide whether we should revise this and other
+          // handled syntax. This is used to allow queries like "term1,OR,term2"
+          // to succeed. It's not clear if we should allow this or require
+          // clients to ensure that OR operators are always surrounded by
+          // whitespace.
+          type = OR_OPERATOR;
+        } else if (!i18n_utils::IsAscii(term[0])) {
+          type = NON_ASCII_ALPHABETIC_TERM;
+        } else if (!std::isalnum(term[0])) {
+          type = OTHER;
+        }
+        ICING_RETURN_IF_ERROR(ProcessTerm(&current_state, &current_term,
+                                          &current_term_type,
+                                          &unclosed_parentheses_count, term,
+                                          type, language_segmenter, &tokens));
+      }
     }
   }
   // Adds a fake whitespace at the end to flush the last term.
-  ICING_RETURN_IF_ERROR(
-      ProcessTerm(&current_state, &current_term, &current_term_type,
-                  &unclosed_parentheses_count,
-                  std::string_view(&kWhitespace, 1), WHITESPACE, &tokens));
+  ICING_RETURN_IF_ERROR(ProcessTerm(
+      &current_state, &current_term, &current_term_type,
+      &unclosed_parentheses_count, std::string_view(&kWhitespace, 1),
+      WHITESPACE, language_segmenter, &tokens));
   if (unclosed_parentheses_count > 0) {
     return absl_ports::InvalidArgumentError("Unclosed left parentheses.");
   }
@@ -542,10 +668,16 @@ RawQueryTokenizer::Tokenize(std::string_view text) const {
 
 libtextclassifier3::StatusOr<std::vector<Token>> RawQueryTokenizer::TokenizeAll(
     std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<LanguageSegmenter::Iterator> base_iterator,
-      language_segmenter_.Segment(text));
-  return ProcessTerms(std::move(base_iterator));
+  // 1. Prescan all terms in the text, to determine which ones are potentially
+  // content and which ones are not.
+  std::vector<std::pair<TermType, std::string_view>> prescanned_terms;
+  for (size_t pos = 0; pos < text.length();) {
+    std::pair<TermType, std::string_view> term_pair = GetTerm(text, pos);
+    pos += term_pair.second.length();
+    prescanned_terms.push_back(term_pair);
+  }
+  // 2. Process the prescanned terms, segmenting content terms as needed.
+  return ProcessTerms(&language_segmenter_, std::move(prescanned_terms));
 }
 
 }  // namespace lib
