@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/testing/snippet-helpers.h"
+#include "icing/util/snippet-helpers.h"
 
 #include <algorithm>
 #include <string_view>

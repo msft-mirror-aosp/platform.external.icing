@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 
+#include <cinttypes>
 #include <string>
 #include <utility>
 #include <vector>
