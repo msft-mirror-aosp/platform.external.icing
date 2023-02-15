@@ -29,6 +29,7 @@
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/proto/debug.pb.h"
@@ -587,10 +588,11 @@ class IcingSearchEngine {
           parse_query_latency_ms(parse_query_latency_ms_in),
           scoring_latency_ms(scoring_latency_ms_in) {}
   };
-  QueryScoringResults ProcessQueryAndScore(const SearchSpecProto& search_spec,
-                                           const ScoringSpecProto& scoring_spec,
-                                           const ResultSpecProto& result_spec)
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  QueryScoringResults ProcessQueryAndScore(
+      const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+      const ResultSpecProto& result_spec,
+      const JoinChildrenFetcher* join_children_fetcher)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
   // Check that everything is consistent with each other so that we're not

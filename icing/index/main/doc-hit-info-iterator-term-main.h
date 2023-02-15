@@ -40,7 +40,7 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
         cached_doc_hit_infos_idx_(-1),
         num_advance_calls_(0),
         num_blocks_inspected_(0),
-        next_posting_list_id_(PostingListIdentifier::kInvalid),
+        all_pages_consumed_(false),
         section_restrict_mask_(section_restrict_mask),
         need_hit_term_frequency_(need_hit_term_frequency) {}
 
@@ -102,11 +102,22 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
   int cached_doc_hit_infos_idx_;
   int num_advance_calls_;
   int num_blocks_inspected_;
-  PostingListIdentifier next_posting_list_id_;
+  bool all_pages_consumed_;
   // Mask indicating which sections hits should be considered for.
   // Ex. 0000 0000 0000 0010 means that only hits from section 1 are desired.
   const SectionIdMask section_restrict_mask_;
   const bool need_hit_term_frequency_;
+
+ private:
+  // Remaining number of hits including the current hit.
+  // Returns -1 if cached_doc_hit_infos_idx_ is invalid.
+  int cached_doc_hit_info_count() const {
+    if (cached_doc_hit_infos_idx_ == -1 ||
+        cached_doc_hit_infos_idx_ >= cached_doc_hit_infos_.size()) {
+      return -1;
+    }
+    return cached_doc_hit_infos_.size() - cached_doc_hit_infos_idx_;
+  }
 };
 
 class DocHitInfoIteratorTermMainExact : public DocHitInfoIteratorTermMain {

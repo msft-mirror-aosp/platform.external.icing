@@ -66,10 +66,10 @@ class FileBackedProto {
   // Reset the internal file_path for the file backed proto.
   // Example use:
   //   auto file_backed_proto1 = *FileBackedProto<Proto>::Create(...);
-  //   auto file_backed_proto2 = *FileBackedProto<Proto>::Create(...);
+  //   auto file_backed_google::protobuf = *FileBackedProto<Proto>::Create(...);
   //   filesystem.SwapFiles(file1, file2);
   //   file_backed_proto1.SetSwappedFilepath(file2);
-  //   file_backed_proto2.SetSwappedFilepath(file1);
+  //   file_backed_google::protobuf.SetSwappedFilepath(file1);
   void SetSwappedFilepath(std::string_view swapped_to_file_path) {
     file_path_ = swapped_to_file_path;
   }

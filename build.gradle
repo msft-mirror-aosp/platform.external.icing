@@ -59,6 +59,7 @@ dependencies {
     androidTestImplementation(libs.testCore)
     androidTestImplementation(libs.testRules)
     androidTestImplementation(libs.truth)
+    androidTestImplementation(libs.kotlinBom)
 }
 
 protobuf {

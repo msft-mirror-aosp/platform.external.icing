@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/search.pb.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
@@ -34,10 +35,21 @@ class JoinProcessor {
   explicit JoinProcessor(const DocumentStore* doc_store)
       : doc_store_(doc_store) {}
 
+  // Get a JoinChildrenFetcher used to fetch all children documents by a parent
+  // document id.
+  //
+  // Returns:
+  //   A JoinChildrenFetcher instance on success.
+  //   UNIMPLEMENTED_ERROR if the join type specified by join_spec is not
+  //   supported.
+  libtextclassifier3::StatusOr<JoinChildrenFetcher> GetChildrenFetcher(
+      const JoinSpecProto& join_spec,
+      std::vector<ScoredDocumentHit>&& child_scored_document_hits);
+
   libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>> Join(
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& parent_scored_document_hits,
-      std::vector<ScoredDocumentHit>&& child_scored_document_hits);
+      const JoinChildrenFetcher& join_children_fetcher);
 
  private:
   // Loads a document and uses a property expression to fetch the value of the

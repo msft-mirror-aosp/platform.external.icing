@@ -104,6 +104,7 @@ filegroup {
         "icing/file/filesystem.cc",
         "icing/file/memory-mapped-file.cc",
         "icing/file/persistent-hash-map.cc",
+        "icing/file/persistent-storage.cc",
         "icing/legacy/core/icing-string-util.cc",
         "icing/testing/tmp-directory.cc",
         "icing/testing/common-matchers.cc",

@@ -88,7 +88,9 @@ const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
   // Didn't find our namespace, fail the test.
   EXPECT_TRUE(false) << "Failed to find namespace '" << name_space
                      << "' in DocumentStorageInfoProto.";
-  return std::move(NamespaceStorageInfoProto());
+  static const auto& default_namespace_storage_info =
+      *new NamespaceStorageInfoProto();
+  return default_namespace_storage_info;
 }
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,

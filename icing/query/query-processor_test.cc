@@ -70,7 +70,8 @@ class QueryProcessorTest
       : test_dir_(GetTestTempDir() + "/icing"),
         store_dir_(test_dir_ + "/store"),
         schema_store_dir_(test_dir_ + "/schema_store"),
-        index_dir_(test_dir_ + "/index") {}
+        index_dir_(test_dir_ + "/index"),
+        numeric_index_dir_(test_dir_ + "/numeric_index") {}
 
   void SetUp() override {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
@@ -104,7 +105,9 @@ class QueryProcessorTest
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
     // TODO(b/249829533): switch to use persistent numeric index.
-    numeric_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        numeric_index_,
+        DummyNumericIndex<int64_t>::Create(filesystem_, numeric_index_dir_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -154,6 +157,7 @@ class QueryProcessorTest
  private:
   IcingFilesystem icing_filesystem_;
   const std::string index_dir_;
+  const std::string numeric_index_dir_;
 
  protected:
   std::unique_ptr<Index> index_;
@@ -223,17 +227,25 @@ TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
   SearchSpecProto search_spec;
   search_spec.set_query("()");
   search_spec.set_search_type(GetParam());
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        QueryResults results,
+        query_processor_->ParseSearch(search_spec,
+                                      ScoringSpecProto::RankingStrategy::NONE));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      QueryResults results,
-      query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
-
-  // Descending order of valid DocumentIds
-  EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
-              ElementsAre(document_id2, document_id1));
-  EXPECT_THAT(results.query_terms, IsEmpty());
-  EXPECT_THAT(results.query_term_iterators, IsEmpty());
+    // Descending order of valid DocumentIds
+    EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
+                ElementsAre(document_id2, document_id1));
+    EXPECT_THAT(results.query_terms, IsEmpty());
+    EXPECT_THAT(results.query_term_iterators, IsEmpty());
+  } else {
+    // TODO(b/208654892): Resolve the difference between RAW_QUERY and ADVANCED
+    // regarding empty composite expressions.
+    EXPECT_THAT(query_processor_->ParseSearch(
+                    search_spec, ScoringSpecProto::RankingStrategy::NONE),
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  }
 }
 
 TEST_P(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
@@ -315,22 +327,18 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
-                    EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("hello", "world"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(
+      matched_terms_stats,
+      ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
+                  EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "world"));
 }
 
 TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
@@ -373,19 +381,16 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                         "he", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "he", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
 }
 
 TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
@@ -430,19 +435,16 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                         "he", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "he", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
 }
 
 TEST_P(QueryProcessorTest, OneTermExactMatch) {
@@ -485,20 +487,16 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "hello", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello"));
 }
 
 TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
@@ -541,26 +539,18 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "hello", expected_section_ids_tf_map)));
+
   ASSERT_FALSE(results.root_iterator->Advance().ok());
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello"));
 }
 
 TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
@@ -606,22 +596,18 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
-                    EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("hello", "world"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(
+      matched_terms_stats,
+      ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
+                  EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "world"));
 }
 
 TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
@@ -664,26 +650,18 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                         "he", expected_section_ids_tf_map)));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "he", expected_section_ids_tf_map)));
 
   ASSERT_FALSE(results.root_iterator->Advance().ok());
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he"));
 }
 
 TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
@@ -730,21 +708,18 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("he", expected_section_ids_tf_map),
-                    EqualsTermMatchInfo("wo", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he", "wo"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(
+      matched_terms_stats,
+      ElementsAre(EqualsTermMatchInfo("he", expected_section_ids_tf_map),
+                  EqualsTermMatchInfo("wo", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he", "wo"));
 }
 
 TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
@@ -791,21 +766,18 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
-                    EqualsTermMatchInfo("wo", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "wo"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(
+      matched_terms_stats,
+      ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map),
+                  EqualsTermMatchInfo("wo", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "wo"));
 }
 
 TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
@@ -857,38 +829,26 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("world", expected_section_ids_tf_map)));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "world", expected_section_ids_tf_map)));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id1);
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("hello", "world"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  matched_terms_stats.clear();
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "hello", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "world"));
 }
 
 TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
@@ -940,35 +900,26 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                         "wo", expected_section_ids_tf_map)));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "wo", expected_section_ids_tf_map)));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id1);
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                         "he", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he", "wo"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  matched_terms_stats.clear();
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "he", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("he", "wo"));
 }
 
 TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
@@ -1019,36 +970,25 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
-                                         "wo", expected_section_ids_tf_map)));
-  }
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 1}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "wo", expected_section_ids_tf_map)));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id1);
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 1}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("hello", expected_section_ids_tf_map)));
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "wo"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  matched_terms_stats.clear();
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
+                                       "hello", expected_section_ids_tf_map)));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("hello", "wo"));
 }
 
 TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
@@ -1117,23 +1057,19 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
               section_id_mask);
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      std::unordered_map<SectionId, Hit::TermFrequency>
-          expected_section_ids_tf_map = {{section_id, 1}};
-      std::vector<TermMatchInfo> matched_terms_stats;
-      results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      EXPECT_THAT(
-          matched_terms_stats,
-          ElementsAre(EqualsTermMatchInfo("puppy", expected_section_ids_tf_map),
-                      EqualsTermMatchInfo("dog", expected_section_ids_tf_map)));
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
+    std::vector<TermMatchInfo> matched_terms_stats;
+    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("puppy", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("dog", expected_section_ids_tf_map)));
+    EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 
-      EXPECT_THAT(results.query_terms, SizeIs(1));
-      EXPECT_THAT(results.query_terms[""],
-                  UnorderedElementsAre("puppy", "kitten", "dog"));
-      EXPECT_THAT(results.query_term_iterators, SizeIs(3));
-    }
+    EXPECT_THAT(results.query_terms, SizeIs(1));
+    EXPECT_THAT(results.query_terms[""],
+                UnorderedElementsAre("puppy", "kitten", "dog"));
   }
 
   {
@@ -1158,19 +1094,15 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
               section_id_mask);
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      std::unordered_map<SectionId, Hit::TermFrequency>
-          expected_section_ids_tf_map = {{section_id, 1}};
-      std::vector<TermMatchInfo> matched_terms_stats;
-      results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      EXPECT_THAT(
-          matched_terms_stats,
-          ElementsAre(
-              EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
-              EqualsTermMatchInfo("kitten", expected_section_ids_tf_map)));
-    }
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
+    std::vector<TermMatchInfo> matched_terms_stats;
+    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(
+            EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+            EqualsTermMatchInfo("kitten", expected_section_ids_tf_map)));
 
     ASSERT_THAT(results.root_iterator->Advance(), IsOk());
     EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(),
@@ -1178,23 +1110,17 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
               section_id_mask);
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      std::unordered_map<SectionId, Hit::TermFrequency>
-          expected_section_ids_tf_map = {{section_id, 1}};
-      std::vector<TermMatchInfo> matched_terms_stats;
-      results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      EXPECT_THAT(
-          matched_terms_stats,
-          ElementsAre(
-              EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
-              EqualsTermMatchInfo("puppy", expected_section_ids_tf_map)));
-      EXPECT_THAT(results.query_terms, SizeIs(1));
-      EXPECT_THAT(results.query_terms[""],
-                  UnorderedElementsAre("animal", "puppy", "kitten"));
-      EXPECT_THAT(results.query_term_iterators, SizeIs(3));
-    }
+    matched_terms_stats.clear();
+    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("puppy", expected_section_ids_tf_map)));
+    EXPECT_THAT(results.query_term_iterators, SizeIs(3));
+
+    EXPECT_THAT(results.query_terms, SizeIs(1));
+    EXPECT_THAT(results.query_terms[""],
+                UnorderedElementsAre("animal", "puppy", "kitten"));
   }
 
   {
@@ -1217,24 +1143,19 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
               section_id_mask);
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      std::unordered_map<SectionId, Hit::TermFrequency>
-          expected_section_ids_tf_map = {{section_id, 1}};
-      std::vector<TermMatchInfo> matched_terms_stats;
-      results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-      EXPECT_THAT(
-          matched_terms_stats,
-          ElementsAre(
-              EqualsTermMatchInfo("kitten", expected_section_ids_tf_map),
-              EqualsTermMatchInfo("cat", expected_section_ids_tf_map)));
+    std::unordered_map<SectionId, Hit::TermFrequency>
+        expected_section_ids_tf_map = {{section_id, 1}};
+    std::vector<TermMatchInfo> matched_terms_stats;
+    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+    EXPECT_THAT(
+        matched_terms_stats,
+        ElementsAre(EqualsTermMatchInfo("kitten", expected_section_ids_tf_map),
+                    EqualsTermMatchInfo("cat", expected_section_ids_tf_map)));
+    EXPECT_THAT(results.query_term_iterators, SizeIs(4));
 
-      EXPECT_THAT(results.query_terms, SizeIs(1));
-      EXPECT_THAT(results.query_terms[""],
-                  UnorderedElementsAre("kitten", "foo", "bar", "cat"));
-      EXPECT_THAT(results.query_term_iterators, SizeIs(4));
-    }
+    EXPECT_THAT(results.query_terms, SizeIs(1));
+    EXPECT_THAT(results.query_terms[""],
+                UnorderedElementsAre("kitten", "foo", "bar", "cat"));
   }
 }
 
@@ -1294,15 +1215,11 @@ TEST_P(QueryProcessorTest, OneGroup) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("puppy", "kitten", "foo"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(3));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""],
+              UnorderedElementsAre("puppy", "kitten", "foo"));
 }
 
 TEST_P(QueryProcessorTest, TwoGroups) {
@@ -1364,15 +1281,11 @@ TEST_P(QueryProcessorTest, TwoGroups) {
   expectedDocHitInfo2.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo2, expectedDocHitInfo1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(4));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("puppy", "dog", "kitten", "cat"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(4));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""],
+              UnorderedElementsAre("puppy", "dog", "kitten", "cat"));
 }
 
 TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
@@ -1431,15 +1344,11 @@ TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("puppy", "kitten", "foo"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(3));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""],
+              UnorderedElementsAre("puppy", "kitten", "foo"));
 }
 
 TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
@@ -1500,15 +1409,11 @@ TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
   expectedDocHitInfo2.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo2, expectedDocHitInfo1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(3));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""],
-                UnorderedElementsAre("puppy", "kitten", "cat"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(3));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""],
+              UnorderedElementsAre("puppy", "kitten", "cat"));
 }
 
 TEST_P(QueryProcessorTest, ExcludeTerm) {
@@ -1665,13 +1570,9 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
     // and exclude all documents that have cat". Since both documents contain
     // animal, there are no results.
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
+    EXPECT_THAT(results.query_term_iterators, IsEmpty());
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      EXPECT_THAT(results.query_terms, IsEmpty());
-      EXPECT_THAT(results.query_term_iterators, IsEmpty());
-    }
+    EXPECT_THAT(results.query_terms, IsEmpty());
   }
 
   {
@@ -1689,14 +1590,10 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
     // and include all documents that have cat". Since both documents contain
     // animal, there are no results.
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
+    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      EXPECT_THAT(results.query_terms, SizeIs(1));
-      EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("cat"));
-      EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-    }
+    EXPECT_THAT(results.query_terms, SizeIs(1));
+    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("cat"));
   }
 }
 
@@ -1755,13 +1652,9 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
     // more based on the fact that the query excluded all the other documents.
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
                 ElementsAre(DocHitInfo(document_id1, kSectionIdMaskNone)));
+    EXPECT_THAT(results.query_term_iterators, IsEmpty());
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      EXPECT_THAT(results.query_terms, IsEmpty());
-      EXPECT_THAT(results.query_term_iterators, IsEmpty());
-    }
+    EXPECT_THAT(results.query_terms, IsEmpty());
   }
 
   {
@@ -1783,12 +1676,8 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
     EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
                 ElementsAre(expectedDocHitInfo2, expectedDocHitInfo1));
 
-    // TODO(b/208654892) Support Query Terms with advanced query
-    if (GetParam() !=
-        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-      EXPECT_THAT(results.query_terms, SizeIs(1));
-      EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
-    }
+    EXPECT_THAT(results.query_terms, SizeIs(1));
+    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
   }
 }
 
@@ -1860,21 +1749,16 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    // Since need_hit_term_frequency is false, the expected term frequency for
-    // the section with the hit should be 0.
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 0}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(
-            EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
-            EqualsTermMatchInfo("kitten", expected_section_ids_tf_map)));
-  }
+  // Since need_hit_term_frequency is false, the expected term frequency for
+  // the section with the hit should be 0.
+  std::unordered_map<SectionId, Hit::TermFrequency>
+      expected_section_ids_tf_map = {{section_id, 0}};
+  std::vector<TermMatchInfo> matched_terms_stats;
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(
+      matched_terms_stats,
+      ElementsAre(EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+                  EqualsTermMatchInfo("kitten", expected_section_ids_tf_map)));
 
   // The second Document to match (Document 1) matches on 'animal' AND 'puppy'
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1882,21 +1766,15 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   EXPECT_EQ(results.root_iterator->doc_hit_info().hit_section_ids_mask(),
             section_id_mask);
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    std::unordered_map<SectionId, Hit::TermFrequency>
-        expected_section_ids_tf_map = {{section_id, 0}};
-    std::vector<TermMatchInfo> matched_terms_stats;
-    results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
-    EXPECT_THAT(
-        matched_terms_stats,
-        ElementsAre(EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
-                    EqualsTermMatchInfo("puppy", expected_section_ids_tf_map)));
+  matched_terms_stats.clear();
+  results.root_iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+  EXPECT_THAT(
+      matched_terms_stats,
+      ElementsAre(EqualsTermMatchInfo("animal", expected_section_ids_tf_map),
+                  EqualsTermMatchInfo("puppy", expected_section_ids_tf_map)));
 
-    // This should be empty because ranking_strategy != RELEVANCE_SCORE
-    EXPECT_THAT(results.query_term_iterators, IsEmpty());
-  }
+  // This should be empty because ranking_strategy != RELEVANCE_SCORE
+  EXPECT_THAT(results.query_term_iterators, IsEmpty());
 }
 
 TEST_P(QueryProcessorTest, DeletedFilter) {
@@ -1954,14 +1832,10 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, NamespaceFilter) {
@@ -2019,14 +1893,10 @@ TEST_P(QueryProcessorTest, NamespaceFilter) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, SchemaTypeFilter) {
@@ -2082,14 +1952,10 @@ TEST_P(QueryProcessorTest, SchemaTypeFilter) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
@@ -2139,14 +2005,10 @@ TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["subject"], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["subject"], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
@@ -2225,14 +2087,10 @@ TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
   expectedDocHitInfo2.UpdateSection(/*section_id=*/1);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo1, expectedDocHitInfo2));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
@@ -2299,13 +2157,10 @@ TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, NestedPropertyFilter) {
@@ -2379,15 +2234,11 @@ TEST_P(QueryProcessorTest, NestedPropertyFilter) {
   expectedDocHitInfo1.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["foo.bar.baz"],
-                UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo.bar.baz"],
+              UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
@@ -2456,14 +2307,10 @@ TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
@@ -2505,15 +2352,11 @@ TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["nonexistent"],
-                UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["nonexistent"],
+              UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
@@ -2563,14 +2406,10 @@ TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(1));
-    EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(1));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
@@ -2641,15 +2480,11 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
   expectedDocHitInfo2.UpdateSection(/*section_id=*/0);
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(expectedDocHitInfo1, expectedDocHitInfo2));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(2));
 
-  // TODO(b/208654892) Support Query Terms with advanced query
-  if (GetParam() !=
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    EXPECT_THAT(results.query_terms, SizeIs(2));
-    EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("cat"));
-    EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
-    EXPECT_THAT(results.query_term_iterators, SizeIs(2));
-  }
+  EXPECT_THAT(results.query_terms, SizeIs(2));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("cat"));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
 TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {

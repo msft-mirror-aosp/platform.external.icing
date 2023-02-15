@@ -32,6 +32,7 @@
 #include "icing/testing/tmp-directory.h"
 
 using ::testing::IsEmpty;
+using ::testing::IsTrue;
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
 
@@ -47,7 +48,13 @@ class KeyMapperTest : public ::testing::Test {
  protected:
   using KeyMapperType = T;
 
-  void SetUp() override { base_dir_ = GetTestTempDir() + "/key_mapper"; }
+  void SetUp() override {
+    base_dir_ = GetTestTempDir() + "/icing";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
+                IsTrue());
+
+    working_dir_ = base_dir_ + "/key_mapper";
+  }
 
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
@@ -63,17 +70,18 @@ class KeyMapperTest : public ::testing::Test {
   libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<DocumentId>>>
   CreateKeyMapper<DynamicTrieKeyMapper<DocumentId>>() {
     return DynamicTrieKeyMapper<DocumentId>::Create(
-        filesystem_, base_dir_, kMaxDynamicTrieKeyMapperSize);
+        filesystem_, working_dir_, kMaxDynamicTrieKeyMapperSize);
   }
 
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<KeyMapper<DocumentId>>>
   CreateKeyMapper<PersistentHashMapKeyMapper<DocumentId>>() {
     return PersistentHashMapKeyMapper<DocumentId>::Create(filesystem_,
-                                                          base_dir_);
+                                                          working_dir_);
   }
 
   std::string base_dir_;
+  std::string working_dir_;
   Filesystem filesystem_;
 };
 
@@ -175,15 +183,15 @@ TYPED_TEST(KeyMapperTest, CanUseAcrossMultipleInstances) {
 
 TYPED_TEST(KeyMapperTest, CanDeleteAndRestartKeyMapping) {
   // Can delete even if there's nothing there
-  ICING_EXPECT_OK(
-      TestFixture::KeyMapperType::Delete(this->filesystem_, this->base_dir_));
+  ICING_EXPECT_OK(TestFixture::KeyMapperType::Delete(this->filesystem_,
+                                                     this->working_dir_));
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<KeyMapper<DocumentId>> key_mapper,
                              this->template CreateKeyMapper<TypeParam>());
   ICING_EXPECT_OK(key_mapper->Put("default-google.com", 100));
   ICING_EXPECT_OK(key_mapper->PersistToDisk());
-  ICING_EXPECT_OK(
-      TestFixture::KeyMapperType::Delete(this->filesystem_, this->base_dir_));
+  ICING_EXPECT_OK(TestFixture::KeyMapperType::Delete(this->filesystem_,
+                                                     this->working_dir_));
 
   key_mapper.reset();
   ICING_ASSERT_OK_AND_ASSIGN(key_mapper,

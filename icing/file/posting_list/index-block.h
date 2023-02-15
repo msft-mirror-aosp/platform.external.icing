@@ -62,7 +62,7 @@ class IndexBlock {
   static libtextclassifier3::StatusOr<IndexBlock>
   CreateFromPreexistingIndexBlockRegion(const Filesystem& filesystem,
                                         std::string_view file_path,
-                                        PostingListUsedSerializer* serializer,
+                                        PostingListSerializer* serializer,
                                         off_t offset, uint32_t block_size);
 
   // Create an IndexBlock to reference an uninitialized region of the
@@ -78,7 +78,7 @@ class IndexBlock {
   //   - INTERNAL_ERROR if unable to mmap the region [offset, offset+block_size)
   static libtextclassifier3::StatusOr<IndexBlock> CreateFromUninitializedRegion(
       const Filesystem& filesystem, std::string_view file_path,
-      PostingListUsedSerializer* serializer, off_t offset, uint32_t block_size,
+      PostingListSerializer* serializer, off_t offset, uint32_t block_size,
       uint32_t posting_list_bytes);
 
   IndexBlock(const IndexBlock&) = delete;
@@ -164,7 +164,7 @@ class IndexBlock {
  private:
   // Assumes that mmapped_file already has established a valid mapping to the
   // requested block.
-  explicit IndexBlock(PostingListUsedSerializer* serializer,
+  explicit IndexBlock(PostingListSerializer* serializer,
                       MemoryMappedFile&& mmapped_block);
 
   // Resets IndexBlock to hold posting lists of posting_list_bytes size and adds
@@ -203,7 +203,7 @@ class IndexBlock {
   char* posting_lists_start_ptr_;
   uint32_t block_size_in_bytes_;
 
-  PostingListUsedSerializer* serializer_;  // Does not own.
+  PostingListSerializer* serializer_;  // Does not own.
 
   // MemoryMappedFile used to interact with the underlying flash block.
   std::unique_ptr<MemoryMappedFile> mmapped_block_;

@@ -19,7 +19,7 @@
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/posting-list-used.h"
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -44,7 +44,7 @@ class IndexBlockTest : public ::testing::Test {
     ASSERT_TRUE(filesystem_.Grow(flash_file_.c_str(), kBlockSize));
 
     // TODO: test different serializers
-    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
+    serializer_ = std::make_unique<PostingListHitSerializer>();
   }
 
   void TearDown() override {
@@ -55,7 +55,7 @@ class IndexBlockTest : public ::testing::Test {
   std::string test_dir_;
   std::string flash_file_;
   Filesystem filesystem_;
-  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
+  std::unique_ptr<PostingListHitSerializer> serializer_;
 };
 
 TEST_F(IndexBlockTest, CreateFromUninitializedRegionProducesEmptyBlock) {
