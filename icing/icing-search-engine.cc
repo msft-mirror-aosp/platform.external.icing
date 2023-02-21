@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -35,6 +36,8 @@
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/dummy-numeric-index.h"
+#include "icing/join/join-processor.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/proto/debug.pb.h"
@@ -52,6 +55,8 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/query-features.h"
 #include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
 #include "icing/query/suggestion-processor.h"
@@ -62,6 +67,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -115,7 +121,7 @@ struct NamespaceTypePairHasher {
 };
 
 libtextclassifier3::Status ValidateResultSpec(
-    const ResultSpecProto& result_spec) {
+    const DocumentStore* document_store, const ResultSpecProto& result_spec) {
   if (result_spec.num_per_page() < 0) {
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_per_page cannot be negative.");
@@ -125,19 +131,31 @@ libtextclassifier3::Status ValidateResultSpec(
         "ResultSpecProto.num_total_bytes_per_page_threshold cannot be "
         "non-positive.");
   }
-  std::unordered_set<std::string> unique_namespaces;
+  // Validate ResultGroupings.
+  std::unordered_set<int32_t> unique_entry_ids;
+  ResultSpecProto::ResultGroupingType result_grouping_type =
+      result_spec.result_group_type();
   for (const ResultSpecProto::ResultGrouping& result_grouping :
        result_spec.result_groupings()) {
     if (result_grouping.max_results() <= 0) {
       return absl_ports::InvalidArgumentError(
           "Cannot specify a result grouping with max results <= 0.");
     }
-    for (const std::string& name_space : result_grouping.namespaces()) {
-      if (unique_namespaces.count(name_space) > 0) {
-        return absl_ports::InvalidArgumentError(
-            "Namespaces must be unique across result groups.");
+    for (const ResultSpecProto::ResultGrouping::Entry& entry :
+         result_grouping.entry_groupings()) {
+      const std::string& name_space = entry.namespace_();
+      const std::string& schema = entry.schema();
+      auto entry_id_or = document_store->GetResultGroupingEntryId(
+          result_grouping_type, name_space, schema);
+      if (!entry_id_or.ok()) {
+        continue;
       }
-      unique_namespaces.insert(name_space);
+      int32_t entry_id = entry_id_or.ValueOrDie();
+      if (unique_entry_ids.find(entry_id) != unique_entry_ids.end()) {
+        return absl_ports::InvalidArgumentError(
+            "Entry Ids must be unique across result groups.");
+      }
+      unique_entry_ids.insert(entry_id);
     }
   }
   return libtextclassifier3::Status::OK;
@@ -151,6 +169,16 @@ libtextclassifier3::Status ValidateSearchSpec(
         absl_ports::StrCat("SearchSpecProto.query is longer than the maximum "
                            "allowed query length: ",
                            std::to_string(configuration.max_query_length)));
+  }
+  // Check that no unknown features have been enabled in the search spec.
+  std::unordered_set<Feature> query_features_set = GetQueryFeaturesSet();
+  for (const Feature feature : search_spec.enabled_features()) {
+    if (query_features_set.find(feature) == query_features_set.end()) {
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Unknown feature in "
+                             "SearchSpecProto.enabled_features: ",
+                             feature));
+    }
   }
   return libtextclassifier3::Status::OK;
 }
@@ -433,6 +461,31 @@ bool ShouldRebuildIndex(const OptimizeStatsProto& optimize_stats) {
   return num_invalid_documents >= optimize_stats.num_original_documents() * 0.9;
 }
 
+// Useful method to get RankingStrategy if advanced scoring is enabled. When the
+// "RelevanceScore" function is used in the advanced scoring expression,
+// RankingStrategy will be treated as RELEVANCE_SCORE in order to prepare the
+// necessary information needed for calculating relevance score.
+libtextclassifier3::StatusOr<ScoringSpecProto::RankingStrategy::Code>
+GetRankingStrategyFromScoringSpec(const ScoringSpecProto& scoring_spec) {
+  if (scoring_spec.advanced_scoring_expression().empty()) {
+    return scoring_spec.rank_by();
+  }
+  // TODO(b/261474063) The Lexer will be called again when creating the
+  // AdvancedScorer instance. Consider refactoring the code to allow the Lexer
+  // to be called only once.
+  Lexer lexer(scoring_spec.advanced_scoring_expression(),
+              Lexer::Language::SCORING);
+  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
+                         lexer.ExtractTokens());
+  for (const Lexer::LexerToken& token : lexer_tokens) {
+    if (token.type == Lexer::TokenType::FUNCTION_NAME &&
+        token.text == RelevanceScoreFunctionScoreExpression::kFunctionName) {
+      return ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+    }
+  }
+  return ScoringSpecProto::RankingStrategy::NONE;
+}
+
 }  // namespace
 
 IcingSearchEngine::IcingSearchEngine(const IcingSearchEngineOptions& options,
@@ -477,6 +530,7 @@ void IcingSearchEngine::ResetMembers() {
   language_segmenter_.reset();
   normalizer_.reset();
   index_.reset();
+  integer_index_.reset();
 }
 
 libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
@@ -598,6 +652,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
 
   std::string marker_filepath =
       MakeSetSchemaMarkerFilePath(options_.base_dir());
+
+  // TODO(b/249829533): switch to use persistent numeric index after
+  //                    implementing and initialize numeric index.
+  integer_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
+
   libtextclassifier3::Status index_init_status;
   if (absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
     // The schema was either lost or never set before. Wipe out the doc store
@@ -864,6 +923,12 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         return result_proto;
       }
 
+      status = integer_index_->Reset();
+      if (!status.ok()) {
+        TransformStatus(status, result_status);
+        return result_proto;
+      }
+
       IndexRestorationResult restore_result = RestoreIndexIfNeeded();
       // DATA_LOSS means that we have successfully re-added content to the
       // index. Some indexed content was lost, but otherwise the index is in a
@@ -963,17 +1028,17 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   TokenizedDocument tokenized_document(
       std::move(tokenized_document_or).ValueOrDie());
 
-  auto document_id_or =
-      document_store_->Put(tokenized_document.document(),
-                           tokenized_document.num_tokens(), put_document_stats);
+  auto document_id_or = document_store_->Put(
+      tokenized_document.document(), tokenized_document.num_string_tokens(),
+      put_document_stats);
   if (!document_id_or.ok()) {
     TransformStatus(document_id_or.status(), result_status);
     return result_proto;
   }
   DocumentId document_id = document_id_or.ValueOrDie();
 
-  auto index_processor_or =
-      IndexProcessor::Create(normalizer_.get(), index_.get(), clock_.get());
+  auto index_processor_or = IndexProcessor::Create(
+      normalizer_.get(), index_.get(), integer_index_.get(), clock_.get());
   if (!index_processor_or.ok()) {
     TransformStatus(index_processor_or.status(), result_status);
     return result_proto;
@@ -981,21 +1046,42 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   std::unique_ptr<IndexProcessor> index_processor =
       std::move(index_processor_or).ValueOrDie();
 
-  auto status = index_processor->IndexDocument(tokenized_document, document_id,
-                                               put_document_stats);
-  if (!status.ok()) {
-    // If we encountered a failure while indexing this document, then mark it as
-    // deleted.
+  auto index_status = index_processor->IndexDocument(
+      tokenized_document, document_id, put_document_stats);
+  // Getting an internal error from the index could possibly mean that the index
+  // is broken. Try to rebuild the index to recover.
+  if (absl_ports::IsInternal(index_status)) {
+    ICING_LOG(ERROR) << "Got an internal error from the index. Trying to "
+                        "rebuild the index!\n"
+                     << index_status.error_message();
+    index_status = index_->Reset();
+    if (index_status.ok()) {
+      index_status = RestoreIndexIfNeeded().status;
+      if (!index_status.ok()) {
+        ICING_LOG(ERROR) << "Failed to reindex documents after a failure of "
+                            "indexing a document.";
+      }
+    } else {
+      ICING_LOG(ERROR) << "Failed to reset the index after a failure of "
+                          "indexing a document.";
+    }
+  }
+
+  if (!index_status.ok()) {
+    // If we encountered a failure or cannot resolve an internal error while
+    // indexing this document, then mark it as deleted.
     libtextclassifier3::Status delete_status =
         document_store_->Delete(document_id);
     if (!delete_status.ok()) {
       // This is pretty dire (and, hopefully, unlikely). We can't roll back the
       // document that we just added. Wipeout the whole index.
+      ICING_LOG(ERROR) << "Cannot delete the document that is failed to index. "
+                          "Wiping out the whole Icing search engine.";
       ResetInternal();
     }
   }
 
-  TransformStatus(status, result_status);
+  TransformStatus(index_status, result_status);
   return result_proto;
 }
 
@@ -1105,9 +1191,13 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   // that can support error logging.
   libtextclassifier3::Status status = document_store_->Delete(name_space, uri);
   if (!status.ok()) {
-    ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete Document. namespace: " << name_space
-                     << ", uri: " << uri;
+    LogSeverity::Code severity = ERROR;
+    if (absl_ports::IsNotFound(status)) {
+      severity = DBG;
+    }
+    ICING_LOG(severity) << status.error_message()
+                        << "Failed to delete Document. namespace: "
+                        << name_space << ", uri: " << uri;
     TransformStatus(status, result_status);
     return result_proto;
   }
@@ -1222,8 +1312,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
   // Gets unordered results from query processor
   auto query_processor_or = QueryProcessor::Create(
-      index_.get(), language_segmenter_.get(), normalizer_.get(),
-      document_store_.get(), schema_store_.get());
+      index_.get(), integer_index_.get(), language_segmenter_.get(),
+      normalizer_.get(), document_store_.get(), schema_store_.get());
   if (!query_processor_or.ok()) {
     TransformStatus(query_processor_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -1398,10 +1488,24 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     optimize_stats->set_index_restoration_mode(
         OptimizeStatsProto::FULL_INDEX_REBUILD);
     ICING_LOG(WARNING) << "Resetting the entire index!";
+
+    // Reset string index
     libtextclassifier3::Status index_reset_status = index_->Reset();
     if (!index_reset_status.ok()) {
       status = absl_ports::Annotate(
           absl_ports::InternalError("Failed to reset index."),
+          index_reset_status.error_message());
+      TransformStatus(status, result_status);
+      optimize_stats->set_index_restoration_latency_ms(
+          optimize_index_timer->GetElapsedMilliseconds());
+      return result_proto;
+    }
+
+    // Reset integer index
+    index_reset_status = integer_index_->Reset();
+    if (!index_reset_status.ok()) {
+      status = absl_ports::Annotate(
+          absl_ports::InternalError("Failed to reset integer index."),
           index_reset_status.error_message());
       TransformStatus(status, result_status);
       optimize_stats->set_index_restoration_latency_ms(
@@ -1518,6 +1622,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   }
   int64_t index_elements_size = index_elements_size_or.ValueOrDie();
 
+  // TODO(b/259744228): add stats for integer index
+
   // Sum up the optimizable sizes from DocumentStore and Index
   result_proto.set_estimated_optimizable_bytes(
       index_elements_size * doc_store_optimize_info.optimizable_docs /
@@ -1547,6 +1653,7 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
       schema_store_->GetStorageInfo();
   *result.mutable_storage_info()->mutable_index_storage_info() =
       index_->GetStorageInfo();
+  // TODO(b/259744228): add stats for integer index
   result.mutable_status()->set_code(StatusProto::OK);
   return result;
 }
@@ -1566,6 +1673,8 @@ DebugInfoResultProto IcingSearchEngine::GetDebugInfo(
   // Index
   *debug_info.mutable_debug_info()->mutable_index_info() =
       index_->GetDebugInfo(verbosity);
+
+  // TODO(b/259744228): add debug info for integer index
 
   // Document Store
   libtextclassifier3::StatusOr<DocumentDebugInfoProto> document_debug_info =
@@ -1599,6 +1708,7 @@ libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
   ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
   ICING_RETURN_IF_ERROR(document_store_->PersistToDisk(PersistType::FULL));
   ICING_RETURN_IF_ERROR(index_->PersistToDisk());
+  ICING_RETURN_IF_ERROR(integer_index_->PersistToDisk());
 
   return libtextclassifier3::Status::OK;
 }
@@ -1624,7 +1734,8 @@ SearchResultProto IcingSearchEngine::Search(
     return result_proto;
   }
 
-  libtextclassifier3::Status status = ValidateResultSpec(result_spec);
+  libtextclassifier3::Status status =
+      ValidateResultSpec(document_store_.get(), result_spec);
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
@@ -1643,77 +1754,82 @@ SearchResultProto IcingSearchEngine::Search(
   query_stats->set_is_first_page(true);
   query_stats->set_requested_page_size(result_spec.num_per_page());
 
-  std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
-  // Gets unordered results from query processor
-  auto query_processor_or = QueryProcessor::Create(
-      index_.get(), language_segmenter_.get(), normalizer_.get(),
-      document_store_.get(), schema_store_.get());
-  if (!query_processor_or.ok()) {
-    TransformStatus(query_processor_or.status(), result_status);
-    query_stats->set_parse_query_latency_ms(
-        component_timer->GetElapsedMilliseconds());
-    return result_proto;
-  }
-  std::unique_ptr<QueryProcessor> query_processor =
-      std::move(query_processor_or).ValueOrDie();
-
-  auto query_results_or =
-      query_processor->ParseSearch(search_spec, scoring_spec.rank_by());
-  if (!query_results_or.ok()) {
-    TransformStatus(query_results_or.status(), result_status);
-    query_stats->set_parse_query_latency_ms(
-        component_timer->GetElapsedMilliseconds());
-    return result_proto;
-  }
-  QueryResults query_results = std::move(query_results_or).ValueOrDie();
-  query_stats->set_parse_query_latency_ms(
-      component_timer->GetElapsedMilliseconds());
-
+  // Process query and score
+  QueryScoringResults query_scoring_results =
+      ProcessQueryAndScore(search_spec, scoring_spec, result_spec);
   int term_count = 0;
-  for (const auto& section_and_terms : query_results.query_terms) {
+  for (const auto& section_and_terms : query_scoring_results.query_terms) {
     term_count += section_and_terms.second.size();
   }
   query_stats->set_num_terms(term_count);
-
-  component_timer = clock_->GetNewTimer();
-  // Scores but does not rank the results.
-  libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
-      scoring_processor_or = ScoringProcessor::Create(
-          scoring_spec, document_store_.get(), schema_store_.get());
-  if (!scoring_processor_or.ok()) {
-    TransformStatus(scoring_processor_or.status(), result_status);
-    query_stats->set_scoring_latency_ms(
-        component_timer->GetElapsedMilliseconds());
+  query_stats->set_parse_query_latency_ms(
+      query_scoring_results.parse_query_latency_ms);
+  query_stats->set_scoring_latency_ms(query_scoring_results.scoring_latency_ms);
+  if (!query_scoring_results.status.ok()) {
+    TransformStatus(query_scoring_results.status, result_status);
     return result_proto;
   }
-  std::unique_ptr<ScoringProcessor> scoring_processor =
-      std::move(scoring_processor_or).ValueOrDie();
-  std::vector<ScoredDocumentHit> result_document_hits =
-      scoring_processor->Score(std::move(query_results.root_iterator),
-                               performance_configuration_.num_to_score,
-                               &query_results.query_term_iterators);
-  query_stats->set_scoring_latency_ms(
-      component_timer->GetElapsedMilliseconds());
-  query_stats->set_num_documents_scored(result_document_hits.size());
 
+  query_stats->set_num_documents_scored(
+      query_scoring_results.scored_document_hits.size());
   // Returns early for empty result
-  if (result_document_hits.empty()) {
+  if (query_scoring_results.scored_document_hits.empty()) {
     result_status->set_code(StatusProto::OK);
     return result_proto;
   }
 
-  component_timer = clock_->GetNewTimer();
-  // Ranks results
-  std::unique_ptr<ScoredDocumentHitsRanker> ranker =
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
-          std::move(result_document_hits),
-          /*is_descending=*/scoring_spec.order_by() ==
-              ScoringSpecProto::Order::DESC);
-  query_stats->set_ranking_latency_ms(
-      component_timer->GetElapsedMilliseconds());
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker;
+  if (search_spec.has_join_spec()) {
+    // Process 2nd query
+    QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
+        search_spec.join_spec().nested_spec().search_spec(),
+        search_spec.join_spec().nested_spec().scoring_spec(),
+        search_spec.join_spec().nested_spec().result_spec());
+    // TOOD(b/256022027): set different kinds of latency for 2nd query.
+    if (!nested_query_scoring_results.status.ok()) {
+      TransformStatus(nested_query_scoring_results.status, result_status);
+      return result_proto;
+    }
 
-  component_timer = clock_->GetNewTimer();
-  // RanksAndPaginates and retrieves the document protos and snippets if
+    // Join 2 scored document hits
+    JoinProcessor join_processor(document_store_.get());
+    libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
+        joined_result_document_hits_or = join_processor.Join(
+            search_spec.join_spec(),
+            std::move(query_scoring_results.scored_document_hits),
+            std::move(nested_query_scoring_results.scored_document_hits));
+    if (!joined_result_document_hits_or.ok()) {
+      TransformStatus(joined_result_document_hits_or.status(), result_status);
+      return result_proto;
+    }
+    std::vector<JoinedScoredDocumentHit> joined_result_document_hits =
+        std::move(joined_result_document_hits_or).ValueOrDie();
+    // TODO(b/256022027): set join latency
+
+    std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
+    // Ranks results
+    ranker = std::make_unique<
+        PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
+        std::move(joined_result_document_hits),
+        /*is_descending=*/scoring_spec.order_by() ==
+            ScoringSpecProto::Order::DESC);
+    query_stats->set_ranking_latency_ms(
+        component_timer->GetElapsedMilliseconds());
+  } else {
+    // Non-join query
+    std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
+    // Ranks results
+    ranker = std::make_unique<
+        PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+        std::move(query_scoring_results.scored_document_hits),
+        /*is_descending=*/scoring_spec.order_by() ==
+            ScoringSpecProto::Order::DESC);
+    query_stats->set_ranking_latency_ms(
+        component_timer->GetElapsedMilliseconds());
+  }
+
+  std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
+  // CacheAndRetrieveFirstPage and retrieves the document protos and snippets if
   // requested
   auto result_retriever_or =
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -1729,8 +1845,9 @@ SearchResultProto IcingSearchEngine::Search(
 
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
-          std::move(ranker), std::move(query_results.query_terms), search_spec,
-          scoring_spec, result_spec, *document_store_, *result_retriever);
+          std::move(ranker), std::move(query_scoring_results.query_terms),
+          search_spec, scoring_spec, result_spec, *document_store_,
+          *result_retriever);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -1760,6 +1877,69 @@ SearchResultProto IcingSearchEngine::Search(
   query_stats->set_num_results_with_snippets(
       page_result_info.second.num_results_with_snippets);
   return result_proto;
+}
+
+IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
+
+  // Gets unordered results from query processor
+  auto query_processor_or = QueryProcessor::Create(
+      index_.get(), integer_index_.get(), language_segmenter_.get(),
+      normalizer_.get(), document_store_.get(), schema_store_.get());
+  if (!query_processor_or.ok()) {
+    return QueryScoringResults(
+        std::move(query_processor_or).status(), /*query_terms_in=*/{},
+        /*scored_document_hits_in=*/{},
+        /*parse_query_latency_ms_in=*/component_timer->GetElapsedMilliseconds(),
+        /*scoring_latency_ms_in=*/0);
+  }
+  std::unique_ptr<QueryProcessor> query_processor =
+      std::move(query_processor_or).ValueOrDie();
+
+  auto ranking_strategy_or = GetRankingStrategyFromScoringSpec(scoring_spec);
+  libtextclassifier3::StatusOr<QueryResults> query_results_or;
+  if (ranking_strategy_or.ok()) {
+    query_results_or = query_processor->ParseSearch(
+        search_spec, ranking_strategy_or.ValueOrDie());
+  } else {
+    query_results_or = ranking_strategy_or.status();
+  }
+  if (!query_results_or.ok()) {
+    return QueryScoringResults(
+        std::move(query_results_or).status(), /*query_terms_in=*/{},
+        /*scored_document_hits_in=*/{},
+        /*parse_query_latency_ms_in=*/component_timer->GetElapsedMilliseconds(),
+        /*scoring_latency_ms_in=*/0);
+  }
+  QueryResults query_results = std::move(query_results_or).ValueOrDie();
+  int64_t parse_query_latency_ms = component_timer->GetElapsedMilliseconds();
+
+  component_timer = clock_->GetNewTimer();
+  // Scores but does not rank the results.
+  libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
+      scoring_processor_or = ScoringProcessor::Create(
+          scoring_spec, document_store_.get(), schema_store_.get());
+  if (!scoring_processor_or.ok()) {
+    return QueryScoringResults(std::move(scoring_processor_or).status(),
+                               std::move(query_results.query_terms),
+                               /*scored_document_hits_in=*/{},
+                               parse_query_latency_ms,
+                               /*scoring_latency_ms_in=*/0);
+  }
+  std::unique_ptr<ScoringProcessor> scoring_processor =
+      std::move(scoring_processor_or).ValueOrDie();
+  std::vector<ScoredDocumentHit> scored_document_hits =
+      scoring_processor->Score(std::move(query_results.root_iterator),
+                               performance_configuration_.num_to_score,
+                               &query_results.query_term_iterators);
+  int64_t scoring_latency_ms = component_timer->GetElapsedMilliseconds();
+
+  return QueryScoringResults(libtextclassifier3::Status::OK,
+                             std::move(query_results.query_terms),
+                             std::move(scored_document_hits),
+                             parse_query_latency_ms, scoring_latency_ms);
 }
 
 SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
@@ -1985,8 +2165,8 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     return {libtextclassifier3::Status::OK, false};
   }
 
-  auto index_processor_or =
-      IndexProcessor::Create(normalizer_.get(), index_.get(), clock_.get());
+  auto index_processor_or = IndexProcessor::Create(
+      normalizer_.get(), index_.get(), integer_index_.get(), clock_.get());
   if (!index_processor_or.ok()) {
     return {index_processor_or.status(), true};
   }

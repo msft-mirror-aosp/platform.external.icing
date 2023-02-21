@@ -280,9 +280,12 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
     const std::string& term, TermMatchType::Code term_match_type,
     NamespaceId namespace_id) {
   uint32_t tvi;
-  if (!lexicon_.Insert(term.c_str(), "", &tvi, false)) {
-    return absl_ports::ResourceExhaustedError(
-        absl_ports::StrCat("Unable to add term ", term, " to lexicon!"));
+  libtextclassifier3::Status status =
+      lexicon_.Insert(term.c_str(), "", &tvi, false);
+  if (!status.ok()) {
+    ICING_LOG(DBG) << "Unable to add term " << term << " to lexicon!\n"
+                   << status.error_message();
+    return status;
   }
   ICING_RETURN_IF_ERROR(UpdateTermProperties(
       tvi, term_match_type == TermMatchType::PREFIX, namespace_id));

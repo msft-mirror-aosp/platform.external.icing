@@ -142,7 +142,8 @@ libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
   DocumentProto empty_document;
 
   // Start reading out from the old log and putting them in the new log.
-  auto iterator = v0_proto_log->GetIterator();
+  ICING_ASSIGN_OR_RETURN(FileBackedProtoLog<DocumentWrapper>::Iterator iterator,
+                         v0_proto_log->GetIterator());
   auto iterator_status = iterator.Advance();
   while (iterator_status.ok()) {
     libtextclassifier3::StatusOr<DocumentWrapper> document_wrapper_or =

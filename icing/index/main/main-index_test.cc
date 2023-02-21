@@ -22,7 +22,6 @@
 #include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
 #include "icing/index/main/main-index-merger.h"
-#include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"

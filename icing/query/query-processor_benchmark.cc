@@ -17,6 +17,8 @@
 #include "third_party/absl/flags/flag.h"
 #include "icing/document-builder.h"
 #include "icing/index/index.h"
+#include "icing/index/numeric/dummy-numeric-index.h"
+#include "icing/index/numeric/numeric-index.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
@@ -113,6 +115,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -147,9 +152,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get()));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -233,6 +238,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -281,9 +289,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get()));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   const std::string query_string = absl_ports::StrCat(
       input_string_a, " ", input_string_b, " ", input_string_c, " ",
@@ -371,6 +379,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -408,9 +419,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get()));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);
@@ -494,6 +505,9 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
+  // TODO(b/249829533): switch to use persistent numeric index.
+  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -531,9 +545,9 @@ void BM_QueryHiragana(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QueryProcessor> query_processor,
-      QueryProcessor::Create(index.get(), language_segmenter.get(),
-                             normalizer.get(), document_store.get(),
-                             schema_store.get()));
+      QueryProcessor::Create(index.get(), numeric_index.get(),
+                             language_segmenter.get(), normalizer.get(),
+                             document_store.get(), schema_store.get()));
 
   SearchSpecProto search_spec;
   search_spec.set_query(input_string);

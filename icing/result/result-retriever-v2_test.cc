@@ -62,16 +62,7 @@ using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
-using NamespaceIdMap = std::unordered_map<NamespaceId, int>;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
+using EntryIdMap = std::unordered_map<int32_t, int>;
 
 // Mock the behavior of GroupResultLimiter::ShouldBeRemoved.
 class MockGroupResultLimiter : public GroupResultLimiterV2 {
@@ -81,8 +72,9 @@ class MockGroupResultLimiter : public GroupResultLimiterV2 {
   }
 
   MOCK_METHOD(bool, ShouldBeRemoved,
-              (const ScoredDocumentHit&, const NamespaceIdMap&,
-               const DocumentStore&, std::vector<int>&),
+              (const ScoredDocumentHit&, const EntryIdMap&,
+               const DocumentStore&, std::vector<int>&,
+               ResultSpecProto::ResultGroupingType),
               (const, override));
 };
 
@@ -116,12 +108,12 @@ class ResultRetrieverV2Test : public ::testing::Test {
                          .SetType("Email")
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("name")
-                                          .SetDataTypeString(MATCH_PREFIX,
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("body")
-                                          .SetDataTypeString(MATCH_EXACT,
+                                          .SetDataTypeString(TERM_MATCH_EXACT,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(
@@ -133,16 +125,16 @@ class ResultRetrieverV2Test : public ::testing::Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("Person")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("name")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("emailAddress")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("name")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("emailAddress")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
@@ -215,8 +207,10 @@ ScoringSpecProto CreateScoringSpec(bool is_descending_order) {
   return scoring_spec;
 }
 
-ResultSpecProto CreateResultSpec(int num_per_page) {
+ResultSpecProto CreateResultSpec(
+    int num_per_page, ResultSpecProto::ResultGroupingType result_group_type) {
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(result_group_type);
   result_spec.set_num_per_page(num_per_page);
   return result_spec;
 }
@@ -298,11 +292,13 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   result5.set_score(1);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/2), *doc_store);
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+      *doc_store);
 
   // First page, 2 results
   auto [page_result1, has_more_results1] =
@@ -375,12 +371,14 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   result2.set_score(4);
 
   ResultStateV2 result_state1(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/3), *doc_store);
+      CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
+      *doc_store);
   PageResult page_result1 =
       result_retriever->RetrieveNextPage(result_state1).first;
   EXPECT_THAT(page_result1.results,
@@ -392,12 +390,14 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       {document_id1, hit_section_id_mask, /*score=*/12},
       {document_id2, hit_section_id_mask, /*score=*/4}};
   ResultStateV2 result_state2(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/3), *doc_store);
+      CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
+      *doc_store);
   PageResult page_result2 =
       result_retriever->RetrieveNextPage(result_state2).first;
   EXPECT_THAT(page_result2.results,
@@ -441,12 +441,14 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   result1.set_score(0);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/2), *doc_store);
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+      *doc_store);
   PageResult page_result =
       result_retriever->RetrieveNextPage(result_state).first;
   // We mocked mock_filesystem to return an internal error when retrieving doc2,
@@ -488,12 +490,14 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
                                 language_segmenter_.get(), normalizer_.get()));
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/2), *doc_store);
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+      *doc_store);
 
   // First page, 2 results
   PageResult page_result1 =
@@ -559,13 +563,15 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
       {document_id2, hit_section_id_mask, /*score=*/0}};
   std::shared_ptr<ResultStateV2> result_state1 =
       std::make_shared<ResultStateV2>(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1),
               /*is_descending=*/true),
           /*query_terms=*/SectionRestrictQueryTermsMap{},
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true),
-          CreateResultSpec(/*num_per_page=*/1), *doc_store);
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          *doc_store);
   {
     absl_ports::unique_lock l(&result_state1->mutex);
 
@@ -585,13 +591,15 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
       {document_id5, hit_section_id_mask, /*score=*/0}};
   std::shared_ptr<ResultStateV2> result_state2 =
       std::make_shared<ResultStateV2>(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
           /*query_terms=*/SectionRestrictQueryTermsMap{},
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true),
-          CreateResultSpec(/*num_per_page=*/2), *doc_store);
+          CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+          *doc_store);
   {
     absl_ports::unique_lock l(&result_state2->mutex);
 
@@ -668,10 +676,12 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   *result2.mutable_document() = CreateDocument(/*id=*/2);
   result2.set_score(0);
 
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.set_num_total_bytes_per_page_threshold(result1.ByteSizeLong());
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -729,10 +739,12 @@ TEST_F(ResultRetrieverV2Test,
   int threshold = 1;
   ASSERT_THAT(result1.ByteSizeLong(), Gt(threshold));
 
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.set_num_total_bytes_per_page_threshold(threshold);
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
@@ -789,10 +801,12 @@ TEST_F(ResultRetrieverV2Test,
   int threshold = result1.ByteSizeLong() + 1;
   ASSERT_THAT(result1.ByteSizeLong() + result2.ByteSizeLong(), Gt(threshold));
 
-  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.set_num_total_bytes_per_page_threshold(threshold);
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),

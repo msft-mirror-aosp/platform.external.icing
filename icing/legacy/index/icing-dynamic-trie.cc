@@ -75,6 +75,7 @@
 #include <memory>
 #include <utility>
 
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
@@ -86,6 +87,7 @@
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
+#include "icing/util/status-macros.h"
 
 using std::inplace_merge;
 using std::lower_bound;
@@ -308,7 +310,7 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   // REQUIRES: nodes_left() > 0.
   Node *AllocNode();
   // REQUIRES: nexts_left() >= kMaxNextArraySize.
-  Next *AllocNextArray(int size);
+  libtextclassifier3::StatusOr<Next *> AllocNextArray(int size);
   void FreeNextArray(Next *next, int log2_size);
   // REQUIRES: suffixes_left() >= strlen(suffix) + 1 + value_size()
   uint32_t MakeSuffix(const char *suffix, const void *value,
@@ -727,10 +729,11 @@ IcingDynamicTrie::Node *IcingDynamicTrie::IcingDynamicTrieStorage::AllocNode() {
   return GetMutableNode(hdr_.hdr.num_nodes() - 1);
 }
 
-IcingDynamicTrie::Next *
+libtextclassifier3::StatusOr<IcingDynamicTrie::Next *>
 IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   if (size > kMaxNextArraySize) {
-    ICING_LOG(FATAL) << "Array size exceeds the max 'next' array size";
+    return absl_ports::InternalError(
+        "Array size exceeds the max 'next' array size");
   }
 
   if (nexts_left() < static_cast<uint32_t>(kMaxNextArraySize)) {
@@ -1298,50 +1301,6 @@ void IcingDynamicTrie::OnSleep() {
   UpdateCrc();
 }
 
-IcingDynamicTrie::NewValueMap::~NewValueMap() {}
-
-bool IcingDynamicTrie::Compact(
-    const NewValueMap &old_tvi_to_new_value, IcingDynamicTrie *out,
-    std::unordered_map<uint32_t, uint32_t> *old_to_new_tvi) const {
-  if (old_to_new_tvi == nullptr) {
-    ICING_LOG(ERROR) << "TVI is null";
-  }
-
-  if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
-  }
-
-  PropertyReadersAll prop_readers(*this);
-
-  old_to_new_tvi->clear();
-  old_to_new_tvi->rehash(size() * 2);
-
-  for (Iterator it_all(*this, ""); it_all.IsValid(); it_all.Advance()) {
-    uint32_t value_index = it_all.GetValueIndex();
-    const void *new_value = old_tvi_to_new_value.GetNewValue(value_index);
-    if (!new_value) continue;
-
-    uint32_t new_value_index;
-    if (!out->Insert(it_all.GetKey(), new_value, &new_value_index, false)) {
-      return false;
-    }
-
-    old_to_new_tvi->insert({value_index, new_value_index});
-
-    // Copy properties.
-    for (size_t i = 0; i < prop_readers.size(); i++) {
-      if (prop_readers.HasProperty(i, value_index)) {
-        if (!out->SetProperty(new_value_index, i)) {
-          // Ouch. We need to bail.
-          return false;
-        }
-      }
-    }
-  }
-
-  return true;
-}
-
 uint32_t IcingDynamicTrie::size() const {
   if (!is_initialized()) {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
@@ -1554,9 +1513,11 @@ bool IcingDynamicTrie::SortNextArray(const Node *node) {
   return true;
 }
 
-bool IcingDynamicTrie::Insert(const char *key, const void *value,
-                              uint32_t *value_index, bool replace,
-                              bool *pnew_key) {
+libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
+                                                    const void *value,
+                                                    uint32_t *value_index,
+                                                    bool replace,
+                                                    bool *pnew_key) {
   if (!is_initialized()) {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
   }
@@ -1572,8 +1533,7 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
   if (!(storage_->nodes_left() >= 2 + key_len + 1 &&
         storage_->nexts_left() >= 2 + key_len + 1 + kMaxNextArraySize &&
         storage_->suffixes_left() >= key_len + 1 + value_size())) {
-    // No more space left.
-    return false;
+    return absl_ports::ResourceExhaustedError("No more space left");
   }
 
   uint32_t best_node_index;
@@ -1615,7 +1575,7 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
             storage_->GetSuffixIndex(prev_suffix_cur + 1), value_size());
         memcpy(mutable_prev_suffix_cur, value, value_size());
       }
-      return true;
+      return libtextclassifier3::Status::OK;
     }
 
     if (*prev_suffix_cur == *key_cur) {
@@ -1629,7 +1589,7 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
     int common_len = prev_suffix_cur - prev_suffix;
     for (int i = 0; i < common_len; i++) {
       // Create a single-branch child node.
-      Next *split_next = storage_->AllocNextArray(1);
+      ICING_ASSIGN_OR_RETURN(Next * split_next, storage_->AllocNextArray(1));
       split_node->set_next_index(storage_->GetNextArrayIndex(split_next));
       split_node->set_is_leaf(false);
       split_node->set_log2_num_children(0);
@@ -1641,7 +1601,7 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
     }
 
     // Fill a split.
-    Next *split_next = storage_->AllocNextArray(2);
+    ICING_ASSIGN_OR_RETURN(Next * split_next, storage_->AllocNextArray(2));
     split_node->set_next_index(storage_->GetNextArrayIndex(split_next));
     split_node->set_is_leaf(false);
     split_node->set_log2_num_children(1);
@@ -1700,7 +1660,7 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
     Next *new_next = cur_next;
     if (next_len == (next_array_buffer_size)) {
       // Allocate a new, larger, array.
-      new_next = storage_->AllocNextArray(next_len + 1);
+      ICING_ASSIGN_OR_RETURN(new_next, storage_->AllocNextArray(next_len + 1));
       memcpy(new_next, cur_next, sizeof(Next) * next_len);
     }
 
@@ -1721,7 +1681,8 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
 
       // 8 == log2(256)
       if (log2_num_children >= 8) {
-        ICING_LOG(FATAL) << "Number of children exceeds the max allowed size";
+        return absl_ports::InternalError(
+            "Number of children exceeds the max allowed size");
       }
 
       mutable_best_node->set_log2_num_children(log2_num_children + 1);
@@ -1735,7 +1696,7 @@ bool IcingDynamicTrie::Insert(const char *key, const void *value,
   storage_->inc_num_keys();
 
   if (pnew_key) *pnew_key = true;
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
 const void *IcingDynamicTrie::GetValueAtIndex(uint32_t value_index) const {
