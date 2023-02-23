@@ -17,6 +17,7 @@
 #include <algorithm>
 
 #include "icing/absl_ports/str_join.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/section-manager.h"
 
 namespace icing {
@@ -41,7 +42,7 @@ ProjectionTree::Node* ProjectionTree::AddChildNode(
   if (itr != current_children->end()) {
     return &(*itr);
   }
-  current_children->push_back(ProjectionTree::Node(property_name));
+  current_children->push_back(ProjectionTree::Node(std::string(property_name)));
   return &current_children->back();
 }
 
