@@ -48,7 +48,7 @@ class SuggestionProcessor {
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> QuerySuggestions(
       const SuggestionSpecProto& suggestion_spec,
-      const NamespaceChecker* namespace_checker);
+      const SuggestionResultChecker* suggestion_result_checker);
 
  private:
   explicit SuggestionProcessor(Index* index,

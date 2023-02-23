@@ -31,9 +31,14 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/proto/term.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
@@ -59,6 +64,7 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
@@ -84,17 +90,6 @@ const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
                      << "' in DocumentStorageInfoProto.";
   return std::move(NamespaceStorageInfoProto());
 }
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-
-constexpr PropertyConfigProto::DataType::Code TYPE_INT =
-    PropertyConfigProto::DataType::INT64;
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
                               int64 timestamp_ms,
@@ -177,16 +172,16 @@ class DocumentStoreTest : public ::testing::Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("email")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("subject")
-                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("body")
-                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("subject")
+                                     .SetDataTypeString(TERM_MATCH_EXACT,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("body")
+                                     .SetDataTypeString(TERM_MATCH_EXACT,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
@@ -1058,8 +1053,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // deleted
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(ElementsAre(0, 1, 2)));
   int64_t optimized_size1 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_EQ(original_size, optimized_size1);
@@ -1069,8 +1064,9 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1"));
-  ICING_ASSERT_OK(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  // DocumentId 0 is removed.
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, 1)));
   int64_t optimized_size2 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(original_size, Gt(optimized_size2));
@@ -1083,11 +1079,39 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // expired
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  // DocumentId 0 is removed, and DocumentId 2 is expired.
+  EXPECT_THAT(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+      IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId)));
   int64_t optimized_size3 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(optimized_size2, Gt(optimized_size3));
+
+  // Delete the last document
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri2"));
+  // DocumentId 0 and 1 is removed, and DocumentId 2 is expired.
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(ElementsAre(kInvalidDocumentId, kInvalidDocumentId,
+                                       kInvalidDocumentId)));
+  int64_t optimized_size4 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(optimized_size3, Gt(optimized_size4));
+}
+
+TEST_F(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
+              IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
@@ -2328,7 +2352,7 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -2562,7 +2586,7 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -3392,11 +3416,11 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
@@ -3441,14 +3465,14 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("alarm")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("name")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("time")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_type_config)
           .Build();
@@ -3492,11 +3516,11 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
@@ -3541,14 +3565,14 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("alarm")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("name")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("time")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_type_config)
           .Build();
@@ -3588,11 +3612,11 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
@@ -3654,7 +3678,7 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
@@ -3693,11 +3717,11 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
@@ -3759,7 +3783,7 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
@@ -3793,16 +3817,16 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   std::string schema_store_dir = schema_store_dir_ + "_migrate";
@@ -3913,20 +3937,20 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   std::string schema_store_dir = schema_store_dir_ + "_custom";
