@@ -17,6 +17,7 @@
 #include <algorithm>
 
 #include "icing/absl_ports/str_join.h"
+#include "icing/proto/search.pb.h"
 #include "icing/schema/section-manager.h"
 
 namespace icing {

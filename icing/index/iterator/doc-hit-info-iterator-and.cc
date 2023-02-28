@@ -55,11 +55,12 @@ std::unique_ptr<DocHitInfoIterator> CreateAndIterator(
   if (iterators.size() <= kBinaryAndIteratorPerformanceThreshold &&
       iterators.size() >= kMinBinaryIterators) {
     // Accumulate the iterators that need to be ANDed together.
-    iterator = std::move(iterators.at(0));
-    for (size_t i = 1; i < iterators.size(); ++i) {
+    iterator = std::move(iterators.at(iterators.size() - 1));
+    for (int i = iterators.size() - 2; i >= 0; --i) {
       std::unique_ptr<DocHitInfoIterator> temp_iterator = std::move(iterator);
       iterator = std::make_unique<DocHitInfoIteratorAnd>(
-          std::move(temp_iterator), std::move(iterators[i]));
+          /*short_it=*/std::move(iterators[i]),
+          /*long_it=*/std::move(temp_iterator));
     }
   } else {
     // If the vector is too small, the AndNary iterator can handle it and return

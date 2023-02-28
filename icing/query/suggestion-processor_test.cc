@@ -16,7 +16,7 @@
 
 #include "gmock/gmock.h"
 #include "icing/store/document-store.h"
-#include "icing/testing/always-true-namespace-checker-impl.h"
+#include "icing/testing/always-true-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -131,7 +131,7 @@ TEST_F(SuggestionProcessorTest, PrependedPrefixTokenTest) {
       "prefix token should be prepended to the suggestion f");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -153,7 +153,7 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
   suggestion_spec.set_prefix("nonExistTerm");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -175,7 +175,7 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
   suggestion_spec.set_prefix("f    ");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -197,7 +197,7 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
   suggestion_spec.set_prefix("F");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -236,7 +236,7 @@ TEST_F(SuggestionProcessorTest, OrOperatorPrefixTest) {
   suggestion_spec.set_prefix("f OR");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -258,7 +258,7 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
   suggestion_spec.set_prefix("{f}");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -289,7 +289,7 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   suggestion_spec.set_prefix("f:");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
@@ -315,7 +315,7 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   suggestion_spec.set_prefix("OR OR - :");
   suggestion_spec.set_num_to_return(10);
 
-  AlwaysTrueNamespaceCheckerImpl impl;
+  AlwaysTrueSuggestionResultCheckerImpl impl;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor->QuerySuggestions(suggestion_spec, &impl));
