@@ -141,7 +141,7 @@ class QueryProcessorTest
     std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
         numeric_index_->Edit(property, document_id, section_id);
     ICING_RETURN_IF_ERROR(editor->BufferKey(value));
-    return editor->IndexAllBufferedKeys();
+    return std::move(*editor).IndexAllBufferedKeys();
   }
 
   void TearDown() override {

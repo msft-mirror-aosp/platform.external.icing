@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
+#include <unistd.h>
 
 #include <cstdint>
 #include <limits>
@@ -26,6 +26,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -45,6 +46,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
@@ -126,17 +128,24 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .SetKey(std::move(name_space), std::move(uri))
       .SetSchema("Message")
       .AddStringProperty("body", "message body")
+      .AddInt64Property("indexableInteger", 123)
       .SetCreationTimestampMs(kDefaultCreationTimestampMs)
       .Build();
 }
 
 SchemaProto CreateMessageSchema() {
   return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-          PropertyConfigBuilder()
-              .SetName("body")
-              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-              .SetCardinality(CARDINALITY_REQUIRED)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Message")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("body")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_REQUIRED))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("indexableInteger")
+                                    .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                    .SetCardinality(CARDINALITY_REQUIRED)))
       .Build();
 }
 
@@ -267,6 +276,7 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
                                 .SetKey("namespace", "uri2")
                                 .SetSchema("Message")
                                 .AddStringProperty("body", "message body")
+                                .AddInt64Property("indexableInteger", 456)
                                 .SetCreationTimestampMs(100)
                                 .SetTtlMs(500)
                                 .Build();
@@ -408,6 +418,15 @@ TEST_F(IcingSearchEngineOptimizeTest, GetAndPutShouldWorkAfterOptimization) {
 
 TEST_F(IcingSearchEngineOptimizeTest,
        GetAndPutShouldWorkAfterOptimizationWithEmptyDocuments) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
   DocumentProto empty_document1 =
       DocumentBuilder()
           .SetKey("namespace", "uri1")
@@ -434,7 +453,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(std::move(schema)).status(), ProtoIsOk());
 
   ASSERT_THAT(icing.Put(empty_document1).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(empty_document2).status(), ProtoIsOk());
@@ -626,9 +645,17 @@ TEST_F(IcingSearchEngineOptimizeTest, SetSchemaShouldWorkAfterOptimization) {
 
 TEST_F(IcingSearchEngineOptimizeTest, SearchShouldWorkAfterOptimization) {
   DocumentProto document = CreateMessageDocument("namespace", "uri");
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
-  search_spec.set_query("m");
+
+  SearchSpecProto search_spec1;
+  search_spec1.set_term_match_type(TermMatchType::PREFIX);
+  search_spec1.set_query("m");
+
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
@@ -642,20 +669,37 @@ TEST_F(IcingSearchEngineOptimizeTest, SearchShouldWorkAfterOptimization) {
     ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
 
     // Validates that Search() works right after Optimize()
-    SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
+    // Term search
+    SearchResultProto search_result_proto1 =
+        icing.Search(search_spec1, GetDefaultScoringSpec(),
                      ResultSpecProto::default_instance());
-    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                         expected_search_result_proto));
+    EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                          expected_search_result_proto));
+
+    // Numeric (integer) search
+    SearchResultProto search_result_google::protobuf =
+        icing.Search(search_spec2, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                          expected_search_result_proto));
   }  // Destroys IcingSearchEngine to make sure nothing is cached.
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+
+  // Verify term search
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineOptimizeTest,
@@ -698,10 +742,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
   EXPECT_THAT(icing.Put(document2).status(), ProtoIsOk());
 
-  SearchSpecProto search_spec;
-  search_spec.set_query("m");
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
-
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
@@ -709,11 +749,29 @@ TEST_F(IcingSearchEngineOptimizeTest,
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document1;
 
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("m");
+  search_spec1.set_term_match_type(TermMatchType::PREFIX);
+
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineOptimizeTest,
@@ -760,36 +818,57 @@ TEST_F(IcingSearchEngineOptimizeTest,
           .SetKey("namespace", "uri2")
           .SetSchema("Message")
           .AddStringProperty("body", "new body")
+          .AddInt64Property("indexableInteger", 456)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
   EXPECT_THAT(icing.Put(new_document).status(), ProtoIsOk());
 
-  SearchSpecProto search_spec;
-  search_spec.set_query("m");
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("m");
+  search_spec1.set_term_match_type(TermMatchType::PREFIX);
+
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
 
   // Searching old content returns nothing because original file directory is
   // missing
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+  // Term search
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 
-  search_spec.set_query("n");
-
-  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      new_document;
+  // Numeric (integer) search
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 
   // Searching new content returns the new document
-  search_result_proto = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                     ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      new_document;
+  // Term search
+  search_spec1.set_query("n");
+  search_result_proto1 = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                      ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
+
+  // Numeric (integer) search
+  search_spec2.set_query("indexableInteger == 456");
+  search_result_google::protobuf = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                      ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineOptimizeTest,
@@ -838,35 +917,56 @@ TEST_F(IcingSearchEngineOptimizeTest,
           .SetKey("namespace", "uri2")
           .SetSchema("Message")
           .AddStringProperty("body", "new body")
+          .AddInt64Property("indexableInteger", 456)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
   EXPECT_THAT(icing.Put(new_document).status(), ProtoIsOk());
 
-  SearchSpecProto search_spec;
-  search_spec.set_query("m");
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("m");
+  search_spec1.set_term_match_type(TermMatchType::PREFIX);
+
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
 
   // Searching old content returns nothing because original files are missing
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+  // Term search
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 
-  search_spec.set_query("n");
-
-  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      new_document;
+  // Numeric (integer) search
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 
   // Searching new content returns the new document
-  search_result_proto = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                     ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      new_document;
+  // Term search
+  search_spec1.set_query("n");
+  search_result_proto1 = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                      ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
+
+  // Numeric (integer) search
+  search_spec2.set_query("indexableInteger == 456");
+  search_result_google::protobuf = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                      ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {

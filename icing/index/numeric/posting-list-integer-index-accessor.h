@@ -91,12 +91,9 @@ class PostingListIntegerIndexAccessor : public PostingListAccessor {
 
  private:
   explicit PostingListIntegerIndexAccessor(
-      FlashIndexStorage* storage,
-      std::unique_ptr<uint8_t[]> posting_list_buffer_array,
-      PostingListUsed posting_list_buffer,
+      FlashIndexStorage* storage, PostingListUsed in_memory_posting_list,
       PostingListIntegerIndexSerializer* serializer)
-      : PostingListAccessor(storage, std::move(posting_list_buffer_array),
-                            std::move(posting_list_buffer)),
+      : PostingListAccessor(storage, std::move(in_memory_posting_list)),
         serializer_(serializer) {}
 
   PostingListIntegerIndexSerializer* serializer_;  // Does not own.

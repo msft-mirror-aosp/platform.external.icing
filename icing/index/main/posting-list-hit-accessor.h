@@ -86,12 +86,10 @@ class PostingListHitAccessor : public PostingListAccessor {
   libtextclassifier3::Status PrependHit(const Hit& hit);
 
  private:
-  explicit PostingListHitAccessor(
-      FlashIndexStorage* storage, PostingListHitSerializer* serializer,
-      std::unique_ptr<uint8_t[]> posting_list_buffer_array,
-      PostingListUsed posting_list_buffer)
-      : PostingListAccessor(storage, std::move(posting_list_buffer_array),
-                            std::move(posting_list_buffer)),
+  explicit PostingListHitAccessor(FlashIndexStorage* storage,
+                                  PostingListHitSerializer* serializer,
+                                  PostingListUsed in_memory_posting_list)
+      : PostingListAccessor(storage, std::move(in_memory_posting_list)),
         serializer_(serializer) {}
 
   PostingListHitSerializer* serializer_;  // Does not own.

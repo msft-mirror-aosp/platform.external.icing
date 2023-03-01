@@ -33,12 +33,10 @@ class SchemaUtil {
   using TypeConfigMap =
       std::unordered_map<std::string, const SchemaTypeConfigProto>;
 
-  // Maps from a child type to the parent types that depend on it.
-  // Ex. type A has a single property of type B
-  // The dependency map will be { { "B", { "A" } } }
-  using DependencyMap =
-      std::unordered_map<std::string_view,
-                         std::unordered_set<std::string_view>>;
+  // If A -> B is indicated in the map, then type A must be built before
+  // building type B, i.e. B depends on A.
+  using DependentMap = std::unordered_map<std::string_view,
+                                          std::unordered_set<std::string_view>>;
 
   struct SchemaDelta {
     // Which schema types were present in the old schema, but were deleted from
@@ -120,11 +118,11 @@ class SchemaUtil {
   //  document properties can be opted out of indexing.
   //
   // Returns:
-  //   On success, a dependency map from each child types to all parent types
+  //   On success, a dependent map from each types to their dependent types
   //   that depend on it directly or indirectly.
   //   ALREADY_EXISTS for case 1 and 2
   //   INVALID_ARGUMENT for 3-13
-  static libtextclassifier3::StatusOr<DependencyMap> Validate(
+  static libtextclassifier3::StatusOr<DependentMap> Validate(
       const SchemaProto& schema);
 
   // Creates a mapping of schema type -> schema type config proto. The
@@ -175,7 +173,7 @@ class SchemaUtil {
   // Returns a SchemaDelta that captures the aforementioned differences.
   static const SchemaDelta ComputeCompatibilityDelta(
       const SchemaProto& old_schema, const SchemaProto& new_schema,
-      const DependencyMap& new_schema_dependency_map);
+      const DependentMap& new_schema_dependent_map);
 
   // Validates the 'property_name' field.
   //   1. Can't be an empty string

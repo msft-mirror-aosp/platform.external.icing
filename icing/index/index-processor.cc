@@ -36,8 +36,8 @@ namespace lib {
 
 libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>>
 IndexProcessor::Create(const Normalizer* normalizer, Index* index,
-                       NumericIndex<int64_t>* integer_index,
-                       const Clock* clock) {
+                       NumericIndex<int64_t>* integer_index, const Clock* clock,
+                       bool recovery_mode) {
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(index);
   ICING_RETURN_ERROR_IF_NULL(integer_index);
@@ -50,7 +50,7 @@ IndexProcessor::Create(const Normalizer* normalizer, Index* index,
       std::make_unique<IntegerSectionIndexingHandler>(clock, integer_index));
 
   return std::unique_ptr<IndexProcessor>(
-      new IndexProcessor(std::move(handlers), clock));
+      new IndexProcessor(std::move(handlers), clock, recovery_mode));
 }
 
 libtextclassifier3::Status IndexProcessor::IndexDocument(
@@ -59,7 +59,7 @@ libtextclassifier3::Status IndexProcessor::IndexDocument(
   // TODO(b/259744228): set overall index latency.
   for (auto& section_indexing_handler : section_indexing_handlers_) {
     ICING_RETURN_IF_ERROR(section_indexing_handler->Handle(
-        tokenized_document, document_id, put_document_stats));
+        tokenized_document, document_id, recovery_mode_, put_document_stats));
   }
 
   return libtextclassifier3::Status::OK;

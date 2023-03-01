@@ -38,14 +38,14 @@ class StringSectionIndexingHandler : public SectionIndexingHandler {
 
   ~StringSectionIndexingHandler() override = default;
 
-  // Handles the string indexing process: add hits into the lite index for all
-  // contents in tokenized_document.tokenized_string_sections and merge lite
+  // Handles the string term indexing process: add hits into the lite index for
+  // all contents in tokenized_document.tokenized_string_sections and merge lite
   // index into main index if necessary.
   //
   /// Returns:
   //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if document_id is less than the document_id of a
-  //     previously indexed document.
+  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
+  //     document_id of a previously indexed document in non recovery mode.
   //   - RESOURCE_EXHAUSTED_ERROR if the index is full and can't add anymore
   //     content.
   //   - DATA_LOSS_ERROR if an attempt to merge the index fails and both indices
@@ -54,7 +54,7 @@ class StringSectionIndexingHandler : public SectionIndexingHandler {
   //   - Any main/lite index errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      PutDocumentStatsProto* put_document_stats) override;
+      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
 
  private:
   const Normalizer& normalizer_;

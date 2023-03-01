@@ -32,23 +32,32 @@ class SectionIndexingHandler {
   virtual ~SectionIndexingHandler() = default;
 
   // Handles the indexing process: add data (hits) into the specific type index
-  // (e.g. string index, integer index) for all contents in the corresponding
-  // type of sections in tokenized_document.
+  // (e.g. term index, integer index) for all contents in the corresponding type
+  // of sections in tokenized_document.
   // For example, IntegerSectionIndexingHandler::Handle should add data into
   // integer index for all contents in tokenized_document.integer_sections.
+  //
+  // Also it should handle last added DocumentId properly (based on
+  // recovery_mode_) to avoid adding previously indexed documents.
   //
   // tokenized_document: document object with different types of tokenized
   //                     sections.
   // document_id:        id of the document.
+  // recovery_mode:      decides how to handle document_id <=
+  //                     last_added_document_id. If in recovery_mode, then
+  //                     Handle() will simply return OK immediately. Otherwise,
+  //                     returns INVALID_ARGUMENT_ERROR.
   // put_document_stats: object for collecting stats during indexing. It can be
   //                     nullptr.
   //
   /// Returns:
   //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
+  //     document_id of a previously indexed document in non recovery mode
   //   - Any other errors. It depends on each implementation.
   virtual libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      PutDocumentStatsProto* put_document_stats) = 0;
+      bool recovery_mode, PutDocumentStatsProto* put_document_stats) = 0;
 
  protected:
   const Clock& clock_;

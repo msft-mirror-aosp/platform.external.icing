@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,6 +24,9 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
+#include "icing/index/index.h"
+#include "icing/index/numeric/integer-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
@@ -46,8 +47,10 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -63,8 +66,11 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
+using ::testing::DoDefault;
+using ::testing::EndsWith;
 using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::Matcher;
 using ::testing::Return;
 using ::testing::SizeIs;
 
@@ -152,6 +158,10 @@ std::string GetDocumentDir() { return GetTestBaseDir() + "/document_dir"; }
 
 std::string GetIndexDir() { return GetTestBaseDir() + "/index_dir"; }
 
+std::string GetIntegerIndexDir() {
+  return GetTestBaseDir() + "/integer_index_dir";
+}
+
 std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 
 std::string GetHeaderFilename() {
@@ -169,6 +179,7 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .SetKey(std::move(name_space), std::move(uri))
       .SetSchema("Message")
       .AddStringProperty("body", "message body")
+      .AddInt64Property("indexableInteger", 123)
       .SetCreationTimestampMs(kDefaultCreationTimestampMs)
       .Build();
 }
@@ -186,37 +197,90 @@ DocumentProto CreateEmailDocument(const std::string& name_space,
       .Build();
 }
 
-SchemaProto CreateMessageSchema() {
-  return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-          PropertyConfigBuilder()
-              .SetName("body")
-              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-              .SetCardinality(CARDINALITY_REQUIRED)))
+SchemaTypeConfigProto CreateMessageSchemaTypeConfig() {
+  return SchemaTypeConfigBuilder()
+      .SetType("Message")
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("body")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("indexableInteger")
+                       .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                       .SetCardinality(CARDINALITY_REQUIRED))
       .Build();
 }
 
-SchemaProto CreateEmailSchema() {
-  return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder()
-                   .SetType("Email")
-                   .AddProperty(PropertyConfigBuilder()
-                                    .SetName("body")
-                                    .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                       TOKENIZER_PLAIN)
-                                    .SetCardinality(CARDINALITY_REQUIRED))
-                   .AddProperty(PropertyConfigBuilder()
-                                    .SetName("subject")
-                                    .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                       TOKENIZER_PLAIN)
-                                    .SetCardinality(CARDINALITY_REQUIRED)))
+SchemaTypeConfigProto CreateEmailSchemaTypeConfig() {
+  return SchemaTypeConfigBuilder()
+      .SetType("Email")
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("body")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("subject")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
       .Build();
+}
+
+SchemaProto CreateMessageSchema() {
+  return SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
+}
+
+SchemaProto CreateEmailSchema() {
+  return SchemaBuilder().AddType(CreateEmailSchemaTypeConfig()).Build();
 }
 
 ScoringSpecProto GetDefaultScoringSpec() {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   return scoring_spec;
+}
+
+TEST_F(IcingSearchEngineInitializationTest, UninitializedInstanceFailsSafely) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+
+  SchemaProto email_schema = CreateMessageSchema();
+  EXPECT_THAT(icing.SetSchema(email_schema).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.GetSchema().status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.GetSchemaType(email_schema.types(0).schema_type()).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+
+  DocumentProto doc = CreateMessageDocument("namespace", "uri");
+  EXPECT_THAT(icing.Put(doc).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing
+                  .Get(doc.namespace_(), doc.uri(),
+                       GetResultSpecProto::default_instance())
+                  .status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.Delete(doc.namespace_(), doc.uri()).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.DeleteByNamespace(doc.namespace_()).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.DeleteBySchemaType(email_schema.types(0).schema_type())
+                  .status()
+                  .code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+
+  SearchSpecProto search_spec = SearchSpecProto::default_instance();
+  ScoringSpecProto scoring_spec = ScoringSpecProto::default_instance();
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  constexpr int kSomePageToken = 12;
+  EXPECT_THAT(icing.GetNextPage(kSomePageToken).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  icing.InvalidateNextPageToken(kSomePageToken);  // Verify this doesn't crash.
+
+  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(icing.Optimize().status(),
+              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, SimpleInitialization) {
@@ -465,16 +529,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     auto mock_filesystem = std::make_unique<MockFilesystem>();
     std::string document_log_filepath =
         icing_options.base_dir() + "/document_dir/document_log_v1";
-    auto get_filesize_lambda = [this,
-                                &document_log_filepath](const char* filename) {
-      if (strncmp(document_log_filepath.c_str(), filename,
-                  document_log_filepath.length()) == 0) {
-        return Filesystem::kBadFileSize;
-      }
-      return this->filesystem()->GetFileSize(filename);
-    };
-    ON_CALL(*mock_filesystem, GetFileSize(A<const char*>()))
-        .WillByDefault(get_filesize_lambda);
+    ON_CALL(*mock_filesystem,
+            GetFileSize(Matcher<const char*>(Eq(document_log_filepath))))
+        .WillByDefault(Return(Filesystem::kBadFileSize));
 
     TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
                                 std::make_unique<IcingFilesystem>(),
@@ -581,12 +638,25 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromMissingHeaderFile) {
       icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
       EqualsProto(expected_get_result_proto));
 
-  // Checks that the index is still ok so we can search over it
+  // Checks that the term index is still ok so we can search over it
   SearchResultProto search_result_proto =
       icing.Search(search_spec, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
+
+  // Checks that the integer index is still ok so we can search over it
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 
   // Checks that Schema is still since it'll be needed to validate the document
   EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
@@ -663,6 +733,7 @@ TEST_F(IcingSearchEngineInitializationTest,
           .SetSchema("Message")
           .AddStringProperty("additional", "content")
           .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
           .SetCreationTimestampMs(kDefaultCreationTimestampMs)
           .Build();
 
@@ -672,23 +743,16 @@ TEST_F(IcingSearchEngineInitializationTest,
     IcingSearchEngine icing(options, GetTestJniCache());
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-    SchemaProto schema;
-    auto type = schema.add_types();
-    type->set_schema_type("Message");
-
-    auto property = type->add_properties();
-    property->set_property_name("body");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    property->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
-    property = type->add_properties();
-    property->set_property_name("additional");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder(CreateMessageSchemaTypeConfig())
+                    // Add non-indexable property "additional"
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("additional")
+                                     .SetDataType(TYPE_STRING)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
 
     EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -718,30 +782,18 @@ TEST_F(IcingSearchEngineInitializationTest,
     auto type = new_schema.add_types();
     type->set_schema_type("Email");
 
-    type = new_schema.add_types();
-    type->set_schema_type("Message");
-
-    // Adding a new property changes the SectionIds (since SectionIds are
-    // assigned based on alphabetical order of indexed sections, marking
-    // "additional" as an indexed property will push the "body" property to a
-    // different SectionId)
-    auto property = type->add_properties();
-    property->set_property_name("body");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    property->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
-    property = type->add_properties();
-    property->set_property_name("additional");
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    property->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
+    // Switching a non-indexable property to indexable changes the SectionIds
+    // (since SectionIds are assigned based on alphabetical order of indexed
+    // sections, marking "additional" as an indexed property will push the
+    // "body" and "indexableInteger" property to different SectionIds)
+    *new_schema.add_types() =
+        SchemaTypeConfigBuilder(CreateMessageSchemaTypeConfig())
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("additional")
+                    .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
 
     // Write the marker file
     std::string marker_filepath =
@@ -777,37 +829,75 @@ TEST_F(IcingSearchEngineInitializationTest,
                         GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_proto));
 
-  SearchSpecProto search_spec;
+  // Verify term search
+  SearchSpecProto search_spec1;
 
   // The section restrict will ensure we are using the correct, updated
   // SectionId in the Index
-  search_spec.set_query("additional:content");
+  search_spec1.set_query("additional:content");
 
   // Schema type filter will ensure we're using the correct, updated
   // SchemaTypeId in the DocumentStore
-  search_spec.add_schema_type_filters("Message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec1.add_schema_type_filters("Message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
 
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+  SearchResultProto expected_search_result_proto1;
+  expected_search_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto1.mutable_results()->Add()->mutable_document() =
       document2_with_additional_property;
 
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto1));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec1.add_schema_type_filters("Message");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto expected_search_result_google::protobuf;
+  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
+      document2_with_additional_property;
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
+      document1;
+
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_google::protobuf));
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
        RecoverFromInconsistentDocumentStore) {
+  // Test the following scenario: document store is ahead of term and integer
+  // index. IcingSearchEngine should be able to recover term index. Several
+  // additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
+  // - Still, we need to replay and reindex documents.
+
   DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
   DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
 
   {
     // Initializes folder and schema, index one document
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
     EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(document1).status(), ProtoIsOk());
@@ -831,10 +921,38 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_EXPECT_OK(document_store->Put(document2));
   }
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  // Mock filesystem to observe and check the behavior of term index and
+  // integer index.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+      .WillRepeatedly(DoDefault());
+  // Ensure term index directory should never be discarded.
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(EndsWith("/index_dir")))
+      .Times(0);
+  // Ensure integer index directory should never be discarded, and Clear()
+  // should never be called (i.e. storage sub directory
+  // "*/integer_index_dir/*" should never be discarded).
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+      .Times(0);
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+      .Times(0);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
   // Index Restoration should be triggered here and document2 should be
   // indexed.
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
 
   GetResultProto expected_get_result_proto;
   expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
@@ -850,66 +968,52 @@ TEST_F(IcingSearchEngineInitializationTest,
       icing.Get("namespace", "uri2", GetResultSpecProto::default_instance()),
       EqualsProto(expected_get_result_proto));
 
-  // We indexed the additional document
-  SearchSpecProto search_spec;
-  search_spec.set_query("message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
-
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document1;
 
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+  // We indexed the additional document in all indices.
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
-}
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 
-TEST_F(IcingSearchEngineInitializationTest, RecoverFromInconsistentIndex) {
-  SearchSpecProto search_spec;
-  search_spec.set_query("message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-
-  {
-    // Initializes folder and schema, index one document
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-    EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-    EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-                ProtoIsOk());
-    SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
-    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                         expected_search_result_proto));
-  }  // This should shut down IcingSearchEngine and persist anything it needs to
-
-  // Pretend we lost the entire index
-  EXPECT_TRUE(filesystem()->DeleteDirectoryRecursively(
-      absl_ports::StrCat(GetIndexDir(), "/idx/lite.").c_str()));
-
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-  // Check that our index is ok by searching over the restored index
-  SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, ScoringSpecProto::default_instance(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                       expected_search_result_proto));
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIndex) {
+  // Test the following scenario: term index is corrupted (e.g. checksum doesn't
+  // match). IcingSearchEngine should be able to recover term index. Several
+  // additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Should discard the entire term index directory and start it from
+  //     scratch.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect since we start it
+  //     from scratch.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
   SearchSpecProto search_spec;
   search_spec.set_query("message");
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
@@ -921,7 +1025,10 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIndex) {
 
   {
     // Initializes folder and schema, index one document
-    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
     EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
     EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
@@ -933,14 +1040,44 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIndex) {
                                          expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
 
-  // Pretend index is corrupted
-  const std::string index_hit_buffer_file = GetIndexDir() + "/idx/lite.hb";
-  ScopedFd fd(filesystem()->OpenForWrite(index_hit_buffer_file.c_str()));
-  ASSERT_TRUE(fd.is_valid());
-  ASSERT_TRUE(filesystem()->Write(fd.get(), "1234", 4));
+  // Manually corrupt term index
+  {
+    const std::string index_hit_buffer_file = GetIndexDir() + "/idx/lite.hb";
+    ScopedFd fd(filesystem()->OpenForWrite(index_hit_buffer_file.c_str()));
+    ASSERT_TRUE(fd.is_valid());
+    ASSERT_TRUE(filesystem()->Write(fd.get(), "1234", 4));
+  }
 
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Mock filesystem to observe and check the behavior of term index and integer
+  // index.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+      .WillRepeatedly(DoDefault());
+  // Ensure term index directory should be discarded once.
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(EndsWith("/index_dir")))
+      .Times(1);
+  // Ensure integer index directory should never be discarded, and Clear()
+  // should never be called (i.e. storage sub directory "*/integer_index_dir/*"
+  // should never be discarded).
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+      .Times(0);
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+      .Times(0);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
 
   // Check that our index is ok by searching over the restored index
   SearchResultProto search_result_proto =
@@ -950,189 +1087,495 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIndex) {
                                        expected_search_result_proto));
 }
 
-TEST_F(IcingSearchEngineInitializationTest, UninitializedInstanceFailsSafely) {
-  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIntegerIndex) {
+  // Test the following scenario: integer index is corrupted (e.g. checksum
+  // doesn't match). IcingSearchEngine should be able to recover integer index.
+  // Several additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Should discard the entire integer index directory and start it from
+  //     scratch.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded, since we start it from scratch.
+  SearchSpecProto search_spec;
+  search_spec.set_query("indexableInteger == 123");
+  search_spec.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
 
-  SchemaProto email_schema = CreateMessageSchema();
-  EXPECT_THAT(icing.SetSchema(email_schema).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing.GetSchema().status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing.GetSchemaType(email_schema.types(0).schema_type()).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      CreateMessageDocument("namespace", "uri");
 
-  DocumentProto doc = CreateMessageDocument("namespace", "uri");
-  EXPECT_THAT(icing.Put(doc).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing
-                  .Get(doc.namespace_(), doc.uri(),
-                       GetResultSpecProto::default_instance())
-                  .status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing.Delete(doc.namespace_(), doc.uri()).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing.DeleteByNamespace(doc.namespace_()).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing.DeleteBySchemaType(email_schema.types(0).schema_type())
-                  .status()
-                  .code(),
-              Eq(StatusProto::FAILED_PRECONDITION));
+  {
+    // Initializes folder and schema, index one document
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+    EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+                ProtoIsOk());
+    SearchResultProto search_result_proto =
+        icing.Search(search_spec, GetDefaultScoringSpec(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                         expected_search_result_proto));
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
 
-  SearchSpecProto search_spec = SearchSpecProto::default_instance();
-  ScoringSpecProto scoring_spec = ScoringSpecProto::default_instance();
-  ResultSpecProto result_spec = ResultSpecProto::default_instance();
-  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  constexpr int kSomePageToken = 12;
-  EXPECT_THAT(icing.GetNextPage(kSomePageToken).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  icing.InvalidateNextPageToken(kSomePageToken);  // Verify this doesn't crash.
+  // Manually corrupt integer index
+  {
+    const std::string integer_index_metadata_file =
+        GetIntegerIndexDir() + "/integer_index.m";
+    ScopedFd fd(
+        filesystem()->OpenForWrite(integer_index_metadata_file.c_str()));
+    ASSERT_TRUE(fd.is_valid());
+    ASSERT_TRUE(filesystem()->Write(fd.get(), "1234", 4));
+  }
 
-  EXPECT_THAT(icing.PersistToDisk(PersistType::FULL).status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  EXPECT_THAT(icing.Optimize().status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  // Mock filesystem to observe and check the behavior of term index and integer
+  // index.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+      .WillRepeatedly(DoDefault());
+  // Ensure term index directory should never be discarded.
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(EndsWith("/index_dir")))
+      .Times(0);
+  // Ensure integer index directory should be discarded once, and Clear()
+  // should never be called (i.e. storage sub directory "*/integer_index_dir/*"
+  // should never be discarded) since we start it from scratch.
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+      .Times(1);
+  EXPECT_CALL(*mock_filesystem,
+              DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+      .Times(0);
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::IO_ERROR));
+
+  // Check that our index is ok by searching over the restored index
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
 }
 
-TEST_F(IcingSearchEngineInitializationTest, RestoreIndex) {
+TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
+  // Test the following scenario: losing the entire term index directory.
+  // IcingSearchEngine should be able to recover term index. Several additional
+  // behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should not be discarded since we've already lost
+  //     it. Start it from scratch.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect since we start it
+  //     from scratch.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", kIpsumText)
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
-  // 1. Create an index with a LiteIndex that will only allow one document
-  // before needing a merge.
+  // 1. Create an index with 3 documents.
   {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_index_merge_size(document.ByteSizeLong());
-    IcingSearchEngine icing(options, GetTestJniCache());
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
 
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
 
-    // Add two documents. These should get merged into the main index.
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
     document = DocumentBuilder(document).SetUri("fake_type/1").Build();
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
-    // Add one document. This one should get remain in the lite index.
     document = DocumentBuilder(document).SetUri("fake_type/2").Build();
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // 2. Delete the index file to trigger RestoreIndexIfNeeded.
-  std::string idx_subdir = GetIndexDir() + "/idx";
-  filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str());
+  // 2. Delete the term index directory to trigger RestoreIndexIfNeeded.
+  std::string idx_dir = GetIndexDir();
+  filesystem()->DeleteDirectoryRecursively(idx_dir.c_str());
 
   // 3. Create the index again. This should trigger index restoration.
   {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_index_merge_size(document.ByteSizeLong());
-    IcingSearchEngine icing(options, GetTestJniCache());
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded since we've already
+    // lost it.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded, and Clear()
+    // should never be called (i.e. storage sub directory
+    // "*/integer_index_dir/*" should never be discarded).
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
 
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
 
-    SearchSpecProto search_spec;
-    search_spec.set_query("consectetur");
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    SearchResultProto results =
-        icing.Search(search_spec, ScoringSpecProto::default_instance(),
+    // Verify term index works normally
+    SearchSpecProto search_spec1;
+    search_spec1.set_query("consectetur");
+    search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+    SearchResultProto results1 =
+        icing.Search(search_spec1, ScoringSpecProto::default_instance(),
                      ResultSpecProto::default_instance());
-    EXPECT_THAT(results.status(), ProtoIsOk());
-    EXPECT_THAT(results.next_page_token(), Eq(0));
+    EXPECT_THAT(results1.status(), ProtoIsOk());
+    EXPECT_THAT(results1.next_page_token(), Eq(0));
     // All documents should be retrievable.
-    ASSERT_THAT(results.results(), SizeIs(3));
-    EXPECT_THAT(results.results(0).document().uri(), Eq("fake_type/2"));
-    EXPECT_THAT(results.results(1).document().uri(), Eq("fake_type/1"));
-    EXPECT_THAT(results.results(2).document().uri(), Eq("fake_type/0"));
-  }
-}
+    ASSERT_THAT(results1.results(), SizeIs(3));
+    EXPECT_THAT(results1.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results1.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results1.results(2).document().uri(), Eq("fake_type/0"));
 
-TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseLiteIndex) {
-  DocumentProto document = DocumentBuilder()
-                               .SetKey("icing", "fake_type/0")
-                               .SetSchema("Message")
-                               .AddStringProperty("body", kIpsumText)
-                               .Build();
-  // 1. Create an index with a LiteIndex that will only allow one document
-  // before needing a merge.
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_index_merge_size(document.ByteSizeLong());
-    IcingSearchEngine icing(options, GetTestJniCache());
+    // Verify integer index works normally
+    SearchSpecProto search_spec2;
+    search_spec2.set_query("indexableInteger == 123");
+    search_spec2.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
 
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-
-    // Add two documents. These should get merged into the main index.
-    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
-    document = DocumentBuilder(document).SetUri("fake_type/1").Build();
-    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
-    // Add one document. This one should get remain in the lite index.
-    document = DocumentBuilder(document).SetUri("fake_type/2").Build();
-    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
-  }
-
-  // 2. Delete the last document from the document log
-  {
-    const std::string document_log_file = absl_ports::StrCat(
-        GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
-    filesystem()->DeleteFile(document_log_file.c_str());
-    ICING_ASSERT_OK_AND_ASSIGN(
-        auto create_result,
-        PortableFileBackedProtoLog<DocumentWrapper>::Create(
-            filesystem(), document_log_file.c_str(),
-            PortableFileBackedProtoLog<DocumentWrapper>::Options(
-                /*compress_in=*/true)));
-    std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log =
-        std::move(create_result.proto_log);
-
-    document = DocumentBuilder(document).SetUri("fake_type/0").Build();
-    DocumentWrapper wrapper;
-    *wrapper.mutable_document() = document;
-    ASSERT_THAT(document_log->WriteProto(wrapper), IsOk());
-
-    document = DocumentBuilder(document).SetUri("fake_type/1").Build();
-    *wrapper.mutable_document() = document;
-    ASSERT_THAT(document_log->WriteProto(wrapper), IsOk());
-  }
-
-  // 3. Create the index again. This should throw out the lite index and trigger
-  // index restoration which will only restore the two documents in the main
-  // index.
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_index_merge_size(document.ByteSizeLong());
-    IcingSearchEngine icing(options, GetTestJniCache());
-
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-    SearchSpecProto search_spec;
-    search_spec.set_query("consectetur");
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    SearchResultProto results =
-        icing.Search(search_spec, ScoringSpecProto::default_instance(),
+    SearchResultProto results2 =
+        icing.Search(search_spec2, ScoringSpecProto::default_instance(),
                      ResultSpecProto::default_instance());
-    EXPECT_THAT(results.status(), ProtoIsOk());
-    EXPECT_THAT(results.next_page_token(), Eq(0));
-    // Only the documents that were in the main index should be retrievable.
-    ASSERT_THAT(results.results(), SizeIs(2));
-    EXPECT_THAT(results.results(0).document().uri(), Eq("fake_type/1"));
-    EXPECT_THAT(results.results(1).document().uri(), Eq("fake_type/0"));
+    ASSERT_THAT(results2.results(), SizeIs(3));
+    EXPECT_THAT(results2.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results2.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results2.results(2).document().uri(), Eq("fake_type/0"));
   }
 }
 
-TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIndex) {
+TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIntegerIndex) {
+  // Test the following scenario: losing the entire integer index directory.
+  // IcingSearchEngine should be able to recover integer index. Several
+  // additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should not be discarded since we've already
+  //     lost it. Start it from scratch.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded, since we start it from scratch.
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", kIpsumText)
+                               .AddInt64Property("indexableInteger", 123)
+                               .Build();
+  // 1. Create an index with 3 documents.
+  {
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/1").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/2").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // 2. Delete the integer index file to trigger RestoreIndexIfNeeded.
+  std::string integer_index_dir = GetIntegerIndexDir();
+  filesystem()->DeleteDirectoryRecursively(integer_index_dir.c_str());
+
+  // 3. Create the index again. This should trigger index restoration.
+  {
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded since we've
+    // already lost it, and Clear() should never be called (i.e. storage sub
+    // directory "*/integer_index_dir/*" should never be discarded) since we
+    // start it from scratch.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
+
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+
+    // Verify term index works normally
+    SearchSpecProto search_spec1;
+    search_spec1.set_query("consectetur");
+    search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+    SearchResultProto results1 =
+        icing.Search(search_spec1, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(results1.status(), ProtoIsOk());
+    EXPECT_THAT(results1.next_page_token(), Eq(0));
+    // All documents should be retrievable.
+    ASSERT_THAT(results1.results(), SizeIs(3));
+    EXPECT_THAT(results1.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results1.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results1.results(2).document().uri(), Eq("fake_type/0"));
+
+    // Verify integer index works normally
+    SearchSpecProto search_spec2;
+    search_spec2.set_query("indexableInteger == 123");
+    search_spec2.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+    SearchResultProto results2 =
+        icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results2.results(), SizeIs(3));
+    EXPECT_THAT(results2.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results2.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results2.results(2).document().uri(), Eq("fake_type/0"));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RestoreIndexTruncateLiteIndexWithoutReindexing) {
+  // Test the following scenario: term lite index is *completely* ahead of
+  // document store. IcingSearchEngine should be able to recover term index.
+  // Several additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index should take effect and throw out the
+  //     entire lite index. This should be sufficient to make term index
+  //     consistent with document store, so reindexing should not take place.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kIpsumText)
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
   // 1. Create an index with a LiteIndex that will only allow one document
   // before needing a merge.
   {
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
     options.set_index_merge_size(document.ByteSizeLong());
-    IcingSearchEngine icing(options, GetTestJniCache());
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    // Add two documents. These should get merged into the main index.
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/1").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // 2. Manually add some data into term lite index and increment
+  // last_added_document_id, but don't merge into the main index. This will
+  // cause mismatched last_added_document_id with term index.
+  //   - Document store: [0, 1]
+  //   - Term index
+  //     - Main index: [0, 1]
+  //     - Lite index: [2]
+  //   - Integer index: [0, 1]
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(
+            Index::Options(GetIndexDir(),
+                           /*index_merge_size=*/document.ByteSizeLong()),
+            &filesystem, &icing_filesystem));
+    DocumentId original_last_added_doc_id = index->last_added_document_id();
+    index->set_last_added_document_id(original_last_added_doc_id + 1);
+    Index::Editor editor =
+        index->Edit(original_last_added_doc_id + 1, /*section_id=*/0,
+                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+    ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  }
+
+  // 3. Create the index again.
+  {
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded. since we only call
+    // TruncateTo for term index.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded, and Clear()
+    // should never be called (i.e. storage sub directory
+    // "*/integer_index_dir/*" should never be discarded).
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
+
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_index_merge_size(document.ByteSizeLong());
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Since truncating lite index is sufficient to make term index consistent
+    // with document store, replaying documents or reindex shouldn't take place.
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+
+    // Verify term index works normally
+    SearchSpecProto search_spec1;
+    search_spec1.set_query("consectetur");
+    search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+    SearchResultProto results1 =
+        icing.Search(search_spec1, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(results1.status(), ProtoIsOk());
+    EXPECT_THAT(results1.next_page_token(), Eq(0));
+    // Only the documents that were in the main index should be retrievable.
+    ASSERT_THAT(results1.results(), SizeIs(2));
+    EXPECT_THAT(results1.results(0).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results1.results(1).document().uri(), Eq("fake_type/0"));
+
+    // Verify integer index works normally
+    SearchSpecProto search_spec2;
+    search_spec2.set_query("indexableInteger == 123");
+    search_spec2.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+    SearchResultProto results2 =
+        icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results2.results(), SizeIs(2));
+    EXPECT_THAT(results2.results(0).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results2.results(1).document().uri(), Eq("fake_type/0"));
+  }
+
+  // 4. Since document 2 doesn't exist, testing query = "foo" is not enough to
+  // verify the correctness of term index restoration. Instead, we have to check
+  // hits for "foo" should not be found in term index.
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(
+            Index::Options(GetIndexDir(),
+                           /*index_merge_size=*/document.ByteSizeLong()),
+            &filesystem, &icing_filesystem));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
+        index->GetIterator("foo", /*term_start_index=*/0,
+                           /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                           TermMatchType::EXACT_ONLY));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RestoreIndexTruncateLiteIndexWithReindexing) {
+  // Test the following scenario: term lite index is *partially* ahead of
+  // document store. IcingSearchEngine should be able to recover term index.
+  // Several additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index should take effect and throw out the
+  //     entire lite index. However, some valid data in term lite index were
+  //     discarded together, so reindexing should still take place to recover
+  //     them after truncating.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kIpsumText)
+                               .AddInt64Property("indexableInteger", 123)
+                               .Build();
+  // 1. Create an index with a LiteIndex that will only allow one document
+  //    before needing a merge.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_index_merge_size(document.ByteSizeLong());
+    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
 
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
     ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
@@ -1146,46 +1589,668 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIndex) {
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // 2. Delete the last two documents from the document log.
+  // 2. Manually add some data into term lite index and increment
+  //    last_added_document_id, but don't merge into the main index. This will
+  //    cause mismatched last_added_document_id with term index.
+  //   - Document store: [0, 1, 2]
+  //   - Term index
+  //     - Main index: [0, 1]
+  //     - Lite index: [2, 3]
+  //   - Integer index: [0, 1, 2]
   {
-    const std::string document_log_file = absl_ports::StrCat(
-        GetDocumentDir(), "/", DocumentLogCreator::GetDocumentLogFilename());
-    filesystem()->DeleteFile(document_log_file.c_str());
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        auto create_result,
-        PortableFileBackedProtoLog<DocumentWrapper>::Create(
-            filesystem(), document_log_file.c_str(),
-            PortableFileBackedProtoLog<DocumentWrapper>::Options(
-                /*compress_in=*/true)));
-    std::unique_ptr<PortableFileBackedProtoLog<DocumentWrapper>> document_log =
-        std::move(create_result.proto_log);
+        std::unique_ptr<Index> index,
+        Index::Create(
+            Index::Options(GetIndexDir(),
+                           /*index_merge_size=*/document.ByteSizeLong()),
+            &filesystem, &icing_filesystem));
+    DocumentId original_last_added_doc_id = index->last_added_document_id();
+    index->set_last_added_document_id(original_last_added_doc_id + 1);
+    Index::Editor editor =
+        index->Edit(original_last_added_doc_id + 1, /*section_id=*/0,
+                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+    ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  }
 
-    document = DocumentBuilder(document).SetUri("fake_type/0").Build();
-    DocumentWrapper wrapper;
-    *wrapper.mutable_document() = document;
-    ASSERT_THAT(document_log->WriteProto(wrapper), IsOk());
+  // 3. Create the index again.
+  {
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded. since we only call
+    // TruncateTo for term index.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded, and Clear()
+    // should never be called (i.e. storage sub directory
+    // "*/integer_index_dir/*" should never be discarded).
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
+
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_index_merge_size(document.ByteSizeLong());
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Truncating lite index not only deletes data ahead document store, but
+    // also deletes valid data. Therefore, we still have to replay documents and
+    // reindex.
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+
+    // Verify term index works normally
+    SearchSpecProto search_spec1;
+    search_spec1.set_query("consectetur");
+    search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+    SearchResultProto results1 =
+        icing.Search(search_spec1, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(results1.status(), ProtoIsOk());
+    EXPECT_THAT(results1.next_page_token(), Eq(0));
+    // Only the documents that were in the main index should be retrievable.
+    ASSERT_THAT(results1.results(), SizeIs(3));
+    EXPECT_THAT(results1.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results1.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results1.results(2).document().uri(), Eq("fake_type/0"));
+
+    // Verify integer index works normally
+    SearchSpecProto search_spec2;
+    search_spec2.set_query("indexableInteger == 123");
+    search_spec2.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+    SearchResultProto results2 =
+        icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results2.results(), SizeIs(3));
+    EXPECT_THAT(results2.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results2.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results2.results(2).document().uri(), Eq("fake_type/0"));
+  }
+
+  // 4. Since document 3 doesn't exist, testing query = "foo" is not enough to
+  // verify the correctness of term index restoration. Instead, we have to check
+  // hits for "foo" should not be found in term index.
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(
+            Index::Options(GetIndexDir(),
+                           /*index_merge_size=*/document.ByteSizeLong()),
+            &filesystem, &icing_filesystem));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
+        index->GetIterator("foo", /*term_start_index=*/0,
+                           /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                           TermMatchType::EXACT_ONLY));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RestoreIndexTruncateMainIndexWithoutReindexing) {
+  // Test the following scenario: term main index is *completely* ahead of
+  // document store. IcingSearchEngine should be able to recover term index.
+  // Several additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index should take effect and throw out the
+  //     entire lite and main index. This should be sufficient to make term
+  //     index consistent with document store (in this case, document store is
+  //     empty as well), so reindexing should not take place.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
+
+  // 1. Create an index with no document.
+  {
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  }
+
+  // 2. Manually add some data into term lite index and increment
+  //    last_added_document_id. Merge some of them into the main index and keep
+  //    others in the lite index. This will cause mismatched document id with
+  //    document store.
+  //   - Document store: []
+  //   - Term index
+  //     - Main index: [0]
+  //     - Lite index: [1]
+  //   - Integer index: []
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(
+            // index merge size is not important here because we will manually
+            // invoke merge below.
+            Index::Options(GetIndexDir(), /*index_merge_size=*/100),
+            &filesystem, &icing_filesystem));
+    // Add hits for document 0 and merge.
+    ASSERT_THAT(index->last_added_document_id(), kInvalidDocumentId);
+    index->set_last_added_document_id(0);
+    Index::Editor editor =
+        index->Edit(/*document_id=*/0, /*section_id=*/0,
+                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+    ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+    ICING_ASSERT_OK(index->Merge());
+
+    // Add hits for document 1 and don't merge.
+    index->set_last_added_document_id(1);
+    editor = index->Edit(/*document_id=*/1, /*section_id=*/0,
+                         TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("bar"));
+    ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  }
+
+  // 3. Create the index again. This should throw out the lite and main index.
+  {
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded. since we only call
+    // TruncateTo for term index.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded, and Clear()
+    // should never be called (i.e. storage sub directory
+    // "*/integer_index_dir/*" should never be discarded).
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
+
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Since truncating main index is sufficient to make term index consistent
+    // with document store, replaying documents or reindexing shouldn't take
+    // place.
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+  }
+
+  // 4. Since document 0, 1 don't exist, testing queries = "foo", "bar" are not
+  // enough to verify the correctness of term index restoration. Instead, we
+  // have to check hits for "foo", "bar" should not be found in term index.
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100),
+                      &filesystem, &icing_filesystem));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
+        index->GetIterator("foo", /*term_start_index=*/0,
+                           /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                           TermMatchType::EXACT_ONLY));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        doc_hit_info_iter,
+        index->GetIterator("bar", /*term_start_index=*/0,
+                           /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                           TermMatchType::EXACT_ONLY));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RestoreIndexTruncateMainIndexWithReindexing) {
+  // Test the following scenario: term main index is *partially* ahead of
+  // document store. IcingSearchEngine should be able to recover term index.
+  // Several additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - In RestoreIndexIfNecessary():
+  //   - "TruncateTo()" for term index should take effect and throw out the
+  //     entire lite and main index. However, some valid data in term main index
+  //     were discarded together, so reindexing should still take place to
+  //     recover them after truncating.
+  //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
+  //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
+  //     discarded.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kIpsumText)
+                               .AddInt64Property("indexableInteger", 123)
+                               .Build();
+  // 1. Create an index with 3 documents.
+  {
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/1").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/2").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // 2. Manually add some data into term lite index and increment
+  //    last_added_document_id. Merge some of them into the main index and keep
+  //    others in the lite index. This will cause mismatched document id with
+  //    document store.
+  //   - Document store: [0, 1, 2]
+  //   - Term index
+  //     - Main index: [0, 1, 2, 3]
+  //     - Lite index: [4]
+  //   - Integer index: [0, 1, 2]
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(
+            Index::Options(GetIndexDir(),
+                           /*index_merge_size=*/document.ByteSizeLong()),
+            &filesystem, &icing_filesystem));
+    // Add hits for document 3 and merge.
+    DocumentId original_last_added_doc_id = index->last_added_document_id();
+    index->set_last_added_document_id(original_last_added_doc_id + 1);
+    Index::Editor editor =
+        index->Edit(original_last_added_doc_id + 1, /*section_id=*/0,
+                    TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("foo"));
+    ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+    ICING_ASSERT_OK(index->Merge());
+
+    // Add hits for document 4 and don't merge.
+    index->set_last_added_document_id(original_last_added_doc_id + 2);
+    editor = index->Edit(original_last_added_doc_id + 2, /*section_id=*/0,
+                         TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+    ICING_ASSERT_OK(editor.BufferTerm("bar"));
+    ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
   }
 
   // 3. Create the index again. This should throw out the lite and main index
   // and trigger index restoration.
   {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_index_merge_size(document.ByteSizeLong());
-    IcingSearchEngine icing(options, GetTestJniCache());
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded. since we only call
+    // TruncateTo for term index.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded, and Clear()
+    // should never be called (i.e. storage sub directory
+    // "*/integer_index_dir/*" should never be discarded).
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
+
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    // Truncating main index not only deletes data ahead document store, but
+    // also deletes valid data. Therefore, we still have to replay documents and
+    // reindex.
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+
+    // Verify term index works normally
+    SearchSpecProto search_spec1;
+    search_spec1.set_query("consectetur");
+    search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+    SearchResultProto results1 =
+        icing.Search(search_spec1, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    EXPECT_THAT(results1.status(), ProtoIsOk());
+    EXPECT_THAT(results1.next_page_token(), Eq(0));
+    // Only the first document should be retrievable.
+    ASSERT_THAT(results1.results(), SizeIs(3));
+    EXPECT_THAT(results1.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results1.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results1.results(2).document().uri(), Eq("fake_type/0"));
+
+    // Verify integer index works normally
+    SearchSpecProto search_spec2;
+    search_spec2.set_query("indexableInteger == 123");
+    search_spec2.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+    SearchResultProto results2 =
+        icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results2.results(), SizeIs(3));
+    EXPECT_THAT(results2.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results2.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results2.results(2).document().uri(), Eq("fake_type/0"));
+  }
+
+  // 4. Since document 3, 4 don't exist, testing queries = "foo", "bar" are not
+  // enough to verify the correctness of term index restoration. Instead, we
+  // have to check hits for "foo", "bar" should not be found in term index.
+  {
+    Filesystem filesystem;
+    IcingFilesystem icing_filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100),
+                      &filesystem, &icing_filesystem));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
+        index->GetIterator("foo", /*term_start_index=*/0,
+                           /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                           TermMatchType::EXACT_ONLY));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        doc_hit_info_iter,
+        index->GetIterator("bar", /*term_start_index=*/0,
+                           /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                           TermMatchType::EXACT_ONLY));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RestoreIndexTruncateIntegerIndexWithoutReindexing) {
+  // Test the following scenario: integer index is *completely* ahead of
+  // document store. IcingSearchEngine should be able to recover integer index.
+  // Several additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect.
+  //   - "Clear()" should be called for integer index and throw out all integer
+  //     index storages, i.e. all storage sub directories (path_expr =
+  //     "*/integer_index_dir/*") should be discarded. This should be sufficient
+  //     to make integer index consistent with document store (in this case,
+  //     document store is empty as well), so reindexing should not take place.
+
+  // 1. Create an index with no document.
+  {
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
 
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  }
 
-    SearchSpecProto search_spec;
-    search_spec.set_query("consectetur");
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    SearchResultProto results =
-        icing.Search(search_spec, ScoringSpecProto::default_instance(),
+  // 2. Manually add some data into integer index and increment
+  //    last_added_document_id. This will cause mismatched document id with
+  //    document store.
+  //   - Document store: []
+  //   - Term index: []
+  //   - Integer index: [0]
+  {
+    Filesystem filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+    // Add hits for document 0.
+    ASSERT_THAT(integer_index->last_added_document_id(), kInvalidDocumentId);
+    integer_index->set_last_added_document_id(0);
+    std::unique_ptr<NumericIndex<int64_t>::Editor> editor = integer_index->Edit(
+        /*property_path=*/"indexableInteger", /*document_id=*/0,
+        /*section_id=*/0);
+    ICING_ASSERT_OK(editor->BufferKey(123));
+    ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  }
+
+  // 3. Create the index again. This should trigger index restoration.
+  {
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    // Clear() should be called to truncate integer index and thus storage sub
+    // directory (path_expr = "*/integer_index_dir/*") should be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(1);
+
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    // Since truncating integer index is sufficient to make it consistent with
+    // document store, replaying documents or reindexing shouldn't take place.
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+  }
+
+  // 4. Since document 0 doesn't exist, testing numeric query
+  // "indexableInteger == 123" is not enough to verify the correctness of
+  // integer index restoration. Instead, we have to check hits for 123 should
+  // not be found in integer index.
+  {
+    Filesystem filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
+        integer_index->GetIterator(/*property_path=*/"indexableInteger",
+                                   /*key_lower=*/123, /*key_upper=*/123));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  }
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RestoreIndexTruncateIntegerIndexWithReindexing) {
+  // Test the following scenario: integer index is *partially* ahead of document
+  // store. IcingSearchEngine should be able to recover integer index. Several
+  // additional behaviors are also tested:
+  // - Index directory handling:
+  //   - Term index directory should be unaffected.
+  //   - Integer index directory should be unaffected.
+  // - Truncate indices:
+  //   - "TruncateTo()" for term index shouldn't take effect.
+  //   - "Clear()" should be called for integer index and throw out all integer
+  //     index storages, i.e. all storage sub directories (path_expr =
+  //     "*/integer_index_dir/*") should be discarded. However, some valid data
+  //     in integer index were discarded together, so reindexing should still
+  //     take place to recover them after clearing.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", kIpsumText)
+                               .AddInt64Property("indexableInteger", 123)
+                               .Build();
+  // 1. Create an index with 3 documents.
+  {
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/1").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+    document = DocumentBuilder(document).SetUri("fake_type/2").Build();
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // 2. Manually add some data into integer index and increment
+  //    last_added_document_id. This will cause mismatched document id with
+  //    document store.
+  //   - Document store: [0, 1, 2]
+  //   - Term index: [0, 1, 2]
+  //   - Integer index: [0, 1, 2, 3]
+  {
+    Filesystem filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+    // Add hits for document 3.
+    DocumentId original_last_added_doc_id =
+        integer_index->last_added_document_id();
+    integer_index->set_last_added_document_id(original_last_added_doc_id + 1);
+    std::unique_ptr<NumericIndex<int64_t>::Editor> editor = integer_index->Edit(
+        /*property_path=*/"indexableInteger",
+        /*document_id=*/original_last_added_doc_id + 1, /*section_id=*/0);
+    ICING_ASSERT_OK(editor->BufferKey(456));
+    ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  }
+
+  // 3. Create the index again. This should trigger index restoration.
+  {
+    // Mock filesystem to observe and check the behavior of term index and
+    // integer index.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should never be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(0);
+    // Clear() should be called to truncate integer index and thus storage sub
+    // directory (path_expr = "*/integer_index_dir/*") should be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(1);
+
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+
+    // Verify term index works normally
+    SearchSpecProto search_spec1;
+    search_spec1.set_query("consectetur");
+    search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+    SearchResultProto results1 =
+        icing.Search(search_spec1, ScoringSpecProto::default_instance(),
                      ResultSpecProto::default_instance());
-    EXPECT_THAT(results.status(), ProtoIsOk());
-    EXPECT_THAT(results.next_page_token(), Eq(0));
-    // Only the first document should be retrievable.
-    ASSERT_THAT(results.results(), SizeIs(1));
-    EXPECT_THAT(results.results(0).document().uri(), Eq("fake_type/0"));
+    EXPECT_THAT(results1.status(), ProtoIsOk());
+    EXPECT_THAT(results1.next_page_token(), Eq(0));
+    // All documents should be retrievable.
+    ASSERT_THAT(results1.results(), SizeIs(3));
+    EXPECT_THAT(results1.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results1.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results1.results(2).document().uri(), Eq("fake_type/0"));
+
+    // Verify integer index works normally
+    SearchSpecProto search_spec2;
+    search_spec2.set_query("indexableInteger == 123");
+    search_spec2.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+    SearchResultProto results2 =
+        icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results2.results(), SizeIs(3));
+    EXPECT_THAT(results2.results(0).document().uri(), Eq("fake_type/2"));
+    EXPECT_THAT(results2.results(1).document().uri(), Eq("fake_type/1"));
+    EXPECT_THAT(results2.results(2).document().uri(), Eq("fake_type/0"));
+  }
+
+  // 4. Since document 3 doesn't exist, testing numeric query
+  // "indexableInteger == 456" is not enough to verify the correctness of
+  // integer index restoration. Instead, we have to check hits for 456 should
+  // not be found in integer index.
+  {
+    Filesystem filesystem;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
+        integer_index->GetIterator(/*property_path=*/"indexableInteger",
+                                   /*key_lower=*/456, /*key_upper=*/456));
+    EXPECT_THAT(doc_hit_info_iter->Advance(),
+                StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
   }
 }
 
@@ -1200,21 +2265,29 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Set a schema for a single type that has no indexed properties.
     SchemaProto schema =
         SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-                PropertyConfigBuilder()
-                    .SetName("unindexedField")
-                    .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
-                    .SetCardinality(CARDINALITY_REQUIRED)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Message")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("unindexedField")
+                                     .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                        TOKENIZER_NONE)
+                                     .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("unindexedInteger")
+                                     .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                     .SetCardinality(CARDINALITY_REQUIRED)))
             .Build();
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
-    // Add a document that contains no indexed content.
+    // Add a document that contains no indexed properties.
     DocumentProto document =
         DocumentBuilder()
             .SetKey("icing", "fake_type/0")
             .SetSchema("Message")
             .AddStringProperty("unindexedField",
                                "Don't you dare search over this!")
+            .AddInt64Property("unindexedInteger", -123)
             .Build();
     EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
@@ -1232,6 +2305,9 @@ TEST_F(IcingSearchEngineInitializationTest,
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        init_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
   }
 }
 
@@ -1243,10 +2319,27 @@ TEST_F(IcingSearchEngineInitializationTest,
     IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
     ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-    // Set a schema for a single type that has no indexed properties.
-    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Message")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("body")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("indexableInteger")
+                                     .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+            .Build();
+    // Set a schema for a single type that has no indexed contents.
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
-    // Add a document that contains no valid indexed content - just punctuation.
+    // Add a document that contains:
+    // - No valid indexed string content - just punctuation
+    // - No integer content - since it is an optional property
     DocumentProto document = DocumentBuilder()
                                  .SetKey("icing", "fake_type/0")
                                  .SetSchema("Message")
@@ -1268,6 +2361,9 @@ TEST_F(IcingSearchEngineInitializationTest,
                 Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
                 Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        init_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
   }
 }
 
@@ -1290,11 +2386,13 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 .SetKey("icing", "fake_type/1")
                                 .SetSchema("Message")
                                 .AddStringProperty("body", "message body")
+                                .AddInt64Property("indexableInteger", 123)
                                 .Build();
   DocumentProto document2 = DocumentBuilder()
                                 .SetKey("icing", "fake_type/2")
                                 .SetSchema("Message")
                                 .AddStringProperty("body", "message body")
+                                .AddInt64Property("indexableInteger", 456)
                                 .Build();
 
   {
@@ -1353,6 +2451,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_cause(),
       Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(0));
@@ -1370,6 +2471,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
 
   {
@@ -1413,9 +2515,15 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::PARTIAL_LOSS));
+    // Since document store rewinds to previous checkpoint, last stored doc id
+    // will be consistent with last added document ids in term/integer indices,
+    // so there will be no index restoration.
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
@@ -1434,6 +2542,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 .SetKey("icing", "fake_type/1")
                                 .SetSchema("Message")
                                 .AddStringProperty("body", "message body")
+                                .AddInt64Property("indexableInteger", 123)
                                 .Build();
 
   const std::string document_log_file = absl_ports::StrCat(
@@ -1504,6 +2613,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -1516,11 +2628,12 @@ TEST_F(IcingSearchEngineInitializationTest,
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
-       InitializeShouldLogRecoveryCauseInconsistentWithGroundTruth) {
+       InitializeShouldLogRecoveryCauseIndexInconsistentWithGroundTruth) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
   {
     // Initialize and put a document.
@@ -1551,6 +2664,70 @@ TEST_F(IcingSearchEngineInitializationTest,
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .index_restoration_latency_ms(),
+                Eq(10));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .document_store_recovery_latency_ms(),
+                Eq(0));
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().document_store_data_status(),
+        Eq(InitializeStatsProto::NO_DATA_LOSS));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .schema_store_recovery_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .schema_store_recovery_latency_ms(),
+                Eq(0));
+  }
+}
+
+TEST_F(
+    IcingSearchEngineInitializationTest,
+    InitializeShouldLogRecoveryCauseIntegerIndexInconsistentWithGroundTruth) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
+                               .Build();
+  {
+    // Initialize and put a document.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  {
+    // Delete the integer index file to trigger RestoreIndexIfNeeded.
+    std::string integer_index_dir = GetIntegerIndexDir();
+    filesystem()->DeleteDirectoryRecursively(integer_index_dir.c_str());
+  }
+
+  {
+    // Index is empty but ground truth is not. Index should be restored due to
+    // the inconsistency.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetTimerElapsedMilliseconds(10);
+    TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                                std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().index_restoration_cause(),
+        Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(10));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -1572,11 +2749,12 @@ TEST_F(IcingSearchEngineInitializationTest,
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
-       InitializeShouldLogRecoveryCauseSchemaChangesOutofSync) {
+       InitializeShouldLogRecoveryCauseSchemaChangesOutOfSync) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   {
@@ -1592,13 +2770,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     SchemaProto new_schema =
         SchemaBuilder()
             .AddType(
-                SchemaTypeConfigBuilder()
-                    .SetType("Message")
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName("body")
-                                     .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_REQUIRED))
+                SchemaTypeConfigBuilder(CreateMessageSchemaTypeConfig())
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName("subject")
                                      .SetDataTypeString(TERM_MATCH_PREFIX,
@@ -1633,6 +2805,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(10));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -1666,6 +2841,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -1692,6 +2870,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
   {
     // Initialize and put one document.
@@ -1701,23 +2880,16 @@ TEST_F(IcingSearchEngineInitializationTest,
     ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // lambda to fail OpenForWrite on lite index hit buffer once.
-  bool has_failed_already = false;
-  auto open_write_lambda = [this, &has_failed_already](const char* filename) {
-    std::string lite_index_buffer_file_path =
-        absl_ports::StrCat(GetIndexDir(), "/idx/lite.hb");
-    std::string filename_string(filename);
-    if (!has_failed_already && filename_string == lite_index_buffer_file_path) {
-      has_failed_already = true;
-      return -1;
-    }
-    return this->filesystem()->OpenForWrite(filename);
-  };
-
+  std::string lite_index_buffer_file_path =
+      absl_ports::StrCat(GetIndexDir(), "/idx/lite.hb");
   auto mock_icing_filesystem = std::make_unique<IcingMockFilesystem>();
+  EXPECT_CALL(*mock_icing_filesystem, OpenForWrite(_))
+      .WillRepeatedly(DoDefault());
   // This fails Index::Create() once.
-  ON_CALL(*mock_icing_filesystem, OpenForWrite)
-      .WillByDefault(open_write_lambda);
+  EXPECT_CALL(*mock_icing_filesystem,
+              OpenForWrite(Eq(lite_index_buffer_file_path)))
+      .WillOnce(Return(-1))
+      .WillRepeatedly(DoDefault());
 
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(10);
@@ -1731,6 +2903,69 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_cause(),
       Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
+      Eq(10));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .document_store_recovery_latency_ms(),
+              Eq(0));
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().document_store_data_status(),
+      Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().schema_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .schema_store_recovery_latency_ms(),
+              Eq(0));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       InitializeShouldLogRecoveryCauseIntegerIndexIOError) {
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("icing", "fake_type/0")
+                               .SetSchema("Message")
+                               .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
+                               .Build();
+  {
+    // Initialize and put one document.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  std::string integer_index_metadata_file =
+      absl_ports::StrCat(GetIntegerIndexDir(), "/integer_index.m");
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, OpenForWrite(_)).WillRepeatedly(DoDefault());
+  // This fails IntegerIndex::Create() once.
+  EXPECT_CALL(*mock_filesystem, OpenForWrite(Eq(integer_index_metadata_file)))
+      .WillOnce(Return(-1))
+      .WillRepeatedly(DoDefault());
+
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(10);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(10));
@@ -1757,6 +2992,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                .SetKey("icing", "fake_type/0")
                                .SetSchema("Message")
                                .AddStringProperty("body", "message body")
+                               .AddInt64Property("indexableInteger", 123)
                                .Build();
   {
     // Initialize and put one document.
@@ -1766,25 +3002,17 @@ TEST_F(IcingSearchEngineInitializationTest,
     ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
   }
 
-  // lambda to fail Read on document store header once.
-  bool has_failed_already = false;
-  auto read_lambda = [this, &has_failed_already](const char* filename,
-                                                 void* buf, size_t buf_size) {
-    std::string document_store_header_file_path =
-        absl_ports::StrCat(GetDocumentDir(), "/document_store_header");
-    std::string filename_string(filename);
-    if (!has_failed_already &&
-        filename_string == document_store_header_file_path) {
-      has_failed_already = true;
-      return false;
-    }
-    return this->filesystem()->Read(filename, buf, buf_size);
-  };
-
+  std::string document_store_header_file_path =
+      absl_ports::StrCat(GetDocumentDir(), "/document_store_header");
   auto mock_filesystem = std::make_unique<MockFilesystem>();
+  EXPECT_CALL(*mock_filesystem, Read(A<const char*>(), _, _))
+      .WillRepeatedly(DoDefault());
   // This fails DocumentStore::InitializeDerivedFiles() once.
-  ON_CALL(*mock_filesystem, Read(A<const char*>(), _, _))
-      .WillByDefault(read_lambda);
+  EXPECT_CALL(
+      *mock_filesystem,
+      Read(Matcher<const char*>(Eq(document_store_header_file_path)), _, _))
+      .WillOnce(Return(false))
+      .WillRepeatedly(DoDefault());
 
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(10);
@@ -1807,6 +3035,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_cause(),
       Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().index_restoration_latency_ms(),
       Eq(0));
@@ -1861,6 +3092,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
     EXPECT_THAT(initialize_result_proto.initialize_stats()
+                    .integer_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .index_restoration_latency_ms(),
                 Eq(0));
   }
@@ -1891,17 +3125,7 @@ TEST_F(IcingSearchEngineInitializationTest,
 
     // Create and set a schema with two type configs: Email and Message.
     SchemaProto schema = CreateEmailSchema();
-
-    auto type = schema.add_types();
-    type->set_schema_type("Message");
-    auto body = type->add_properties();
-    body->set_property_name("body");
-    body->set_data_type(PropertyConfigProto::DataType::STRING);
-    body->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    body->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::PREFIX);
-    body->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
+    *schema.add_types() = CreateMessageSchemaTypeConfig();
 
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   }

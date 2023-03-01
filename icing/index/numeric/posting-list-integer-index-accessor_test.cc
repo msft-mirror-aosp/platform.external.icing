@@ -119,7 +119,7 @@ TEST_F(PostingListIntegerIndexAccessorTest, DataAddAndRetrieveProperly) {
   EXPECT_THAT(
       serializer_->GetData(&pl_holder.posting_list),
       IsOkAndHolds(ElementsAreArray(data_vec.rbegin(), data_vec.rend())));
-  EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
+  EXPECT_THAT(pl_holder.next_block_index, Eq(kInvalidBlockIndex));
 }
 
 TEST_F(PostingListIntegerIndexAccessorTest, PreexistingPLKeepOnSameBlock) {
@@ -254,7 +254,7 @@ TEST_F(PostingListIntegerIndexAccessorTest, MultiBlockChainsBlocksProperly) {
               ElementsAreArray(data_vec.rbegin(), first_block_data_start));
 
   // Now retrieve all of the data that were on the first block.
-  uint32_t first_block_id = pl_holder.block.next_block_index();
+  uint32_t first_block_id = pl_holder.next_block_index;
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
@@ -328,7 +328,7 @@ TEST_F(PostingListIntegerIndexAccessorTest,
               ElementsAreArray(all_data_vec.rbegin(), first_block_data_start));
 
   // Now retrieve all of the data that were on the first block.
-  uint32_t first_block_id = pl_holder.block.next_block_index();
+  uint32_t first_block_id = pl_holder.next_block_index;
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
