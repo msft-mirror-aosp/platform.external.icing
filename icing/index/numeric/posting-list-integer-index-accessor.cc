@@ -38,16 +38,12 @@ PostingListIntegerIndexAccessor::Create(
     FlashIndexStorage* storage, PostingListIntegerIndexSerializer* serializer) {
   uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
       storage->block_size(), serializer->GetDataTypeBytes());
-  std::unique_ptr<uint8_t[]> posting_list_buffer_array =
-      std::make_unique<uint8_t[]>(max_posting_list_bytes);
-  ICING_ASSIGN_OR_RETURN(
-      PostingListUsed posting_list_buffer,
-      PostingListUsed::CreateFromUnitializedRegion(
-          serializer, posting_list_buffer_array.get(), max_posting_list_bytes));
+  ICING_ASSIGN_OR_RETURN(PostingListUsed in_memory_posting_list,
+                         PostingListUsed::CreateFromUnitializedRegion(
+                             serializer, max_posting_list_bytes));
   return std::unique_ptr<PostingListIntegerIndexAccessor>(
       new PostingListIntegerIndexAccessor(
-          storage, std::move(posting_list_buffer_array),
-          std::move(posting_list_buffer), serializer));
+          storage, std::move(in_memory_posting_list), serializer));
 }
 
 /* static */ libtextclassifier3::StatusOr<
@@ -79,20 +75,23 @@ PostingListIntegerIndexAccessor::GetNextDataBatch() {
   ICING_ASSIGN_OR_RETURN(
       std::vector<IntegerIndexData> batch,
       serializer_->GetData(&preexisting_posting_list_->posting_list));
-  uint32_t next_block_index;
+  uint32_t next_block_index = kInvalidBlockIndex;
   // Posting lists will only be chained when they are max-sized, in which case
-  // block.next_block_index() will point to the next block for the next posting
-  // list. Otherwise, block.next_block_index() can be kInvalidBlockIndex or be
-  // used to point to the next free list block, which is not relevant here.
-  if (preexisting_posting_list_->block.max_num_posting_lists() == 1) {
-    next_block_index = preexisting_posting_list_->block.next_block_index();
-  } else {
-    next_block_index = kInvalidBlockIndex;
+  // next_block_index will point to the next block for the next posting list.
+  // Otherwise, next_block_index can be kInvalidBlockIndex or be used to point
+  // to the next free list block, which is not relevant here.
+  if (preexisting_posting_list_->posting_list.size_in_bytes() ==
+      storage_->max_posting_list_bytes()) {
+    next_block_index = preexisting_posting_list_->next_block_index;
   }
+
   if (next_block_index != kInvalidBlockIndex) {
+    // Since we only have to deal with next block for max-sized posting list
+    // block, max_num_posting_lists is 1 and posting_list_index_bits is
+    // BitsToStore(1).
     PostingListIdentifier next_posting_list_id(
         next_block_index, /*posting_list_index=*/0,
-        preexisting_posting_list_->block.posting_list_index_bits());
+        /*posting_list_index_bits=*/BitsToStore(1));
     ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                            storage_->GetPostingList(next_posting_list_id));
     preexisting_posting_list_ =
@@ -108,7 +107,7 @@ libtextclassifier3::Status PostingListIntegerIndexAccessor::PrependData(
     const IntegerIndexData& data) {
   PostingListUsed& active_pl = (preexisting_posting_list_ != nullptr)
                                    ? preexisting_posting_list_->posting_list
-                                   : posting_list_buffer_;
+                                   : in_memory_posting_list_;
   libtextclassifier3::Status status =
       serializer_->PrependData(&active_pl, data);
   if (!absl_ports::IsResourceExhausted(status)) {
@@ -118,16 +117,16 @@ libtextclassifier3::Status PostingListIntegerIndexAccessor::PrependData(
   // we need to either move those data to a larger posting list or flush this
   // posting list and create another max-sized posting list in the chain.
   if (preexisting_posting_list_ != nullptr) {
-    FlushPreexistingPostingList();
+    ICING_RETURN_IF_ERROR(FlushPreexistingPostingList());
   } else {
     ICING_RETURN_IF_ERROR(FlushInMemoryPostingList());
   }
 
-  // Re-add data. Should always fit since we just cleared posting_list_buffer_.
-  // It's fine to explicitly reference posting_list_buffer_ here because there's
-  // no way of reaching this line while preexisting_posting_list_ is still in
-  // use.
-  return serializer_->PrependData(&posting_list_buffer_, data);
+  // Re-add data. Should always fit since we just cleared
+  // in_memory_posting_list_. It's fine to explicitly reference
+  // in_memory_posting_list_ here because there's no way of reaching this line
+  // while preexisting_posting_list_ is still in use.
+  return serializer_->PrependData(&in_memory_posting_list_, data);
 }
 
 }  // namespace lib

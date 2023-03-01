@@ -654,7 +654,8 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on any IO errors
   struct IndexRestorationResult {
     libtextclassifier3::Status status;
-    bool needed_restoration;
+    bool index_needed_restoration;
+    bool integer_index_needed_restoration;
   };
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -669,6 +670,39 @@ class IcingSearchEngine {
   //   bool indicating if we had a schema and unintentionally lost it
   //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<bool> LostPreviousSchema()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard parts of (term, integer) indices if they contain
+  // data for document ids greater than last_stored_document_id.
+  //
+  // Returns:
+  //   On success, a DocumentId indicating the first document to start for
+  //     reindexing and 2 bool flags indicating whether term or integer index
+  //     needs restoration.
+  //   INTERNAL on any I/O errors
+  struct TruncateIndexResult {
+    DocumentId first_document_to_reindex;
+    bool index_needed_restoration;
+    bool integer_index_needed_restoration;
+
+    explicit TruncateIndexResult(DocumentId first_document_to_reindex_in,
+                                 bool index_needed_restoration_in,
+                                 bool integer_index_needed_restoration_in)
+        : first_document_to_reindex(first_document_to_reindex_in),
+          index_needed_restoration(index_needed_restoration_in),
+          integer_index_needed_restoration(
+              integer_index_needed_restoration_in) {}
+  };
+  libtextclassifier3::StatusOr<TruncateIndexResult> TruncateIndicesTo(
+      DocumentId last_stored_document_id)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard the entire (term, integer) indices.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status ClearIndices()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

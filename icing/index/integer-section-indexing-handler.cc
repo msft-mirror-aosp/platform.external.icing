@@ -26,10 +26,21 @@ namespace lib {
 
 libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    PutDocumentStatsProto* put_document_stats) {
-  // TODO(b/259744228):
-  // 1. Resolve last_added_document_id for index rebuilding before rollout
-  // 2. Set integer indexing latency and other stats
+    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
+  // TODO(b/259744228): set integer indexing latency and other stats
+
+  if (integer_index_.last_added_document_id() != kInvalidDocumentId &&
+      document_id <= integer_index_.last_added_document_id()) {
+    if (recovery_mode) {
+      // Skip the document if document_id <= last_added_document_id in recovery
+      // mode without returning an error.
+      return libtextclassifier3::Status::OK;
+    }
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "DocumentId %d must be greater than last added document_id %d",
+        document_id, integer_index_.last_added_document_id()));
+  }
+  integer_index_.set_last_added_document_id(document_id);
 
   libtextclassifier3::Status status;
   // We have to add integer sections into integer index in reverse order because
@@ -55,7 +66,7 @@ libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     }
 
     // Add all the seen keys to the integer index.
-    status = editor->IndexAllBufferedKeys();
+    status = std::move(*editor).IndexAllBufferedKeys();
     if (!status.ok()) {
       ICING_LOG(WARNING) << "Failed to add keys into integer index due to: "
                          << status.error_message();

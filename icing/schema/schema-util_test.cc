@@ -39,8 +39,8 @@ constexpr char kEmailType[] = "EmailMessage";
 constexpr char kMessageType[] = "Text";
 constexpr char kPersonType[] = "Person";
 
-TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
-  // Create a schema with the following dependencies:
+TEST(SchemaUtilTest, DependentGraphAlphabeticalOrder) {
+  // Create a schema with the following dependent relation:
   //         C
   //       /   \
   // A - B       E - F
@@ -106,7 +106,7 @@ TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  // Provide these in alphabetical (also parent-child) order: A, B, C, D, E, F
+  // Provide these in alphabetical order: A, B, C, D, E, F
   SchemaProto schema = SchemaBuilder()
                            .AddType(type_a)
                            .AddType(type_b)
@@ -115,7 +115,7 @@ TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
                            .AddType(type_e)
                            .AddType(type_f)
                            .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependencyMap d_map,
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
                              SchemaUtil::Validate(schema));
   EXPECT_THAT(d_map, testing::SizeIs(5));
   EXPECT_THAT(d_map["F"],
@@ -126,8 +126,8 @@ TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
   EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
 }
 
-TEST(SchemaUtilTest, DependencyGraphReverseAlphabeticalOrder) {
-  // Create a schema with the following dependencies:
+TEST(SchemaUtilTest, DependentGraphReverseAlphabeticalOrder) {
+  // Create a schema with the following dependent relation:
   //         C
   //       /   \
   // A - B       E - F
@@ -193,7 +193,7 @@ TEST(SchemaUtilTest, DependencyGraphReverseAlphabeticalOrder) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  // Provide these in reverse alphabetical (also child-parent) order:
+  // Provide these in reverse alphabetical order:
   //   F, E, D, C, B, A
   SchemaProto schema = SchemaBuilder()
                            .AddType(type_f)
@@ -203,7 +203,7 @@ TEST(SchemaUtilTest, DependencyGraphReverseAlphabeticalOrder) {
                            .AddType(type_b)
                            .AddType(type_a)
                            .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependencyMap d_map,
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
                              SchemaUtil::Validate(schema));
   EXPECT_THAT(d_map, testing::SizeIs(5));
   EXPECT_THAT(d_map["F"],
@@ -214,8 +214,8 @@ TEST(SchemaUtilTest, DependencyGraphReverseAlphabeticalOrder) {
   EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
 }
 
-TEST(SchemaUtilTest, DependencyGraphMixedOrder) {
-  // Create a schema with the following dependencies:
+TEST(SchemaUtilTest, DependentGraphMixedOrder) {
+  // Create a schema with the following dependent relation:
   //         C
   //       /   \
   // A - B       E - F
@@ -290,7 +290,7 @@ TEST(SchemaUtilTest, DependencyGraphMixedOrder) {
                            .AddType(type_b)
                            .AddType(type_d)
                            .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependencyMap d_map,
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
                              SchemaUtil::Validate(schema));
   EXPECT_THAT(d_map, testing::SizeIs(5));
   EXPECT_THAT(d_map["F"],
@@ -302,7 +302,7 @@ TEST(SchemaUtilTest, DependencyGraphMixedOrder) {
 }
 
 TEST(SchemaUtilTest, TopLevelCycle) {
-  // Create a schema with the following dependencies:
+  // Create a schema with the following dependent relation:
   // A - B - B - B - B....
   SchemaTypeConfigProto type_a =
       SchemaTypeConfigBuilder()
@@ -330,7 +330,7 @@ TEST(SchemaUtilTest, TopLevelCycle) {
 }
 
 TEST(SchemaUtilTest, MultiLevelCycle) {
-  // Create a schema with the following dependencies:
+  // Create a schema with the following dependent relation:
   // A - B - C - A - B - C - A ...
   SchemaTypeConfigProto type_a =
       SchemaTypeConfigBuilder()
@@ -367,7 +367,7 @@ TEST(SchemaUtilTest, MultiLevelCycle) {
 }
 
 TEST(SchemaUtilTest, NonExistentType) {
-  // Create a schema with the following dependencies:
+  // Create a schema with the following dependent relation:
   // A - B - C - X (does not exist)
   SchemaTypeConfigProto type_a =
       SchemaTypeConfigBuilder()
@@ -683,9 +683,9 @@ TEST(SchemaUtilTest, NewOptionalPropertyIsCompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_changed_fully_compatible.insert(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  old_schema, new_schema_with_optional, no_dependencies_map),
+                  old_schema, new_schema_with_optional, no_dependents_map),
               Eq(schema_delta));
 }
 
@@ -719,9 +719,9 @@ TEST(SchemaUtilTest, NewRequiredPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  old_schema, new_schema_with_required, no_dependencies_map),
+                  old_schema, new_schema_with_required, no_dependents_map),
               Eq(schema_delta));
 }
 
@@ -755,9 +755,9 @@ TEST(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map),
+                                                    no_dependents_map),
               Eq(schema_delta));
 }
 
@@ -787,10 +787,10 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
   // We can't have a new schema be more restrictive, REPEATED->OPTIONAL
   SchemaUtil::SchemaDelta incompatible_schema_delta;
   incompatible_schema_delta.schema_types_incompatible.emplace(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/less_restrictive_schema,
-                  /*new_schema=*/more_restrictive_schema, no_dependencies_map),
+                  /*new_schema=*/more_restrictive_schema, no_dependents_map),
               Eq(incompatible_schema_delta));
 
   // We can have the new schema be less restrictive, OPTIONAL->REPEATED;
@@ -799,7 +799,7 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
       kEmailType);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   /*old_schema=*/more_restrictive_schema,
-                  /*new_schema=*/less_restrictive_schema, no_dependencies_map),
+                  /*new_schema=*/less_restrictive_schema, no_dependents_map),
               Eq(compatible_schema_delta));
 }
 
@@ -828,9 +828,9 @@ TEST(SchemaUtilTest, DifferentDataTypeIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map),
+                                                    no_dependents_map),
               Eq(schema_delta));
 }
 
@@ -888,16 +888,16 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
   // kEmailType depends on kMessageType
-  SchemaUtil::DependencyMap dependencies_map = {{kMessageType, {kEmailType}}};
+  SchemaUtil::DependentMap dependents_map = {{kMessageType, {kEmailType}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
-      old_schema, new_schema, dependencies_map);
+      old_schema, new_schema, dependents_map);
   EXPECT_THAT(actual, Eq(schema_delta));
   EXPECT_THAT(actual.schema_types_incompatible,
               testing::ElementsAre(kEmailType));
   EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
 }
 
-TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
+TEST(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
   // Configure old schema
   SchemaProto schema_with_indexed_property =
       SchemaBuilder()
@@ -925,21 +925,21 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.insert(kPersonType);
 
-  // New schema gained a new indexed property.
-  SchemaUtil::DependencyMap no_dependencies_map;
+  // New schema gained a new indexed string property.
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_unindexed_property, schema_with_indexed_property,
-                  no_dependencies_map),
+                  no_dependents_map),
               Eq(schema_delta));
 
-  // New schema lost an indexed property.
+  // New schema lost an indexed string property.
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_indexed_property, schema_with_unindexed_property,
-                  no_dependencies_map),
+                  no_dependents_map),
               Eq(schema_delta));
 }
 
-TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
+TEST(SchemaUtilTest, AddingNewIndexedStringPropertyMakesIndexIncompatible) {
   // Configure old schema
   SchemaProto old_schema =
       SchemaBuilder()
@@ -971,10 +971,158 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.insert(kPersonType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map),
+                                                    no_dependents_map),
               Eq(schema_delta));
+}
+
+TEST(SchemaUtilTest,
+     AddingNewNonIndexedStringPropertyShouldRemainIndexCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewProperty")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependents_map)
+                  .schema_types_index_incompatible,
+              IsEmpty());
+}
+
+TEST(SchemaUtilTest, ChangingIndexedIntegerPropertiesMakesIndexIncompatible) {
+  // Configure old schema
+  SchemaProto schema_with_indexed_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto schema_with_unindexed_property =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+
+  // New schema gained a new indexed integer property.
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_unindexed_property, schema_with_indexed_property,
+                  no_dependents_map),
+              Eq(schema_delta));
+
+  // New schema lost an indexed integer property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_indexed_property, schema_with_unindexed_property,
+                  no_dependents_map),
+              Eq(schema_delta));
+}
+
+TEST(SchemaUtilTest, AddingNewIndexedIntegerPropertyMakesIndexIncompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewIndexedProperty")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependents_map),
+              Eq(schema_delta));
+}
+
+TEST(SchemaUtilTest,
+     AddingNewNonIndexedIntegerPropertyShouldRemainIndexCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewProperty")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
+                                                    no_dependents_map)
+                  .schema_types_index_incompatible,
+              IsEmpty());
 }
 
 TEST(SchemaUtilTest, ChangingJoinablePropertiesMakesJoinIncompatible) {
@@ -1006,16 +1154,16 @@ TEST(SchemaUtilTest, ChangingJoinablePropertiesMakesJoinIncompatible) {
   expected_schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   // New schema gained a new joinable property.
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_non_joinable_property,
-                  schema_with_joinable_property, no_dependencies_map),
+                  schema_with_joinable_property, no_dependents_map),
               Eq(expected_schema_delta));
 
   // New schema lost a joinable property.
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_joinable_property,
-                  schema_with_non_joinable_property, no_dependencies_map),
+                  schema_with_non_joinable_property, no_dependents_map),
               Eq(expected_schema_delta));
 }
 
@@ -1051,9 +1199,9 @@ TEST(SchemaUtilTest, AddingNewJoinablePropertyMakesJoinIncompatible) {
 
   SchemaUtil::SchemaDelta expected_schema_delta;
   expected_schema_delta.schema_types_join_incompatible.insert(kPersonType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map),
+                                                    no_dependents_map),
               Eq(expected_schema_delta));
 }
 
@@ -1087,9 +1235,9 @@ TEST(SchemaUtilTest, AddingNewNonJoinablePropertyShouldRemainJoinCompatible) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map)
+                                                    no_dependents_map)
                   .schema_types_join_incompatible,
               IsEmpty());
 }
@@ -1128,9 +1276,9 @@ TEST(SchemaUtilTest, AddingTypeIsCompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_new.insert(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map),
+                                                    no_dependents_map),
               Eq(schema_delta));
 }
 
@@ -1169,9 +1317,9 @@ TEST(SchemaUtilTest, DeletingTypeIsNoted) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_deleted.emplace(kPersonType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                                    no_dependencies_map),
+                                                    no_dependents_map),
               Eq(schema_delta));
 }
 
@@ -1207,9 +1355,9 @@ TEST(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
   schema_delta.schema_types_index_incompatible.emplace(kEmailType);
-  SchemaUtil::DependencyMap no_dependencies_map;
+  SchemaUtil::DependentMap no_dependents_map;
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
-      old_schema, new_schema, no_dependencies_map);
+      old_schema, new_schema, no_dependents_map);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -1255,16 +1403,16 @@ TEST(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   // unaffected.
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.emplace(kPersonType);
-  SchemaUtil::DependencyMap dependencies_map = {{kEmailType, {kPersonType}}};
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {kPersonType}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
-      no_nested_index_schema, nested_index_schema, dependencies_map);
+      no_nested_index_schema, nested_index_schema, dependents_map);
   EXPECT_THAT(actual, Eq(schema_delta));
 
   // Going from index_nested_properties=true to index_nested_properties=false
   // should also make kPersonType index_incompatible. kEmailType should be
   // unaffected.
   actual = SchemaUtil::ComputeCompatibilityDelta(
-      nested_index_schema, no_nested_index_schema, dependencies_map);
+      nested_index_schema, no_nested_index_schema, dependents_map);
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
@@ -1321,19 +1469,19 @@ TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
 TEST(SchemaUtilTest, MultipleReferencesToSameNestedSchemaOk) {
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("ChildSchema"))
+          .AddType(SchemaTypeConfigBuilder().SetType("InnerSchema"))
           .AddType(SchemaTypeConfigBuilder()
-                       .SetType("ParentSchema")
+                       .SetType("OuterSchema")
                        .AddProperty(PropertyConfigBuilder()
-                                        .SetName("ChildProperty1")
+                                        .SetName("InnerProperty1")
                                         .SetDataTypeDocument(
-                                            "ChildSchema",
+                                            "InnerSchema",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_REPEATED))
                        .AddProperty(PropertyConfigBuilder()
-                                        .SetName("ChildProperty2")
+                                        .SetName("InnerProperty2")
                                         .SetDataTypeDocument(
-                                            "ChildSchema",
+                                            "InnerSchema",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
@@ -1385,7 +1533,7 @@ TEST(SchemaUtilTest, InvalidSelfReferenceEvenWithOtherProperties) {
 }
 
 TEST(SchemaUtilTest, InvalidInfiniteLoopTwoDegrees) {
-  // Create a schema for the parent schema
+  // Create a schema for the outer schema
   SchemaProto schema =
       SchemaBuilder()
           .AddType(
@@ -1397,7 +1545,7 @@ TEST(SchemaUtilTest, InvalidInfiniteLoopTwoDegrees) {
                                    .SetDataTypeDocument(
                                        "B", /*index_nested_properties=*/true)
                                    .SetCardinality(CARDINALITY_OPTIONAL)))
-          // Create the child schema
+          // Create the inner schema
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("B")
@@ -1419,7 +1567,7 @@ TEST(SchemaUtilTest, InvalidInfiniteLoopTwoDegrees) {
 TEST(SchemaUtilTest, InvalidInfiniteLoopThreeDegrees) {
   SchemaProto schema =
       SchemaBuilder()
-          // Create a schema for the parent schema
+          // Create a schema for the outer schema
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("A")
@@ -1429,7 +1577,7 @@ TEST(SchemaUtilTest, InvalidInfiniteLoopThreeDegrees) {
                                    .SetDataTypeDocument(
                                        "B", /*index_nested_properties=*/true)
                                    .SetCardinality(CARDINALITY_OPTIONAL)))
-          // Create the child schema
+          // Create the inner schema
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("B")
@@ -1439,7 +1587,7 @@ TEST(SchemaUtilTest, InvalidInfiniteLoopThreeDegrees) {
                                    .SetDataTypeDocument(
                                        "C", /*index_nested_properties=*/true)
                                    .SetCardinality(CARDINALITY_REPEATED)))
-          // Create the child schema
+          // Create the inner schema
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("C")

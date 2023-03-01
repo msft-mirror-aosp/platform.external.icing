@@ -327,10 +327,6 @@ TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
   prop->set_name("name");
   prop->add_string_values("foo bar baz");
 
-  EXPECT_THAT(store->GetStringSectionContent(doc, /*section_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(store->GetStringSectionContent(doc, "name"),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(store->ExtractSections(doc),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 

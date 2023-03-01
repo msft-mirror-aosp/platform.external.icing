@@ -37,12 +37,20 @@ class IndexProcessor {
   // of any input components, and all pointers must refer to valid objects that
   // outlive the created IndexProcessor instance.
   //
+  // - recovery_mode: a flag indicates that if IndexProcessor is used to restore
+  //   index. Since there are several indices (term, integer) being restored at
+  //   the same time, we start with the minimum last added DocumentId of all
+  //   indices and replay documents to re-index, so it is possible to get some
+  //   previously indexed documents in the recovery mode. Therefore, we should
+  //   skip them without returning an error in recovery mode.
+  //
   // Returns:
   //   An IndexProcessor on success
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
       const Normalizer* normalizer, Index* index,
-      NumericIndex<int64_t>* integer_index_, const Clock* clock);
+      NumericIndex<int64_t>* integer_index_, const Clock* clock,
+      bool recovery_mode = false);
 
   // Add tokenized document to the index, associated with document_id. If the
   // number of tokens in the document exceeds max_tokens_per_document, then only
@@ -65,13 +73,15 @@ class IndexProcessor {
  private:
   explicit IndexProcessor(std::vector<std::unique_ptr<SectionIndexingHandler>>&&
                               section_indexing_handlers,
-                          const Clock* clock)
+                          const Clock* clock, bool recovery_mode)
       : section_indexing_handlers_(std::move(section_indexing_handlers)),
-        clock_(*clock) {}
+        clock_(*clock),
+        recovery_mode_(recovery_mode) {}
 
   std::vector<std::unique_ptr<SectionIndexingHandler>>
       section_indexing_handlers_;
   const Clock& clock_;
+  bool recovery_mode_;
 };
 
 }  // namespace lib

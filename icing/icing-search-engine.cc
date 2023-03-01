@@ -36,7 +36,7 @@
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/numeric/dummy-numeric-index.h"
+#include "icing/index/numeric/integer-index.h"
 #include "icing/join/join-processor.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
@@ -74,7 +74,6 @@
 #include "icing/scoring/scoring-processor.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
-#include "icing/store/suggestion-result-checker-impl.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
@@ -207,120 +206,6 @@ libtextclassifier3::Status ValidateSuggestionSpec(
                            std::to_string(configuration.max_query_length)));
   }
   return libtextclassifier3::Status::OK;
-}
-
-libtextclassifier3::StatusOr<
-    std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>>
-PopulateDocumentIdFilters(
-    const DocumentStore* document_store,
-    const icing::lib::SuggestionSpecProto& suggestion_spec,
-    const std::unordered_set<NamespaceId>& namespace_ids) {
-  std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>
-      document_id_filter_map;
-  document_id_filter_map.reserve(suggestion_spec.document_uri_filters_size());
-  for (const NamespaceDocumentUriGroup& namespace_document_uri_group :
-       suggestion_spec.document_uri_filters()) {
-    auto namespace_id_or = document_store->GetNamespaceId(
-        namespace_document_uri_group.namespace_());
-    if (!namespace_id_or.ok()) {
-      // The current namespace doesn't exist.
-      continue;
-    }
-    NamespaceId namespace_id = namespace_id_or.ValueOrDie();
-    if (!namespace_ids.empty() &&
-        namespace_ids.find(namespace_id) == namespace_ids.end()) {
-      // The current namespace doesn't appear in the namespace filter.
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-          "The namespace : ", namespace_document_uri_group.namespace_(),
-          " appears in the document uri filter, but doesn't appear in the "
-          "namespace filter."));
-    }
-
-    if (namespace_document_uri_group.document_uris().empty()) {
-      // Client should use namespace filter to filter out all document under
-      // a namespace.
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-          "The namespace : ", namespace_document_uri_group.namespace_(),
-          " has empty document uri in the document uri filter. Please use the "
-          "namespace filter to exclude a namespace instead of the document uri "
-          "filter."));
-    }
-
-    // Translate namespace document Uris into document_ids
-    std::unordered_set<DocumentId> target_document_ids;
-    target_document_ids.reserve(
-        namespace_document_uri_group.document_uris_size());
-    for (std::string_view document_uri :
-         namespace_document_uri_group.document_uris()) {
-      auto document_id_or = document_store->GetDocumentId(
-          namespace_document_uri_group.namespace_(), document_uri);
-      if (!document_id_or.ok()) {
-        continue;
-      }
-      target_document_ids.insert(document_id_or.ValueOrDie());
-    }
-    document_id_filter_map.insert({namespace_id, target_document_ids});
-  }
-  return document_id_filter_map;
-}
-
-libtextclassifier3::StatusOr<std::unordered_map<SchemaTypeId, SectionIdMask>>
-PopulatePropertyFilters(
-    const SchemaStore* schema_store,
-    const icing::lib::SuggestionSpecProto& suggestion_spec,
-    const std::unordered_set<SchemaTypeId>& schema_type_ids) {
-  std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map;
-  property_filter_map.reserve(suggestion_spec.type_property_filters_size());
-  for (const TypePropertyMask& type_field_mask :
-       suggestion_spec.type_property_filters()) {
-    auto schema_type_id_or =
-        schema_store->GetSchemaTypeId(type_field_mask.schema_type());
-    if (!schema_type_id_or.ok()) {
-      // The current schema doesn't exist
-      continue;
-    }
-    SchemaTypeId schema_type_id = schema_type_id_or.ValueOrDie();
-
-    if (!schema_type_ids.empty() &&
-        schema_type_ids.find(schema_type_id) == schema_type_ids.end()) {
-      // The current schema type doesn't appear in the schema type filter.
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-          "The schema : ", type_field_mask.schema_type(),
-          " appears in the property filter, but doesn't appear in the schema"
-          " type filter."));
-    }
-
-    if (type_field_mask.paths().empty()) {
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-          "The schema type : ", type_field_mask.schema_type(),
-          " has empty path in the property filter. Please use the schema type"
-          " filter to exclude a schema type instead of the property filter."));
-    }
-
-    // Translate property paths into section id mask
-    SectionIdMask section_mask = kSectionIdMaskNone;
-    auto section_metadata_list_or =
-        schema_store->GetSectionMetadata(type_field_mask.schema_type());
-    if (!section_metadata_list_or.ok()) {
-      // The current schema doesn't has section metadata.
-      continue;
-    }
-    std::unordered_set<std::string> target_property_paths;
-    target_property_paths.reserve(type_field_mask.paths_size());
-    for (const std::string& target_property_path : type_field_mask.paths()) {
-      target_property_paths.insert(target_property_path);
-    }
-    const std::vector<SectionMetadata>* section_metadata_list =
-        section_metadata_list_or.ValueOrDie();
-    for (const SectionMetadata& section_metadata : *section_metadata_list) {
-      if (target_property_paths.find(section_metadata.path) !=
-          target_property_paths.end()) {
-        section_mask |= UINT64_C(1) << section_metadata.id;
-      }
-    }
-    property_filter_map.insert({schema_type_id, section_mask});
-  }
-  return property_filter_map;
 }
 
 // Document store files are in a standalone subfolder for easier file
@@ -662,13 +547,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   std::string marker_filepath =
       MakeSetSchemaMarkerFilePath(options_.base_dir());
 
-  // TODO(b/249829533): switch to use persistent numeric index after
-  //                    implementing and initialize numeric index.
-  TC3_ASSIGN_OR_RETURN(
-      integer_index_,
-      DummyNumericIndex<int64_t>::Create(
-          *filesystem_, MakeIntegerIndexWorkingPath(options_.base_dir())));
-
   libtextclassifier3::Status index_init_status;
   if (absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
     // The schema was either lost or never set before. Wipe out the doc store
@@ -676,10 +554,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     const std::string doc_store_dir =
         MakeDocumentDirectoryPath(options_.base_dir());
     const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
+    const std::string integer_index_dir =
+        MakeIntegerIndexWorkingPath(options_.base_dir());
     if (!filesystem_->DeleteDirectoryRecursively(doc_store_dir.c_str()) ||
-        !filesystem_->DeleteDirectoryRecursively(index_dir.c_str())) {
-      return absl_ports::InternalError(absl_ports::StrCat(
-          "Could not delete directories: ", index_dir, " and ", doc_store_dir));
+        !filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
+        !IntegerIndex::Discard(*filesystem_, integer_index_dir).ok()) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Could not delete directories: ", index_dir, ", ",
+                             integer_index_dir, " and", doc_store_dir));
     }
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
@@ -694,7 +576,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
 
     // We're going to need to build the index from scratch. So just delete its
-    // files now.
+    // directory now.
+    // Discard index directory and instantiate a new one.
     const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
     Index::Options index_options(index_dir, options_.index_merge_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
@@ -705,6 +588,15 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     ICING_ASSIGN_OR_RETURN(index_,
                            Index::Create(index_options, filesystem_.get(),
                                          icing_filesystem_.get()));
+
+    // Discard integer index directory and instantiate a new one.
+    std::string integer_index_dir =
+        MakeIntegerIndexWorkingPath(options_.base_dir());
+    ICING_RETURN_IF_ERROR(
+        IntegerIndex::Discard(*filesystem_, integer_index_dir));
+    ICING_ASSIGN_OR_RETURN(
+        integer_index_,
+        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir)));
 
     std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     IndexRestorationResult restore_result = RestoreIndexIfNeeded();
@@ -723,6 +615,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     initialize_stats->set_index_restoration_latency_ms(
         restore_timer->GetElapsedMilliseconds());
     initialize_stats->set_index_restoration_cause(
+        InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
+    initialize_stats->set_integer_index_restoration_cause(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
   } else {
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
@@ -796,7 +690,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   }
   Index::Options index_options(index_dir, options_.index_merge_size());
 
-  InitializeStatsProto::RecoveryCause recovery_cause;
+  InitializeStatsProto::RecoveryCause index_recovery_cause;
   auto index_or =
       Index::Create(index_options, filesystem_.get(), icing_filesystem_.get());
   if (!index_or.ok()) {
@@ -806,7 +700,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
           absl_ports::StrCat("Could not recreate directory: ", index_dir));
     }
 
-    recovery_cause = InitializeStatsProto::IO_ERROR;
+    index_recovery_cause = InitializeStatsProto::IO_ERROR;
 
     // Try recreating it from scratch and re-indexing everything.
     ICING_ASSIGN_OR_RETURN(index_,
@@ -817,15 +711,46 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     index_ = std::move(index_or).ValueOrDie();
     // If a recover does have to happen, then it must be because the index is
     // out of sync with the document store.
-    recovery_cause = InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH;
+    index_recovery_cause = InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH;
+  }
+
+  std::string integer_index_dir =
+      MakeIntegerIndexWorkingPath(options_.base_dir());
+  InitializeStatsProto::RecoveryCause integer_index_recovery_cause;
+  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir);
+  if (!integer_index_or.ok()) {
+    ICING_RETURN_IF_ERROR(
+        IntegerIndex::Discard(*filesystem_, integer_index_dir));
+
+    integer_index_recovery_cause = InitializeStatsProto::IO_ERROR;
+
+    // Try recreating it from scratch and re-indexing everything.
+    ICING_ASSIGN_OR_RETURN(
+        integer_index_,
+        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir)));
+  } else {
+    // Integer index was created fine.
+    integer_index_ = std::move(integer_index_or).ValueOrDie();
+    // If a recover does have to happen, then it must be because the index is
+    // out of sync with the document store.
+    integer_index_recovery_cause =
+        InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH;
   }
 
   std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
   IndexRestorationResult restore_result = RestoreIndexIfNeeded();
-  if (restore_result.needed_restoration) {
+  if (restore_result.index_needed_restoration ||
+      restore_result.integer_index_needed_restoration) {
     initialize_stats->set_index_restoration_latency_ms(
         restore_timer->GetElapsedMilliseconds());
-    initialize_stats->set_index_restoration_cause(recovery_cause);
+
+    if (restore_result.index_needed_restoration) {
+      initialize_stats->set_index_restoration_cause(index_recovery_cause);
+    }
+    if (restore_result.integer_index_needed_restoration) {
+      initialize_stats->set_integer_index_restoration_cause(
+          integer_index_recovery_cause);
+    }
   }
   return restore_result.status;
 }
@@ -942,14 +867,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     }
 
     if (lost_previous_schema || index_incompatible) {
-      // Clears all index files
-      status = index_->Reset();
-      if (!status.ok()) {
-        TransformStatus(status, result_status);
-        return result_proto;
-      }
-
-      status = integer_index_->Reset();
+      // Clears all indices
+      status = ClearIndices();
       if (!status.ok()) {
         TransformStatus(status, result_status);
         return result_proto;
@@ -1080,7 +999,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     ICING_LOG(ERROR) << "Got an internal error from the index. Trying to "
                         "rebuild the index!\n"
                      << index_status.error_message();
-    index_status = index_->Reset();
+    index_status = ClearIndices();
     if (index_status.ok()) {
       index_status = RestoreIndexIfNeeded().status;
       if (!index_status.ok()) {
@@ -1088,7 +1007,7 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
                             "indexing a document.";
       }
     } else {
-      ICING_LOG(ERROR) << "Failed to reset the index after a failure of "
+      ICING_LOG(ERROR) << "Failed to clear the index after a failure of "
                           "indexing a document.";
     }
   }
@@ -1502,10 +1421,19 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
                          << index_optimize_status.error_message();
       should_rebuild_index = true;
     }
+
+    libtextclassifier3::Status integer_index_optimize_status =
+        integer_index_->Optimize(document_id_old_to_new_or.ValueOrDie(),
+                                 document_store_->last_added_document_id());
+    if (!integer_index_optimize_status.ok()) {
+      ICING_LOG(WARNING) << "Failed to optimize integer index. Error: "
+                         << integer_index_optimize_status.error_message();
+      should_rebuild_index = true;
+    }
   }
   // If we received a DATA_LOSS error from OptimizeDocumentStore, we have a
   // valid document store, but it might be the old one or the new one. So throw
-  // out the index and rebuild from scratch.
+  // out the index data and rebuild from scratch.
   // Likewise, if Index::Optimize failed, then attempt to recover the index by
   // rebuilding from scratch.
   // If ShouldRebuildIndex() returns true, we will also rebuild the index for
@@ -1513,26 +1441,13 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   if (should_rebuild_index) {
     optimize_stats->set_index_restoration_mode(
         OptimizeStatsProto::FULL_INDEX_REBUILD);
-    ICING_LOG(WARNING) << "Resetting the entire index!";
+    ICING_LOG(WARNING) << "Clearing the entire index!";
 
-    // Reset string index
-    libtextclassifier3::Status index_reset_status = index_->Reset();
-    if (!index_reset_status.ok()) {
+    libtextclassifier3::Status index_clear_status = ClearIndices();
+    if (!index_clear_status.ok()) {
       status = absl_ports::Annotate(
-          absl_ports::InternalError("Failed to reset index."),
-          index_reset_status.error_message());
-      TransformStatus(status, result_status);
-      optimize_stats->set_index_restoration_latency_ms(
-          optimize_index_timer->GetElapsedMilliseconds());
-      return result_proto;
-    }
-
-    // Reset integer index
-    index_reset_status = integer_index_->Reset();
-    if (!index_reset_status.ok()) {
-      status = absl_ports::Annotate(
-          absl_ports::InternalError("Failed to reset integer index."),
-          index_reset_status.error_message());
+          absl_ports::InternalError("Failed to clear index."),
+          index_clear_status.error_message());
       TransformStatus(status, result_status);
       optimize_stats->set_index_restoration_latency_ms(
           optimize_index_timer->GetElapsedMilliseconds());
@@ -2180,52 +2095,49 @@ IcingSearchEngine::IndexRestorationResult
 IcingSearchEngine::RestoreIndexIfNeeded() {
   DocumentId last_stored_document_id =
       document_store_->last_added_document_id();
-  DocumentId last_indexed_document_id = index_->last_added_document_id();
-
-  if (last_stored_document_id == last_indexed_document_id) {
+  if (last_stored_document_id == index_->last_added_document_id() &&
+      last_stored_document_id == integer_index_->last_added_document_id()) {
     // No need to recover.
-    return {libtextclassifier3::Status::OK, false};
+    return {libtextclassifier3::Status::OK, false, false};
   }
 
   if (last_stored_document_id == kInvalidDocumentId) {
-    // Document store is empty but index is not. Reset the index.
-    return {index_->Reset(), false};
+    // Document store is empty but index is not. Clear the index.
+    return {ClearIndices(), false, false};
   }
 
-  // TruncateTo ensures that the index does not hold any data that is not
-  // present in the ground truth. If the document store lost some documents,
-  // TruncateTo will ensure that the index does not contain any hits from those
-  // lost documents. If the index does not contain any hits for documents with
-  // document id greater than last_stored_document_id, then TruncateTo will have
-  // no effect.
-  auto status = index_->TruncateTo(last_stored_document_id);
-  if (!status.ok()) {
-    return {status, false};
+  // Truncate indices first.
+  auto truncate_result_or = TruncateIndicesTo(last_stored_document_id);
+  if (!truncate_result_or.ok()) {
+    return {std::move(truncate_result_or).status(), false, false};
   }
-  // Last indexed document id may have changed thanks to TruncateTo.
-  last_indexed_document_id = index_->last_added_document_id();
-  DocumentId first_document_to_reindex =
-      (last_indexed_document_id != kInvalidDocumentId)
-          ? index_->last_added_document_id() + 1
-          : kMinDocumentId;
-  if (first_document_to_reindex > last_stored_document_id) {
+  TruncateIndexResult truncate_result =
+      std::move(truncate_result_or).ValueOrDie();
+
+  if (truncate_result.first_document_to_reindex > last_stored_document_id) {
     // Nothing to restore. Just return.
-    return {libtextclassifier3::Status::OK, false};
+    return {libtextclassifier3::Status::OK, false, false};
   }
 
+  // By using recovery_mode for IndexProcessor, we're able to replay documents
+  // from smaller document id and it will skip documents that are already been
+  // indexed.
   auto index_processor_or = IndexProcessor::Create(
-      normalizer_.get(), index_.get(), integer_index_.get(), clock_.get());
+      normalizer_.get(), index_.get(), integer_index_.get(), clock_.get(),
+      /*recovery_mode=*/true);
   if (!index_processor_or.ok()) {
-    return {index_processor_or.status(), true};
+    return {index_processor_or.status(),
+            truncate_result.index_needed_restoration,
+            truncate_result.integer_index_needed_restoration};
   }
   std::unique_ptr<IndexProcessor> index_processor =
       std::move(index_processor_or).ValueOrDie();
 
   ICING_VLOG(1) << "Restoring index by replaying documents from document id "
-                << first_document_to_reindex << " to document id "
-                << last_stored_document_id;
+                << truncate_result.first_document_to_reindex
+                << " to document id " << last_stored_document_id;
   libtextclassifier3::Status overall_status;
-  for (DocumentId document_id = first_document_to_reindex;
+  for (DocumentId document_id = truncate_result.first_document_to_reindex;
        document_id <= last_stored_document_id; ++document_id) {
     libtextclassifier3::StatusOr<DocumentProto> document_or =
         document_store_->Get(document_id);
@@ -2237,7 +2149,8 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
         continue;
       } else {
         // Returns other errors
-        return {document_or.status(), true};
+        return {document_or.status(), truncate_result.index_needed_restoration,
+                truncate_result.integer_index_needed_restoration};
       }
     }
     DocumentProto document(std::move(document_or).ValueOrDie());
@@ -2247,7 +2160,9 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
                                   language_segmenter_.get(),
                                   std::move(document));
     if (!tokenized_document_or.ok()) {
-      return {tokenized_document_or.status(), true};
+      return {tokenized_document_or.status(),
+              truncate_result.index_needed_restoration,
+              truncate_result.integer_index_needed_restoration};
     }
     TokenizedDocument tokenized_document(
         std::move(tokenized_document_or).ValueOrDie());
@@ -2257,15 +2172,18 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     if (!status.ok()) {
       if (!absl_ports::IsDataLoss(status)) {
         // Real error. Stop recovering and pass it up.
-        return {status, true};
+        return {status, truncate_result.index_needed_restoration,
+                truncate_result.integer_index_needed_restoration};
       }
+      // FIXME: why can we skip data loss error here?
       // Just a data loss. Keep trying to add the remaining docs, but report the
       // data loss when we're done.
       overall_status = status;
     }
   }
 
-  return {overall_status, true};
+  return {overall_status, truncate_result.index_needed_restoration,
+          truncate_result.integer_index_needed_restoration};
 }
 
 libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {
@@ -2289,6 +2207,67 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {
   // then that means we must have had a schema at some point. Since we wouldn't
   // accept documents without a schema to validate them against.
   return document_store_->last_added_document_id() != kInvalidDocumentId;
+}
+
+libtextclassifier3::StatusOr<IcingSearchEngine::TruncateIndexResult>
+IcingSearchEngine::TruncateIndicesTo(DocumentId last_stored_document_id) {
+  // Attempt to truncate term index.
+  // TruncateTo ensures that the index does not hold any data that is not
+  // present in the ground truth. If the document store lost some documents,
+  // TruncateTo will ensure that the index does not contain any hits from those
+  // lost documents. If the index does not contain any hits for documents with
+  // document id greater than last_stored_document_id, then TruncateTo will have
+  // no effect.
+  ICING_RETURN_IF_ERROR(index_->TruncateTo(last_stored_document_id));
+
+  // Get last indexed document id for term index after truncating.
+  DocumentId term_index_last_added_document_id =
+      index_->last_added_document_id();
+  DocumentId first_document_to_reindex =
+      (term_index_last_added_document_id != kInvalidDocumentId)
+          ? term_index_last_added_document_id + 1
+          : kMinDocumentId;
+  bool index_needed_restoration =
+      (last_stored_document_id != term_index_last_added_document_id);
+
+  // Attempt to truncate integer index.
+  bool integer_index_needed_restoration = false;
+  DocumentId integer_index_last_added_document_id =
+      integer_index_->last_added_document_id();
+  if (integer_index_last_added_document_id == kInvalidDocumentId ||
+      last_stored_document_id > integer_index_last_added_document_id) {
+    // If last_stored_document_id is greater than
+    // integer_index_last_added_document_id, then we only have to replay docs
+    // starting from integer_index_last_added_document_id + 1. Also use std::min
+    // since we might need to replay even smaller doc ids for term index.
+    integer_index_needed_restoration = true;
+    first_document_to_reindex =
+        integer_index_last_added_document_id != kInvalidDocumentId
+            ? std::min(first_document_to_reindex,
+                       integer_index_last_added_document_id + 1)
+            : kMinDocumentId;
+  } else if (last_stored_document_id < integer_index_last_added_document_id) {
+    // Clear the entire integer index if last_stored_document_id is smaller than
+    // integer_index_last_added_document_id, because there is no way to remove
+    // data with doc_id > last_stored_document_id from integer index and we have
+    // to rebuild.
+    ICING_RETURN_IF_ERROR(integer_index_->Clear());
+
+    // Since the entire integer index is discarded, we start to rebuild it by
+    // setting first_document_to_reindex to kMinDocumentId.
+    integer_index_needed_restoration = true;
+    first_document_to_reindex = kMinDocumentId;
+  }
+
+  return TruncateIndexResult(first_document_to_reindex,
+                             index_needed_restoration,
+                             integer_index_needed_restoration);
+}
+
+libtextclassifier3::Status IcingSearchEngine::ClearIndices() {
+  ICING_RETURN_IF_ERROR(index_->Reset());
+  ICING_RETURN_IF_ERROR(integer_index_->Clear());
+  return libtextclassifier3::Status::OK;
 }
 
 ResetResultProto IcingSearchEngine::Reset() {
@@ -2350,7 +2329,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
 
   // Create the suggestion processor.
   auto suggestion_processor_or = SuggestionProcessor::Create(
-      index_.get(), language_segmenter_.get(), normalizer_.get());
+      index_.get(), integer_index_.get(), language_segmenter_.get(),
+      normalizer_.get(), document_store_.get(), schema_store_.get());
   if (!suggestion_processor_or.ok()) {
     TransformStatus(suggestion_processor_or.status(), response_status);
     return response;
@@ -2358,74 +2338,9 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   std::unique_ptr<SuggestionProcessor> suggestion_processor =
       std::move(suggestion_processor_or).ValueOrDie();
 
-  // Populate target namespace filter.
-  std::unordered_set<NamespaceId> namespace_ids;
-  namespace_ids.reserve(suggestion_spec.namespace_filters_size());
-  for (std::string_view name_space : suggestion_spec.namespace_filters()) {
-    auto namespace_id_or = document_store_->GetNamespaceId(name_space);
-    if (!namespace_id_or.ok()) {
-      // The current namespace doesn't exist.
-      continue;
-    }
-    namespace_ids.insert(namespace_id_or.ValueOrDie());
-  }
-  if (namespace_ids.empty() && !suggestion_spec.namespace_filters().empty()) {
-    // None of desired namespace exists, we should return directly.
-    response_status->set_code(StatusProto::OK);
-    return response;
-  }
-
-  // Populate target document id filter.
-  auto document_id_filter_map_or = PopulateDocumentIdFilters(
-      document_store_.get(), suggestion_spec, namespace_ids);
-  if (!document_id_filter_map_or.ok()) {
-    TransformStatus(document_id_filter_map_or.status(), response_status);
-    return response;
-  }
-  std::unordered_map<NamespaceId, std::unordered_set<DocumentId>>
-      document_id_filter_map = document_id_filter_map_or.ValueOrDie();
-  if (document_id_filter_map.empty() &&
-      !suggestion_spec.document_uri_filters().empty()) {
-    // None of desired DocumentId exists, we should return directly.
-    response_status->set_code(StatusProto::OK);
-    return response;
-  }
-
-  // Populate target schema type filter.
-  std::unordered_set<SchemaTypeId> schema_type_ids;
-  schema_type_ids.reserve(suggestion_spec.schema_type_filters_size());
-  for (std::string_view schema_type : suggestion_spec.schema_type_filters()) {
-    auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema_type);
-    if (!schema_type_id_or.ok()) {
-      continue;
-    }
-    schema_type_ids.insert(schema_type_id_or.ValueOrDie());
-  }
-  if (schema_type_ids.empty() &&
-      !suggestion_spec.schema_type_filters().empty()) {
-    // None of desired schema type exists, we should return directly.
-    response_status->set_code(StatusProto::OK);
-    return response;
-  }
-
-  // Populate target properties filter.
-  auto property_filter_map_or = PopulatePropertyFilters(
-      schema_store_.get(), suggestion_spec, schema_type_ids);
-  if (!property_filter_map_or.ok()) {
-    TransformStatus(property_filter_map_or.status(), response_status);
-    return response;
-  }
-  std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map =
-      property_filter_map_or.ValueOrDie();
-
   // Run suggestion based on given SuggestionSpec.
-  SuggestionResultCheckerImpl suggestion_result_checker_impl(
-      document_store_.get(), std::move(namespace_ids),
-      std::move(document_id_filter_map), std::move(schema_type_ids),
-      std::move(property_filter_map));
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> terms_or =
-      suggestion_processor->QuerySuggestions(suggestion_spec,
-                                             &suggestion_result_checker_impl);
+      suggestion_processor->QuerySuggestions(suggestion_spec);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
     return response;

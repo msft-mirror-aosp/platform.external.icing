@@ -24,8 +24,10 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/destructible-directory.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/index/numeric/doc-hit-info-iterator-numeric.h"
 #include "icing/index/numeric/integer-index-storage.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/store/document-id.h"
@@ -95,11 +97,38 @@ GetPropertyIntegerIndexStorageMap(
 
 }  // namespace
 
+libtextclassifier3::Status IntegerIndex::Editor::IndexAllBufferedKeys() && {
+  auto iter = integer_index_.property_to_storage_map_.find(property_path_);
+  IntegerIndexStorage* target_storage = nullptr;
+  if (iter != integer_index_.property_to_storage_map_.end()) {
+    target_storage = iter->second.get();
+  } else {
+    // A new property path. Create a new storage instance and insert into the
+    // map.
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<IntegerIndexStorage> new_storage,
+        IntegerIndexStorage::Create(
+            integer_index_.filesystem_,
+            GetPropertyIndexStoragePath(integer_index_.working_path_,
+                                        property_path_),
+            IntegerIndexStorage::Options(),
+            integer_index_.posting_list_serializer_.get()));
+    target_storage = new_storage.get();
+    integer_index_.property_to_storage_map_.insert(
+        std::make_pair(property_path_, std::move(new_storage)));
+  }
+
+  return target_storage->AddKeys(document_id_, section_id_,
+                                 std::move(seen_keys_));
+}
+
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
 IntegerIndex::Create(const Filesystem& filesystem, std::string working_path) {
   if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str())) {
     // Discard working_path if metadata file is missing, and reinitialize.
-    ICING_RETURN_IF_ERROR(Discard(filesystem, working_path, kWorkingPathType));
+    if (filesystem.DirectoryExists(working_path.c_str())) {
+      ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
+    }
     return InitializeNewFiles(filesystem, std::move(working_path));
   }
   return InitializeExistingFiles(filesystem, std::move(working_path));
@@ -113,7 +142,74 @@ IntegerIndex::~IntegerIndex() {
   }
 }
 
-libtextclassifier3::Status IntegerIndex::Reset() {
+libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
+IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
+                          int64_t key_upper) const {
+  auto iter = property_to_storage_map_.find(std::string(property_path));
+  if (iter == property_to_storage_map_.end()) {
+    // Return an empty iterator.
+    return std::make_unique<DocHitInfoIteratorNumeric<int64_t>>(
+        /*numeric_index_iter=*/nullptr);
+  }
+
+  return iter->second->GetIterator(key_lower, key_upper);
+}
+
+libtextclassifier3::Status IntegerIndex::Optimize(
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) {
+  std::string temp_working_path = working_path_ + "_temp";
+  ICING_RETURN_IF_ERROR(Discard(filesystem_, temp_working_path));
+
+  DestructibleDirectory temp_working_path_ddir(&filesystem_,
+                                               std::move(temp_working_path));
+  if (!temp_working_path_ddir.is_valid()) {
+    return absl_ports::InternalError(
+        "Unable to create temp directory to build new integer index");
+  }
+
+  {
+    // Transfer all indexed data from current integer index to new integer
+    // index. Also PersistToDisk and destruct the instance after finishing, so
+    // we can safely swap directories later.
+    ICING_ASSIGN_OR_RETURN(std::unique_ptr<IntegerIndex> new_integer_index,
+                           Create(filesystem_, temp_working_path_ddir.dir()));
+    ICING_RETURN_IF_ERROR(
+        TransferIndex(document_id_old_to_new, new_integer_index.get()));
+    new_integer_index->set_last_added_document_id(new_last_added_document_id);
+    ICING_RETURN_IF_ERROR(new_integer_index->PersistToDisk());
+  }
+
+  // Destruct current storage instances to safely swap directories.
+  metadata_mmapped_file_.reset();
+  property_to_storage_map_.clear();
+  if (!filesystem_.SwapFiles(temp_working_path_ddir.dir().c_str(),
+                             working_path_.c_str())) {
+    return absl_ports::InternalError(
+        "Unable to apply new integer index due to failed swap");
+  }
+
+  // Reinitialize the integer index.
+  ICING_ASSIGN_OR_RETURN(
+      MemoryMappedFile metadata_mmapped_file,
+      MemoryMappedFile::Create(filesystem_, GetMetadataFilePath(working_path_),
+                               MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+                               /*max_file_size=*/kMetadataFileSize,
+                               /*pre_mapping_file_offset=*/0,
+                               /*pre_mapping_mmap_size=*/kMetadataFileSize));
+  metadata_mmapped_file_ =
+      std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file));
+
+  // Initialize all existing integer index storages.
+  ICING_ASSIGN_OR_RETURN(
+      property_to_storage_map_,
+      GetPropertyIntegerIndexStorageMap(filesystem_, working_path_,
+                                        posting_list_serializer_.get()));
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status IntegerIndex::Clear() {
   // Step 1: clear property_to_storage_map_.
   property_to_storage_map_.clear();
 
@@ -128,7 +224,7 @@ libtextclassifier3::Status IntegerIndex::Reset() {
         GetPropertyIndexStoragePath(working_path_, property_path)));
   }
 
-  info()->last_added_document_id = kInvalidDocumentId;
+  info().last_added_document_id = kInvalidDocumentId;
   return libtextclassifier3::Status::OK;
 }
 
@@ -160,9 +256,9 @@ IntegerIndex::InitializeNewFiles(const Filesystem& filesystem,
       std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file)),
       /*property_to_storage_map=*/{}));
   // Initialize info content by writing mapped memory directly.
-  Info* info_ptr = new_integer_index->info();
-  info_ptr->magic = Info::kMagic;
-  info_ptr->last_added_document_id = kInvalidDocumentId;
+  Info& info_ref = new_integer_index->info();
+  info_ref.magic = Info::kMagic;
+  info_ref.last_added_document_id = kInvalidDocumentId;
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_integer_index->InitializeNewStorage());
@@ -200,11 +296,39 @@ IntegerIndex::InitializeExistingFiles(const Filesystem& filesystem,
   ICING_RETURN_IF_ERROR(integer_index->InitializeExistingStorage());
 
   // Validate magic.
-  if (integer_index->info()->magic != Info::kMagic) {
+  if (integer_index->info().magic != Info::kMagic) {
     return absl_ports::FailedPreconditionError("Incorrect magic value");
   }
 
   return integer_index;
+}
+
+libtextclassifier3::Status IntegerIndex::TransferIndex(
+    const std::vector<DocumentId>& document_id_old_to_new,
+    IntegerIndex* new_integer_index) const {
+  for (const auto& [property_path, old_storage] : property_to_storage_map_) {
+    std::string new_storage_working_path = GetPropertyIndexStoragePath(
+        new_integer_index->working_path_, property_path);
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<IntegerIndexStorage> new_storage,
+        IntegerIndexStorage::Create(
+            new_integer_index->filesystem_, new_storage_working_path,
+            IntegerIndexStorage::Options(),
+            new_integer_index->posting_list_serializer_.get()));
+
+    ICING_RETURN_IF_ERROR(
+        old_storage->TransferIndex(document_id_old_to_new, new_storage.get()));
+
+    if (new_storage->num_data() == 0) {
+      new_storage.reset();
+      ICING_RETURN_IF_ERROR(
+          IntegerIndexStorage::Discard(filesystem_, new_storage_working_path));
+    } else {
+      new_integer_index->property_to_storage_map_.insert(
+          std::make_pair(property_path, std::move(new_storage)));
+    }
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk() {
@@ -222,7 +346,7 @@ libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk() {
 }
 
 libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeInfoChecksum() {
-  return info()->ComputeChecksum();
+  return info().ComputeChecksum();
 }
 
 libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum() {

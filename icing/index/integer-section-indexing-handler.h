@@ -33,17 +33,17 @@ class IntegerSectionIndexingHandler : public SectionIndexingHandler {
 
   ~IntegerSectionIndexingHandler() override = default;
 
-  // TODO(b/259744228): update this documentation after resolving
-  //                    last_added_document_id problem.
   // Handles the integer indexing process: add hits into the integer index for
   // all contents in tokenized_document.integer_sections.
   //
-  /// Returns:
+  // Returns:
   //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
+  //     document_id of a previously indexed document in non recovery mode.
   //   - Any NumericIndex<int64_t>::Editor errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      PutDocumentStatsProto* put_document_stats) override;
+      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
 
  private:
   NumericIndex<int64_t>& integer_index_;

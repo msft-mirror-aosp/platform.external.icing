@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,6 +24,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -45,6 +44,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -124,18 +124,27 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .SetKey(std::move(name_space), std::move(uri))
       .SetSchema("Message")
       .AddStringProperty("body", "message body")
+      .AddInt64Property("indexableInteger", 123)
       .SetCreationTimestampMs(kDefaultCreationTimestampMs)
       .Build();
 }
 
-SchemaProto CreateMessageSchema() {
-  return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-          PropertyConfigBuilder()
-              .SetName("body")
-              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-              .SetCardinality(CARDINALITY_REQUIRED)))
+SchemaTypeConfigProto CreateMessageSchemaTypeConfig() {
+  return SchemaTypeConfigBuilder()
+      .SetType("Message")
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("body")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("indexableInteger")
+                       .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                       .SetCardinality(CARDINALITY_REQUIRED))
       .Build();
+}
+
+SchemaProto CreateMessageSchema() {
+  return SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
 }
 
 ScoringSpecProto GetDefaultScoringSpec() {
@@ -612,12 +621,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
 
   SchemaProto schema_with_email_and_message = schema_with_email;
-  type = schema_with_email_and_message.add_types();
-  type->set_schema_type("Message");
-  property = type->add_properties();
-  property->set_property_name("body");
-  property->set_data_type(PropertyConfigProto::DataType::STRING);
-  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  *schema_with_email_and_message.add_types() = CreateMessageSchemaTypeConfig();
 
   // Create an arbitrary invalid schema
   SchemaProto invalid_schema;
@@ -663,58 +667,217 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
-       SetSchemaNewIndexedPropertyTriggersIndexRestorationAndReturnsOk) {
+       SetSchemaNewIndexedStringPropertyTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-  SchemaProto schema_with_no_indexed_property = CreateMessageSchema();
-  schema_with_no_indexed_property.mutable_types(0)
-      ->mutable_properties(0)
-      ->clear_string_indexing_config();
+  // Create a schema with 2 properties:
+  // - 'a': string type, unindexed. No section id assigned.
+  // - 'b': int64 type, indexed. Section id = 0.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Schema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
 
-  SetSchemaResultProto set_schema_result =
-      icing.SetSchema(schema_with_no_indexed_property);
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_latency_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("Message");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
-  // Nothing will be index and Search() won't return anything.
-  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-              ProtoIsOk());
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("Schema")
+          .AddStringProperty("a", "message body")
+          .AddInt64Property("b", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  // Only 'b' will be indexed.
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
-  SearchSpecProto search_spec;
-  search_spec.set_query("message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
 
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
 
+  // Verify term search: won't get anything.
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("a:message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
-  SchemaProto schema_with_indexed_property = CreateMessageSchema();
+  // Verify numeric (integer) search: will get document.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("b == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Change the schema to:
+  // - 'a': string type, indexed. Section id = 0.
+  // - 'b': int64 type, indexed. Section id = 1.
+  SchemaProto schema_two = schema_one;
+  schema_two.mutable_types(0)
+      ->mutable_properties(0)
+      ->mutable_string_indexing_config()
+      ->set_term_match_type(TERM_MATCH_PREFIX);
+  schema_two.mutable_types(0)
+      ->mutable_properties(0)
+      ->mutable_string_indexing_config()
+      ->set_tokenizer_type(TOKENIZER_PLAIN);
   // Index restoration should be triggered here because new schema requires more
-  // properties to be indexed.
-  set_schema_result = icing.SetSchema(schema_with_indexed_property);
+  // properties to be indexed. Also new section ids will be reassigned and index
+  // restoration should use new section ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_latency_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
-      ->Add("Message");
+      ->Add("Schema");
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify term search: will get document now.
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search: will still get document.
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       SetSchemaNewIndexedIntegerPropertyTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create a schema with 2 properties:
+  // - 'a': int64 type, unindexed. No section id assigned.
+  // - 'b': string type, indexed. Section id = 0.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Schema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("Schema")
+          .AddInt64Property("a", 123)
+          .AddStringProperty("b", "message body")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  // Only 'b' will be indexed.
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+      document;
+
+  SearchResultProto empty_result;
+  empty_result.mutable_status()->set_code(StatusProto::OK);
+
+  // Verify term search: will get document.
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("b:message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search: won't get anything.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("a == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Change the schema to:
+  // - 'a': int64 type, indexed. Section id = 0.
+  // - 'b': string type, indexed. Section id = 1.
+  SchemaProto schema_two = schema_one;
+  schema_two.mutable_types(0)
+      ->mutable_properties(0)
+      ->mutable_integer_indexing_config()
+      ->set_numeric_match_type(NUMERIC_MATCH_RANGE);
+  // Index restoration should be triggered here because new schema requires more
+  // properties to be indexed. Also new section ids will be reassigned and index
+  // restoration should use new section ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
+      ->Add("Schema");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify term search: will still get document.
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search: will get document now.
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
@@ -733,7 +896,16 @@ TEST_F(IcingSearchEngineSchemaTest,
                   .SetName("name")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
+  // Create a schema with nested properties:
+  // - "sender.age": int64 type, (nested) indexed. Section id = 0.
+  // - "sender.name": string type, (nested) indexed. Section id = 1.
+  // - "subject": string type, indexed. Section id = 2.
+  // - "timestamp": int64 type, indexed. Section id = 3.
   SchemaProto nested_schema =
       SchemaBuilder()
           .AddType(person_proto)
@@ -749,6 +921,10 @@ TEST_F(IcingSearchEngineSchemaTest,
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -773,39 +949,67 @@ TEST_F(IcingSearchEngineSchemaTest,
                                    .SetKey("namespace1", "uri1")
                                    .SetSchema("Person")
                                    .AddStringProperty("name", "Bill Lundbergh")
+                                   .AddInt64Property("age", 20)
                                    .Build())
+          .AddInt64Property("timestamp", 1234)
           .Build();
 
-  // "sender.name" should get assigned property id 0 and subject should get
-  // property id 1.
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
-  // document should match a query for 'Bill' in 'sender.name', but not in
-  // 'subject'
-  SearchSpecProto search_spec;
-  search_spec.set_query("sender.name:Bill");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto result;
-  result.mutable_status()->set_code(StatusProto::OK);
-  *result.mutable_results()->Add()->mutable_document() = document;
-
-  SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
 
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
-  search_spec.set_query("subject:Bill");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+
+  // Verify term search
+  // document should match a query for 'Bill' in 'sender.name', but not in
+  // 'subject'
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("sender.name:Bill");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec1.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Verify numeric (integer) search
+  // document should match a query for 20 in 'sender.age', but not in
+  // 'timestamp'
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("sender.age == 20");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec2.set_query("timestamp == 20");
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
   // Now update the schema with index_nested_properties=false. This should
-  // reassign property ids, lead to an index rebuild and ensure that nothing
-  // match a query for "Bill".
+  // reassign section ids, lead to an index rebuild and ensure that nothing
+  // match a query for "Bill" or 20.
+  // - "sender.age": int64 type, (nested) unindexed. No section id assigned.
+  // - "sender.name": string type, (nested) unindexed. No section id assigned.
+  // - "subject": string type, indexed. Section id = 0.
+  // - "timestamp": int64 type, indexed. Section id = 1.
   SchemaProto no_nested_schema =
       SchemaBuilder()
           .AddType(person_proto)
@@ -821,6 +1025,10 @@ TEST_F(IcingSearchEngineSchemaTest,
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -833,16 +1041,36 @@ TEST_F(IcingSearchEngineSchemaTest,
       ->Add("Email");
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
+  // Verify term search
   // document shouldn't match a query for 'Bill' in either 'sender.name' or
   // 'subject'
-  search_spec.set_query("sender.name:Bill");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+  search_spec1.set_query("sender.name:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
-  search_spec.set_query("subject:Bill");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+  search_spec1.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Verify numeric (integer) search
+  // document shouldn't match a query for 20 in either 'sender.age' or
+  // 'timestamp'
+  search_spec2.set_query("sender.age == 20");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  search_spec2.set_query("timestamp == 20");
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
@@ -853,8 +1081,11 @@ TEST_F(IcingSearchEngineSchemaTest,
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-  // 'body' should have a property id of 0 and 'subject' should have a property
-  // id of 1.
+  // Create a schema with 4 properties:
+  // - "body": string type, indexed. Section id = 0.
+  // - "subject": string type, indexed. Section id = 1.
+  // - "timestamp1": int64 type, indexed. Section id = 2.
+  // - "timestamp2": int64 type, indexed. Section id = 3.
   SchemaProto email_with_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -868,6 +1099,14 @@ TEST_F(IcingSearchEngineSchemaTest,
                                         .SetName("body")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp1")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp2")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -880,7 +1119,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
-  // Create a document with only a subject property.
+  // Create a document with only subject and timestamp2 property.
   DocumentProto document =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -888,36 +1127,64 @@ TEST_F(IcingSearchEngineSchemaTest,
           .SetCreationTimestampMs(1000)
           .AddStringProperty("subject",
                              "Did you get the memo about TPS reports?")
+          .AddInt64Property("timestamp2", 1234)
           .Build();
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  SearchSpecProto search_spec;
-  search_spec.set_query("subject:tps");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto result;
-  result.mutable_status()->set_code(StatusProto::OK);
-  *result.mutable_results()->Add()->mutable_document() = document;
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("subject:tps");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 
-  // Now update the schema to remove the 'body' field. This is backwards
-  // incompatible, but document should be preserved because it doesn't contain a
-  // 'body' field. If the index is correctly rebuilt, then 'subject' will now
-  // have a property id of 0. If not, then the hits in the index will still have
-  // have a property id of 1 and therefore it won't be found.
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp2'.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("timestamp2 == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Now update the schema to remove the 'body' and 'timestamp1' field. This is
+  // backwards incompatible, but document should be preserved because it doesn't
+  // contain a 'body' or 'timestamp1' field.
+  // - "subject": string type, indexed. Section id = 0.
+  // - "timestamp2": int64 type, indexed. Section id = 1.
+  //
+  // If the index is not correctly rebuilt, then the hits of 'subject' and
+  // 'timestamp2' in the index will still have old section ids of 1, 3 and
+  // therefore they won't be found.
   SchemaProto email_no_body_schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("subject")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp2")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   set_schema_result = icing.SetSchema(
@@ -931,12 +1198,27 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  search_spec.set_query("subject:tps");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+  search_spec1.set_query("subject:tps");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp'.
+  search_spec2.set_query("timestamp2 == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 }
 
 TEST_F(
@@ -945,8 +1227,10 @@ TEST_F(
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-  // 'body' should have a property id of 0 and 'subject' should have a property
-  // id of 1.
+  // Create a schema with 3 properties:
+  // - "body": string type, indexed. Section id = 0.
+  // - "subject": string type, indexed. Section id = 1.
+  // - "timestamp": int64 type, indexed. Section id = 2.
   SchemaProto email_with_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -960,6 +1244,10 @@ TEST_F(
                                         .SetName("body")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -972,7 +1260,7 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
-  // Create a document with only a subject property.
+  // Create a document with only subject and timestamp property.
   DocumentProto document =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -980,30 +1268,52 @@ TEST_F(
           .SetCreationTimestampMs(1000)
           .AddStringProperty("subject",
                              "Did you get the memo about TPS reports?")
+          .AddInt64Property("timestamp", 1234)
           .Build();
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  SearchSpecProto search_spec;
-  search_spec.set_query("subject:tps");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto result;
-  result.mutable_status()->set_code(StatusProto::OK);
-  *result.mutable_results()->Add()->mutable_document() = document;
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("subject:tps");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp'.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("timestamp == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 
   // Now update the schema to remove the 'body' field. This is backwards
   // incompatible, but document should be preserved because it doesn't contain a
-  // 'body' field. If the index is correctly rebuilt, then 'subject' and 'to'
-  // will now have property ids of 0 and 1 respectively. If not, then the hits
-  // in the index will still have have a property id of 1 and therefore it won't
-  // be found.
+  // 'body' field.
+  // - "subject": string type, indexed. Section id = 0.
+  // - "timestamp": int64 type, indexed. Section id = 1.
+  // - "to": string type, indexed. Section id = 2.
+  //
+  // If the index is not correctly rebuilt, then the hits of 'subject' and
+  // 'timestamp' in the index will still have old section ids of 1, 2 and
+  // therefore they won't be found.
   SchemaProto email_no_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -1017,6 +1327,10 @@ TEST_F(
                                         .SetName("to")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -1031,12 +1345,27 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  search_spec.set_query("subject:tps");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+  search_spec1.set_query("subject:tps");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp'.
+  search_spec2.set_query("timestamp == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
@@ -1401,18 +1730,13 @@ TEST_F(IcingSearchEngineSchemaTest,
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaCanDetectPreviousSchemaWasLost) {
-  SchemaProto schema;
-  auto type = schema.add_types();
-  type->set_schema_type("Message");
+  SchemaTypeConfigProto message_schema_type_config =
+      CreateMessageSchemaTypeConfig();
+  message_schema_type_config.mutable_properties(0)->set_cardinality(
+      CARDINALITY_OPTIONAL);
 
-  auto body = type->add_properties();
-  body->set_property_name("body");
-  body->set_data_type(PropertyConfigProto::DataType::STRING);
-  body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  body->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::PREFIX);
-  body->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+  SchemaProto schema;
+  *schema.add_types() = message_schema_type_config;
 
   // Make an incompatible schema, a previously OPTIONAL field is REQUIRED
   SchemaProto incompatible_schema = schema;

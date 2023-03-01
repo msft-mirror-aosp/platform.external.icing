@@ -31,8 +31,8 @@
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
@@ -191,30 +191,6 @@ class SchemaStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<SchemaTypeId> GetSchemaTypeId(
       std::string_view schema_type) const;
-
-  // Finds content of a section by section path (e.g. property1.property2)
-  //
-  // Returns:
-  //   A string of content on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   NOT_FOUND if:
-  //     1. Property is optional and not found in the document
-  //     2. section_path is invalid
-  //     3. Content is empty
-  libtextclassifier3::StatusOr<std::vector<std::string_view>>
-  GetStringSectionContent(const DocumentProto& document,
-                          std::string_view section_path) const;
-
-  // Finds content of a section by id
-  //
-  // Returns:
-  //   A string of content on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   INVALID_ARGUMENT if section id is invalid
-  //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<std::vector<std::string_view>>
-  GetStringSectionContent(const DocumentProto& document,
-                          SectionId section_id) const;
 
   // Returns the SectionMetadata associated with the SectionId that's in the
   // SchemaTypeId.
@@ -392,8 +368,9 @@ class SchemaStore {
   // Maps schema types to a densely-assigned unique id.
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
-  // Manager of indexed section related metadata.
-  std::unique_ptr<const SectionManager> section_manager_;
+  // Manager of section (indexable property) and joinable property related
+  // metadata for all Schemas.
+  std::unique_ptr<const SchemaTypeManager> schema_type_manager_;
 };
 
 }  // namespace lib

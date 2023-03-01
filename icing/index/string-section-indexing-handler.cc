@@ -36,18 +36,22 @@ namespace lib {
 
 libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    PutDocumentStatsProto* put_document_stats) {
+    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (index_.last_added_document_id() != kInvalidDocumentId &&
       document_id <= index_.last_added_document_id()) {
+    if (recovery_mode) {
+      // Skip the document if document_id <= last_added_document_id in recovery
+      // mode without returning an error.
+      return libtextclassifier3::Status::OK;
+    }
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "DocumentId %d must be greater than last added document_id %d",
         document_id, index_.last_added_document_id()));
   }
-  // TODO(b/259744228): revisit last_added_document_id with numeric index for
-  //                    index rebuilding before rollout.
   index_.set_last_added_document_id(document_id);
+
   uint32_t num_tokens = 0;
   libtextclassifier3::Status status;
   for (const TokenizedSection& section :
