@@ -54,8 +54,8 @@ struct CreateList {
     std::vector<std::string> values;
     values.reserve(args.size());
     for (PendingValue& arg : args) {
-      std::string val = std::move(arg).string_val().ValueOrDie();
-      values.push_back(std::move(val));
+      QueryTerm val = std::move(arg).string_val().ValueOrDie();
+      values.push_back(std::move(val.term));
     }
     return PendingValue(std::move(values));
   }
@@ -168,16 +168,17 @@ void QueryVisitor::PendingPropertyRestricts::AddValidRestricts(
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-QueryVisitor::CreateTermIterator(const std::string& term) {
+QueryVisitor::CreateTermIterator(QueryTerm query_term) {
+  TermMatchType::Code match_type = GetTermMatchType(query_term.is_prefix_val);
   if (!processing_not_) {
     // 1. Add term to property_query_terms_map
     if (pending_property_restricts_.has_active_property_restricts()) {
       for (const std::string& property_restrict :
            pending_property_restricts_.active_property_restricts()) {
-        property_query_terms_map_[property_restrict].insert(term);
+        property_query_terms_map_[property_restrict].insert(query_term.term);
       }
     } else {
-      property_query_terms_map_[""].insert(term);
+      property_query_terms_map_[""].insert(query_term.term);
     }
 
     // 2. If needed add term iterator to query_term_iterators_ map.
@@ -186,22 +187,22 @@ QueryVisitor::CreateTermIterator(const std::string& term) {
     // pass it into index.GetIterator
       ICING_ASSIGN_OR_RETURN(
           std::unique_ptr<DocHitInfoIterator> term_iterator,
-          index_.GetIterator(term, /*term_start_index=*/0,
+          index_.GetIterator(query_term.term, /*term_start_index=*/0,
                              /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                             match_type_, needs_term_frequency_info_));
-      query_term_iterators_[term] = std::make_unique<DocHitInfoIteratorFilter>(
-          std::move(term_iterator), &document_store_, &schema_store_,
-          filter_options_);
+                             match_type, needs_term_frequency_info_));
+      query_term_iterators_[query_term.term] =
+          std::make_unique<DocHitInfoIteratorFilter>(
+              std::move(term_iterator), &document_store_, &schema_store_,
+              filter_options_);
     }
   }
 
   // 3. Add the term iterator.
-  // TODO(b/208654892): Add support for the prefix operator (*).
   // TODO(b/152934343) Save "term start index" into Node and PendingValue and
   // pass it into index.GetIterator
-  return index_.GetIterator(term, /*term_start_index=*/0,
+  return index_.GetIterator(query_term.term, /*term_start_index=*/0,
                             /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                            match_type_, needs_term_frequency_info_);
+                            match_type, needs_term_frequency_info_);
 }
 
 void QueryVisitor::RegisterFunctions() {
@@ -248,8 +249,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
 
   // The first arg is guaranteed to be a STRING at this point. It should be safe
   // to call ValueOrDie.
-  const std::string* query = args.at(0).string_val().ValueOrDie();
-  Lexer lexer(*query, Lexer::Language::QUERY);
+  const QueryTerm* query = args.at(0).string_val().ValueOrDie();
+  Lexer lexer(query->term, Lexer::Language::QUERY);
   ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
                          lexer.ExtractTokens());
 
@@ -307,22 +308,21 @@ libtextclassifier3::StatusOr<int64_t> QueryVisitor::PopPendingIntValue() {
   return int_value;
 }
 
-libtextclassifier3::StatusOr<std::string>
-QueryVisitor::PopPendingStringValue() {
+libtextclassifier3::StatusOr<QueryTerm> QueryVisitor::PopPendingStringValue() {
   if (pending_values_.empty()) {
     return absl_ports::InvalidArgumentError("Unable to retrieve string value.");
   }
-  ICING_ASSIGN_OR_RETURN(std::string string_value,
+  ICING_ASSIGN_OR_RETURN(QueryTerm string_value,
                          std::move(pending_values_.top()).string_val());
   pending_values_.pop();
   return string_value;
 }
 
-libtextclassifier3::StatusOr<std::string> QueryVisitor::PopPendingTextValue() {
+libtextclassifier3::StatusOr<QueryTerm> QueryVisitor::PopPendingTextValue() {
   if (pending_values_.empty()) {
     return absl_ports::InvalidArgumentError("Unable to retrieve text value.");
   }
-  ICING_ASSIGN_OR_RETURN(std::string text_value,
+  ICING_ASSIGN_OR_RETURN(QueryTerm text_value,
                          std::move(pending_values_.top()).text_val());
   pending_values_.pop();
   return text_value;
@@ -340,19 +340,33 @@ QueryVisitor::PopPendingIterator() {
     return iterator;
   } else if (pending_values_.top().data_type() == DataType::kString) {
     features_.insert(kVerbatimSearchFeature);
-    ICING_ASSIGN_OR_RETURN(std::string value, PopPendingStringValue());
-    return CreateTermIterator(std::move(value));
+    ICING_ASSIGN_OR_RETURN(QueryTerm string_value, PopPendingStringValue());
+    return CreateTermIterator(std::move(string_value));
   } else {
-    ICING_ASSIGN_OR_RETURN(std::string value, PopPendingTextValue());
+    ICING_ASSIGN_OR_RETURN(QueryTerm text_value, PopPendingTextValue());
     ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> token_itr,
-                           tokenizer_.Tokenize(value));
+                           tokenizer_.Tokenize(text_value.term));
     std::string normalized_term;
     std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
-    while (token_itr->Advance()) {
-      for (const Token& token : token_itr->GetTokens()) {
+    // The tokenizer will produce 1+ tokens out of the text. The prefix operator
+    // only applies to the final token.
+    bool reached_final_token = !token_itr->Advance();
+    while (!reached_final_token) {
+      std::vector<Token> tokens = token_itr->GetTokens();
+      reached_final_token = !token_itr->Advance();
+
+      // The tokenizer iterator iterates between token groups. In practice, the
+      // tokenizer used with QueryVisitor (PlainTokenizer) will always only
+      // produce a single token per token group.
+      // For simplicity, we will apply the prefix operator to *all* tokens
+      // in the final token group.
+      for (const Token& token : tokens) {
         normalized_term = normalizer_.NormalizeTerm(token.text);
-        ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
-                               CreateTermIterator(std::move(normalized_term)));
+        ICING_ASSIGN_OR_RETURN(
+            std::unique_ptr<DocHitInfoIterator> iterator,
+            CreateTermIterator(
+                QueryTerm{std::move(normalized_term),
+                          reached_final_token && text_value.is_prefix_val}));
         iterators.push_back(std::move(iterator));
       }
     }
@@ -382,27 +396,65 @@ QueryVisitor::PopAllPendingIterators() {
   return iterators;
 }
 
-libtextclassifier3::StatusOr<PendingValue>
-QueryVisitor::ProcessNumericComparator(const NaryOperatorNode* node) {
-  // 1. The children should have been processed and added their outputs to
-  // pending_values_. Time to process them.
-  // The first two pending values should be the int value and the property.
-  ICING_ASSIGN_OR_RETURN(int64_t int_value, PopPendingIntValue());
-  ICING_ASSIGN_OR_RETURN(std::string property, PopPendingTextValue());
-
-  // 2. Create the iterator.
-  ICING_ASSIGN_OR_RETURN(Int64Range range,
-                         GetInt64Range(node->operator_text(), int_value));
-  auto iterator_or =
-      numeric_index_.GetIterator(property, range.low, range.high);
-  if (!iterator_or.ok()) {
-    return std::move(iterator_or).status();
+libtextclassifier3::Status QueryVisitor::ProcessNumericComparator(
+    const NaryOperatorNode* node) {
+  if (node->children().size() != 2) {
+    return absl_ports::InvalidArgumentError("Expected 2 children.");
   }
 
+  // 1. Put in a placeholder PendingValue
+  pending_values_.push(PendingValue());
+
+  // 2. The first child is the property to restrict by.
+  node->children().at(0)->Accept(this);
+  if (has_pending_error()) {
+    return std::move(pending_error_);
+  }
+  ICING_ASSIGN_OR_RETURN(QueryTerm text_value, PopPendingTextValue());
+
+  if (text_value.is_prefix_val) {
+    return absl_ports::InvalidArgumentError(
+        "Cannot use prefix operator '*' with a property name!");
+  }
+
+  // If there is an active property restrict and this property is not present in
+  // in the active restrict set, then it's not satisfiable.
+  if (pending_property_restricts_.has_active_property_restricts() &&
+      pending_property_restricts_.active_property_restricts().find(
+          text_value.term) ==
+          pending_property_restricts_.active_property_restricts().end()) {
+    // The property restrict can't be satisfiable. Pop the placeholder that was
+    // just added and push a FALSE iterator.
+    pending_property_restricts_.PopRestricts();
+    pending_values_.pop();
+    pending_values_.push(
+        PendingValue(std::make_unique<DocHitInfoIteratorNone>()));
+    return libtextclassifier3::Status::OK;
+  }
+
+  // 3. The second child should be parseable as an integer value.
+  expecting_numeric_arg_ = true;
+  node->children().at(1)->Accept(this);
+  expecting_numeric_arg_ = false;
+  ICING_ASSIGN_OR_RETURN(int64_t int_value, PopPendingIntValue());
+
+  // 4. Check for the placeholder.
+  if (!pending_values_.top().is_placeholder()) {
+    return absl_ports::InvalidArgumentError(
+        "Error processing arguments for node.");
+  }
+  pending_values_.pop();
+
+  // 5. Create the iterator and push it onto pending_values_.
+  ICING_ASSIGN_OR_RETURN(Int64Range range,
+                         GetInt64Range(node->operator_text(), int_value));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<DocHitInfoIterator> iterator,
+      numeric_index_.GetIterator(text_value.term, range.low, range.high));
+
   features_.insert(kNumericSearchFeature);
-  std::unique_ptr<DocHitInfoIterator> iterator =
-      std::move(iterator_or).ValueOrDie();
-  return PendingValue(std::move(iterator));
+  pending_values_.push(PendingValue(std::move(iterator)));
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessAndOperator(
@@ -421,6 +473,85 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessOrOperator(
   return PendingValue(CreateOrIterator(std::move(iterators)));
 }
 
+libtextclassifier3::Status QueryVisitor::ProcessNegationOperator(
+    const UnaryOperatorNode* node) {
+  // 1. Put in a placeholder PendingValue
+  pending_values_.push(PendingValue());
+
+  // 2. Visit child
+  node->child()->Accept(this);
+  if (has_pending_error()) {
+    return std::move(pending_error_);
+  }
+
+  if (pending_values_.size() < 2) {
+    return absl_ports::InvalidArgumentError(
+        "Visit unary operator child didn't correctly add pending values.");
+  }
+
+  // 3. We want to preserve the original text of the integer value, append our
+  // minus and *then* parse as an int.
+  ICING_ASSIGN_OR_RETURN(QueryTerm int_text_val, PopPendingTextValue());
+  int_text_val.term = absl_ports::StrCat("-", int_text_val.term);
+  PendingValue pending_value =
+      PendingValue::CreateTextPendingValue(std::move(int_text_val));
+  ICING_RETURN_IF_ERROR(pending_value.long_val());
+
+  // We've parsed our integer value successfully. Pop our placeholder, push it
+  // on to the stack and return successfully.
+  if (!pending_values_.top().is_placeholder()) {
+    return absl_ports::InvalidArgumentError(
+        "Error processing arguments for node.");
+  }
+  pending_values_.pop();
+  pending_values_.push(std::move(pending_value));
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status QueryVisitor::ProcessNotOperator(
+    const UnaryOperatorNode* node) {
+  // TODO(b/265312785) Consider implementing query optimization when we run into
+  // nested NOTs. This would allow us to simplify a query like "NOT (-foo)" to
+  // just "foo". This would also require more complicate rewrites as we would
+  // need to do things like rewrite "NOT (-a OR b)" as "a AND -b" and
+  // "NOT (price < 5)" as "price >= 5".
+  // 1. Put in a placeholder PendingValue
+  pending_values_.push(PendingValue());
+  // Toggle whatever the current value of 'processing_not_' is before visiting
+  // the children.
+  processing_not_ = !processing_not_;
+
+  // 2. Visit child
+  node->child()->Accept(this);
+  if (has_pending_error()) {
+    return std::move(pending_error_);
+  }
+
+  if (pending_values_.size() < 2) {
+    return absl_ports::InvalidArgumentError(
+        "Visit unary operator child didn't correctly add pending values.");
+  }
+
+  // 3. Retrieve the delegate iterator
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> delegate,
+                         PopPendingIterator());
+
+  // 4. Check for the placeholder.
+  if (!pending_values_.top().is_placeholder()) {
+    return absl_ports::InvalidArgumentError(
+        "Error processing arguments for node.");
+  }
+  pending_values_.pop();
+
+  pending_values_.push(PendingValue(std::make_unique<DocHitInfoIteratorNot>(
+      std::move(delegate), document_store_.last_added_document_id())));
+
+  // Untoggle whatever the current value of 'processing_not_' is now that we've
+  // finished processing this NOT.
+  processing_not_ = !processing_not_;
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
     const NaryOperatorNode* node) {
   if (node->children().size() != 2) {
@@ -435,8 +566,12 @@ libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
   if (has_pending_error()) {
     return pending_error_;
   }
-  ICING_ASSIGN_OR_RETURN(std::string property, PopPendingTextValue());
-  pending_property_restricts_.AddValidRestricts({property});
+  ICING_ASSIGN_OR_RETURN(QueryTerm text_value, PopPendingTextValue());
+  if (text_value.is_prefix_val) {
+    return absl_ports::InvalidArgumentError(
+        "Cannot use prefix operator '*' with a property name!");
+  }
+  pending_property_restricts_.AddValidRestricts({text_value.term});
 
   // Just added a restrict - if there are no active property restricts then that
   // be because this restrict is unsatisfiable.
@@ -466,7 +601,7 @@ libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
   pending_values_.pop();
   pending_property_restricts_.PopRestricts();
 
-  std::set<std::string> property_restricts = {std::move(property)};
+  std::set<std::string> property_restricts = {std::move(text_value.term)};
   pending_values_.push(
       PendingValue(std::make_unique<DocHitInfoIteratorSectionRestrict>(
           std::move(delegate), &document_store_, &schema_store_,
@@ -487,16 +622,16 @@ void QueryVisitor::VisitString(const StringNode* node) {
     return;
   }
   std::string unescaped_string = std::move(unescaped_string_or).ValueOrDie();
-  pending_values_.push(
-      PendingValue::CreateStringPendingValue(std::move(unescaped_string)));
+  pending_values_.push(PendingValue::CreateStringPendingValue(
+      QueryTerm{std::move(unescaped_string), node->is_prefix()}));
 }
 
 void QueryVisitor::VisitText(const TextNode* node) {
   // TEXT nodes could either be a term (and will become DocHitInfoIteratorTerm)
   // or a property name. As such, we just push the TEXT value into pending
   // values and determine which it is at a later point.
-  pending_values_.push(
-      PendingValue::CreateTextPendingValue(std::move(node->value())));
+  pending_values_.push(PendingValue::CreateTextPendingValue(
+      QueryTerm{std::move(node->value()), node->is_prefix()}));
 }
 
 void QueryVisitor::VisitMember(const MemberNode* node) {
@@ -517,21 +652,41 @@ void QueryVisitor::VisitMember(const MemberNode* node) {
     }
   }
 
-  // 3. The children should have been processed and added their outputs to
-  // pending_values_. Time to process them.
-  libtextclassifier3::StatusOr<std::string> member_or;
-  std::vector<std::string> members;
-  while (!pending_values_.empty() && !pending_values_.top().is_placeholder()) {
-    member_or = PopPendingTextValue();
-    if (!member_or.ok()) {
-      pending_error_ = std::move(member_or).status();
-      return;
+  // 3. Now process the results of the children and produce a single pending
+  //    value representing this member.
+  PendingValue pending_value;
+  if (node->children().size() == 1) {
+    // 3a. This member only has a single child, then the pending value produced
+    //    by that child is the final value produced by this member.
+    pending_value = std::move(pending_values_.top());
+    pending_values_.pop();
+  } else {
+    // 3b. Retrieve the values of all children and concatenate them into a
+    // single value.
+    libtextclassifier3::StatusOr<QueryTerm> member_or;
+    std::vector<std::string> members;
+    QueryTerm text_val;
+    while (!pending_values_.empty() &&
+           !pending_values_.top().is_placeholder()) {
+      member_or = PopPendingTextValue();
+      if (!member_or.ok()) {
+        pending_error_ = std::move(member_or).status();
+        return;
+      }
+      text_val = std::move(member_or).ValueOrDie();
+      if (text_val.is_prefix_val) {
+        pending_error_ = absl_ports::InvalidArgumentError(
+            "Cannot use prefix operator '*' within a property name!");
+        return;
+      }
+      members.push_back(std::move(text_val.term));
     }
-    members.push_back(std::move(member_or).ValueOrDie());
+    QueryTerm member;
+    member.term = absl_ports::StrJoin(members.rbegin(), members.rend(),
+                                      property_util::kPropertyPathSeparator);
+    member.is_prefix_val = false;
+    pending_value = PendingValue::CreateTextPendingValue(std::move(member));
   }
-  std::string member =
-      absl_ports::StrJoin(members.rbegin(), members.rend(),
-      property_util::kPropertyPathSeparator);
 
   // 4. If pending_values_ is empty somehow, then our placeholder disappeared
   // somehow.
@@ -542,7 +697,7 @@ void QueryVisitor::VisitMember(const MemberNode* node) {
   }
   pending_values_.pop();
 
-  pending_values_.push(PendingValue::CreateTextPendingValue(std::move(member)));
+  pending_values_.push(std::move(pending_value));
 }
 
 void QueryVisitor::VisitFunction(const FunctionNode* node) {
@@ -594,59 +749,26 @@ void QueryVisitor::VisitFunction(const FunctionNode* node) {
 // `NOT search("foo", createList("prop1"))
 //  AND search("bar", createList("prop1"))`
 void QueryVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
-  if (node->operator_text() != "NOT") {
+  bool is_minus = node->operator_text() == "MINUS";
+  if (node->operator_text() != "NOT" && !is_minus) {
     pending_error_ = absl_ports::UnimplementedError(
         absl_ports::StrCat("Visiting for unary operator ",
                            node->operator_text(), " not implemented yet."));
     return;
   }
 
-  // TODO(b/265312785) Consider implementing query optimization when we run into
-  // nested NOTs. This would allow us to simplify a query like "NOT (-foo)" to
-  // just "foo". This would also require more complicate rewrites as we would
-  // need to do things like rewrite "NOT (-a OR b)" as "a AND -b" and
-  // "NOT (price < 5)" as "price >= 5".
-  // 1. Put in a placeholder PendingValue
-  pending_values_.push(PendingValue());
-  // Toggle whatever the current value of 'processing_not_' is before visiting
-  // the children.
-  processing_not_ = !processing_not_;
-
-  // 2. Visit child
-  node->child()->Accept(this);
-  if (has_pending_error()) {
-    return;
+  libtextclassifier3::Status status;
+  if (expecting_numeric_arg_ && is_minus) {
+    // If the operator is a MINUS ('-') and we're at the child of a numeric
+    // comparator, then this must be a negation ('-3')
+    status = ProcessNegationOperator(node);
+  } else {
+    status = ProcessNotOperator(node);
   }
 
-  if (pending_values_.size() < 2) {
-    pending_error_ = absl_ports::InvalidArgumentError(
-        "Visit unary operator child didn't correctly add pending values.");
-    return;
+  if (!status.ok()) {
+    pending_error_ = std::move(status);
   }
-
-  // 3. Retrieve the delegate iterator
-  auto iterator_or = PopPendingIterator();
-  if (!iterator_or.ok()) {
-    pending_error_ = std::move(iterator_or).status();
-    return;
-  }
-  std::unique_ptr<DocHitInfoIterator> delegate =
-      std::move(iterator_or).ValueOrDie();
-
-  // 4. Check for the placeholder.
-  if (!pending_values_.top().is_placeholder()) {
-    pending_error_ = absl_ports::InvalidArgumentError(
-        "Error processing arguments for node.");
-    return;
-  }
-  pending_values_.pop();
-
-  pending_values_.push(PendingValue(std::make_unique<DocHitInfoIteratorNot>(
-      std::move(delegate), document_store_.last_added_document_id())));
-
-  // Untoggle whatever the current value of 'processing_not_' is now that we've
-  // finished processing this NOT.
-  processing_not_ = !processing_not_;
 }
 
 void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
@@ -658,6 +780,12 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
 
   if (node->operator_text() == ":") {
     libtextclassifier3::Status status = ProcessHasOperator(node);
+    if (!status.ok()) {
+      pending_error_ = std::move(status);
+    }
+    return;
+  } else if (IsNumericComparator(node->operator_text())) {
+    libtextclassifier3::Status status = ProcessNumericComparator(node);
     if (!status.ok()) {
       pending_error_ = std::move(status);
     }
@@ -677,9 +805,7 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
 
   // 3. Retrieve the pending value for this node.
   libtextclassifier3::StatusOr<PendingValue> pending_value_or;
-  if (IsNumericComparator(node->operator_text())) {
-    pending_value_or = ProcessNumericComparator(node);
-  } else if (node->operator_text() == "AND") {
+  if (node->operator_text() == "AND") {
     pending_value_or = ProcessAndOperator(node);
   } else if (node->operator_text() == "OR") {
     pending_value_or = ProcessOrOperator(node);

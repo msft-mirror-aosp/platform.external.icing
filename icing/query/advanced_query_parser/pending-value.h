@@ -36,14 +36,19 @@ enum class DataType {
   kDocumentIterator,
 };
 
+struct QueryTerm {
+  std::string term;
+  bool is_prefix_val;
+};
+
 // A holder for intermediate results when processing child nodes.
 struct PendingValue {
-  static PendingValue CreateStringPendingValue(std::string str) {
-    return PendingValue(std::move(str), DataType::kString);
+  static PendingValue CreateStringPendingValue(QueryTerm query_term) {
+    return PendingValue(std::move(query_term), DataType::kString);
   }
 
-  static PendingValue CreateTextPendingValue(std::string text) {
-    return PendingValue(std::move(text), DataType::kText);
+  static PendingValue CreateTextPendingValue(QueryTerm query_term) {
+    return PendingValue(std::move(query_term), DataType::kText);
   }
 
   PendingValue() : data_type_(DataType::kNone) {}
@@ -82,22 +87,22 @@ struct PendingValue {
     return std::move(string_vals_);
   }
 
-  libtextclassifier3::StatusOr<const std::string*> string_val() const& {
+  libtextclassifier3::StatusOr<const QueryTerm*> string_val() const& {
     ICING_RETURN_IF_ERROR(CheckDataType(DataType::kString));
-    return &string_vals_.at(0);
+    return &query_term_;
   }
-  libtextclassifier3::StatusOr<std::string> string_val() && {
+  libtextclassifier3::StatusOr<QueryTerm> string_val() && {
     ICING_RETURN_IF_ERROR(CheckDataType(DataType::kString));
-    return std::move(string_vals_.at(0));
+    return std::move(query_term_);
   }
 
-  libtextclassifier3::StatusOr<const std::string*> text_val() const& {
+  libtextclassifier3::StatusOr<const QueryTerm*> text_val() const& {
     ICING_RETURN_IF_ERROR(CheckDataType(DataType::kText));
-    return &string_vals_.at(0);
+    return &query_term_;
   }
-  libtextclassifier3::StatusOr<std::string> text_val() && {
+  libtextclassifier3::StatusOr<QueryTerm> text_val() && {
     ICING_RETURN_IF_ERROR(CheckDataType(DataType::kText));
-    return std::move(string_vals_.at(0));
+    return std::move(query_term_);
   }
 
   libtextclassifier3::StatusOr<int64_t> long_val() {
@@ -119,8 +124,8 @@ struct PendingValue {
   DataType data_type() const { return data_type_; }
 
  private:
-  explicit PendingValue(std::string str, DataType data_type)
-      : string_vals_({std::move(str)}), data_type_(data_type) {}
+  explicit PendingValue(QueryTerm query_term, DataType data_type)
+      : query_term_({std::move(query_term)}), data_type_(data_type) {}
 
   libtextclassifier3::Status CheckDataType(DataType required_data_type) const {
     if (data_type_ == required_data_type) {
@@ -136,9 +141,11 @@ struct PendingValue {
   // iterator_ will be populated when data_type_ is kDocumentIterator.
   std::unique_ptr<DocHitInfoIterator> iterator_;
 
-  // string_vals_ will be populated when data_type_ is kString, kText and
-  // kStringList.
+  // string_vals_ will be populated when data_type_ is kStringList.
   std::vector<std::string> string_vals_;
+
+  // query_term_ will be populated when data_type_ is kString or kText
+  QueryTerm query_term_;
 
   // long_val_ will be populated when data_type_ is kLong - after a successful
   // call to ParseInt.

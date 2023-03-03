@@ -52,18 +52,24 @@ class Node {
 
 class TerminalNode : public Node {
  public:
-  explicit TerminalNode(std::string value) : value_(std::move(value)) {}
+  explicit TerminalNode(std::string value, bool is_prefix)
+      : value_(std::move(value)), is_prefix_(is_prefix) {}
 
-  const std::string& value() const { return value_; }
+  const std::string& value() const& { return value_; }
+  std::string value() && { return std::move(value_); }
+
+  bool is_prefix() const { return is_prefix_; }
 
  private:
   std::string value_;
+  bool is_prefix_;
 };
 
 class FunctionNameNode : public TerminalNode {
  public:
   explicit FunctionNameNode(std::string value)
-      : TerminalNode(std::move(value)) {}
+      : TerminalNode(std::move(value), /*is_prefix=*/false) {}
+
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitFunctionName(this);
   }
@@ -71,7 +77,9 @@ class FunctionNameNode : public TerminalNode {
 
 class StringNode : public TerminalNode {
  public:
-  explicit StringNode(std::string value) : TerminalNode(std::move(value)) {}
+  explicit StringNode(std::string value, bool is_prefix = false)
+      : TerminalNode(std::move(value), is_prefix) {}
+
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitString(this);
   }
@@ -79,7 +87,9 @@ class StringNode : public TerminalNode {
 
 class TextNode : public TerminalNode {
  public:
-  explicit TextNode(std::string value) : TerminalNode(std::move(value)) {}
+  explicit TextNode(std::string value, bool is_prefix = false)
+      : TerminalNode(std::move(value), is_prefix) {}
+
   void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
     visitor->VisitText(this);
   }

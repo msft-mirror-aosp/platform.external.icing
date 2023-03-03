@@ -38,6 +38,7 @@ class Lexer {
     DOT,         // '.'
     PLUS,        // '+'            Not allowed in QUERY language.
     MINUS,       // '-'
+    STAR,        // '*'            Not allowed in SCORING language.
     TIMES,       // '*'            Not allowed in QUERY language.
     DIV,         // '/'            Not allowed in QUERY language.
     LPAREN,      // '('
@@ -149,6 +150,10 @@ class Lexer {
   int32_t current_index_ = -1;
   char current_char_ = '\0';
   std::vector<LexerToken> tokens_;
+
+  // Stores whether the lexer is currently inspecting a TEXT segment while
+  // handling current_char_.
+  bool in_text_ = false;
 };
 
 }  // namespace lib

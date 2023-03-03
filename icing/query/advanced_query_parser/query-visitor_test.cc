@@ -389,8 +389,7 @@ TEST_P(QueryVisitorTest, SimpleGreaterThan) {
               ElementsAre(kDocumentId2));
 }
 
-// TODO(b/208654892) Properly handle negative numbers in query expressions.
-TEST_P(QueryVisitorTest, DISABLED_IntMinLessThanEqual) {
+TEST_P(QueryVisitorTest, IntMinLessThanEqual) {
   // Setup the numeric index with docs 0, 1 and 2 holding the values INT_MIN,
   // INT_MAX and INT_MIN + 1 respectively.
   int64_t int_min = std::numeric_limits<int64_t>::min();
@@ -648,8 +647,7 @@ TEST_P(QueryVisitorTest, NeverVisitedReturnsInvalid) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-// TODO(b/208654892) Properly handle negative numbers in query expressions.
-TEST_P(QueryVisitorTest, DISABLED_IntMinLessThanInvalid) {
+TEST_P(QueryVisitorTest, IntMinLessThanInvalid) {
   // Setup the numeric index with docs 0, 1 and 2 holding the values INT_MIN,
   // INT_MAX and INT_MIN + 1 respectively.
   int64_t int_min = std::numeric_limits<int64_t>::min();
@@ -722,6 +720,74 @@ TEST_P(QueryVisitorTest, NumericComparisonPropertyStringIsInvalid) {
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("type"))
+          .Build()));
+
+  // Index three documents:
+  // - Doc0: ["-2", "-1", "1", "2"] and [-2, -1, 1, 2]
+  // - Doc1: [-1]
+  // - Doc2: ["2"] and [-1]
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
+  std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
+      numeric_index_->Edit("price", kDocumentId0, kSectionId0);
+  editor->BufferKey(-2);
+  editor->BufferKey(-1);
+  editor->BufferKey(1);
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
+  Index::Editor term_editor = index_->Edit(
+      kDocumentId0, kSectionId1, TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  term_editor.BufferTerm("-2");
+  term_editor.BufferTerm("-1");
+  term_editor.BufferTerm("1");
+  term_editor.BufferTerm("2");
+  term_editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
+  editor = numeric_index_->Edit("price", kDocumentId1, kSectionId0);
+  editor->BufferKey(-1);
+  std::move(*editor).IndexAllBufferedKeys();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
+  editor = numeric_index_->Edit("price", kDocumentId2, kSectionId0);
+  editor->BufferKey(-1);
+  std::move(*editor).IndexAllBufferedKeys();
+  term_editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+                             /*namespace_id=*/0);
+  term_editor.BufferTerm("2");
+  term_editor.IndexAllBufferedTerms();
+
+  // Translating MINUS chars that are interpreted as NOTs, this query would be
+  // `price == -1 AND NOT 2`
+  // All documents should match `price == -1`
+  // Both docs 0 and 2 should be excluded because of the `NOT 2` clause
+  // doc0 has both a text and number entry for `-2`, neither of which should
+  // match.
+  std::string query = CreateQuery("price == -1 -2");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kNumericSearchFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
+  EXPECT_THAT(query_results.query_terms, IsEmpty());
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1));
 }
 
 TEST_P(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
@@ -827,6 +893,169 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
+TEST_P(QueryVisitorTest, SingleTermPrefix) {
+  // Setup the index with docs 0, 1 and 2 holding the values "foo", "foo" and
+  // "bar" respectively.
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
+
+  // An EXACT query for 'fo' won't match anything.
+  std::string query = CreateQuery("fo");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("fo"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("fo"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+
+  query = CreateQuery("fo*");
+  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
+  QueryVisitor query_visitor_two(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor_two);
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("fo"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("fo"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1, kDocumentId0));
+}
+
+TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyReturnsInvalid) {
+  std::string query = "price* < 2";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, PrefixOperatorAfterNumericValueReturnsInvalid) {
+  std::string query = "price < 2*";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyRestrictReturnsInvalid) {
+  std::string query = "subject*:foo";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
+  // Setup the index with docs 0, 1 and 2 holding the values ["foo", "ba"],
+  // ["foo", "ba"] and ["bar", "fo"] respectively.
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.BufferTerm("ba");
+  editor.IndexAllBufferedTerms();
+
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.BufferTerm("ba");
+  editor.IndexAllBufferedTerms();
+
+  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("bar");
+  editor.BufferTerm("fo");
+  editor.IndexAllBufferedTerms();
+
+  // An EXACT query for `ba?fo` will be lexed into a single TEXT token.
+  // The visitor will tokenize it into `ba` and `fo` (`?` is dropped because it
+  // is punctuation). Each document will match one and only one of these exact
+  // tokens. Therefore, nothing will match this query.
+  std::string query = CreateQuery("ba?fo");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("ba", "fo"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("ba", "fo"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+
+  // An EXACT query for `ba?fo*` will be lexed into a TEXT token and a TIMES
+  // token.
+  // The visitor will tokenize the TEXT into `ba` and `fo` (`?` is dropped
+  // because it is punctuation). The prefix operator should only apply to the
+  // final token `fo`. This will cause matches with docs 0 and 1 which contain
+  // "ba" and "foo". doc2 will not match because "ba" does not exactly match
+  // either "bar" or "fo".
+  query = CreateQuery("ba?fo*");
+  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
+  QueryVisitor query_visitor_two(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor_two);
+  ICING_ASSERT_OK_AND_ASSIGN(query_results,
+                             std::move(query_visitor_two).ConsumeResults());
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("ba", "fo"));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("ba", "fo"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1, kDocumentId0));
+}
+
 TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
   // Setup the index with docs 0, 1 and 2 holding the values "foo:bar(baz)",
   // "foo:bar(baz)" and "bar:baz(foo)" respectively.
@@ -863,6 +1092,46 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
               UnorderedElementsAre("foo:bar(baz)"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("foo:bar(baz)"));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1, kDocumentId0));
+}
+
+TEST_P(QueryVisitorTest, SingleVerbatimTermPrefix) {
+  // Setup the index with docs 0, 1 and 2 holding the values "foo:bar(baz)",
+  // "foo:bar(abc)" and "bar:baz(foo)" respectively.
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo:bar(baz)");
+  editor.IndexAllBufferedTerms();
+
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo:bar(abc)");
+  editor.IndexAllBufferedTerms();
+
+  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("bar:baz(foo)");
+  editor.IndexAllBufferedTerms();
+
+  // Query for `"foo:bar("*`. This should match docs 0 and 1.
+  std::string query = CreateQuery("\"foo:bar(\"*");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(),
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              ElementsAre(kVerbatimSearchFeature));
+  EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
+  EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("foo:bar("));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
+              UnorderedElementsAre("foo:bar("));
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }

@@ -119,19 +119,21 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
         match_type_(match_type),
         needs_term_frequency_info_(needs_term_frequency_info),
         pending_property_restricts_(std::move(pending_property_restricts)),
-        processing_not_(processing_not) {
+        processing_not_(processing_not),
+        expecting_numeric_arg_(false) {
     RegisterFunctions();
   }
 
   bool has_pending_error() const { return !pending_error_.ok(); }
 
-  // Creates a DocHitInfoIterator reflecting the provided term. Also populates,
+  // Creates a DocHitInfoIterator reflecting the provided term and whether the
+  // prefix operator has been applied to this term. Also populates,
   // property_query_terms_map_ and query_term_iterators_ as appropriate.
   // Returns:
   //   - On success, a DocHitInfoIterator for the provided term
   //   - INVALID_ARGUMENT if unable to create an iterator for the term.
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-  CreateTermIterator(const std::string& term);
+  CreateTermIterator(QueryTerm term);
 
   // Processes the PendingValue at the top of pending_values_, parses it into a
   // int64_t and pops the top.
@@ -143,15 +145,17 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
 
   // Processes the PendingValue at the top of pending_values_ and pops the top.
   // Returns:
-  //   - On success, the string value stored in the text at the top
+  //   - On success, the string value stored in the text at the top and a bool
+  //     indicating whether or not the string value has a prefix operator.
   //   - INVALID_ARGUMENT if pending_values_ is empty or doesn't hold a string.
-  libtextclassifier3::StatusOr<std::string> PopPendingStringValue();
+  libtextclassifier3::StatusOr<QueryTerm> PopPendingStringValue();
 
   // Processes the PendingValue at the top of pending_values_ and pops the top.
   // Returns:
   //   - On success, the string value stored in the text at the top
+  //     indicating whether or not the string value has a prefix operator.
   //   - INVALID_ARGUMENT if pending_values_ is empty or doesn't hold a text.
-  libtextclassifier3::StatusOr<std::string> PopPendingTextValue();
+  libtextclassifier3::StatusOr<QueryTerm> PopPendingTextValue();
 
   // Processes the PendingValue at the top of pending_values_ and pops the top.
   // Returns:
@@ -171,15 +175,35 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DocHitInfoIterator>>>
   PopAllPendingIterators();
 
+  // Processes the unary operator node as a NOT operator. A NOT can have an
+  // operator type of "NOT" or "MINUS"
+  //
+  // RETURNS:
+  //   - OK on success
+  //   - INVALID_ARGUMENT if any errors are encountered while processing
+  //     node->child
+  libtextclassifier3::Status ProcessNotOperator(const UnaryOperatorNode* node);
+
+  // Processes the unary operator node as a negation operator. A negation
+  // operator should have an operator of type "MINUS" and it's children must
+  // resolve to a numeric value.
+  //
+  // RETURNS:
+  //   - OK on success
+  //   - INVALID_ARGUMENT if the node->child can't be resolved to a numeric
+  //     value.
+  libtextclassifier3::Status ProcessNegationOperator(
+      const UnaryOperatorNode* node);
+
   // Processes the NumericComparator represented by node. This must be called
   // *after* this node's children have been visited. The PendingValues added by
   // this node's children will be consumed by this function and the PendingValue
   // for this node will be returned.
   // Returns:
-  //   - On success, then PendingValue representing this node and it's children.
+  //   - On success, OK
   //   - INVALID_ARGUMENT if unable to retrieve string value or int value
   //   - NOT_FOUND if there is no entry in the numeric index for the property
-  libtextclassifier3::StatusOr<PendingValue> ProcessNumericComparator(
+  libtextclassifier3::Status ProcessNumericComparator(
       const NaryOperatorNode* node);
 
   // Processes the AND and OR operators represented by the node. This must be
@@ -230,6 +254,12 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   //    children cannot be resolved to a MEMBER or an iterator respectively.
   libtextclassifier3::Status ProcessHasOperator(const NaryOperatorNode* node);
 
+  // Returns the correct match type to apply based on both the match type and
+  // whether the prefix operator is currently present.
+  TermMatchType::Code GetTermMatchType(bool is_prefix) const {
+    return (is_prefix) ? TermMatchType::PREFIX : match_type_;
+  }
+
   std::stack<PendingValue> pending_values_;
   libtextclassifier3::Status pending_error_;
 
@@ -259,6 +289,10 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   // The stack of property restricts currently being processed by the visitor.
   PendingPropertyRestricts pending_property_restricts_;
   bool processing_not_;
+
+  // Whether we are in the midst of processing a subtree that is expected to
+  // resolve to a numeric argument.
+  bool expecting_numeric_arg_;
 };
 
 }  // namespace lib
