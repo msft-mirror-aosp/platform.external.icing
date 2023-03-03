@@ -25,13 +25,14 @@ namespace lib {
 
 DocJoinInfo::DocJoinInfo(DocumentId document_id,
                          JoinablePropertyId joinable_property_id) {
-  value_ = 0;
+  Value temp_value = 0;
   bit_util::BitfieldSet(/*new_value=*/document_id,
                         /*lsb_offset=*/kJoinablePropertyIdBits,
-                        /*len=*/kDocumentIdBits, &value_);
+                        /*len=*/kDocumentIdBits, &temp_value);
   bit_util::BitfieldSet(/*new_value=*/joinable_property_id,
                         /*lsb_offset=*/0,
-                        /*len=*/kJoinablePropertyIdBits, &value_);
+                        /*len=*/kJoinablePropertyIdBits, &temp_value);
+  value_ = temp_value;
 }
 
 DocumentId DocJoinInfo::document_id() const {

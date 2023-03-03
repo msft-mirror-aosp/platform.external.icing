@@ -1987,6 +1987,8 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(email_collection).status(), ProtoIsOk());
 
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
   const std::vector<std::string> query_terms = {
       "first1", "last2",   "email3@gmail.com", "000-000-001",
       "body",   "subject", "2022-08-02",       "3\\:00"};
@@ -1995,8 +1997,6 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
   *expected_document.mutable_results()->Add()->mutable_document() =
       email_collection;
   for (const std::string& query_term : query_terms) {
-    SearchSpecProto search_spec;
-    search_spec.set_term_match_type(TermMatchType::PREFIX);
     search_spec.set_query(query_term);
     SearchResultProto actual_results =
         icing.Search(search_spec, GetDefaultScoringSpec(),
@@ -2005,8 +2005,6 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
                 EqualsSearchResultIgnoreStatsAndScores(expected_document));
   }
 
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
   search_spec.set_query("foo");
   SearchResultProto expected_no_documents;
   expected_no_documents.mutable_status()->set_code(StatusProto::OK);

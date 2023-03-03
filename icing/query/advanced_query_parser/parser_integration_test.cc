@@ -189,7 +189,7 @@ TEST(ParserIntegrationTest, Minus) {
                              parser.ConsumeQuery());
 
   // Expected AST:
-  //  NOT
+  //  MINUS
   //   |
   // member
   //   |
@@ -197,11 +197,11 @@ TEST(ParserIntegrationTest, Minus) {
   SimpleVisitor visitor;
   tree_root->Accept(&visitor);
   // SimpleVisitor ordering
-  //   { text, member, NOT }
+  //   { text, member, MINUS }
   EXPECT_THAT(visitor.nodes(),
               ElementsAre(EqualsNodeInfo("foo", NodeType::kText),
                           EqualsNodeInfo("", NodeType::kMember),
-                          EqualsNodeInfo("NOT", NodeType::kUnaryOperator)));
+                          EqualsNodeInfo("MINUS", NodeType::kUnaryOperator)));
 }
 
 TEST(ParserIntegrationTest, Has) {

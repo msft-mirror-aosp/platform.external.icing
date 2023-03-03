@@ -38,10 +38,24 @@ bool Lexer::ConsumeWhitespace() {
 }
 
 bool Lexer::ConsumeQuerySingleChar() {
-  if (current_char_ != ':') {
-    return false;
+  switch (current_char_) {
+    case ':':
+      tokens_.push_back({":", TokenType::COMPARATOR});
+      break;
+    case '*':
+      tokens_.push_back({"", TokenType::STAR});
+      break;
+    case '-':
+      if (in_text_) {
+        // MINUS ('-') is considered to be a part of a text segment if it is
+        // in the middle of a TEXT segment (ex. `foo-bar`).
+        return false;
+      }
+      tokens_.push_back({"", TokenType::MINUS});
+      break;
+    default:
+      return false;
   }
-  tokens_.push_back({":", TokenType::COMPARATOR});
   Advance();
   return true;
 }
@@ -57,6 +71,9 @@ bool Lexer::ConsumeScoringSingleChar() {
     case '/':
       tokens_.push_back({"", TokenType::DIV});
       break;
+    case '-':
+      tokens_.push_back({"", TokenType::MINUS});
+      break;
     default:
       return false;
   }
@@ -71,9 +88,6 @@ bool Lexer::ConsumeGeneralSingleChar() {
       break;
     case '.':
       tokens_.push_back({"", TokenType::DOT});
-      break;
-    case '-':
-      tokens_.push_back({"", TokenType::MINUS});
       break;
     case '(':
       tokens_.push_back({"", TokenType::LPAREN});
@@ -176,6 +190,7 @@ bool Lexer::Text() {
   tokens_.push_back({"", TokenType::TEXT});
   int token_index = tokens_.size() - 1;
   while (!ConsumeNonText() && current_char_ != '\0') {
+    in_text_ = true;
     // When getting a backslash in TEXT, unescape it by accepting its following
     // character no matter which character it is, including white spaces,
     // operator symbols, parentheses, etc.
@@ -194,6 +209,8 @@ bool Lexer::Text() {
       // No need to break, since NonText() must be true at this point.
     }
   }
+  in_text_ = false;
+
   if (language_ == Lexer::Language::QUERY) {
     std::string &text = tokens_[token_index].text;
     TokenType &type = tokens_[token_index].type;

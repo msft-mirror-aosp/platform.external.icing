@@ -24,14 +24,19 @@ libtextclassifier3::Status PendingValue::ParseInt() {
   } else if (data_type_ != DataType::kText) {
     return absl_ports::InvalidArgumentError("Cannot parse value as LONG");
   }
-  char* value_end;
-  long_val_ = std::strtoll(string_vals_.at(0).c_str(), &value_end, /*base=*/10);
-  if (value_end != string_vals_.at(0).c_str() + string_vals_.at(0).length()) {
+  if (query_term_.is_prefix_val) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-        "Unable to parse \"", string_vals_.at(0), "\" as number."));
+        "Cannot use prefix operator '*' with numeric value: ",
+        query_term_.term));
+  }
+  char* value_end;
+  long_val_ = std::strtoll(query_term_.term.c_str(), &value_end, /*base=*/10);
+  if (value_end != query_term_.term.c_str() + query_term_.term.length()) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Unable to parse \"", query_term_.term, "\" as number."));
   }
   data_type_ = DataType::kLong;
-  string_vals_.clear();
+  query_term_ = {"", false};
   return libtextclassifier3::Status::OK;
 }
 

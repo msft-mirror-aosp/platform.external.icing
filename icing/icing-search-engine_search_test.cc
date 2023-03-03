@@ -3002,12 +3002,6 @@ TEST_P(IcingSearchEngineSearchTest, SnippetSectionRestrict) {
 }
 
 TEST_P(IcingSearchEngineSearchTest, Hyphens) {
-  // TODO(b/208654892): Fix issues with minus/hyphen chars.
-  if (GetParam() ==
-      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-    GTEST_SKIP()
-        << "Advanced query doesn't properly support hyphens at this time.";
-  }
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
