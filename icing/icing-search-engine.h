@@ -26,6 +26,7 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -671,6 +672,12 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<bool> LostPreviousSchema()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to create all types of data indexing handlers to index term,
+  // integer, and joinable qualified ids.
+  libtextclassifier3::StatusOr<
+      std::vector<std::unique_ptr<DataIndexingHandler>>>
+  CreateDataIndexingHandlers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to discard parts of (term, integer) indices if they contain
   // data for document ids greater than last_stored_document_id.

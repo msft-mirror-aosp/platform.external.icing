@@ -325,14 +325,15 @@ IcuLanguageSegmenter::IcuLanguageSegmenter(std::string locale)
     : locale_(std::move(locale)) {}
 
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter::Iterator>>
-IcuLanguageSegmenter::Segment(const std::string_view text) const {
+IcuLanguageSegmenter::Segment(const std::string_view text,
+                              LanguageSegmenter::AccessType) const {
   return IcuLanguageSegmenterIterator::Create(text, locale_);
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string_view>>
 IcuLanguageSegmenter::GetAllTerms(const std::string_view text) const {
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<LanguageSegmenter::Iterator> iterator,
-                         Segment(text));
+                         IcuLanguageSegmenterIterator::Create(text, locale_));
   std::vector<std::string_view> terms;
   while (iterator->Advance()) {
     terms.push_back(iterator->GetTerm());

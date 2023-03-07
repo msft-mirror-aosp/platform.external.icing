@@ -14,8 +14,11 @@
 
 #include "icing/index/integer-section-indexing-handler.h"
 
+#include <cstdint>
+#include <memory>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/schema/section-manager.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/util/logging.h"
@@ -23,6 +26,17 @@
 
 namespace icing {
 namespace lib {
+
+/* static */ libtextclassifier3::StatusOr<
+    std::unique_ptr<IntegerSectionIndexingHandler>>
+IntegerSectionIndexingHandler::Create(const Clock* clock,
+                                      NumericIndex<int64_t>* integer_index) {
+  ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(integer_index);
+
+  return std::unique_ptr<IntegerSectionIndexingHandler>(
+      new IntegerSectionIndexingHandler(clock, integer_index));
+}
 
 libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,

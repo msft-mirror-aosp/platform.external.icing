@@ -31,6 +31,7 @@
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
@@ -196,16 +197,16 @@ class SchemaStore {
   // SchemaTypeId.
   //
   // Returns:
-  //   pointer to SectionMetadata on success
+  //   Valid pointer to SectionMetadata on success
   //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   INVALID_ARGUMENT if schema type id or section is invalid
+  //   INVALID_ARGUMENT if schema type id or section id is invalid
   libtextclassifier3::StatusOr<const SectionMetadata*> GetSectionMetadata(
       SchemaTypeId schema_type_id, SectionId section_id) const;
 
   // Extracts all sections of different types from the given document and group
   // them by type.
   // - Each Section vector is sorted by section Id in ascending order. The
-  //   sorted section Ids may not be continuous, since not all section Ids are
+  //   sorted section ids may not be continuous, since not all sections are
   //   present in the document.
   // - Sections with empty content won't be returned.
   // - For example, we may extract:
@@ -217,6 +218,34 @@ class SchemaStore {
   //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if type config name of document not found
   libtextclassifier3::StatusOr<SectionGroup> ExtractSections(
+      const DocumentProto& document) const;
+
+  // Returns the JoinablePropertyMetadata associated with property_path that's
+  // in the SchemaTypeId.
+  //
+  // Returns:
+  //   Valid pointer to JoinablePropertyMetadata on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   INVALID_ARGUMENT if schema type id is invalid
+  //   NOT_FOUND if property_path doesn't exist (or is not joinable) in the
+  //     joinable metadata list of the schema
+  libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+  GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
+                              const std::string& property_path) const;
+
+  // Extracts all joinable property contents of different types from the given
+  // document and group them by joinable value type.
+  // - Joinable properties are sorted by joinable property id in ascending
+  //   order. The sorted joinable property ids may not be continuous, since not
+  //   all joinable properties are present in the document.
+  // - Joinable property ids start from 0.
+  // - Joinable properties with empty content won't be returned.
+  //
+  // Returns:
+  //   A JoinablePropertyGroup instance on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   NOT_FOUND if the type config name of document not found
+  libtextclassifier3::StatusOr<JoinablePropertyGroup> ExtractJoinableProperties(
       const DocumentProto& document) const;
 
   // Syncs all the data changes to disk.

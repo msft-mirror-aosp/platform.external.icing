@@ -16,6 +16,8 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -36,15 +38,16 @@ namespace {
 
 // Helper function to append a new joinable property metadata
 libtextclassifier3::Status AppendNewJoinablePropertyMetadata(
-    std::vector<JoinablePropertyMetadata>* metadata_list,
+    JoinablePropertyManager::JoinablePropertyMetadataListWrapper*
+        metadata_list_wrapper,
     std::string&& concatenated_path,
     PropertyConfigProto::DataType::Code data_type,
     JoinableConfig::ValueType::Code value_type) {
   // Validates next joinable property id, makes sure that joinable property id
   // is the same as the list index so that we could find any joinable property
   // metadata by id in O(1) later.
-  JoinablePropertyId new_id =
-      static_cast<JoinablePropertyId>(metadata_list->size());
+  JoinablePropertyId new_id = static_cast<JoinablePropertyId>(
+      metadata_list_wrapper->metadata_list.size());
   if (!IsJoinablePropertyIdValid(new_id)) {
     // Max number of joinable properties reached
     return absl_ports::OutOfRangeError(
@@ -54,8 +57,10 @@ libtextclassifier3::Status AppendNewJoinablePropertyMetadata(
   }
 
   // Creates joinable property metadata
-  metadata_list->push_back(JoinablePropertyMetadata(
+  metadata_list_wrapper->metadata_list.push_back(JoinablePropertyMetadata(
       new_id, data_type, value_type, std::move(concatenated_path)));
+  metadata_list_wrapper->property_path_to_id_map.insert(
+      {metadata_list_wrapper->metadata_list.back().path, new_id});
   return libtextclassifier3::Status::OK;
 }
 
@@ -84,7 +89,8 @@ JoinablePropertyManager::Builder::ProcessSchemaTypePropertyConfig(
     SchemaTypeId schema_type_id, const PropertyConfigProto& property_config,
     std::string&& property_path) {
   if (schema_type_id < 0 ||
-      schema_type_id >= joinable_property_metadata_cache_.size()) {
+      schema_type_id >=
+          static_cast<int64_t>(joinable_property_metadata_cache_.size())) {
     return absl_ports::InvalidArgumentError("Invalid schema type id");
   }
 
@@ -139,10 +145,33 @@ JoinablePropertyManager::ExtractJoinableProperties(
 
 libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
 JoinablePropertyManager::GetJoinablePropertyMetadata(
+    SchemaTypeId schema_type_id, const std::string& property_path) const {
+  if (schema_type_id < 0 ||
+      schema_type_id >=
+          static_cast<int64_t>(joinable_property_metadata_cache_.size())) {
+    return absl_ports::InvalidArgumentError("Invalid schema type id");
+  }
+
+  const auto iter = joinable_property_metadata_cache_[schema_type_id]
+                        .property_path_to_id_map.find(property_path);
+  if (iter == joinable_property_metadata_cache_[schema_type_id]
+                  .property_path_to_id_map.end()) {
+    return absl_ports::NotFoundError(
+        "Property path is not joinable or doesn't exist");
+  }
+
+  JoinablePropertyId joinable_property_id = iter->second;
+  return &joinable_property_metadata_cache_[schema_type_id]
+              .metadata_list[joinable_property_id];
+}
+
+libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+JoinablePropertyManager::GetJoinablePropertyMetadata(
     SchemaTypeId schema_type_id,
     JoinablePropertyId joinable_property_id) const {
   if (schema_type_id < 0 ||
-      schema_type_id >= joinable_property_metadata_cache_.size()) {
+      schema_type_id >=
+          static_cast<int64_t>(joinable_property_metadata_cache_.size())) {
     return absl_ports::InvalidArgumentError("Invalid schema type id");
   }
   if (!IsJoinablePropertyIdValid(joinable_property_id)) {
@@ -150,9 +179,9 @@ JoinablePropertyManager::GetJoinablePropertyMetadata(
         "Invalid joinable property id %d", joinable_property_id));
   }
 
-  const std::vector<JoinablePropertyMetadata>& joinable_property_metadatas =
-      joinable_property_metadata_cache_[schema_type_id];
-  if (joinable_property_id >= joinable_property_metadatas.size()) {
+  const std::vector<JoinablePropertyMetadata>& metadata_list =
+      joinable_property_metadata_cache_[schema_type_id].metadata_list;
+  if (joinable_property_id >= metadata_list.size()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Joinable property with id %d doesn't exist in type config id %d",
         joinable_property_id, schema_type_id));
@@ -160,7 +189,7 @@ JoinablePropertyManager::GetJoinablePropertyMetadata(
 
   // The index of metadata list is the same as the joinable property id, so we
   // can use joinable property id as the index.
-  return &joinable_property_metadatas[joinable_property_id];
+  return &metadata_list[joinable_property_id];
 }
 
 libtextclassifier3::StatusOr<const std::vector<JoinablePropertyMetadata>*>
@@ -168,7 +197,7 @@ JoinablePropertyManager::GetMetadataList(
     const std::string& type_config_name) const {
   ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                          schema_type_mapper_.Get(type_config_name));
-  return &joinable_property_metadata_cache_.at(schema_type_id);
+  return &joinable_property_metadata_cache_.at(schema_type_id).metadata_list;
 }
 
 }  // namespace lib

@@ -23,6 +23,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -48,7 +49,10 @@ class Rfc822TokenizerTest : public testing::Test {
 TEST_F(Rfc822TokenizerTest, StartingState) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c";
-  auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();
+  auto token_iterator =
+      rfc822_tokenizer
+          .Tokenize(text, LanguageSegmenter::AccessType::kForwardIterator)
+          .ValueOrDie();
 
   ASSERT_THAT(token_iterator->GetTokens(), IsEmpty());
   ASSERT_TRUE(token_iterator->Advance());
@@ -979,7 +983,10 @@ TEST_F(Rfc822TokenizerTest, Commas) {
 TEST_F(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
-  auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();
+  auto token_iterator =
+      rfc822_tokenizer
+          .Tokenize(text, LanguageSegmenter::AccessType::kBidirectionalIterator)
+          .ValueOrDie();
   ASSERT_TRUE(token_iterator->Advance());
   ASSERT_TRUE(token_iterator->Advance());
 
@@ -995,7 +1002,10 @@ TEST_F(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
 TEST_F(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
-  auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();
+  auto token_iterator =
+      rfc822_tokenizer
+          .Tokenize(text, LanguageSegmenter::AccessType::kBidirectionalIterator)
+          .ValueOrDie();
   token_iterator->Advance();
 
   ASSERT_TRUE(token_iterator->ResetToTokenEndingBefore(5));

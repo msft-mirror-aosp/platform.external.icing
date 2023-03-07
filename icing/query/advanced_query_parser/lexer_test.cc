@@ -661,6 +661,19 @@ TEST(LexerTest, WhiteSpacesDoNotAffectColonTokenization) {
                           EqualsLexerToken("h", Lexer::TokenType::TEXT)));
 }
 
+// For the "bar:baz" part to be treated as a TEXT token in a query like
+// foo:bar:baz, an explicit escape is required, so use foo:bar\:baz instead.
+TEST(LexerTest, ColonInTextRequiresExplicitEscaping) {
+  std::unique_ptr<Lexer> lexer =
+      std::make_unique<Lexer>("foo:bar\\:baz", Lexer::Language::QUERY);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Lexer::LexerToken> tokens,
+                             lexer->ExtractTokens());
+  EXPECT_THAT(tokens,
+              ElementsAre(EqualsLexerToken("foo", Lexer::TokenType::TEXT),
+                          EqualsLexerToken(":", Lexer::TokenType::COMPARATOR),
+                          EqualsLexerToken("bar:baz", Lexer::TokenType::TEXT)));
+}
+
 TEST(LexerTest, QueryShouldRejectTokensBeyondLimit) {
   std::string query;
   for (int i = 0; i < Lexer::kMaxNumTokens + 1; ++i) {
