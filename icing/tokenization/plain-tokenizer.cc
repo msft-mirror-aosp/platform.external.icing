@@ -130,17 +130,19 @@ class PlainTokenIterator : public Tokenizer::Iterator {
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>>
-PlainTokenizer::Tokenize(std::string_view text) const {
+PlainTokenizer::Tokenize(std::string_view text,
+                         LanguageSegmenter::AccessType access_type) const {
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<LanguageSegmenter::Iterator> base_iterator,
-      language_segmenter_.Segment(text));
+      language_segmenter_.Segment(text, access_type));
   return std::make_unique<PlainTokenIterator>(std::move(base_iterator));
 }
 
 libtextclassifier3::StatusOr<std::vector<Token>> PlainTokenizer::TokenizeAll(
     std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
-                         Tokenize(text));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<Tokenizer::Iterator> iterator,
+      Tokenize(text, LanguageSegmenter::AccessType::kForwardIterator));
   std::vector<Token> tokens;
   while (iterator->Advance()) {
     std::vector<Token> batch_tokens = iterator->GetTokens();

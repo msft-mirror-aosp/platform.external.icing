@@ -20,6 +20,7 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -33,6 +34,19 @@
 
 namespace icing {
 namespace lib {
+
+/* static */ libtextclassifier3::StatusOr<
+    std::unique_ptr<StringSectionIndexingHandler>>
+StringSectionIndexingHandler::Create(const Clock* clock,
+                                     const Normalizer* normalizer,
+                                     Index* index) {
+  ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(normalizer);
+  ICING_RETURN_ERROR_IF_NULL(index);
+
+  return std::unique_ptr<StringSectionIndexingHandler>(
+      new StringSectionIndexingHandler(clock, normalizer, index));
+}
 
 libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,

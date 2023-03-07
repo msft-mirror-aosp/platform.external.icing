@@ -216,7 +216,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error. This could potentially leave the storages
-  //     in an invalid state and the caller should handle it property (e.g.
+  //     in an invalid state and the caller should handle it properly (e.g.
   //     discard and rebuild)
   libtextclassifier3::Status TransferIndex(
       const std::vector<DocumentId>& document_id_old_to_new,

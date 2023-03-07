@@ -30,12 +30,15 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
+#include "icing/index/integer-section-indexing-handler.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/integer-index.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/index/string-section-indexing-handler.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
@@ -258,9 +261,21 @@ class IndexProcessorTest : public Test {
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_processor_,
-        IndexProcessor::Create(normalizer_.get(), index_.get(),
-                               integer_index_.get(), &fake_clock_));
+        std::unique_ptr<StringSectionIndexingHandler>
+            string_section_indexing_handler,
+        StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
+                                             index_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerSectionIndexingHandler>
+                                   integer_section_indexing_handler,
+                               IntegerSectionIndexingHandler::Create(
+                                   &fake_clock_, integer_index_.get()));
+    std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+    handlers.push_back(std::move(string_section_indexing_handler));
+    handlers.push_back(std::move(integer_section_indexing_handler));
+
+    index_processor_ =
+        std::make_unique<IndexProcessor>(std::move(handlers), &fake_clock_);
+
     mock_icing_filesystem_ = std::make_unique<IcingMockFilesystem>();
   }
 
@@ -290,6 +305,7 @@ class IndexProcessorTest : public Test {
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<SchemaStore> schema_store_;
+
   std::unique_ptr<IndexProcessor> index_processor_;
 };
 
@@ -313,16 +329,6 @@ std::vector<DocHitInfoTermFrequencyPair> GetHitsWithTermFrequency(
     }
   }
   return infos;
-}
-
-TEST_F(IndexProcessorTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(IndexProcessor::Create(/*normalizer=*/nullptr, index_.get(),
-                                     integer_index_.get(), &fake_clock_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-
-  EXPECT_THAT(IndexProcessor::Create(normalizer_.get(), /*index=*/nullptr,
-                                     integer_index_.get(), &fake_clock_),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(IndexProcessorTest, NoTermMatchTypeContent) {
@@ -584,10 +590,15 @@ TEST_F(IndexProcessorTest, TooLongTokens) {
                              normalizer_factory::Create(
                                  /*max_term_byte_size=*/4));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<StringSectionIndexingHandler>
+                                 string_section_indexing_handler,
+                             StringSectionIndexingHandler::Create(
+                                 &fake_clock_, normalizer.get(), index_.get()));
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+  handlers.push_back(std::move(string_section_indexing_handler));
+
+  index_processor_ =
+      std::make_unique<IndexProcessor>(std::move(handlers), &fake_clock_);
 
   DocumentProto document =
       DocumentBuilder()
@@ -769,10 +780,20 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIds) {
 
 TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<IndexProcessor> index_processor,
-      IndexProcessor::Create(normalizer_.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_,
-                             /*recovery_mode=*/true));
+      std::unique_ptr<StringSectionIndexingHandler>
+          string_section_indexing_handler,
+      StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
+                                           index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerSectionIndexingHandler>
+                                 integer_section_indexing_handler,
+                             IntegerSectionIndexingHandler::Create(
+                                 &fake_clock_, integer_index_.get()));
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+  handlers.push_back(std::move(string_section_indexing_handler));
+  handlers.push_back(std::move(integer_section_indexing_handler));
+
+  IndexProcessor index_processor(std::move(handlers), &fake_clock_,
+                                 /*recovery_mode=*/true);
 
   DocumentProto document =
       DocumentBuilder()
@@ -785,7 +806,7 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor->IndexDocument(tokenized_document, kDocumentId1),
+  EXPECT_THAT(index_processor.IndexDocument(tokenized_document, kDocumentId1),
               IsOk());
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
 
@@ -808,7 +829,7 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
       tokenized_document,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
-  EXPECT_THAT(index_processor->IndexDocument(tokenized_document, kDocumentId0),
+  EXPECT_THAT(index_processor.IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
   // Verify that both index_ and integer_index_ are unchanged.
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
@@ -818,7 +839,7 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
               IsOkAndHolds(integer_index_crc));
 
   // As should indexing a document document_id == last_added_document_id.
-  EXPECT_THAT(index_processor->IndexDocument(tokenized_document, kDocumentId1),
+  EXPECT_THAT(index_processor.IndexDocument(tokenized_document, kDocumentId1),
               IsOk());
   // Verify that both index_ and integer_index_ are unchanged.
   EXPECT_THAT(index_->last_added_document_id(), Eq(kDocumentId1));
@@ -907,9 +928,16 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
       index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_));
+      std::unique_ptr<StringSectionIndexingHandler>
+          string_section_indexing_handler,
+      StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
+                                           index_.get()));
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+  handlers.push_back(std::move(string_section_indexing_handler));
+
+  index_processor_ =
+      std::make_unique<IndexProcessor>(std::move(handlers), &fake_clock_);
+
   DocumentId doc_id = 0;
   // Have determined experimentally that indexing 3373 documents with this text
   // will cause the LiteIndex to fill up. Further indexing will fail unless the
@@ -964,9 +992,15 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
       Index::Create(options, &filesystem_, mock_icing_filesystem_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_processor_,
-      IndexProcessor::Create(normalizer_.get(), index_.get(),
-                             integer_index_.get(), &fake_clock_));
+      std::unique_ptr<StringSectionIndexingHandler>
+          string_section_indexing_handler,
+      StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
+                                           index_.get()));
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+  handlers.push_back(std::move(string_section_indexing_handler));
+
+  index_processor_ =
+      std::make_unique<IndexProcessor>(std::move(handlers), &fake_clock_);
 
   // 3. Index one document. This should fit in the LiteIndex without requiring a
   // merge.

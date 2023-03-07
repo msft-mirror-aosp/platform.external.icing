@@ -410,6 +410,94 @@ TEST_F(JoinablePropertyManagerTest,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
+TEST_F(JoinablePropertyManagerTest, GetJoinablePropertyMetadataByPath) {
+  // Use SchemaTypeManager factory method to instantiate
+  // JoinablePropertyManager.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Email (joinable property id -> joinable property path):
+  //   0 -> receiverQualifiedId
+  //   1 -> senderQualifiedId
+  EXPECT_THAT(
+      schema_type_manager->joinable_property_manager()
+          .GetJoinablePropertyMetadata(/*schema_type_id=*/0,
+                                       "receiverQualifiedId"),
+      IsOkAndHolds(Pointee(EqualsJoinablePropertyMetadata(
+          /*expected_id=*/0, /*expected_property_path=*/"receiverQualifiedId",
+          CreateReceiverQualifiedIdPropertyConfig()))));
+  EXPECT_THAT(
+      schema_type_manager->joinable_property_manager()
+          .GetJoinablePropertyMetadata(/*schema_type_id=*/0,
+                                       "senderQualifiedId"),
+      IsOkAndHolds(Pointee(EqualsJoinablePropertyMetadata(
+          /*expected_id=*/1, /*expected_property_path=*/"senderQualifiedId",
+          CreateSenderQualifiedIdPropertyConfig()))));
+
+  // Conversation (joinable property id -> joinable property path):
+  //   0 -> emails.receiverQualifiedId
+  //   1 -> emails.senderQualifiedId
+  //   2 -> groupQualifiedId
+  EXPECT_THAT(schema_type_manager->joinable_property_manager()
+                  .GetJoinablePropertyMetadata(/*schema_type_id=*/1,
+                                               "emails.receiverQualifiedId"),
+              IsOkAndHolds(Pointee(EqualsJoinablePropertyMetadata(
+                  /*expected_id=*/0,
+                  /*expected_property_path=*/"emails.receiverQualifiedId",
+                  CreateReceiverQualifiedIdPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->joinable_property_manager()
+                  .GetJoinablePropertyMetadata(/*schema_type_id=*/1,
+                                               "emails.senderQualifiedId"),
+              IsOkAndHolds(Pointee(EqualsJoinablePropertyMetadata(
+                  /*expected_id=*/1,
+                  /*expected_property_path=*/"emails.senderQualifiedId",
+                  CreateSenderQualifiedIdPropertyConfig()))));
+  EXPECT_THAT(
+      schema_type_manager->joinable_property_manager()
+          .GetJoinablePropertyMetadata(/*schema_type_id=*/1,
+                                       "groupQualifiedId"),
+      IsOkAndHolds(Pointee(EqualsJoinablePropertyMetadata(
+          /*expected_id=*/2, /*expected_property_path=*/"groupQualifiedId",
+          CreateGroupQualifiedIdPropertyConfig()))));
+}
+
+TEST_F(JoinablePropertyManagerTest,
+       GetJoinablePropertyMetadataByPathInvalidSchemaTypeId) {
+  // Use SchemaTypeManager factory method to instantiate
+  // JoinablePropertyManager.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+  ASSERT_THAT(type_config_map_, SizeIs(2));
+
+  EXPECT_THAT(schema_type_manager->joinable_property_manager()
+                  .GetJoinablePropertyMetadata(/*schema_type_id=*/-1,
+                                               "receiverQualifiedId"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(schema_type_manager->joinable_property_manager()
+                  .GetJoinablePropertyMetadata(/*schema_type_id=*/2,
+                                               "receiverQualifiedId"),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(JoinablePropertyManagerTest, GetJoinablePropertyMetadataByPathNotExist) {
+  // Use SchemaTypeManager factory method to instantiate
+  // JoinablePropertyManager.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaTypeManager> schema_type_manager,
+      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  EXPECT_THAT(
+      schema_type_manager->joinable_property_manager()
+          .GetJoinablePropertyMetadata(/*schema_type_id=*/0, "nonExistingPath"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(schema_type_manager->joinable_property_manager()
+                  .GetJoinablePropertyMetadata(/*schema_type_id=*/1,
+                                               "emails.nonExistingPath"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
 // Note: valid GetMetadataList has been tested in
 // JoinablePropertyManagerBuildTest.
 TEST_F(JoinablePropertyManagerTest, GetMetadataListInvalidSchemaTypeName) {

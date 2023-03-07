@@ -44,6 +44,9 @@ namespace lib {
 // EXPECT_THAT(nexts, ElementsAre(1, 3, 5, 6, 8));
 class ReverseJniBreakIterator {
  public:
+  // Chosen based on results in go/reverse-jni-benchmarks
+  static constexpr int kBatchSize = 100;
+
   static constexpr int kDone = -1;
 
   // Creates a ReverseJniBreakiterator with the given text and locale.
@@ -54,7 +57,7 @@ class ReverseJniBreakIterator {
   //   INTERNAL if unable to create any of the required Java objects
   static libtextclassifier3::StatusOr<std::unique_ptr<ReverseJniBreakIterator>>
   Create(const JniCache* jni_cache, std::string_view text,
-         std::string_view locale);
+         std::string_view locale, int batch_size);
 
   // Returns the UTF-16 boundary following the current boundary. If the current
   // boundary is the last text boundary, it returns
@@ -88,9 +91,10 @@ class ReverseJniBreakIterator {
  private:
   ReverseJniBreakIterator(
       const JniCache* jni_cache,
-      libtextclassifier3::ScopedGlobalRef<jobject> iterator_batcher);
+      libtextclassifier3::ScopedGlobalRef<jobject> iterator_batcher,
+      int batch_size);
 
-  // Fetches the results of up to kBatchSize next calls and stores them in
+  // Fetches the results of up to batch_size next calls and stores them in
   // break_indices_cache_. Returns the number of results or kDone if no more
   // results could be fetched.
   int FetchNextBatch();
@@ -109,9 +113,11 @@ class ReverseJniBreakIterator {
   // BreakIteratorBatcher#next.
   std::queue<int> break_indices_cache_;
 
+  int batch_size_;
+
   bool is_done_;
 
-  // The last batch was incomplete (< kBatchSize results were returned). The
+  // The last batch was incomplete (< batch_size_ results were returned). The
   // next call to BreakIteratorBatcher#next is guaranteed to return an
   // empty array. Once the results from the last batch are evicted from
   // break_indices_cache, ReverseJniBreakIterator will transition to is_done_.

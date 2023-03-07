@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_CACHE_H_
-#define ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_CACHE_H_
+#ifndef ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_INDEX_H_
+#define ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_INDEX_H_
 
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -32,9 +33,9 @@
 namespace icing {
 namespace lib {
 
-// QualifiedIdTypeJoinableCache: a class to maintain cache data mapping
-// DocJoinInfo to joinable qualified ids and delete propagation info.
-class QualifiedIdTypeJoinableCache : public PersistentStorage {
+// QualifiedIdTypeJoinableIndex: a class to maintain data mapping DocJoinInfo to
+// joinable qualified ids and delete propagation info.
+class QualifiedIdTypeJoinableIndex : public PersistentStorage {
  public:
   struct Info {
     static constexpr int32_t kMagic = 0x48cabdc6;
@@ -58,16 +59,17 @@ class QualifiedIdTypeJoinableCache : public PersistentStorage {
 
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
-  static constexpr std::string_view kFilePrefix = "qualified_id_joinable_cache";
+  static constexpr std::string_view kFilePrefix =
+      "qualified_id_type_joinable_index";
 
-  // Creates a QualifiedIdTypeJoinableCache instance to store qualified ids for
+  // Creates a QualifiedIdTypeJoinableIndex instance to store qualified ids for
   // future joining search. If any of the underlying file is missing, then
   // delete the whole working_path and (re)initialize with new ones. Otherwise
   // initialize and create the instance by existing files.
   //
   // filesystem: Object to make system level calls
   // working_path: Specifies the working path for PersistentStorage.
-  //               QualifiedIdTypeJoinableCache uses working path as working
+  //               QualifiedIdTypeJoinableIndex uses working path as working
   //               directory and all related files will be stored under this
   //               directory. It takes full ownership and of working_path_,
   //               including creation/deletion. It is the caller's
@@ -84,21 +86,32 @@ class QualifiedIdTypeJoinableCache : public PersistentStorage {
   //   - INTERNAL_ERROR on I/O errors
   //   - Any KeyMapper errors
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdTypeJoinableCache>>
+      std::unique_ptr<QualifiedIdTypeJoinableIndex>>
   Create(const Filesystem& filesystem, std::string working_path);
 
+  // Deletes QualifiedIdTypeJoinableIndex under working_path.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  static libtextclassifier3::Status Discard(const Filesystem& filesystem,
+                                            const std::string& working_path) {
+    return PersistentStorage::Discard(filesystem, working_path,
+                                      kWorkingPathType);
+  }
+
   // Delete copy and move constructor/assignment operator.
-  QualifiedIdTypeJoinableCache(const QualifiedIdTypeJoinableCache&) = delete;
-  QualifiedIdTypeJoinableCache& operator=(const QualifiedIdTypeJoinableCache&) =
+  QualifiedIdTypeJoinableIndex(const QualifiedIdTypeJoinableIndex&) = delete;
+  QualifiedIdTypeJoinableIndex& operator=(const QualifiedIdTypeJoinableIndex&) =
       delete;
 
-  QualifiedIdTypeJoinableCache(QualifiedIdTypeJoinableCache&&) = delete;
-  QualifiedIdTypeJoinableCache& operator=(QualifiedIdTypeJoinableCache&&) =
+  QualifiedIdTypeJoinableIndex(QualifiedIdTypeJoinableIndex&&) = delete;
+  QualifiedIdTypeJoinableIndex& operator=(QualifiedIdTypeJoinableIndex&&) =
       delete;
 
-  ~QualifiedIdTypeJoinableCache() override;
+  ~QualifiedIdTypeJoinableIndex() override;
 
-  // Puts a new data into cache: DocJoinInfo (DocumentId, JoinablePropertyId)
+  // Puts a new data into index: DocJoinInfo (DocumentId, JoinablePropertyId)
   // references to ref_document_id.
   //
   // Returns:
@@ -119,8 +132,50 @@ class QualifiedIdTypeJoinableCache : public PersistentStorage {
   libtextclassifier3::StatusOr<DocumentId> Get(
       const DocJoinInfo& doc_join_info) const;
 
+  // Reduces internal file sizes by reclaiming space and ids of deleted
+  // documents. Qualified id type joinable index will convert all entries to the
+  // new document ids.
+  //
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the qualified id type joinable
+  //                               index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error. This could potentially leave the index in
+  //     an invalid state and the caller should handle it properly (e.g. discard
+  //     and rebuild)
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id);
+
+  // Clears all data and set last_added_document_id to kInvalidDocumentId.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status Clear();
+
+  int32_t size() const { return document_to_qualified_id_mapper_->num_keys(); }
+
+  bool empty() const { return size() == 0; }
+
+  DocumentId last_added_document_id() const {
+    return info().last_added_document_id;
+  }
+
+  void set_last_added_document_id(DocumentId document_id) {
+    Info& info_ref = info();
+    if (info_ref.last_added_document_id == kInvalidDocumentId ||
+        document_id > info_ref.last_added_document_id) {
+      info_ref.last_added_document_id = document_id;
+    }
+  }
+
  private:
-  explicit QualifiedIdTypeJoinableCache(
+  explicit QualifiedIdTypeJoinableIndex(
       const Filesystem& filesystem, std::string&& working_path,
       std::unique_ptr<uint8_t[]> metadata_buffer,
       std::unique_ptr<KeyMapper<DocumentId>> key_mapper)
@@ -130,13 +185,24 @@ class QualifiedIdTypeJoinableCache : public PersistentStorage {
         document_to_qualified_id_mapper_(std::move(key_mapper)) {}
 
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdTypeJoinableCache>>
+      std::unique_ptr<QualifiedIdTypeJoinableIndex>>
   InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path);
 
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdTypeJoinableCache>>
+      std::unique_ptr<QualifiedIdTypeJoinableIndex>>
   InitializeExistingFiles(const Filesystem& filesystem,
                           std::string&& working_path);
+
+  // Transfers qualified id type joinable index data from the current to
+  // new_index and convert to new document id according to
+  // document_id_old_to_new. It is a helper function for Optimize.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status TransferIndex(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      QualifiedIdTypeJoinableIndex* new_index) const;
 
   // Flushes contents of metadata file.
   //
@@ -193,10 +259,10 @@ class QualifiedIdTypeJoinableCache : public PersistentStorage {
   // qualified id string).
   std::unique_ptr<KeyMapper<DocumentId>> document_to_qualified_id_mapper_;
 
-  // TODO(b/263890397): add delete propagation storage
+  // TODO(b/268521214): add delete propagation storage
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_CACHE_H_
+#endif  // ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_INDEX_H_

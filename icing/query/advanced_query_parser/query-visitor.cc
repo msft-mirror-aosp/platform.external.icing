@@ -344,8 +344,10 @@ QueryVisitor::PopPendingIterator() {
     return CreateTermIterator(std::move(string_value));
   } else {
     ICING_ASSIGN_OR_RETURN(QueryTerm text_value, PopPendingTextValue());
-    ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> token_itr,
-                           tokenizer_.Tokenize(text_value.term));
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<Tokenizer::Iterator> token_itr,
+        tokenizer_.Tokenize(text_value.term,
+                            LanguageSegmenter::AccessType::kForwardIterator));
     std::string normalized_term;
     std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
     // The tokenizer will produce 1+ tokens out of the text. The prefix operator

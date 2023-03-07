@@ -17,6 +17,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -34,6 +35,13 @@ namespace lib {
 // from documents.
 class JoinablePropertyManager {
  public:
+  // A wrapper class that contains a vector of metadatas and property path to
+  // JoinablePropertyId reverse lookup map.
+  struct JoinablePropertyMetadataListWrapper {
+    std::vector<JoinablePropertyMetadata> metadata_list;
+    std::unordered_map<std::string, JoinablePropertyId> property_path_to_id_map;
+  };
+
   // Builder class to create a JoinablePropertyManager which does not take
   // ownership of any input components, and all pointers must refer to valid
   // objects that outlive the created JoinablePropertyManager instance.
@@ -66,7 +74,7 @@ class JoinablePropertyManager {
 
    private:
     const KeyMapper<SchemaTypeId>& schema_type_mapper_;  // Does not own.
-    std::vector<std::vector<JoinablePropertyMetadata>>
+    std::vector<JoinablePropertyMetadataListWrapper>
         joinable_property_metadata_cache_;
   };
 
@@ -87,11 +95,23 @@ class JoinablePropertyManager {
   libtextclassifier3::StatusOr<JoinablePropertyGroup> ExtractJoinableProperties(
       const DocumentProto& document) const;
 
+  // Returns the JoinablePropertyMetadata associated with property_path that's
+  // in the SchemaTypeId.
+  //
+  // Returns:
+  //   - Valid pointer to JoinablePropertyMetadata on success
+  //   - INVALID_ARGUMENT_ERROR if schema type id is invalid
+  //   - NOT_FOUND_ERROR if property_path doesn't exist (or is not joinable) in
+  //     the joinable metadata list of the schema
+  libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+  GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
+                              const std::string& property_path) const;
+
   // Returns the JoinablePropertyMetadata associated with the JoinablePropertyId
   // that's in the SchemaTypeId.
   //
   // Returns:
-  //   - Pointer to JoinablePropertyMetadata on success
+  //   - Valid pointer to JoinablePropertyMetadata on success
   //   - INVALID_ARGUMENT_ERROR if schema type id or JoinablePropertyId is
   //     invalid
   libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
@@ -108,7 +128,7 @@ class JoinablePropertyManager {
  private:
   explicit JoinablePropertyManager(
       const KeyMapper<SchemaTypeId>& schema_type_mapper,
-      std::vector<std::vector<JoinablePropertyMetadata>>&&
+      std::vector<JoinablePropertyMetadataListWrapper>&&
           joinable_property_metadata_cache)
       : schema_type_mapper_(schema_type_mapper),
         joinable_property_metadata_cache_(joinable_property_metadata_cache) {}
@@ -117,16 +137,20 @@ class JoinablePropertyManager {
   const KeyMapper<SchemaTypeId>& schema_type_mapper_;  // Does not own
 
   // The index of joinable_property_metadata_cache_ corresponds to a schema
-  // type's SchemaTypeId. At that SchemaTypeId index, we store an inner vector.
-  // The inner vector's index corresponds to a joinable property's
-  // JoinablePropertyId. At the JoinablePropertyId index, we store the
-  // JoinablePropertyMetadata of that joinable property.
+  // type's SchemaTypeId. At that SchemaTypeId index, we store a
+  // JoinablePropertyMetadataListWrapper instance. The metadata list's index
+  // corresponds to a joinable property's JoinablePropertyId. At the
+  // JoinablePropertyId index, we store the JoinablePropertyMetadata of that
+  // joinable property.
   //
   // For example, suppose "email" has a SchemaTypeId of 0 and it has a joinable
   // property called "senderQualifiedId" with a JoinablePropertyId of 1. Then
   // the "senderQualifiedId" property's JoinablePropertyMetadata will be at
-  // joinable_property_metadata_cache_[0][1].
-  const std::vector<std::vector<JoinablePropertyMetadata>>
+  // joinable_property_metadata_cache_[0].metadata_list[1], and
+  // joinable_property_metadata_cache_[0]
+  //     .property_path_to_id_map["senderQualifiedId"]
+  // will be 1.
+  const std::vector<JoinablePropertyMetadataListWrapper>
       joinable_property_metadata_cache_;
 };
 

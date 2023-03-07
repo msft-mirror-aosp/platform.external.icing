@@ -32,11 +32,14 @@
 #include "icing/file/destructible-file.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index-processor.h"
 #include "icing/index/index.h"
+#include "icing/index/integer-section-indexing-handler.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/integer-index.h"
+#include "icing/index/string-section-indexing-handler.h"
 #include "icing/join/join-processor.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
@@ -982,16 +985,15 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   }
   DocumentId document_id = document_id_or.ValueOrDie();
 
-  auto index_processor_or = IndexProcessor::Create(
-      normalizer_.get(), index_.get(), integer_index_.get(), clock_.get());
-  if (!index_processor_or.ok()) {
-    TransformStatus(index_processor_or.status(), result_status);
+  auto data_indexing_handlers_or = CreateDataIndexingHandlers();
+  if (!data_indexing_handlers_or.ok()) {
+    TransformStatus(data_indexing_handlers_or.status(), result_status);
     return result_proto;
   }
-  std::unique_ptr<IndexProcessor> index_processor =
-      std::move(index_processor_or).ValueOrDie();
+  IndexProcessor index_processor(
+      std::move(data_indexing_handlers_or).ValueOrDie(), clock_.get());
 
-  auto index_status = index_processor->IndexDocument(
+  auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, put_document_stats);
   // Getting an internal error from the index could possibly mean that the index
   // is broken. Try to rebuild the index to recover.
@@ -2119,19 +2121,18 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     return {libtextclassifier3::Status::OK, false, false};
   }
 
-  // By using recovery_mode for IndexProcessor, we're able to replay documents
-  // from smaller document id and it will skip documents that are already been
-  // indexed.
-  auto index_processor_or = IndexProcessor::Create(
-      normalizer_.get(), index_.get(), integer_index_.get(), clock_.get(),
-      /*recovery_mode=*/true);
-  if (!index_processor_or.ok()) {
-    return {index_processor_or.status(),
+  auto data_indexing_handlers_or = CreateDataIndexingHandlers();
+  if (!data_indexing_handlers_or.ok()) {
+    return {data_indexing_handlers_or.status(),
             truncate_result.index_needed_restoration,
             truncate_result.integer_index_needed_restoration};
   }
-  std::unique_ptr<IndexProcessor> index_processor =
-      std::move(index_processor_or).ValueOrDie();
+  // By using recovery_mode for IndexProcessor, we're able to replay documents
+  // from smaller document id and it will skip documents that are already been
+  // indexed.
+  IndexProcessor index_processor(
+      std::move(data_indexing_handlers_or).ValueOrDie(), clock_.get(),
+      /*recovery_mode=*/true);
 
   ICING_VLOG(1) << "Restoring index by replaying documents from document id "
                 << truncate_result.first_document_to_reindex
@@ -2168,7 +2169,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
         std::move(tokenized_document_or).ValueOrDie());
 
     libtextclassifier3::Status status =
-        index_processor->IndexDocument(tokenized_document, document_id);
+        index_processor.IndexDocument(tokenized_document, document_id);
     if (!status.ok()) {
       if (!absl_ports::IsDataLoss(status)) {
         // Real error. Stop recovering and pass it up.
@@ -2207,6 +2208,29 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {
   // then that means we must have had a schema at some point. Since we wouldn't
   // accept documents without a schema to validate them against.
   return document_store_->last_added_document_id() != kInvalidDocumentId;
+}
+
+libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DataIndexingHandler>>>
+IcingSearchEngine::CreateDataIndexingHandlers() {
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+
+  // Term index handler
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<StringSectionIndexingHandler>
+                             string_section_indexing_handler,
+                         StringSectionIndexingHandler::Create(
+                             clock_.get(), normalizer_.get(), index_.get()));
+  handlers.push_back(std::move(string_section_indexing_handler));
+
+  // Integer index handler
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<IntegerSectionIndexingHandler>
+                             integer_section_indexing_handler,
+                         IntegerSectionIndexingHandler::Create(
+                             clock_.get(), integer_index_.get()));
+  handlers.push_back(std::move(integer_section_indexing_handler));
+
+  // TODO(b/263890397): add QualifiedIdJoinablePropertyIndexingHandler
+
+  return handlers;
 }
 
 libtextclassifier3::StatusOr<IcingSearchEngine::TruncateIndexResult>

@@ -55,7 +55,7 @@ class IcuLanguageSegmenter : public LanguageSegmenter {
   //   An iterator of terms on success
   //   INTERNAL_ERROR if any error occurs
   libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter::Iterator>>
-  Segment(std::string_view text) const override;
+  Segment(std::string_view text, LanguageSegmenter::AccessType) const override;
 
   // The segmentation depends on the language detected in the input text.
   //
