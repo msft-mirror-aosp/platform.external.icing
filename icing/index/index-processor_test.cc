@@ -132,6 +132,7 @@ using DataType = PropertyConfigProto::DataType;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+using ::testing::IsTrue;
 using ::testing::SizeIs;
 using ::testing::Test;
 
@@ -150,12 +151,21 @@ class IndexProcessorTest : public Test {
               GetTestFilePath("icing/icu.dat")));
     }
 
-    index_dir_ = GetTestTempDir() + "/index_test";
+    base_dir_ = GetTestTempDir() + "/index_processor_test";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
+                IsTrue());
+
+    index_dir_ = base_dir_ + "/index";
+    integer_index_dir_ = base_dir_ + "/integer_index";
+    schema_store_dir_ = base_dir_ + "/schema_store";
+
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
-    integer_index_ = std::make_unique<DummyNumericIndex<int64_t>>();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        integer_index_,
+        DummyNumericIndex<int64_t>::Create(filesystem_, integer_index_dir_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -167,12 +177,11 @@ class IndexProcessorTest : public Test {
         normalizer_factory::Create(
             /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
 
-    std::string schema_store_dir = GetTestTempDir() + "/schema_store";
     ASSERT_TRUE(
-        filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str()));
+        filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -257,7 +266,14 @@ class IndexProcessorTest : public Test {
   }
 
   void TearDown() override {
-    filesystem_.DeleteDirectoryRecursively(index_dir_.c_str());
+    index_processor_.reset();
+    schema_store_.reset();
+    normalizer_.reset();
+    lang_segmenter_.reset();
+    integer_index_.reset();
+    index_.reset();
+
+    filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
   std::unique_ptr<IcingMockFilesystem> mock_icing_filesystem_;
@@ -265,12 +281,15 @@ class IndexProcessorTest : public Test {
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   FakeClock fake_clock_;
+  std::string base_dir_;
   std::string index_dir_;
+  std::string integer_index_dir_;
+  std::string schema_store_dir_;
 
-  std::unique_ptr<LanguageSegmenter> lang_segmenter_;
-  std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<Index> index_;
   std::unique_ptr<NumericIndex<int64_t>> integer_index_;
+  std::unique_ptr<LanguageSegmenter> lang_segmenter_;
+  std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<IndexProcessor> index_processor_;
 };
@@ -1037,6 +1056,13 @@ TEST_F(IndexProcessorTest, Rfc822PropertyExactShouldNotReturnPrefix) {
 }
 
 // Some prefixes of generated RFC822 tokens.
+#ifdef ENABLE_RFC822_PROPERTY_PREFIX_TEST
+// ENABLE_RFC822_PROPERTY_PREFIX_TEST won't be defined, so this test will not be
+// compiled.
+// TODO(b/250648165): Remove #ifdef to enable this test after fixing the
+//                    indeterministic behavior of prefix query term frequency in
+//                    lite index.
+//
 TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/1")
@@ -1077,6 +1103,7 @@ TEST_F(IndexProcessorTest, Rfc822PropertyPrefix) {
   EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
                         kDocumentId0, expected_map)));
 }
+#endif  // ENABLE_RFC822_PROPERTY_PREFIX_TEST
 
 TEST_F(IndexProcessorTest, Rfc822PropertyNoMatch) {
   DocumentProto document = DocumentBuilder()

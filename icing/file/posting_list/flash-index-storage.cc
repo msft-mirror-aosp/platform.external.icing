@@ -51,7 +51,7 @@ uint32_t SelectBlockSize() {
 
 libtextclassifier3::StatusOr<FlashIndexStorage> FlashIndexStorage::Create(
     const std::string& index_filename, const Filesystem* filesystem,
-    PostingListUsedSerializer* serializer, bool in_memory) {
+    PostingListSerializer* serializer, bool in_memory) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   FlashIndexStorage storage(index_filename, filesystem, serializer, in_memory);
   if (!storage.Init()) {
@@ -63,7 +63,7 @@ libtextclassifier3::StatusOr<FlashIndexStorage> FlashIndexStorage::Create(
 
 FlashIndexStorage::FlashIndexStorage(const std::string& index_filename,
                                      const Filesystem* filesystem,
-                                     PostingListUsedSerializer* serializer,
+                                     PostingListSerializer* serializer,
                                      bool has_in_memory_freelists)
     : index_filename_(index_filename),
       num_blocks_(0),

@@ -88,6 +88,20 @@ class JoinProcessorTest : public ::testing::Test {
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
+  libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>> Join(
+      const JoinSpecProto& join_spec,
+      std::vector<ScoredDocumentHit>&& parent_scored_document_hits,
+      std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
+    JoinProcessor join_processor(doc_store_.get());
+    ICING_ASSIGN_OR_RETURN(
+        JoinChildrenFetcher join_children_fetcher,
+        join_processor.GetChildrenFetcher(
+            join_spec, std::move(child_scored_document_hits)));
+    return join_processor.Join(join_spec,
+                               std::move(parent_scored_document_hits),
+                               join_children_fetcher);
+  }
+
   Filesystem filesystem_;
   std::string test_dir_;
   std::unique_ptr<SchemaStore> schema_store_;
@@ -165,11 +179,10 @@ TEST_F(JoinProcessorTest, JoinByQualifiedId) {
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   EXPECT_THAT(
       joined_result_document_hits,
       ElementsAre(EqualsJoinedScoredDocumentHit(JoinedScoredDocumentHit(
@@ -232,11 +245,10 @@ TEST_F(JoinProcessorTest, ShouldIgnoreChildDocumentsWithoutJoiningProperty) {
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   // Since Email2 doesn't have "sender" property, it should be ignored.
   EXPECT_THAT(
       joined_result_document_hits,
@@ -310,11 +322,10 @@ TEST_F(JoinProcessorTest, ShouldIgnoreChildDocumentsWithInvalidQualifiedId) {
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   // Email 2 and email 3 (document id 3 and 4) contain invalid qualified ids.
   // Join processor should ignore them.
   EXPECT_THAT(joined_result_document_hits,
@@ -373,11 +384,10 @@ TEST_F(JoinProcessorTest, LeftJoinShouldReturnParentWithoutChildren) {
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   // Person1 has no child documents, but left join should also include it.
   EXPECT_THAT(
       joined_result_document_hits,
@@ -452,11 +462,10 @@ TEST_F(JoinProcessorTest, ShouldSortChildDocumentsByRankingStrategy) {
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   // Child documents should be sorted according to the (nested) ranking
   // strategy.
   EXPECT_THAT(
@@ -548,11 +557,10 @@ TEST_F(JoinProcessorTest,
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   // Since we set max_joind_child_count as 2 and use DESC as the (nested)
   // ranking strategy, parent document with # of child documents more than 2
   // should only keep 2 child documents with higher scores and the rest should
@@ -601,11 +609,10 @@ TEST_F(JoinProcessorTest, ShouldAllowSelfJoining) {
   join_spec.mutable_nested_spec()->mutable_scoring_spec()->set_order_by(
       ScoringSpecProto::Order::DESC);
 
-  JoinProcessor join_processor(doc_store_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<JoinedScoredDocumentHit> joined_result_document_hits,
-      join_processor.Join(join_spec, std::move(parent_scored_document_hits),
-                          std::move(child_scored_document_hits)));
+      Join(join_spec, std::move(parent_scored_document_hits),
+           std::move(child_scored_document_hits)));
   EXPECT_THAT(joined_result_document_hits,
               ElementsAre(EqualsJoinedScoredDocumentHit(JoinedScoredDocumentHit(
                   /*final_score=*/1.0,

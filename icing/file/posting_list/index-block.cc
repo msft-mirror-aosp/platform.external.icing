@@ -36,7 +36,7 @@ namespace lib {
 namespace {
 
 libtextclassifier3::Status ValidatePostingListBytes(
-    PostingListUsedSerializer* serializer, uint32_t posting_list_bytes,
+    PostingListSerializer* serializer, uint32_t posting_list_bytes,
     uint32_t block_size) {
   if (posting_list_bytes > IndexBlock::CalculateMaxPostingListBytes(
                                block_size, serializer->GetDataTypeBytes()) ||
@@ -58,7 +58,7 @@ libtextclassifier3::Status ValidatePostingListBytes(
 libtextclassifier3::StatusOr<IndexBlock>
 IndexBlock::CreateFromPreexistingIndexBlockRegion(
     const Filesystem& filesystem, std::string_view file_path,
-    PostingListUsedSerializer* serializer, off_t offset, uint32_t block_size) {
+    PostingListSerializer* serializer, off_t offset, uint32_t block_size) {
   if (block_size < sizeof(BlockHeader)) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Provided block_size %d is too small to fit even the BlockHeader!",
@@ -78,7 +78,7 @@ IndexBlock::CreateFromPreexistingIndexBlockRegion(
 libtextclassifier3::StatusOr<IndexBlock>
 IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
                                           std::string_view file_path,
-                                          PostingListUsedSerializer* serializer,
+                                          PostingListSerializer* serializer,
                                           off_t offset, uint32_t block_size,
                                           uint32_t posting_list_bytes) {
   if (block_size < sizeof(BlockHeader)) {
@@ -102,7 +102,7 @@ IndexBlock::CreateFromUninitializedRegion(const Filesystem& filesystem,
   return block;
 }
 
-IndexBlock::IndexBlock(PostingListUsedSerializer* serializer,
+IndexBlock::IndexBlock(PostingListSerializer* serializer,
                        MemoryMappedFile&& mmapped_block)
     : header_(reinterpret_cast<BlockHeader*>(mmapped_block.mutable_region())),
       posting_lists_start_ptr_(mmapped_block.mutable_region() +

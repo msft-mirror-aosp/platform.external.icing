@@ -163,7 +163,8 @@ namespace scorer_factory {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
-    const DocumentStore* document_store, const SchemaStore* schema_store) {
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const JoinChildrenFetcher* join_children_fetcher) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -211,7 +212,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
             "Advanced scoring is enabled, but the expression is empty!");
       }
       return AdvancedScorer::Create(scoring_spec, default_score, document_store,
-                                    schema_store);
+                                    schema_store, join_children_fetcher);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
       // Use join aggregate score to rank. Since the aggregation score is
       // calculated by child documents after joining (in JoinProcessor), we can
