@@ -99,6 +99,10 @@ class CharacterIterator {
   }
 
  private:
+  // Resets the character iterator to the start of the text if any of the
+  // indices are negative.
+  void ResetToStartIfNecessary();
+
   std::string_view text_;
   UChar32 cached_current_char_;
   int utf8_index_;
