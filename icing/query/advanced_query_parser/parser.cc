@@ -55,7 +55,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<TextNode>> Parser::ConsumeText() {
   if (!Match(Lexer::TokenType::TEXT)) {
     return absl_ports::InvalidArgumentError("Unable to consume token as TEXT.");
   }
-  auto text_node = std::make_unique<TextNode>(std::move(current_token_->text));
+  auto text_node = std::make_unique<TextNode>(std::move(current_token_->text),
+                                              current_token_->original_text);
   ++current_token_;
   return text_node;
 }
@@ -81,6 +82,7 @@ Parser::ConsumeStringElement() {
         "Unable to consume token as STRING.");
   }
   std::string text = std::move(current_token_->text);
+  std::string_view raw_text = current_token_->original_text;
   ++current_token_;
 
   bool is_prefix = false;
@@ -89,7 +91,7 @@ Parser::ConsumeStringElement() {
     ++current_token_;
   }
 
-  return std::make_unique<StringNode>(std::move(text), is_prefix);
+  return std::make_unique<StringNode>(std::move(text), raw_text, is_prefix);
 }
 
 libtextclassifier3::StatusOr<std::string> Parser::ConsumeComparator() {
@@ -115,7 +117,9 @@ Parser::ConsumeMember() {
   // at this point. So check for 'STAR' to differentiate the two cases.
   if (Match(Lexer::TokenType::STAR)) {
     Consume(Lexer::TokenType::STAR);
-    text_node = std::make_unique<TextNode>(std::move(*text_node).value(),
+    std::string_view raw_text = text_node->raw_value();
+    std::string text = std::move(*text_node).value();
+    text_node = std::make_unique<TextNode>(std::move(text), raw_text,
                                            /*is_prefix=*/true);
     children.push_back(std::move(text_node));
   } else {

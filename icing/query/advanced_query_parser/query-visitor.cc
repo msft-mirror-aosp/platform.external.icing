@@ -37,9 +37,12 @@
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/param.h"
 #include "icing/query/advanced_query_parser/parser.h"
+#include "icing/query/advanced_query_parser/pending-value.h"
+#include "icing/query/advanced_query_parser/util/string-util.h"
 #include "icing/query/query-features.h"
 #include "icing/schema/property-util.h"
 #include "icing/schema/section.h"
+#include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer.h"
 #include "icing/util/status-macros.h"
 
@@ -54,31 +57,12 @@ struct CreateList {
     std::vector<std::string> values;
     values.reserve(args.size());
     for (PendingValue& arg : args) {
-      QueryTerm val = std::move(arg).string_val().ValueOrDie();
-      values.push_back(std::move(val.term));
+      QueryTerm string_val = std::move(arg).string_val().ValueOrDie();
+      values.push_back(std::move(string_val.term));
     }
     return PendingValue(std::move(values));
   }
 };
-
-libtextclassifier3::StatusOr<std::string> UnescapeStringValue(
-    std::string_view value) {
-  std::string result;
-  bool in_escape = false;
-  for (char c : value) {
-    if (in_escape) {
-      in_escape = false;
-    } else if (c == '\\') {
-      in_escape = true;
-      continue;
-    } else if (c == '"') {
-      return absl_ports::InvalidArgumentError(
-          "Encountered an unescaped quotation mark!");
-    }
-    result += c;
-  }
-  return result;
-}
 
 bool IsNumericComparator(std::string_view operator_text) {
   if (operator_text.length() < 1 || operator_text.length() > 2) {
@@ -168,8 +152,10 @@ void QueryVisitor::PendingPropertyRestricts::AddValidRestricts(
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-QueryVisitor::CreateTermIterator(QueryTerm query_term) {
+QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
   TermMatchType::Code match_type = GetTermMatchType(query_term.is_prefix_val);
+  int unnormalized_term_start =
+      query_term.raw_term.data() - raw_query_text_.data();
   if (!processing_not_) {
     // 1. Add term to property_query_terms_map
     if (pending_property_restricts_.has_active_property_restricts()) {
@@ -183,13 +169,11 @@ QueryVisitor::CreateTermIterator(QueryTerm query_term) {
 
     // 2. If needed add term iterator to query_term_iterators_ map.
     if (needs_term_frequency_info_) {
-    // TODO(b/152934343) Save "term start index" into Node and PendingValue and
-    // pass it into index.GetIterator
       ICING_ASSIGN_OR_RETURN(
           std::unique_ptr<DocHitInfoIterator> term_iterator,
-          index_.GetIterator(query_term.term, /*term_start_index=*/0,
-                             /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-                             match_type, needs_term_frequency_info_));
+          index_.GetIterator(query_term.term, unnormalized_term_start,
+                             query_term.raw_term.length(), kSectionIdMaskAll,
+                             match_type_, needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
           std::make_unique<DocHitInfoIteratorFilter>(
               std::move(term_iterator), &document_store_, &schema_store_,
@@ -198,10 +182,8 @@ QueryVisitor::CreateTermIterator(QueryTerm query_term) {
   }
 
   // 3. Add the term iterator.
-  // TODO(b/152934343) Save "term start index" into Node and PendingValue and
-  // pass it into index.GetIterator
-  return index_.GetIterator(query_term.term, /*term_start_index=*/0,
-                            /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+  return index_.GetIterator(query_term.term, unnormalized_term_start,
+                            query_term.raw_term.length(), kSectionIdMaskAll,
                             match_type, needs_term_frequency_info_);
 }
 
@@ -266,7 +248,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
   } else {
     QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
                                &schema_store_, &normalizer_, &tokenizer_,
-                               filter_options_, match_type_,
+                               query->raw_term, filter_options_, match_type_,
                                needs_term_frequency_info_,
                                pending_property_restricts_, processing_not_);
     tree_root->Accept(&query_visitor);
@@ -353,24 +335,44 @@ QueryVisitor::PopPendingIterator() {
     // The tokenizer will produce 1+ tokens out of the text. The prefix operator
     // only applies to the final token.
     bool reached_final_token = !token_itr->Advance();
+    // raw_text is the portion of text_value.raw_term that hasn't yet been
+    // matched to any of the tokens that we've processed. escaped_token will
+    // hold the portion of raw_text that corresponds to the current token that
+    // is being processed.
+    std::string_view raw_text = text_value.raw_term;
+    std::string_view raw_token;
     while (!reached_final_token) {
       std::vector<Token> tokens = token_itr->GetTokens();
-      reached_final_token = !token_itr->Advance();
-
-      // The tokenizer iterator iterates between token groups. In practice, the
-      // tokenizer used with QueryVisitor (PlainTokenizer) will always only
-      // produce a single token per token group.
-      // For simplicity, we will apply the prefix operator to *all* tokens
-      // in the final token group.
-      for (const Token& token : tokens) {
-        normalized_term = normalizer_.NormalizeTerm(token.text);
-        ICING_ASSIGN_OR_RETURN(
-            std::unique_ptr<DocHitInfoIterator> iterator,
-            CreateTermIterator(
-                QueryTerm{std::move(normalized_term),
-                          reached_final_token && text_value.is_prefix_val}));
-        iterators.push_back(std::move(iterator));
+      if (tokens.size() > 1) {
+        // The tokenizer iterator iterates between token groups. In practice,
+        // the tokenizer used with QueryVisitor (PlainTokenizer) will always
+        // only produce a single token per token group.
+        return absl_ports::InvalidArgumentError(
+            "Encountered unexpected token group with >1 tokens.");
       }
+
+      reached_final_token = !token_itr->Advance();
+      const Token& token = tokens.at(0);
+      if (reached_final_token && token.text.length() == raw_text.length()) {
+        // Unescaped tokens are strictly smaller than their escaped counterparts
+        // This means that if we're at the final token and token.length equals
+        // raw_text, then all of raw_text must correspond to this token.
+        raw_token = raw_text;
+      } else {
+        ICING_ASSIGN_OR_RETURN(raw_token, string_util::FindEscapedToken(
+                                                  raw_text, token.text));
+      }
+      normalized_term = normalizer_.NormalizeTerm(token.text);
+      QueryTerm term_value{std::move(normalized_term), raw_token,
+                           reached_final_token && text_value.is_prefix_val};
+      ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
+                             CreateTermIterator(std::move(term_value)));
+      iterators.push_back(std::move(iterator));
+
+      // Remove escaped_token from raw_text now that we've processed
+      // raw_text.
+      const char* escaped_token_end = raw_token.data() + raw_token.length();
+      raw_text = raw_text.substr(escaped_token_end - raw_text.data());
     }
 
     // Finally, create an And Iterator. If there's only a single term here, then
@@ -618,22 +620,23 @@ void QueryVisitor::VisitFunctionName(const FunctionNameNode* node) {
 
 void QueryVisitor::VisitString(const StringNode* node) {
   // A STRING node can only be a term. Create the iterator now.
-  auto unescaped_string_or = UnescapeStringValue(node->value());
+  auto unescaped_string_or = string_util::UnescapeStringValue(node->value());
   if (!unescaped_string_or.ok()) {
     pending_error_ = std::move(unescaped_string_or).status();
     return;
   }
   std::string unescaped_string = std::move(unescaped_string_or).ValueOrDie();
-  pending_values_.push(PendingValue::CreateStringPendingValue(
-      QueryTerm{std::move(unescaped_string), node->is_prefix()}));
+  QueryTerm val{std::move(unescaped_string), node->raw_value(),
+                node->is_prefix()};
+  pending_values_.push(PendingValue::CreateStringPendingValue(std::move(val)));
 }
 
 void QueryVisitor::VisitText(const TextNode* node) {
   // TEXT nodes could either be a term (and will become DocHitInfoIteratorTerm)
   // or a property name. As such, we just push the TEXT value into pending
   // values and determine which it is at a later point.
-  pending_values_.push(PendingValue::CreateTextPendingValue(
-      QueryTerm{std::move(node->value()), node->is_prefix()}));
+  QueryTerm val{std::move(node->value()), node->raw_value(), node->is_prefix()};
+  pending_values_.push(PendingValue::CreateTextPendingValue(std::move(val)));
 }
 
 void QueryVisitor::VisitMember(const MemberNode* node) {
@@ -668,6 +671,8 @@ void QueryVisitor::VisitMember(const MemberNode* node) {
     libtextclassifier3::StatusOr<QueryTerm> member_or;
     std::vector<std::string> members;
     QueryTerm text_val;
+    const char* start = nullptr;
+    const char* end = nullptr;
     while (!pending_values_.empty() &&
            !pending_values_.top().is_placeholder()) {
       member_or = PopPendingTextValue();
@@ -681,11 +686,19 @@ void QueryVisitor::VisitMember(const MemberNode* node) {
             "Cannot use prefix operator '*' within a property name!");
         return;
       }
+      if (start == nullptr) {
+        start = text_val.raw_term.data();
+        end = text_val.raw_term.data() + text_val.raw_term.length();
+      } else {
+        start = std::min(start, text_val.raw_term.data());
+        end = std::max(end, text_val.raw_term.data() + text_val.raw_term.length());
+      }
       members.push_back(std::move(text_val.term));
     }
     QueryTerm member;
     member.term = absl_ports::StrJoin(members.rbegin(), members.rend(),
                                       property_util::kPropertyPathSeparator);
+    member.raw_term = std::string_view(start, end - start);
     member.is_prefix_val = false;
     pending_value = PendingValue::CreateTextPendingValue(std::move(member));
   }

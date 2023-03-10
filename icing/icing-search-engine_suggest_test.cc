@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -25,6 +23,7 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -1506,6 +1505,95 @@ TEST_F(IcingSearchEngineSuggestTest,
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
               UnorderedElementsAre(EqualsProto(suggestionBarCatSubjectFoo)));
+}
+
+TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_InvalidPrefixTest) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "bar fo")  // "bar fo"
+          .AddStringProperty("body", "fool")
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri2")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "bar cat foo")  // "bar cat fool"
+          .AddStringProperty("body", "fool")
+          .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace1", "uri3")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("subject", "fool")  // "fool"
+                                .AddStringProperty("body", "fool")
+                                .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  // Search for "f OR"
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("f OR");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  if (SearchSpecProto::default_instance().search_type() ==
+      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
+    EXPECT_THAT(response.status(), ProtoIsOk());
+    EXPECT_THAT(response.suggestions(), IsEmpty());
+  } else {
+    EXPECT_THAT(response.status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+    EXPECT_THAT(response.suggestions(), IsEmpty());
+  }
+
+  // TODO(b/208654892): Update handling for hyphens to only consider it a hyphen
+  // within a TEXT token (rather than a MINUS token) when surrounded on both
+  // sides by TEXT rather than just preceded by TEXT.
+  // Search for "f-"
+  suggestion_spec.set_prefix("f-");
+  response = icing.SearchSuggestions(suggestion_spec);
+  EXPECT_THAT(response.status(), ProtoIsOk());
+  EXPECT_THAT(response.suggestions(), IsEmpty());
+
+  // Search for "f:"
+  suggestion_spec.set_prefix("f:");
+  response = icing.SearchSuggestions(suggestion_spec);
+  if (SearchSpecProto::default_instance().search_type() ==
+      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
+    EXPECT_THAT(response.status(), ProtoIsOk());
+    EXPECT_THAT(response.suggestions(), IsEmpty());
+  } else {
+    EXPECT_THAT(response.status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+    EXPECT_THAT(response.suggestions(), IsEmpty());
+  }
+
+  // Search for "OR OR - :"
+  suggestion_spec.set_prefix("OR OR - :");
+  response = icing.SearchSuggestions(suggestion_spec);
+  if (SearchSpecProto::default_instance().search_type() ==
+      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
+    EXPECT_THAT(response.status(), ProtoIsOk());
+    EXPECT_THAT(response.suggestions(), IsEmpty());
+  } else {
+    EXPECT_THAT(response.status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+    EXPECT_THAT(response.suggestions(), IsEmpty());
+  }
 }
 
 }  // namespace

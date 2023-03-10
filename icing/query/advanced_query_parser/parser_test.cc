@@ -46,9 +46,9 @@ TEST(ParserTest, EmptyScoring) {
 }
 
 TEST(ParserTest, SingleTerm) {
-  // Query: "foo"
+  std::string_view query = "foo";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}};
+      {"foo", query, Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -67,9 +67,10 @@ TEST(ParserTest, SingleTerm) {
 }
 
 TEST(ParserTest, ImplicitAnd) {
-  // Query: "foo bar"
+  std::string_view query = "foo bar";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}, {"bar", Lexer::TokenType::TEXT}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"bar", query.substr(4, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -93,11 +94,11 @@ TEST(ParserTest, ImplicitAnd) {
 }
 
 TEST(ParserTest, Or) {
-  // Query: "foo OR bar"
+  std::string_view query = "foo OR bar";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::OR},
-      {"bar", Lexer::TokenType::TEXT}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(4, 2), Lexer::TokenType::OR},
+      {"bar", query.substr(7, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -121,11 +122,11 @@ TEST(ParserTest, Or) {
 }
 
 TEST(ParserTest, And) {
-  // Query: "foo AND bar"
+  std::string_view query = "foo AND bar";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::AND},
-      {"bar", Lexer::TokenType::TEXT}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(4, 3), Lexer::TokenType::AND},
+      {"bar", query.substr(8, 4), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -149,9 +150,10 @@ TEST(ParserTest, And) {
 }
 
 TEST(ParserTest, Not) {
-  // Query: "NOT foo"
+  std::string_view query = "NOT foo";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"", Lexer::TokenType::NOT}, {"foo", Lexer::TokenType::TEXT}};
+      {"", query.substr(0, 3), Lexer::TokenType::NOT},
+      {"foo", query.substr(4, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -173,9 +175,10 @@ TEST(ParserTest, Not) {
 }
 
 TEST(ParserTest, Minus) {
-  // Query: "-foo"
+  std::string_view query = "-foo";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"", Lexer::TokenType::MINUS}, {"foo", Lexer::TokenType::TEXT}};
+      {"", query.substr(0, 1), Lexer::TokenType::MINUS},
+      {"foo", query.substr(1, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -197,11 +200,11 @@ TEST(ParserTest, Minus) {
 }
 
 TEST(ParserTest, Has) {
-  // Query: "subject:foo"
+  std::string_view query = "subject:foo";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"subject", Lexer::TokenType::TEXT},
-      {":", Lexer::TokenType::COMPARATOR},
-      {"foo", Lexer::TokenType::TEXT}};
+      {"subject", query.substr(0, 7), Lexer::TokenType::TEXT},
+      {":", query.substr(7, 1), Lexer::TokenType::COMPARATOR},
+      {"foo", query.substr(8, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -225,13 +228,13 @@ TEST(ParserTest, Has) {
 }
 
 TEST(ParserTest, HasNested) {
-  // Query: "sender.name:foo"
+  std::string_view query = "sender.name:foo";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"sender", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DOT},
-      {"name", Lexer::TokenType::TEXT},
-      {":", Lexer::TokenType::COMPARATOR},
-      {"foo", Lexer::TokenType::TEXT}};
+      {"sender", query.substr(0, 6), Lexer::TokenType::TEXT},
+      {"", query.substr(6, 1), Lexer::TokenType::DOT},
+      {"name", query.substr(7, 4), Lexer::TokenType::TEXT},
+      {":", query.substr(11, 1), Lexer::TokenType::COMPARATOR},
+      {"foo", query.substr(12, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -256,11 +259,11 @@ TEST(ParserTest, HasNested) {
 }
 
 TEST(ParserTest, EmptyFunction) {
-  // Query: "foo()"
+  std::string_view query = "foo()";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 1), Lexer::TokenType::LPAREN},
+      {"", query.substr(4, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -279,12 +282,12 @@ TEST(ParserTest, EmptyFunction) {
 }
 
 TEST(ParserTest, FunctionSingleArg) {
-  // Query: "foo("bar")"
+  std::string_view query = "foo(\"bar\")";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"bar", Lexer::TokenType::STRING},
-      {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 1), Lexer::TokenType::LPAREN},
+      {"bar", query.substr(5, 3), Lexer::TokenType::STRING},
+      {"", query.substr(8, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -304,11 +307,14 @@ TEST(ParserTest, FunctionSingleArg) {
 }
 
 TEST(ParserTest, FunctionMultiArg) {
-  // Query: "foo("bar", "baz")"
+  std::string_view query = "foo(\"bar\", \"baz\")";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME}, {"", Lexer::TokenType::LPAREN},
-      {"bar", Lexer::TokenType::STRING},        {"", Lexer::TokenType::COMMA},
-      {"baz", Lexer::TokenType::STRING},        {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 1), Lexer::TokenType::LPAREN},
+      {"bar", query.substr(5, 3), Lexer::TokenType::STRING},
+      {"", query.substr(9, 1), Lexer::TokenType::COMMA},
+      {"baz", query.substr(12, 3), Lexer::TokenType::STRING},
+      {"", query.substr(16, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -329,11 +335,14 @@ TEST(ParserTest, FunctionMultiArg) {
 }
 
 TEST(ParserTest, FunctionNested) {
-  // Query: "foo(bar())"
+  std::string_view query = "foo(bar())";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME}, {"", Lexer::TokenType::LPAREN},
-      {"bar", Lexer::TokenType::FUNCTION_NAME}, {"", Lexer::TokenType::LPAREN},
-      {"", Lexer::TokenType::RPAREN},           {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 1), Lexer::TokenType::LPAREN},
+      {"bar", query.substr(4, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(7, 1), Lexer::TokenType::LPAREN},
+      {"", query.substr(8, 1), Lexer::TokenType::RPAREN},
+      {"", query.substr(9, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -356,13 +365,13 @@ TEST(ParserTest, FunctionNested) {
 }
 
 TEST(ParserTest, FunctionWithTrailingSequence) {
-  // Query: "foo() OR bar"
+  std::string_view query = "foo() OR bar";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::OR},
-      {"bar", Lexer::TokenType::TEXT}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 1), Lexer::TokenType::LPAREN},
+      {"", query.substr(4, 1), Lexer::TokenType::RPAREN},
+      {"", query.substr(6, 2), Lexer::TokenType::OR},
+      {"bar", query.substr(9, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -386,11 +395,14 @@ TEST(ParserTest, FunctionWithTrailingSequence) {
 }
 
 TEST(ParserTest, Composite) {
-  // Query: "foo OR (bar baz)"
+  std::string_view query = "foo OR (bar baz)";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::OR},
-      {"", Lexer::TokenType::LPAREN},  {"bar", Lexer::TokenType::TEXT},
-      {"baz", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(4, 2), Lexer::TokenType::OR},
+      {"", query.substr(7, 1), Lexer::TokenType::LPAREN},
+      {"bar", query.substr(8, 3), Lexer::TokenType::TEXT},
+      {"baz", query.substr(12, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(15, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -419,11 +431,14 @@ TEST(ParserTest, Composite) {
 }
 
 TEST(ParserTest, CompositeWithTrailingSequence) {
-  // Query: "(bar baz) OR foo"
+  std::string_view query = "(bar baz) OR foo";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"", Lexer::TokenType::LPAREN},  {"bar", Lexer::TokenType::TEXT},
-      {"baz", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::OR},      {"foo", Lexer::TokenType::TEXT}};
+      {"", query.substr(0, 1), Lexer::TokenType::LPAREN},
+      {"bar", query.substr(1, 3), Lexer::TokenType::TEXT},
+      {"baz", query.substr(5, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(8, 1), Lexer::TokenType::RPAREN},
+      {"", query.substr(10, 2), Lexer::TokenType::OR},
+      {"foo", query.substr(13, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -452,17 +467,17 @@ TEST(ParserTest, CompositeWithTrailingSequence) {
 }
 
 TEST(ParserTest, Complex) {
-  // Query: "foo bar:baz OR pal("bat")"
+  std::string_view query = R"(foo bar:baz OR pal("bat"))";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT},
-      {"bar", Lexer::TokenType::TEXT},
-      {":", Lexer::TokenType::COMPARATOR},
-      {"baz", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::OR},
-      {"pal", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"bat", Lexer::TokenType::STRING},
-      {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"bar", query.substr(4, 3), Lexer::TokenType::TEXT},
+      {":", query.substr(7, 1), Lexer::TokenType::COMPARATOR},
+      {"baz", query.substr(8, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(12, 2), Lexer::TokenType::OR},
+      {"pal", query.substr(15, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(18, 1), Lexer::TokenType::LPAREN},
+      {"bat", query.substr(20, 3), Lexer::TokenType::STRING},
+      {"", query.substr(24, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -498,107 +513,116 @@ TEST(ParserTest, Complex) {
 }
 
 TEST(ParserTest, InvalidHas) {
-  // Query: "foo:"  No right hand operand to :
+  std::string_view query = "foo:";  // No right hand operand to :
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}, {":", Lexer::TokenType::COMPARATOR}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {":", query.substr(3, 1), Lexer::TokenType::COMPARATOR}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidComposite) {
-  // Query: "(foo bar"  No terminating RPAREN
+  std::string_view query = "(foo bar";  // No terminating RPAREN
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"", Lexer::TokenType::LPAREN},
-      {"foo", Lexer::TokenType::TEXT},
-      {"bar", Lexer::TokenType::TEXT}};
+      {"", query.substr(0, 1), Lexer::TokenType::LPAREN},
+      {"foo", query.substr(1, 3), Lexer::TokenType::TEXT},
+      {"bar", query.substr(5, 3), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidMember) {
-  // Query: "foo."  DOT must have succeeding TEXT
+  std::string_view query = "foo.";  // DOT must have succeeding TEXT
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::DOT}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(3, 1), Lexer::TokenType::DOT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidOr) {
-  // Query: "foo OR"   No right hand operand to OR
+  std::string_view query = "foo OR";  // No right hand operand to OR
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::OR}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(3, 2), Lexer::TokenType::OR}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidAnd) {
-  // Query: "foo AND"   No right hand operand to AND
+  std::string_view query = "foo AND";  // No right hand operand to AND
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::AND}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(4, 3), Lexer::TokenType::AND}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidNot) {
-  // Query: "NOT"   No right hand operand to NOT
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"", Lexer::TokenType::NOT}};
+  std::string_view query = "NOT";  // No right hand operand to NOT
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"", query.substr(0, 3), Lexer::TokenType::NOT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidMinus) {
-  // Query: "-"   No right hand operand to -
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"", Lexer::TokenType::MINUS}};
+  std::string_view query = "-";  // No right hand operand to -
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"", query.substr(0, 1), Lexer::TokenType::MINUS}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidFunctionCallNoRparen) {
-  // Query: "foo("   No terminating RPAREN
+  std::string_view query = "foo(";  // No terminating RPAREN
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME}, {"", Lexer::TokenType::LPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 0), Lexer::TokenType::LPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidFunctionCallNoLparen) {
-  // Query: "foo bar"   foo labeled FUNCTION_NAME despite no LPAREN
+  std::string_view query =
+      "foo bar";  // foo labeled FUNCTION_NAME despite no LPAREN
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME},
-      {"bar", Lexer::TokenType::FUNCTION_NAME}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"bar", query.substr(4, 3), Lexer::TokenType::FUNCTION_NAME}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, InvalidFunctionArgsHangingComma) {
-  // Query: "foo("bar",)"   no valid arg following COMMA
+  std::string_view query = R"(foo("bar",))";  // no valid arg following COMMA
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"foo", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"bar", Lexer::TokenType::STRING},
-      {"", Lexer::TokenType::COMMA},
-      {"", Lexer::TokenType::RPAREN}};
+      {"foo", query.substr(0, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(3, 1), Lexer::TokenType::LPAREN},
+      {"bar", query.substr(5, 3), Lexer::TokenType::STRING},
+      {"", query.substr(9, 1), Lexer::TokenType::COMMA},
+      {"", query.substr(10, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeQuery(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(ParserTest, ScoringPlus) {
-  // Scoring: "1 + 1 + 1"
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::PLUS},
-                                                 {"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::PLUS},
-                                                 {"1", Lexer::TokenType::TEXT}};
+  std::string_view scoring_exp = "1 + 1 + 1";
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::PLUS},
+      {"1", scoring_exp.substr(4, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(6, 1), Lexer::TokenType::PLUS},
+      {"1", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -622,12 +646,13 @@ TEST(ParserTest, ScoringPlus) {
 }
 
 TEST(ParserTest, ScoringMinus) {
-  // Scoring: "1 - 1 - 1"
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::MINUS},
-                                                 {"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::MINUS},
-                                                 {"1", Lexer::TokenType::TEXT}};
+  std::string_view scoring_exp = "1 - 1 - 1";
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::MINUS},
+      {"1", scoring_exp.substr(4, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(6, 1), Lexer::TokenType::MINUS},
+      {"1", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -651,11 +676,14 @@ TEST(ParserTest, ScoringMinus) {
 }
 
 TEST(ParserTest, ScoringUnaryMinus) {
-  // Scoring: "1 + -1 + 1"
+  std::string_view scoring_exp = "1 + -1 + 1";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"1", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::PLUS},
-      {"", Lexer::TokenType::MINUS}, {"1", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::PLUS},  {"1", Lexer::TokenType::TEXT}};
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::PLUS},
+      {"", scoring_exp.substr(4, 1), Lexer::TokenType::MINUS},
+      {"1", scoring_exp.substr(5, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(7, 1), Lexer::TokenType::PLUS},
+      {"1", scoring_exp.substr(9, 1), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -682,12 +710,15 @@ TEST(ParserTest, ScoringUnaryMinus) {
 }
 
 TEST(ParserTest, ScoringPlusMinus) {
-  // Scoring: "11 + 12 - 13 + 14"
+  std::string_view scoring_exp = "11 + 12 - 13 + 14";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"11", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::PLUS},
-      {"12", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::MINUS},
-      {"13", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::PLUS},
-      {"14", Lexer::TokenType::TEXT}};
+      {"11", scoring_exp.substr(0, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(3, 1), Lexer::TokenType::PLUS},
+      {"12", scoring_exp.substr(5, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(6, 1), Lexer::TokenType::MINUS},
+      {"13", scoring_exp.substr(8, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(11, 1), Lexer::TokenType::PLUS},
+      {"14", scoring_exp.substr(13, 2), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -719,12 +750,13 @@ TEST(ParserTest, ScoringPlusMinus) {
 }
 
 TEST(ParserTest, ScoringTimes) {
-  // Scoring: "1 * 1 * 1"
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::TIMES},
-                                                 {"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::TIMES},
-                                                 {"1", Lexer::TokenType::TEXT}};
+  std::string_view scoring_exp = "1 * 1 * 1";
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::TIMES},
+      {"1", scoring_exp.substr(4, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(6, 1), Lexer::TokenType::TIMES},
+      {"1", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -748,12 +780,13 @@ TEST(ParserTest, ScoringTimes) {
 }
 
 TEST(ParserTest, ScoringDiv) {
-  // Scoring: "1 / 1 / 1"
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::DIV},
-                                                 {"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::DIV},
-                                                 {"1", Lexer::TokenType::TEXT}};
+  std::string_view scoring_exp = "1 / 1 / 1";
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::DIV},
+      {"1", scoring_exp.substr(4, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(6, 1), Lexer::TokenType::DIV},
+      {"1", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -777,13 +810,17 @@ TEST(ParserTest, ScoringDiv) {
 }
 
 TEST(ParserTest, ScoringTimesDiv) {
-  // Scoring: "11 / 12 * 13 / 14 / 15"
+  std::string_view scoring_exp = "11 / 12 * 13 / 14 / 15";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"11", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::DIV},
-      {"12", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::TIMES},
-      {"13", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::DIV},
-      {"14", Lexer::TokenType::TEXT}, {"", Lexer::TokenType::DIV},
-      {"15", Lexer::TokenType::TEXT}};
+      {"11", scoring_exp.substr(0, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(3, 1), Lexer::TokenType::DIV},
+      {"12", scoring_exp.substr(5, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(8, 1), Lexer::TokenType::TIMES},
+      {"13", scoring_exp.substr(10, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(13, 1), Lexer::TokenType::DIV},
+      {"14", scoring_exp.substr(15, 2), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(18, 1), Lexer::TokenType::DIV},
+      {"15", scoring_exp.substr(20, 2), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -817,29 +854,29 @@ TEST(ParserTest, ScoringTimesDiv) {
 }
 
 TEST(ParserTest, ComplexScoring) {
-  // Scoring: "1 + pow((2 * sin(3)), 4) + -5 / 6"
+  std::string_view scoring_exp = "1 + pow((2 * sin(3)), 4) + -5 / 6";
   // With parentheses in function arguments.
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"1", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::PLUS},
-      {"pow", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"", Lexer::TokenType::LPAREN},
-      {"2", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::TIMES},
-      {"sin", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"3", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::COMMA},
-      {"4", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::PLUS},
-      {"", Lexer::TokenType::MINUS},
-      {"5", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DIV},
-      {"6", Lexer::TokenType::TEXT},
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::PLUS},
+      {"pow", scoring_exp.substr(4, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", scoring_exp.substr(7, 1), Lexer::TokenType::LPAREN},
+      {"", scoring_exp.substr(8, 1), Lexer::TokenType::LPAREN},
+      {"2", scoring_exp.substr(9, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(11, 1), Lexer::TokenType::TIMES},
+      {"sin", scoring_exp.substr(13, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", scoring_exp.substr(16, 1), Lexer::TokenType::LPAREN},
+      {"3", scoring_exp.substr(17, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(18, 1), Lexer::TokenType::RPAREN},
+      {"", scoring_exp.substr(19, 1), Lexer::TokenType::RPAREN},
+      {"", scoring_exp.substr(20, 1), Lexer::TokenType::COMMA},
+      {"4", scoring_exp.substr(22, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(23, 1), Lexer::TokenType::RPAREN},
+      {"", scoring_exp.substr(25, 1), Lexer::TokenType::PLUS},
+      {"", scoring_exp.substr(27, 1), Lexer::TokenType::MINUS},
+      {"5", scoring_exp.substr(28, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(30, 1), Lexer::TokenType::DIV},
+      {"6", scoring_exp.substr(32, 1), Lexer::TokenType::TEXT},
   };
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
@@ -869,27 +906,27 @@ TEST(ParserTest, ComplexScoring) {
                           EqualsNodeInfo("DIV", NodeType::kNaryOperator),
                           EqualsNodeInfo("PLUS", NodeType::kNaryOperator)));
 
-  // Scoring: "1 + pow(2 * sin(3), 4) + -5 / 6"
+  scoring_exp = "1 + pow(2 * sin(3), 4) + -5 / 6";
   // Without parentheses in function arguments.
   lexer_tokens = {
-      {"1", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::PLUS},
-      {"pow", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"2", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::TIMES},
-      {"sin", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"3", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::COMMA},
-      {"4", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::RPAREN},
-      {"", Lexer::TokenType::PLUS},
-      {"", Lexer::TokenType::MINUS},
-      {"5", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DIV},
-      {"6", Lexer::TokenType::TEXT},
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::PLUS},
+      {"pow", scoring_exp.substr(4, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", scoring_exp.substr(7, 1), Lexer::TokenType::LPAREN},
+      {"2", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(10, 1), Lexer::TokenType::TIMES},
+      {"sin", scoring_exp.substr(12, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", scoring_exp.substr(15, 1), Lexer::TokenType::LPAREN},
+      {"3", scoring_exp.substr(16, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(17, 1), Lexer::TokenType::RPAREN},
+      {"", scoring_exp.substr(18, 1), Lexer::TokenType::COMMA},
+      {"4", scoring_exp.substr(20, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(21, 1), Lexer::TokenType::RPAREN},
+      {"", scoring_exp.substr(23, 1), Lexer::TokenType::PLUS},
+      {"", scoring_exp.substr(25, 1), Lexer::TokenType::MINUS},
+      {"5", scoring_exp.substr(26, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(28, 1), Lexer::TokenType::DIV},
+      {"6", scoring_exp.substr(30, 1), Lexer::TokenType::TEXT},
   };
   parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(tree_root, parser.ConsumeScoring());
@@ -899,13 +936,14 @@ TEST(ParserTest, ComplexScoring) {
 }
 
 TEST(ParserTest, ScoringMemberFunction) {
-  // Scoring: this.CreationTimestamp()
+  std::string_view scoring_exp = "this.CreationTimestamp()";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"this", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DOT},
-      {"CreationTimestamp", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"", Lexer::TokenType::RPAREN}};
+      {"this", scoring_exp.substr(0, 4), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(4, 1), Lexer::TokenType::DOT},
+      {"CreationTimestamp", scoring_exp.substr(5, 17),
+       Lexer::TokenType::FUNCTION_NAME},
+      {"", scoring_exp.substr(22, 1), Lexer::TokenType::LPAREN},
+      {"", scoring_exp.substr(23, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -927,13 +965,13 @@ TEST(ParserTest, ScoringMemberFunction) {
 }
 
 TEST(ParserTest, QueryMemberFunction) {
-  // Query: this.foo()
+  std::string_view query = "this.foo()";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"this", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DOT},
-      {"foo", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"", Lexer::TokenType::RPAREN}};
+      {"this", query.substr(0, 4), Lexer::TokenType::TEXT},
+      {"", query.substr(4, 1), Lexer::TokenType::DOT},
+      {"foo", query.substr(5, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(8, 1), Lexer::TokenType::LPAREN},
+      {"", query.substr(9, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -954,18 +992,18 @@ TEST(ParserTest, QueryMemberFunction) {
 }
 
 TEST(ParserTest, ScoringComplexMemberFunction) {
-  // Scoring: a.b.fun(c, d)
+  std::string_view scoring_exp = "a.b.fun(c, d)";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"a", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DOT},
-      {"b", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::DOT},
-      {"fun", Lexer::TokenType::FUNCTION_NAME},
-      {"", Lexer::TokenType::LPAREN},
-      {"c", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::COMMA},
-      {"d", Lexer::TokenType::TEXT},
-      {"", Lexer::TokenType::RPAREN}};
+      {"a", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(1, 1), Lexer::TokenType::DOT},
+      {"b", scoring_exp.substr(2, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(3, 1), Lexer::TokenType::DOT},
+      {"fun", scoring_exp.substr(4, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", scoring_exp.substr(7, 1), Lexer::TokenType::LPAREN},
+      {"c", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(9, 1), Lexer::TokenType::COMMA},
+      {"d", scoring_exp.substr(11, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(12, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeScoring());
@@ -993,13 +1031,18 @@ TEST(ParserTest, ScoringComplexMemberFunction) {
 }
 
 TEST(ParserTest, QueryComplexMemberFunction) {
-  // Query: this.abc.fun(def, ghi)
+  std::string_view query = "this.abc.fun(def, ghi)";
   std::vector<Lexer::LexerToken> lexer_tokens = {
-      {"this", Lexer::TokenType::TEXT},         {"", Lexer::TokenType::DOT},
-      {"abc", Lexer::TokenType::TEXT},          {"", Lexer::TokenType::DOT},
-      {"fun", Lexer::TokenType::FUNCTION_NAME}, {"", Lexer::TokenType::LPAREN},
-      {"def", Lexer::TokenType::TEXT},          {"", Lexer::TokenType::COMMA},
-      {"ghi", Lexer::TokenType::TEXT},          {"", Lexer::TokenType::RPAREN}};
+      {"this", query.substr(0, 4), Lexer::TokenType::TEXT},
+      {"", query.substr(4, 1), Lexer::TokenType::DOT},
+      {"abc", query.substr(5, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(8, 1), Lexer::TokenType::DOT},
+      {"fun", query.substr(9, 3), Lexer::TokenType::FUNCTION_NAME},
+      {"", query.substr(12, 1), Lexer::TokenType::LPAREN},
+      {"def", query.substr(13, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(16, 1), Lexer::TokenType::COMMA},
+      {"ghi", query.substr(17, 3), Lexer::TokenType::TEXT},
+      {"", query.substr(20, 1), Lexer::TokenType::RPAREN}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> tree_root,
                              parser.ConsumeQuery());
@@ -1027,11 +1070,12 @@ TEST(ParserTest, QueryComplexMemberFunction) {
 }
 
 TEST(ParserTest, InvalidScoringToken) {
-  // Scoring: "1 + NOT 1"
-  std::vector<Lexer::LexerToken> lexer_tokens = {{"1", Lexer::TokenType::TEXT},
-                                                 {"", Lexer::TokenType::PLUS},
-                                                 {"", Lexer::TokenType::NOT},
-                                                 {"1", Lexer::TokenType::TEXT}};
+  std::string_view scoring_exp = "1 + NOT 1";
+  std::vector<Lexer::LexerToken> lexer_tokens = {
+      {"1", scoring_exp.substr(0, 1), Lexer::TokenType::TEXT},
+      {"", scoring_exp.substr(2, 1), Lexer::TokenType::PLUS},
+      {"", scoring_exp.substr(4, 3), Lexer::TokenType::NOT},
+      {"1", scoring_exp.substr(8, 1), Lexer::TokenType::TEXT}};
   Parser parser = Parser::Create(std::move(lexer_tokens));
   EXPECT_THAT(parser.ConsumeScoring(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));

@@ -85,7 +85,8 @@ message SearchSpecProto {
   // enable testing.
   // TODO(b/208654892) Remove this field once EXPERIMENTAL_ICING_ADVANCED_QUERY
   // is fully supported.
-  optional SearchType.Code search_type = 6 [default = ICING_RAW_QUERY];
+  optional SearchType.Code search_type = 6
+      [default = EXPERIMENTAL_ICING_ADVANCED_QUERY];
 
   // OPTIONAL: If this field is present, join documents based on a nested
   // SearchSpec.

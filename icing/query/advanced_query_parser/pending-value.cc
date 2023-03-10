@@ -36,7 +36,7 @@ libtextclassifier3::Status PendingValue::ParseInt() {
         "Unable to parse \"", query_term_.term, "\" as number."));
   }
   data_type_ = DataType::kLong;
-  query_term_ = {"", false};
+  query_term_ = {/*term=*/"", /*raw_term=*/"", /*is_prefix_val=*/false};
   return libtextclassifier3::Status::OK;
 }
 

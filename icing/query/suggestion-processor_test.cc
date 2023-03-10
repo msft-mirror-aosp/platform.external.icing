@@ -14,6 +14,9 @@
 
 #include "icing/query/suggestion-processor.h"
 
+#include <string>
+#include <vector>
+
 #include "gmock/gmock.h"
 #include "icing/document-builder.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
@@ -36,9 +39,18 @@ namespace lib {
 namespace {
 
 using ::testing::IsEmpty;
-using ::testing::SizeIs;
 using ::testing::Test;
 using ::testing::UnorderedElementsAre;
+
+std::vector<std::string> RetrieveSuggestionsText(
+    const std::vector<TermMetadata>& terms) {
+  std::vector<std::string> suggestions;
+  suggestions.reserve(terms.size());
+  for (const TermMetadata& term : terms) {
+    suggestions.push_back(term.content);
+  }
+  return suggestions;
+}
 
 class SuggestionProcessorTest : public Test {
  protected:
@@ -181,8 +193,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_And) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms.at(0).content, "bar foo");
-  EXPECT_THAT(terms, SizeIs(1));
+  EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("bar foo"));
 }
 
 TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
@@ -228,8 +239,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms.at(0).content, "bar cat foo");
-  EXPECT_THAT(terms, SizeIs(1));
+  EXPECT_THAT(RetrieveSuggestionsText(terms),
+              UnorderedElementsAre("bar cat foo"));
 }
 
 TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
@@ -277,11 +288,7 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-  std::vector<std::string> suggestions;
-  for (TermMetadata term : terms) {
-    suggestions.push_back(term.content);
-  }
-  EXPECT_THAT(suggestions,
+  EXPECT_THAT(RetrieveSuggestionsText(terms),
               UnorderedElementsAre("bar OR cat fo", "bar OR cat foo"));
 }
 
@@ -340,14 +347,11 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_OrNary) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-  std::vector<std::string> suggestions;
-  for (TermMetadata term : terms) {
-    suggestions.push_back(term.content);
-  }
   // "fo" in document1, "foo" in document2 and "fool" in document3 could match.
-  EXPECT_THAT(suggestions, UnorderedElementsAre("bar OR cat OR lot fo",
-                                                "bar OR cat OR lot foo",
-                                                "bar OR cat OR lot fool"));
+  EXPECT_THAT(
+      RetrieveSuggestionsText(terms),
+      UnorderedElementsAre("bar OR cat OR lot fo", "bar OR cat OR lot foo",
+                           "bar OR cat OR lot fool"));
 }
 
 TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
@@ -394,22 +398,17 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-  std::vector<std::string> suggestions;
-  for (TermMetadata term : terms) {
-    suggestions.push_back(term.content);
-  }
   // The term is normalized.
-  EXPECT_THAT(suggestions, UnorderedElementsAre("bar foo", "bar fool"));
-  suggestions.clear();
+  EXPECT_THAT(RetrieveSuggestionsText(terms),
+              UnorderedElementsAre("bar foo", "bar fool"));
+
   // Search for "bar AND ḞÖ"
   suggestion_spec.set_prefix("bar ḞÖ");
   ICING_ASSERT_OK_AND_ASSIGN(
       terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
-  for (TermMetadata term : terms) {
-    suggestions.push_back(term.content);
-  }
   // The term is normalized.
-  EXPECT_THAT(suggestions, UnorderedElementsAre("bar foo", "bar fool"));
+  EXPECT_THAT(RetrieveSuggestionsText(terms),
+              UnorderedElementsAre("bar foo", "bar fool"));
 }
 
 TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
@@ -441,7 +440,6 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -474,7 +472,6 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -506,23 +503,22 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
       suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms.at(0).content, "foo");
+  EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 
   suggestion_spec.set_prefix("fO");
   ICING_ASSERT_OK_AND_ASSIGN(
       terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms.at(0).content, "foo");
+  EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 
   suggestion_spec.set_prefix("Fo");
   ICING_ASSERT_OK_AND_ASSIGN(
       terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms.at(0).content, "foo");
+  EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 
   suggestion_spec.set_prefix("FO");
   ICING_ASSERT_OK_AND_ASSIGN(
       terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
-
-  EXPECT_THAT(terms.at(0).content, "foo");
+  EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 }
 
 TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
@@ -593,20 +589,34 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms, IsEmpty());
+  auto terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  if (SearchSpecProto::default_instance().search_type() ==
+      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
+    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
+    EXPECT_THAT(terms, IsEmpty());
+  } else {
+    EXPECT_THAT(terms_or,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  }
 
+  // TODO(b/208654892): Update handling for hyphens to only consider it a hyphen
+  // within a TEXT token (rather than a MINUS token) when surrounded on both
+  // sides by TEXT rather than just preceded by TEXT.
   suggestion_spec.set_prefix("f-");
-  ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+  terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("f OR");
-  ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms, IsEmpty());
+  terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  if (SearchSpecProto::default_instance().search_type() ==
+      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
+    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
+    EXPECT_THAT(terms, IsEmpty());
+  } else {
+    EXPECT_THAT(terms_or,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  }
 }
 
 TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
@@ -635,10 +645,15 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
-  EXPECT_THAT(terms, IsEmpty());
+  auto terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  if (SearchSpecProto::default_instance().search_type() ==
+      SearchSpecProto::SearchType::ICING_RAW_QUERY) {
+    ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
+    EXPECT_THAT(terms, IsEmpty());
+  } else {
+    EXPECT_THAT(terms_or,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  }
 }
 
 }  // namespace
