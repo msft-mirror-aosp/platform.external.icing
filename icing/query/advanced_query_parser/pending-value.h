@@ -38,17 +38,18 @@ enum class DataType {
 
 struct QueryTerm {
   std::string term;
+  std::string_view raw_term;
   bool is_prefix_val;
 };
 
 // A holder for intermediate results when processing child nodes.
 struct PendingValue {
-  static PendingValue CreateStringPendingValue(QueryTerm query_term) {
-    return PendingValue(std::move(query_term), DataType::kString);
+  static PendingValue CreateStringPendingValue(QueryTerm str) {
+    return PendingValue(std::move(str), DataType::kString);
   }
 
-  static PendingValue CreateTextPendingValue(QueryTerm query_term) {
-    return PendingValue(std::move(query_term), DataType::kText);
+  static PendingValue CreateTextPendingValue(QueryTerm text) {
+    return PendingValue(std::move(text), DataType::kText);
   }
 
   PendingValue() : data_type_(DataType::kNone) {}
@@ -125,7 +126,7 @@ struct PendingValue {
 
  private:
   explicit PendingValue(QueryTerm query_term, DataType data_type)
-      : query_term_({std::move(query_term)}), data_type_(data_type) {}
+      : query_term_(std::move(query_term)), data_type_(data_type) {}
 
   libtextclassifier3::Status CheckDataType(DataType required_data_type) const {
     if (data_type_ == required_data_type) {
@@ -141,7 +142,7 @@ struct PendingValue {
   // iterator_ will be populated when data_type_ is kDocumentIterator.
   std::unique_ptr<DocHitInfoIterator> iterator_;
 
-  // string_vals_ will be populated when data_type_ is kStringList.
+  // string_vals_ will be populated when data_type_ kStringList.
   std::vector<std::string> string_vals_;
 
   // query_term_ will be populated when data_type_ is kString or kText

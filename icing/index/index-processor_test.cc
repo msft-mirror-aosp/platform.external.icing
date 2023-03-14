@@ -40,6 +40,8 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/string-section-indexing-handler.h"
 #include "icing/index/term-property-id.h"
+#include "icing/join/qualified-id-joinable-property-indexing-handler.h"
+#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/platform.h"
@@ -51,6 +53,7 @@
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -160,7 +163,9 @@ class IndexProcessorTest : public Test {
 
     index_dir_ = base_dir_ + "/index";
     integer_index_dir_ = base_dir_ + "/integer_index";
+    qualified_id_join_index_dir_ = base_dir_ + "/qualified_id_join_index";
     schema_store_dir_ = base_dir_ + "/schema_store";
+    doc_store_dir_ = base_dir_ + "/doc_store";
 
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -168,6 +173,10 @@ class IndexProcessorTest : public Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         integer_index_, IntegerIndex::Create(filesystem_, integer_index_dir_));
+
+    ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
+                               QualifiedIdTypeJoinableIndex::Create(
+                                   filesystem_, qualified_id_join_index_dir_));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -260,6 +269,13 @@ class IndexProcessorTest : public Test {
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
 
+    ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock_,
+                              schema_store_.get()));
+    doc_store_ = std::move(create_result.document_store);
+
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<StringSectionIndexingHandler>
             string_section_indexing_handler,
@@ -269,9 +285,16 @@ class IndexProcessorTest : public Test {
                                    integer_section_indexing_handler,
                                IntegerSectionIndexingHandler::Create(
                                    &fake_clock_, integer_index_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>
+            qualified_id_joinable_property_indexing_handler,
+        QualifiedIdJoinablePropertyIndexingHandler::Create(
+            &fake_clock_, qualified_id_join_index_.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(string_section_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
+    handlers.push_back(
+        std::move(qualified_id_joinable_property_indexing_handler));
 
     index_processor_ =
         std::make_unique<IndexProcessor>(std::move(handlers), &fake_clock_);
@@ -281,9 +304,11 @@ class IndexProcessorTest : public Test {
 
   void TearDown() override {
     index_processor_.reset();
+    doc_store_.reset();
     schema_store_.reset();
     normalizer_.reset();
     lang_segmenter_.reset();
+    qualified_id_join_index_.reset();
     integer_index_.reset();
     index_.reset();
 
@@ -298,13 +323,17 @@ class IndexProcessorTest : public Test {
   std::string base_dir_;
   std::string index_dir_;
   std::string integer_index_dir_;
+  std::string qualified_id_join_index_dir_;
   std::string schema_store_dir_;
+  std::string doc_store_dir_;
 
   std::unique_ptr<Index> index_;
   std::unique_ptr<NumericIndex<int64_t>> integer_index_;
+  std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index_;
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
   std::unique_ptr<Normalizer> normalizer_;
   std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> doc_store_;
 
   std::unique_ptr<IndexProcessor> index_processor_;
 };
@@ -788,9 +817,16 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
                                  integer_section_indexing_handler,
                              IntegerSectionIndexingHandler::Create(
                                  &fake_clock_, integer_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>
+          qualified_id_joinable_property_indexing_handler,
+      QualifiedIdJoinablePropertyIndexingHandler::Create(
+          &fake_clock_, qualified_id_join_index_.get()));
   std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
   handlers.push_back(std::move(string_section_indexing_handler));
   handlers.push_back(std::move(integer_section_indexing_handler));
+  handlers.push_back(
+      std::move(qualified_id_joinable_property_indexing_handler));
 
   IndexProcessor index_processor(std::move(handlers), &fake_clock_,
                                  /*recovery_mode=*/true);
@@ -1506,10 +1542,10 @@ TEST_F(IndexProcessorTest, IndexableIntegerProperty) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      integer_index_->GetIterator(kIndexableIntegerProperty, /*key_lower=*/1,
-                                  /*key_upper=*/5));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             integer_index_->GetIterator(
+                                 kIndexableIntegerProperty, /*key_lower=*/1,
+                                 /*key_upper=*/5, *doc_store_, *schema_store_));
 
   EXPECT_THAT(
       GetHits(std::move(itr)),
@@ -1535,10 +1571,10 @@ TEST_F(IndexProcessorTest, IndexableIntegerPropertyNoMatch) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<DocHitInfoIterator> itr,
-      integer_index_->GetIterator(kIndexableIntegerProperty, /*key_lower=*/-1,
-                                  /*key_upper=*/0));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
+                             integer_index_->GetIterator(
+                                 kIndexableIntegerProperty, /*key_lower=*/-1,
+                                 /*key_upper=*/0, *doc_store_, *schema_store_));
 
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }

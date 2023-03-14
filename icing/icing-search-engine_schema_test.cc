@@ -26,6 +26,7 @@
 #include "icing/file/mock-filesystem.h"
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/join-processor.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
@@ -152,6 +153,10 @@ ScoringSpecProto GetDefaultScoringSpec() {
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   return scoring_spec;
 }
+
+// TODO(b/272145329): create SearchSpecBuilder, JoinSpecBuilder,
+// SearchResultProtoBuilder and ResultProtoBuilder for unit tests and build all
+// instances by them.
 
 TEST_F(IcingSearchEngineSchemaTest,
        CircularReferenceCreateSectionManagerReturnsInvalidArgument) {
@@ -1077,7 +1082,203 @@ TEST_F(IcingSearchEngineSchemaTest,
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
-       ForceSetSchemaPropertyDeletionTriggersIndexRestorationAndReturnsOk) {
+       SetSchemaNewJoinablePropertyTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Message" schema with 3 properties:
+  // - "subject": string type, non-joinable. No joinable property id assigned.
+  //   It is indexed and used for searching only.
+  // - "receiverQualifiedId": string type, non-joinable. No joinable property id
+  //   assigned.
+  // - "senderQualifiedId": string type, Qualified Id type joinable. Joinable
+  //   property id = 0.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("receiverQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("Message");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person one")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person two")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto message =
+      DocumentBuilder()
+          .SetKey("namespace", "message1")
+          .SetSchema("Message")
+          .AddStringProperty("subject", "message")
+          .AddStringProperty("receiverQualifiedId", "namespace#person1")
+          .AddStringProperty("senderQualifiedId", "namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  EXPECT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `receiverQualifiedId` field.
+  // Since "receiverQualifiedId" is not JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+  // joining on that property should only return the "left-side" (`name:person`)
+  // of the join.
+  SearchSpecProto search_spec_join_by_receiver;
+  search_spec_join_by_receiver.set_query("name:person");
+  search_spec_join_by_receiver.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec_join_by_receiver.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("receiverQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:message");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  SearchResultProto expected_empty_child_search_result_proto;
+  expected_empty_child_search_result_proto.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_empty_child_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person2;
+  *expected_empty_child_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person1;
+  SearchResultProto actual_results =
+      icing.Search(search_spec_join_by_receiver, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_empty_child_search_result_proto));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `senderQualifiedId` field.
+  // Since "senderQualifiedId" is JOINABLE_VALUE_TYPE_QUALIFIED_ID, joining on
+  // that property should return both "left-side" (`name:person`) and
+  // "right-side" (`subject:message`) of the join.
+  SearchSpecProto search_spec_join_by_sender = search_spec_join_by_receiver;
+  join_spec = search_spec_join_by_sender.mutable_join_spec();
+  join_spec->set_child_property_expression("senderQualifiedId");
+
+  SearchResultProto expected_join_by_sender_search_result_proto;
+  expected_join_by_sender_search_result_proto.mutable_status()->set_code(
+      StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_join_by_sender_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person2;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = message;
+  *expected_join_by_sender_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person1;
+  actual_results =
+      icing.Search(search_spec_join_by_sender, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_join_by_sender_search_result_proto));
+
+  // Change "Message" schema to:
+  // - "subject": string type, non-joinable. No joinable property id assigned.
+  // - "receiverQualifiedId": string type, Qualified Id joinable. Joinable
+  //   property id = 0.
+  // - "senderQualifiedId": string type, Qualified Id joinable. Joinable
+  //   property id = 1.
+  SchemaProto schema_two = schema_one;
+  schema_two.mutable_types(1)
+      ->mutable_properties(1)
+      ->mutable_joinable_config()
+      ->set_value_type(JOINABLE_VALUE_TYPE_QUALIFIED_ID);
+  // Index restoration should be triggered here because new schema requires more
+  // joinable properties. Also new joinable property ids will be reassigned and
+  // index restoration should use new joinable property ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Message");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `receiverQualifiedId` field.
+  // Since we've changed "receiverQualifiedId" to be
+  // JOINABLE_VALUE_TYPE_QUALIFIED_ID, joining on that property should return
+  // should return both "left-side" (`name:person`) and "right-side"
+  // (`subject:message`) of the join now.
+  SearchResultProto expected_join_by_receiver_search_result_proto;
+  expected_join_by_receiver_search_result_proto.mutable_status()->set_code(
+      StatusProto::OK);
+  result_proto =
+      expected_join_by_receiver_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person1;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = message;
+  *expected_join_by_receiver_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person2;
+  actual_results =
+      icing.Search(search_spec_join_by_receiver, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(
+                  expected_join_by_receiver_search_result_proto));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `senderQualifiedId` field. We should
+  // get the same set of result since `senderQualifiedId` is unchanged.
+  actual_results =
+      icing.Search(search_spec_join_by_sender, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_join_by_sender_search_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchemaIndexedPropertyDeletionTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
@@ -1221,9 +1422,161 @@ TEST_F(IcingSearchEngineSchemaTest,
                                   expected_search_result_proto));
 }
 
+TEST_F(IcingSearchEngineSchemaTest,
+       ForceSetSchemaJoinablePropertyDeletionTriggersIndexRestoration) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Email" schema with 2 joinable properties:
+  // - "receiverQualifiedId": qualified id joinable. Joinable property id = 0.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 1.
+  SchemaProto email_with_receiver_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("receiverQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(email_with_receiver_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(1000)
+                             .AddStringProperty("name", "person")
+                             .Build();
+  // Create an email document with only "senderQualifiedId" joinable property.
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .Build();
+
+  EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should be
+  // able to join person and email documents by this property.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("name:person");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("senderQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:tps");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Now update the schema to remove "receiverQualifiedId" fields. This is
+  // backwards incompatible, but document should be preserved because it doesn't
+  // contain "receiverQualifiedId" field. Also since it is join incompatible, we
+  // have to rebuild join index.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 0.
+  //
+  // If the index is not correctly rebuilt, then the joinable data of
+  // "senderQualifiedId" in the joinable index will still have old joinable
+  // property id of 1 and therefore won't take effect for join search query.
+  SchemaProto email_without_receiver_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Although we've just deleted an existing property "receiverQualifiedId" from
+  // schema "Email", some email documents will still be preserved because they
+  // don't have "receiverQualifiedId" property.
+  set_schema_result =
+      icing.SetSchema(email_without_receiver_schema,
+                      /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should
+  // still be able to join person and email documents by this property.
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
 TEST_F(
     IcingSearchEngineSchemaTest,
-    ForceSetSchemaPropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
+    ForceSetSchemaIndexedPropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
@@ -1368,6 +1721,161 @@ TEST_F(
                                   expected_search_result_proto));
 }
 
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchemaJoinablePropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Email" schema with 2 joinable properties:
+  // - "receiverQualifiedId": qualified id joinable. Joinable property id = 0.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 1.
+  SchemaProto email_with_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("receiverQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(email_with_body_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(1000)
+                             .AddStringProperty("name", "person")
+                             .Build();
+  // Create an email document with only subject and timestamp property.
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .Build();
+
+  EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should be
+  // able to join person and email documents by this property.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("name:person");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("senderQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:tps");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Now update the schema to remove the "receiverQualified" field and add
+  // "zQualifiedId". This is backwards incompatible, but document should
+  // be preserved because it doesn't contain a "receiverQualified" field and
+  // "zQualifiedId" is optional.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 0.
+  // - "zQualifiedId": qualified id joinable. Joinable property id = 1.
+  //
+  // If the index is not correctly rebuilt, then the joinable data of
+  // "senderQualifiedId" in the joinable index will still have old joinable
+  // property id of 1 and therefore won't take effect for join search query.
+  SchemaProto email_no_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("zQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result = icing.SetSchema(
+      email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should
+  // still be able to join person and email documents by this property.
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
 TEST_F(IcingSearchEngineSchemaTest,
        ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -1484,9 +1992,6 @@ TEST_F(IcingSearchEngineSchemaTest,
       icing.Get("namespace1", "uri2", GetResultSpecProto::default_instance());
   EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
 }
-
-// TODO(b/256022027): add unit tests for join incompatible schema change to make
-//   sure the joinable cache is rebuilt correctly.
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());

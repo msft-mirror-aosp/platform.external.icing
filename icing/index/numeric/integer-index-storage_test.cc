@@ -14,6 +14,8 @@
 
 #include "icing/index/numeric/integer-index-storage.h"
 
+#include <unistd.h>
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,7 +28,10 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/file-backed-vector.h"
+#include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/index-block.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -42,14 +47,17 @@ namespace lib {
 
 namespace {
 
+using ::testing::Contains;
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
+using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Key;
 using ::testing::Le;
 using ::testing::Ne;
 using ::testing::Not;
@@ -1184,6 +1192,150 @@ TEST_F(IntegerIndexStorageTest,
             /*key_upper=*/std::numeric_limits<int64_t>::max()),
       IsOkAndHolds(ElementsAre(
           EqualsDocHitInfo(kDefaultDocumentId, expected_sections))));
+}
+
+TEST_F(IntegerIndexStorageTest, SplitBuckets) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage,
+      IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
+                                  serializer_.get()));
+
+  uint32_t block_size = FlashIndexStorage::SelectBlockSize();
+  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+      block_size, serializer_->GetDataTypeBytes());
+  uint32_t max_num_data_before_split =
+      max_posting_list_bytes / serializer_->GetDataTypeBytes();
+
+  // Add max_num_data_before_split + 1 keys to invoke bucket splitting.
+  // Keys: max_num_data_before_split to 0
+  // Document ids: 0 to max_num_data_before_split
+  std::unordered_map<int64_t, DocumentId> data;
+  int64_t key = max_num_data_before_split;
+  DocumentId document_id = 0;
+  for (int i = 0; i < max_num_data_before_split + 1; ++i) {
+    data[key] = document_id;
+    ICING_ASSERT_OK(
+        storage->AddKeys(document_id, kDefaultSectionId, /*new_keys=*/{key}));
+    ++document_id;
+    --key;
+  }
+  ICING_ASSERT_OK(storage->PersistToDisk());
+
+  // Manually check sorted and unsorted buckets.
+  {
+    // Check sorted buckets.
+    const std::string sorted_buckets_file_path = absl_ports::StrCat(
+        working_path_, "/", IntegerIndexStorage::kFilePrefix, ".s");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, sorted_buckets_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    EXPECT_THAT(sorted_buckets->num_elements(), Eq(1));
+    ICING_ASSERT_OK_AND_ASSIGN(const Bucket* bucket1,
+                               sorted_buckets->Get(/*idx=*/0));
+    EXPECT_THAT(bucket1->key_lower(), Eq(std::numeric_limits<int64_t>::min()));
+    EXPECT_THAT(bucket1->key_upper(), Ne(std::numeric_limits<int64_t>::max()));
+
+    int64_t sorted_bucket_key_upper = bucket1->key_upper();
+
+    // Check unsorted buckets.
+    const std::string unsorted_buckets_file_path = absl_ports::StrCat(
+        working_path_, "/", IntegerIndexStorage::kFilePrefix, ".u");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, unsorted_buckets_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+
+    EXPECT_THAT(unsorted_buckets->num_elements(), Ge(1));
+    ICING_ASSERT_OK_AND_ASSIGN(const Bucket* bucket2,
+                               unsorted_buckets->Get(/*idx=*/0));
+    EXPECT_THAT(bucket2->key_lower(), Eq(sorted_bucket_key_upper + 1));
+  }
+
+  // Ensure that search works normally.
+  std::vector<SectionId> expected_sections = {kDefaultSectionId};
+  for (int64_t key = max_num_data_before_split; key >= 0; key--) {
+    ASSERT_THAT(data, Contains(Key(key)));
+    DocumentId expected_document_id = data[key];
+    EXPECT_THAT(Query(storage.get(), /*key_lower=*/key, /*key_upper=*/key),
+                IsOkAndHolds(ElementsAre(EqualsDocHitInfo(expected_document_id,
+                                                          expected_sections))));
+  }
+}
+
+TEST_F(IntegerIndexStorageTest, SplitBucketsTriggerSortBuckets) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage,
+      IntegerIndexStorage::Create(filesystem_, working_path_, Options(),
+                                  serializer_.get()));
+
+  uint32_t block_size = FlashIndexStorage::SelectBlockSize();
+  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+      block_size, serializer_->GetDataTypeBytes());
+  uint32_t max_num_data_before_split =
+      max_posting_list_bytes / serializer_->GetDataTypeBytes();
+
+  // Add IntegerIndexStorage::kUnsortedBucketsLengthThreshold keys. For each
+  // key, add max_num_data_before_split + 1 data. Then we will get:
+  // - Bucket splitting will create kUnsortedBucketsLengthThreshold + 1 unsorted
+  //   buckets [[50, 50], [49, 49], ..., [1, 1], [51, INT64_MAX]].
+  // - Since there are kUnsortedBucketsLengthThreshold + 1 unsorted buckets, we
+  //   should sort and merge buckets.
+  std::unordered_map<int64_t, std::vector<DocumentId>> data;
+  int64_t key = IntegerIndexStorage::kUnsortedBucketsLengthThreshold;
+  DocumentId document_id = 0;
+  for (int i = 0; i < IntegerIndexStorage::kUnsortedBucketsLengthThreshold;
+       ++i) {
+    for (int j = 0; j < max_num_data_before_split + 1; ++j) {
+      data[key].push_back(document_id);
+      ICING_ASSERT_OK(
+          storage->AddKeys(document_id, kDefaultSectionId, /*new_keys=*/{key}));
+      ++document_id;
+    }
+    --key;
+  }
+  ICING_ASSERT_OK(storage->PersistToDisk());
+
+  // Manually check sorted and unsorted buckets.
+  {
+    // Check unsorted buckets.
+    const std::string unsorted_buckets_file_path = absl_ports::StrCat(
+        working_path_, "/", IntegerIndexStorage::kFilePrefix, ".u");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, unsorted_buckets_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    EXPECT_THAT(unsorted_buckets->num_elements(), Eq(0));
+
+    // Check sorted buckets.
+    const std::string sorted_buckets_file_path = absl_ports::StrCat(
+        working_path_, "/", IntegerIndexStorage::kFilePrefix, ".s");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
+        FileBackedVector<Bucket>::Create(
+            filesystem_, sorted_buckets_file_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    EXPECT_THAT(sorted_buckets->num_elements(), Gt(1));
+  }
+
+  // Ensure that search works normally.
+  for (key = 1; key <= IntegerIndexStorage::kUnsortedBucketsLengthThreshold;
+       ++key) {
+    ASSERT_THAT(data, Contains(Key(key)));
+
+    std::vector<DocHitInfo> expected_doc_hit_infos;
+    for (DocumentId doc_id : data[key]) {
+      expected_doc_hit_infos.push_back(DocHitInfo(
+          doc_id, /*hit_section_ids_mask=*/UINT64_C(1) << kDefaultSectionId));
+    }
+    EXPECT_THAT(Query(storage.get(), /*key_lower=*/key, /*key_upper=*/key),
+                IsOkAndHolds(ElementsAreArray(expected_doc_hit_infos.rbegin(),
+                                              expected_doc_hit_infos.rend())));
+  }
 }
 
 TEST_F(IntegerIndexStorageTest, TransferIndex) {

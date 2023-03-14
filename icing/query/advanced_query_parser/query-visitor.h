@@ -49,12 +49,12 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       Index* index, const NumericIndex<int64_t>* numeric_index,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       const Normalizer* normalizer, const Tokenizer* tokenizer,
+      std::string_view raw_query_text,
       DocHitInfoIteratorFilter::Options filter_options,
       TermMatchType::Code match_type, bool needs_term_frequency_info)
       : QueryVisitor(index, numeric_index, document_store, schema_store,
-                     normalizer, tokenizer, filter_options, match_type,
-                     needs_term_frequency_info,
-
+                     normalizer, tokenizer, raw_query_text, filter_options,
+                     match_type, needs_term_frequency_info,
                      PendingPropertyRestricts(),
                      /*processing_not=*/false) {}
 
@@ -105,9 +105,9 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       Index* index, const NumericIndex<int64_t>* numeric_index,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       const Normalizer* normalizer, const Tokenizer* tokenizer,
+      std::string_view raw_query_text,
       DocHitInfoIteratorFilter::Options filter_options,
       TermMatchType::Code match_type, bool needs_term_frequency_info,
-
       PendingPropertyRestricts pending_property_restricts, bool processing_not)
       : index_(*index),
         numeric_index_(*numeric_index),
@@ -115,6 +115,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
         schema_store_(*schema_store),
         normalizer_(*normalizer),
         tokenizer_(*tokenizer),
+        raw_query_text_(raw_query_text),
         filter_options_(std::move(filter_options)),
         match_type_(match_type),
         needs_term_frequency_info_(needs_term_frequency_info),
@@ -133,7 +134,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   //   - On success, a DocHitInfoIterator for the provided term
   //   - INVALID_ARGUMENT if unable to create an iterator for the term.
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-  CreateTermIterator(QueryTerm term);
+  CreateTermIterator(const QueryTerm& term);
 
   // Processes the PendingValue at the top of pending_values_, parses it into a
   // int64_t and pops the top.
@@ -279,6 +280,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   const Normalizer& normalizer_;                // Does not own!
   const Tokenizer& tokenizer_;                  // Does not own!
 
+  std::string_view raw_query_text_;
   DocHitInfoIteratorFilter::Options filter_options_;
   TermMatchType::Code match_type_;
   // Whether or not term_frequency information is needed. This affects:

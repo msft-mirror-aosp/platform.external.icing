@@ -23,8 +23,10 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/persistent-storage.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -126,8 +128,9 @@ class NumericIndex : public PersistentStorage {
   //   - INVALID_ARGUMENT_ERROR if key_lower > key_upper
   //   - Any other errors, depending on the actual implementation
   virtual libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-  GetIterator(std::string_view property_path, T key_lower,
-              T key_upper) const = 0;
+  GetIterator(std::string_view property_path, T key_lower, T key_upper,
+              const DocumentStore& document_store,
+              const SchemaStore& schema_store) const = 0;
 
   // Reduces internal file sizes by reclaiming space and ids of deleted
   // documents. Numeric index will convert all data (hits) to the new document
@@ -161,6 +164,10 @@ class NumericIndex : public PersistentStorage {
   // Sets last_added_document_id to document_id so long as document_id >
   // last_added_document_id() or last_added_document_id() is invalid.
   virtual void set_last_added_document_id(DocumentId document_id) = 0;
+
+  // The number of individual indices that the NumericIndex has created to
+  // search over all indexed properties thus far.
+  virtual int num_property_indices() const = 0;
 
  protected:
   explicit NumericIndex(const Filesystem& filesystem,

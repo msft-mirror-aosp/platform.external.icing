@@ -207,7 +207,8 @@ class DocumentStoreTest : public ::testing::Test {
     const std::string header_file =
         absl_ports::StrCat(document_store_dir_, "/document_store_header");
     DocumentStore::Header header;
-    header.magic = DocumentStore::Header::kMagic;
+    header.magic = DocumentStore::Header::GetCurrentMagic(
+        /*namespace_id_fingerprint=*/false);
     header.checksum = 10;  // Arbitrary garbage checksum
     filesystem_.DeleteFile(header_file.c_str());
     filesystem_.Write(header_file.c_str(), &header, sizeof(header));
@@ -3285,10 +3286,10 @@ TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get(),
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            &initialize_stats));
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          /*namespace_id_fingerprint=*/false, &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   // The document log is using the legacy v0 format so that a migration is
@@ -3489,10 +3490,10 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/true,
+            /*namespace_id_fingerprint=*/false, &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -3875,10 +3876,10 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir, &fake_clock_,
-                            schema_store.get(),
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            &initialize_stats));
+      DocumentStore::Create(
+          &filesystem_, document_store_dir, &fake_clock_, schema_store.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          /*namespace_id_fingerprint=*/false, &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 

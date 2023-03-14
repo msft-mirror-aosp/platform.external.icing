@@ -70,7 +70,8 @@ class DummyNumericIndex : public NumericIndex<T> {
   }
 
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
-      std::string_view property_path, T key_lower, T key_upper) const override;
+      std::string_view property_path, T key_lower, T key_upper,
+      const DocumentStore&, const SchemaStore&) const override;
 
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
@@ -92,6 +93,8 @@ class DummyNumericIndex : public NumericIndex<T> {
       last_added_document_id_ = document_id;
     }
   }
+
+  int num_property_indices() const override { return storage_.size(); }
 
  private:
   class Editor : public NumericIndex<T>::Editor {
@@ -176,7 +179,6 @@ class DummyNumericIndex : public NumericIndex<T> {
     DocHitInfo doc_hit_info_;
   };
 
- private:
   explicit DummyNumericIndex(const Filesystem& filesystem,
                              std::string&& working_path)
       : NumericIndex<T>(filesystem, std::move(working_path),
@@ -265,7 +267,8 @@ libtextclassifier3::Status DummyNumericIndex<T>::Iterator::Advance() {
 template <typename T>
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 DummyNumericIndex<T>::GetIterator(std::string_view property_path, T key_lower,
-                                  T key_upper) const {
+                                  T key_upper, const DocumentStore&,
+                                  const SchemaStore&) const {
   if (key_lower > key_upper) {
     return absl_ports::InvalidArgumentError(
         "key_lower should not be greater than key_upper");

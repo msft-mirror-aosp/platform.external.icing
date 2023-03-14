@@ -30,9 +30,13 @@ namespace icing {
 namespace lib {
 namespace {
 
+using portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::Pair;
+using ::testing::Pointee;
+using ::testing::UnorderedElementsAre;
 
 // Properties/fields in a schema type
 constexpr char kEmailType[] = "EmailMessage";
@@ -118,12 +122,32 @@ TEST(SchemaUtilTest, DependentGraphAlphabeticalOrder) {
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
                              SchemaUtil::Validate(schema));
   EXPECT_THAT(d_map, testing::SizeIs(5));
-  EXPECT_THAT(d_map["F"],
-              testing::UnorderedElementsAre("A", "B", "C", "D", "E"));
-  EXPECT_THAT(d_map["E"], testing::UnorderedElementsAre("A", "B", "C", "D"));
-  EXPECT_THAT(d_map["D"], testing::UnorderedElementsAre("A", "B"));
-  EXPECT_THAT(d_map["C"], testing::UnorderedElementsAre("A", "B"));
-  EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
+  EXPECT_THAT(
+      d_map["F"],
+      UnorderedElementsAre(Pair("A", IsEmpty()), Pair("B", IsEmpty()),
+                           Pair("C", IsEmpty()), Pair("D", IsEmpty()),
+                           Pair("E", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_e.properties(0)))))));
+  EXPECT_THAT(d_map["E"],
+              UnorderedElementsAre(
+                  Pair("A", IsEmpty()), Pair("B", IsEmpty()),
+                  Pair("C", UnorderedElementsAre(
+                                Pointee(EqualsProto(type_c.properties(0))))),
+                  Pair("D", UnorderedElementsAre(
+                                Pointee(EqualsProto(type_d.properties(0)))))));
+  EXPECT_THAT(
+      d_map["D"],
+      UnorderedElementsAre(Pair("A", IsEmpty()),
+                           Pair("B", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_b.properties(1)))))));
+  EXPECT_THAT(
+      d_map["C"],
+      UnorderedElementsAre(Pair("A", IsEmpty()),
+                           Pair("B", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_b.properties(0)))))));
+  EXPECT_THAT(d_map["B"], UnorderedElementsAre(Pair(
+                              "A", UnorderedElementsAre(Pointee(
+                                       EqualsProto(type_a.properties(0)))))));
 }
 
 TEST(SchemaUtilTest, DependentGraphReverseAlphabeticalOrder) {
@@ -206,12 +230,32 @@ TEST(SchemaUtilTest, DependentGraphReverseAlphabeticalOrder) {
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
                              SchemaUtil::Validate(schema));
   EXPECT_THAT(d_map, testing::SizeIs(5));
-  EXPECT_THAT(d_map["F"],
-              testing::UnorderedElementsAre("A", "B", "C", "D", "E"));
-  EXPECT_THAT(d_map["E"], testing::UnorderedElementsAre("A", "B", "C", "D"));
-  EXPECT_THAT(d_map["D"], testing::UnorderedElementsAre("A", "B"));
-  EXPECT_THAT(d_map["C"], testing::UnorderedElementsAre("A", "B"));
-  EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
+  EXPECT_THAT(
+      d_map["F"],
+      UnorderedElementsAre(Pair("A", IsEmpty()), Pair("B", IsEmpty()),
+                           Pair("C", IsEmpty()), Pair("D", IsEmpty()),
+                           Pair("E", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_e.properties(0)))))));
+  EXPECT_THAT(d_map["E"],
+              UnorderedElementsAre(
+                  Pair("A", IsEmpty()), Pair("B", IsEmpty()),
+                  Pair("C", UnorderedElementsAre(
+                                Pointee(EqualsProto(type_c.properties(0))))),
+                  Pair("D", UnorderedElementsAre(
+                                Pointee(EqualsProto(type_d.properties(0)))))));
+  EXPECT_THAT(
+      d_map["D"],
+      UnorderedElementsAre(Pair("A", IsEmpty()),
+                           Pair("B", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_b.properties(1)))))));
+  EXPECT_THAT(
+      d_map["C"],
+      UnorderedElementsAre(Pair("A", IsEmpty()),
+                           Pair("B", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_b.properties(0)))))));
+  EXPECT_THAT(d_map["B"], UnorderedElementsAre(Pair(
+                              "A", UnorderedElementsAre(Pointee(
+                                       EqualsProto(type_a.properties(0)))))));
 }
 
 TEST(SchemaUtilTest, DependentGraphMixedOrder) {
@@ -293,12 +337,32 @@ TEST(SchemaUtilTest, DependentGraphMixedOrder) {
   ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
                              SchemaUtil::Validate(schema));
   EXPECT_THAT(d_map, testing::SizeIs(5));
-  EXPECT_THAT(d_map["F"],
-              testing::UnorderedElementsAre("A", "B", "C", "D", "E"));
-  EXPECT_THAT(d_map["E"], testing::UnorderedElementsAre("A", "B", "C", "D"));
-  EXPECT_THAT(d_map["D"], testing::UnorderedElementsAre("A", "B"));
-  EXPECT_THAT(d_map["C"], testing::UnorderedElementsAre("A", "B"));
-  EXPECT_THAT(d_map["B"], testing::UnorderedElementsAre("A"));
+  EXPECT_THAT(
+      d_map["F"],
+      UnorderedElementsAre(Pair("A", IsEmpty()), Pair("B", IsEmpty()),
+                           Pair("C", IsEmpty()), Pair("D", IsEmpty()),
+                           Pair("E", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_e.properties(0)))))));
+  EXPECT_THAT(d_map["E"],
+              UnorderedElementsAre(
+                  Pair("A", IsEmpty()), Pair("B", IsEmpty()),
+                  Pair("C", UnorderedElementsAre(
+                                Pointee(EqualsProto(type_c.properties(0))))),
+                  Pair("D", UnorderedElementsAre(
+                                Pointee(EqualsProto(type_d.properties(0)))))));
+  EXPECT_THAT(
+      d_map["D"],
+      UnorderedElementsAre(Pair("A", IsEmpty()),
+                           Pair("B", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_b.properties(1)))))));
+  EXPECT_THAT(
+      d_map["C"],
+      UnorderedElementsAre(Pair("A", IsEmpty()),
+                           Pair("B", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_b.properties(0)))))));
+  EXPECT_THAT(d_map["B"], UnorderedElementsAre(Pair(
+                              "A", UnorderedElementsAre(Pointee(
+                                       EqualsProto(type_a.properties(0)))))));
 }
 
 TEST(SchemaUtilTest, TopLevelCycle) {
@@ -888,7 +952,8 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
   // kEmailType depends on kMessageType
-  SchemaUtil::DependentMap dependents_map = {{kMessageType, {kEmailType}}};
+  SchemaUtil::DependentMap dependents_map = {
+      {kMessageType, {{kEmailType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, dependents_map);
   EXPECT_THAT(actual, Eq(schema_delta));
@@ -1403,7 +1468,7 @@ TEST(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   // unaffected.
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.emplace(kPersonType);
-  SchemaUtil::DependentMap dependents_map = {{kEmailType, {kPersonType}}};
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       no_nested_index_schema, nested_index_schema, dependents_map);
   EXPECT_THAT(actual, Eq(schema_delta));
@@ -1464,6 +1529,547 @@ TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(SchemaUtilTest,
+     ValidateJoinablePropertyTypeQualifiedIdShouldHaveStringDataType) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_INT64)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Error if data type is not STRING for qualified id joinable value type.
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Passes once we set STRING as the data type.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                    /*propagate_delete=*/false)
+                       .SetCardinality(CARDINALITY_REQUIRED)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(SchemaUtilTest, ValidateJoinablePropertyShouldNotHaveRepeatedCardinality) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Error if using REPEATED cardinality for joinable property.
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Passes once we use OPTIONAL cardinality with joinable property.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                    /*propagate_delete=*/false)
+                       .SetCardinality(CARDINALITY_OPTIONAL)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+
+  // Passes once we use REQUIRED cardinality with joinable property.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                    /*propagate_delete=*/false)
+                       .SetCardinality(CARDINALITY_REQUIRED)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+
+  // Passes once we use REPEATED cardinality with non-joinable property.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
+                                    /*propagate_delete=*/false)
+                       .SetCardinality(CARDINALITY_REPEATED)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(SchemaUtilTest,
+     ValidateJoinablePropertyWithDeletePropagationShouldHaveTypeQualifiedId) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
+                               /*propagate_delete=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // Error if enabling delete propagation with non qualified id joinable value
+  // type.
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Passes once we set qualified id joinable value type with delete propagation
+  // enabled.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                    /*propagate_delete=*/true)
+                       .SetCardinality(CARDINALITY_REQUIRED)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+
+  // Passes once we disable delete propagation.
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
+                                    /*propagate_delete=*/false)
+                       .SetCardinality(CARDINALITY_REQUIRED)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(SchemaUtilTest,
+     ValidateNestedJoinablePropertyShouldNotHaveNestedRepeatedCardinality) {
+  // Dependency and nested document property cardinality:
+  //   "C" --(REPEATED)--> "B" --(OPTIONAL)--> "A"
+  // where "A" contains joinable property. This should not be allowed.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetDataTypeDocument("B",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Passes once we use non-REPEATED cardinality for "C.b", i.e. the dependency
+  // and nested document property cardinality becomes:
+  //   "C" --(OPTIONAL)--> "B" --(OPTIONAL)--> "A"
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("Foo")
+                       .SetDataType(TYPE_STRING)
+                       .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                    /*propagate_delete=*/false)
+                       .SetCardinality(CARDINALITY_OPTIONAL)))
+               .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("a")
+                       .SetDataTypeDocument("A",
+                                            /*index_nested_properties=*/false)
+                       .SetCardinality(CARDINALITY_OPTIONAL)))
+               .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+                   PropertyConfigBuilder()
+                       .SetName("b")
+                       .SetDataTypeDocument("B",
+                                            /*index_nested_properties=*/false)
+                       .SetCardinality(CARDINALITY_OPTIONAL)))
+               .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(
+    SchemaUtilTest,
+    ValidateNestedJoinablePropertyShouldAllowRepeatedCardinalityIfNoJoinableProperty) {
+  // Dependency and nested document property cardinality:
+  //   "C" --(OPTIONAL)--> "B" --(REPEATED)--> "A"
+  // where only "B" contains joinable property. This should be allowed.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_NONE,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("B")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeDocument(
+                                            "A",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Bar")
+                               .SetDataType(TYPE_STRING)
+                               .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                            /*propagate_delete=*/false)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetDataTypeDocument("B",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Passes since nested schema type with REPEATED cardinality doesn't have
+  // joinable property.
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(SchemaUtilTest,
+     ValidateNestedJoinablePropertyMultiplePropertiesWithSameSchema) {
+  // Dependency and nested document property cardinality:
+  //        --(a1: OPTIONAL)--
+  //      /                    \
+  // B --                        --> A
+  //      \                    /
+  //        --(a2: REPEATED)--
+  // where "A" contains joinable property. This should not be allowed.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("B")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a1")
+                                        .SetDataTypeDocument(
+                                            "A",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a2")
+                                        .SetDataTypeDocument(
+                                            "A",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Passes once we use non-REPEATED cardinality for "B.a2", i.e. the dependency
+  // and nested document property cardinality becomes:
+  //        --(a1: OPTIONAL)--
+  //      /                    \
+  // B --                        --> A
+  //      \                    /
+  //        --(a2: OPTIONAL)--
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("B")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a1")
+                                        .SetDataTypeDocument(
+                                            "A",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a2")
+                                        .SetDataTypeDocument(
+                                            "A",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+}
+
+TEST(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
+  // Dependency and nested document property cardinality:
+  //           B
+  //         /   \
+  // (OPTIONAL) (OPTIONAL)
+  //       /       \
+  // D ---           --> A
+  //       \       /
+  // (OPTIONAL) (OPTIONAL)
+  //         \   /
+  //           C
+  // where "A" contains joinable property. This should be allowed.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("D")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeDocument(
+                                            "B",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("c")
+                                        .SetDataTypeDocument(
+                                            "C",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
+
+  // Fails once we change any of edge to REPEATED cardinality.
+  //           B
+  //         /   \
+  // (REPEATED) (OPTIONAL)
+  //       /       \
+  // D ---           --> A
+  //       \       /
+  // (OPTIONAL) (OPTIONAL)
+  //         \   /
+  //           C
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("D")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeDocument(
+                                            "B",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("c")
+                                        .SetDataTypeDocument(
+                                            "C",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  //           B
+  //         /   \
+  // (OPTIONAL) (REPEATED)
+  //       /       \
+  // D ---           --> A
+  //       \       /
+  // (OPTIONAL) (OPTIONAL)
+  //         \   /
+  //           C
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("D")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeDocument(
+                                            "B",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("c")
+                                        .SetDataTypeDocument(
+                                            "C",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  //           B
+  //         /   \
+  // (OPTIONAL) (OPTIONAL)
+  //       /       \
+  // D ---           --> A
+  //       \       /
+  // (REPEATED) (OPTIONAL)
+  //         \   /
+  //           C
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("D")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeDocument(
+                                            "B",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("c")
+                                        .SetDataTypeDocument(
+                                            "C",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  //           B
+  //         /   \
+  // (OPTIONAL) (OPTIONAL)
+  //       /       \
+  // D ---           --> A
+  //       \       /
+  // (OPTIONAL) (REPEATED)
+  //         \   /
+  //           C
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("Foo")
+                  .SetDataType(TYPE_STRING)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("C").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("D")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeDocument(
+                                            "B",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("c")
+                                        .SetDataTypeDocument(
+                                            "C",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(SchemaUtilTest, MultipleReferencesToSameNestedSchemaOk) {

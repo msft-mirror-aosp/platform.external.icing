@@ -369,11 +369,6 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
                        bool ignore_errors_and_delete_documents) {
   ICING_ASSIGN_OR_RETURN(SchemaUtil::DependentMap new_dependent_map,
                          SchemaUtil::Validate(new_schema));
-  // TODO(b/256022027): validate and extract joinable properties.
-  //   - Joinable config in non-string properties should be ignored, since
-  //     currently we only support string joining.
-  //   - If set joinable, the property itself and all of its nested properties
-  //     should not have REPEATED cardinality.
 
   SetSchemaResult result;
 

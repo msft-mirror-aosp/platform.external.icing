@@ -225,10 +225,10 @@ class SchemaStore {
   //
   // Returns:
   //   Valid pointer to JoinablePropertyMetadata on success
+  //   nullptr if property_path doesn't exist (or is not joinable) in the
+  //     joinable metadata list of the schema
   //   FAILED_PRECONDITION if schema hasn't been set yet
   //   INVALID_ARGUMENT if schema type id is invalid
-  //   NOT_FOUND if property_path doesn't exist (or is not joinable) in the
-  //     joinable metadata list of the schema
   libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
   GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
                               const std::string& property_path) const;

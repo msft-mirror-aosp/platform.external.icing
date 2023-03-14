@@ -63,10 +63,10 @@ TEST(FunctionTest, ParamNotWrongTypeFails) {
       Function function,
       Function::Create(/*return_type=*/DataType::kString, "foo",
                        /*params=*/{Param(DataType::kString)}, TrivialEval()));
-  // foo(bar)
+  std::string_view query = "foo(bar)";
   std::vector<PendingValue> args;
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(4, 3), /*is_prefix_val=*/false}));
   EXPECT_THAT(function.Eval(std::move(args)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -77,10 +77,10 @@ TEST(FunctionTest, ParamRequiredArgSucceeds) {
       Function::Create(/*return_type=*/DataType::kString, "foo",
                        /*params=*/{Param(DataType::kString)}, TrivialEval()));
 
-  // foo("bar")
+  std::string_view query = R"(foo("bar"))";
   std::vector<PendingValue> args;
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(PendingValue val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 }
@@ -136,19 +136,19 @@ TEST(FunctionTest, MultipleArgsTrailingOptionalSucceeds) {
                               Param(DataType::kString, Cardinality::kOptional)},
                              TrivialEval()));
 
-  // foo("bar")
+  std::string_view query = R"(foo("bar"))";
   std::vector<PendingValue> args;
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(PendingValue val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar", "baz")
+  query = R"(foo("bar", "baz"))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(12, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 }
@@ -162,30 +162,30 @@ TEST(FunctionTest, MultipleArgsTrailingVariableSucceeds) {
                               Param(DataType::kString, Cardinality::kVariable)},
                              TrivialEval()));
 
-  // foo("bar")
+  std::string_view query = R"(foo("bar"))";
   std::vector<PendingValue> args;
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(PendingValue val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar", "baz")
+  query = R"(foo("bar", "baz"))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(12, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar", "baz", "bat")
+  query = R"(foo("bar", "baz", "bat"))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(12, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bat", /*is_prefix_val=*/false}));
+      QueryTerm{"bat", query.substr(19, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 }
@@ -214,26 +214,26 @@ TEST(FunctionTest, MultipleArgsOptionalBeforeOptionalSucceeds) {
   ICING_ASSERT_OK_AND_ASSIGN(PendingValue val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar")
+  std::string_view query = R"(foo("bar"))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar", baz)
+  query = R"(foo("bar", baz))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(11, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo(baz)
+  query = R"(foo(baz))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(4, 3), /*is_prefix_val=*/false}));
   EXPECT_THAT(function.Eval(std::move(args)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -252,46 +252,46 @@ TEST(FunctionTest, MultipleArgsOptionalBeforeVariableSucceeds) {
   ICING_ASSERT_OK_AND_ASSIGN(PendingValue val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar")
+  std::string_view query = R"(foo("bar"))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar", baz)
+  query = R"(foo("bar", baz))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(11, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo("bar", baz, bat)
+  query = R"(foo("bar", baz, bat))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateStringPendingValue(
-      QueryTerm{"bar", /*is_prefix_val=*/false}));
+      QueryTerm{"bar", query.substr(5, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(11, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"bat", /*is_prefix_val=*/false}));
+      QueryTerm{"bat", query.substr(16, 3), /*is_prefix_val=*/false}));
   ICING_ASSERT_OK_AND_ASSIGN(val, function.Eval(std::move(args)));
   EXPECT_THAT(val.is_placeholder(), IsTrue());
 
-  // foo(baz)
+  query = R"(foo(baz))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(4, 3), /*is_prefix_val=*/false}));
   EXPECT_THAT(function.Eval(std::move(args)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
-  // foo(baz, bat)
+  query = R"(foo(baz, bat))";
   args = std::vector<PendingValue>();
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"baz", /*is_prefix_val=*/false}));
+      QueryTerm{"baz", query.substr(4, 3), /*is_prefix_val=*/false}));
   args.push_back(PendingValue::CreateTextPendingValue(
-      QueryTerm{"bat", /*is_prefix_val=*/false}));
+      QueryTerm{"bat", query.substr(9, 3), /*is_prefix_val=*/false}));
   EXPECT_THAT(function.Eval(std::move(args)),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }

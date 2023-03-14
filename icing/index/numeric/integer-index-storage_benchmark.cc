@@ -57,6 +57,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
 static constexpr SectionId kDefaultSectionId = 12;
@@ -237,18 +238,24 @@ void BM_ExactQuery(benchmark::State& state) {
         std::unique_ptr<DocHitInfoIterator> iterator,
         storage->GetIterator(/*query_key_lower=*/exact_query_key,
                              /*query_key_upper=*/exact_query_key));
-    int cnt = 0;
+    std::vector<DocHitInfo> data;
     while (iterator->Advance().ok()) {
-      benchmark::DoNotOptimize(iterator->doc_hit_info());
-      ++cnt;
+      data.push_back(iterator->doc_hit_info());
     }
 
+    state.PauseTiming();
     const auto it = keys.find(exact_query_key);
     if (it == keys.end()) {
-      ASSERT_THAT(cnt, Eq(0));
+      ASSERT_THAT(data, IsEmpty());
     } else {
-      ASSERT_THAT(it->second, SizeIs(cnt));
+      ASSERT_THAT(data, SizeIs(it->second.size()));
+      std::reverse(data.begin(), data.end());
+      for (int i = 0; i < data.size(); ++i) {
+        ASSERT_THAT(data[i].document_id(), Eq(it->second[i]));
+        ASSERT_THAT(data[i].hit_section_ids_mask(), Eq(1 << kDefaultSectionId));
+      }
     }
+    state.ResumeTiming();
   }
 }
 BENCHMARK(BM_ExactQuery)

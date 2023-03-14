@@ -105,6 +105,9 @@ class FlashIndexStorage {
 
   ~FlashIndexStorage();
 
+  // Selects block size to use.
+  static uint32_t SelectBlockSize();
+
   // Retrieves the PostingList referred to by PostingListIdentifier. This
   // posting list must have been previously allocated by a prior call to
   // AllocatePostingList.

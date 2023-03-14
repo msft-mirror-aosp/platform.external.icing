@@ -203,8 +203,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
   QueryVisitor query_visitor(
       &index_, &numeric_index_, &document_store_, &schema_store_, &normalizer_,
-      plain_tokenizer.get(), std::move(options), search_spec.term_match_type(),
-      needs_term_frequency_info);
+      plain_tokenizer.get(), search_spec.query(), std::move(options),
+      search_spec.term_match_type(), needs_term_frequency_info);
   tree_root->Accept(&query_visitor);
   return std::move(query_visitor).ConsumeResults();
 }
