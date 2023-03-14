@@ -4388,6 +4388,96 @@ TEST_P(IcingSearchEngineSearchTest, LatinSnippetTest) {
   ASSERT_THAT(match, Eq("ḞÖÖ"));
 }
 
+TEST_P(IcingSearchEngineSearchTest,
+       DocumentStoreNamespaceIdFingerprintCompatible) {
+  DocumentProto document1 = CreateMessageDocument("namespace", "uri1");
+  DocumentProto document2 = CreateMessageDocument("namespace", "uri2");
+  DocumentProto document3 = CreateMessageDocument("namespace", "uri3");
+
+  // Initialize with some documents with document_store_namespace_id_fingerprint
+  // being false.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_document_store_namespace_id_fingerprint(false);
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    // Creates and inserts 3 documents
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  }
+
+  // Reinitializate with document_store_namespace_id_fingerprint being true,
+  // and test that we are still able to read/query docs.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_document_store_namespace_id_fingerprint(true);
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    ASSERT_THAT(
+        icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoIsOk());
+    ASSERT_THAT(
+        icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoIsOk());
+    ASSERT_THAT(
+        icing.Get("namespace", "uri3", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoIsOk());
+
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::PREFIX);
+    search_spec.set_query("message");
+    search_spec.set_search_type(GetParam());
+    SearchResultProto results =
+        icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results.results(), SizeIs(3));
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+    EXPECT_THAT(results.results(1).document(), EqualsProto(document2));
+    EXPECT_THAT(results.results(2).document(), EqualsProto(document1));
+  }
+
+  // Reinitializate with document_store_namespace_id_fingerprint being false,
+  // and test that we are still able to read/query docs.
+  {
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    options.set_document_store_namespace_id_fingerprint(false);
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    ASSERT_THAT(
+        icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoIsOk());
+    ASSERT_THAT(
+        icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoIsOk());
+    ASSERT_THAT(
+        icing.Get("namespace", "uri3", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoIsOk());
+
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::PREFIX);
+    search_spec.set_query("message");
+    search_spec.set_search_type(GetParam());
+    SearchResultProto results =
+        icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results.results(), SizeIs(3));
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document3));
+    EXPECT_THAT(results.results(1).document(), EqualsProto(document2));
+    EXPECT_THAT(results.results(2).document(), EqualsProto(document1));
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     IcingSearchEngineSearchTest, IcingSearchEngineSearchTest,
     testing::Values(

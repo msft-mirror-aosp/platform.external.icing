@@ -42,6 +42,7 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::IsNull;
 using ::testing::Pointee;
 using ::testing::SizeIs;
 
@@ -491,11 +492,11 @@ TEST_F(JoinablePropertyManagerTest, GetJoinablePropertyMetadataByPathNotExist) {
   EXPECT_THAT(
       schema_type_manager->joinable_property_manager()
           .GetJoinablePropertyMetadata(/*schema_type_id=*/0, "nonExistingPath"),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+      IsOkAndHolds(IsNull()));
   EXPECT_THAT(schema_type_manager->joinable_property_manager()
                   .GetJoinablePropertyMetadata(/*schema_type_id=*/1,
                                                "emails.nonExistingPath"),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+              IsOkAndHolds(IsNull()));
 }
 
 // Note: valid GetMetadataList has been tested in

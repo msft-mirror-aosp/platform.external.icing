@@ -30,6 +30,7 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index-data.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -117,6 +118,10 @@ class IntegerIndexStorage : public PersistentStorage {
 
     int64_t key_upper() const { return key_upper_; }
 
+    void set_key_lower(int64_t key_lower) { key_lower_ = key_lower; }
+
+    void set_key_upper(int64_t key_upper) { key_upper_ = key_upper; }
+
     PostingListIdentifier posting_list_identifier() const {
       return posting_list_identifier_;
     }
@@ -176,13 +181,28 @@ class IntegerIndexStorage : public PersistentStorage {
       WorkingPathType::kDirectory;
   static constexpr std::string_view kFilePrefix = "integer_index_storage";
 
-  // # of data threshold for bucket merging. If total # data of adjacent buckets
-  // exceed this value, then flush the accumulated data. Otherwise merge
-  // buckets and their data.
+  // # of data threshold for bucket merging during optimization (TransferIndex).
+  // If total # data of adjacent buckets exceed this value, then flush the
+  // accumulated data. Otherwise merge buckets and their data.
   //
   // Calculated by: 0.7 * (kMaxPostingListSize / sizeof(IntegerIndexData)),
   // where kMaxPostingListSize = (kPageSize - sizeof(IndexBlock::BlockHeader)).
   static constexpr int32_t kNumDataThresholdForBucketMerge = 240;
+
+  // # of data threshold for bucket splitting during indexing (AddKeys).
+  // When the posting list of a bucket is full, we will try to split data into
+  // multiple buckets according to their keys. In order to achieve good
+  // (amortized) time complexity, we want # of data in new buckets to be at most
+  // half # of elements in a full posting list.
+  //
+  // Calculated by: 0.5 * (kMaxPostingListSize / sizeof(IntegerIndexData)),
+  // where kMaxPostingListSize = (kPageSize - sizeof(IndexBlock::BlockHeader)).
+  static constexpr int32_t kNumDataThresholdForBucketSplit = 170;
+
+  // Length threshold to sort and merge unsorted buckets into sorted buckets. If
+  // the length of unsorted_buckets exceed the threshold, then call
+  // SortBuckets().
+  static constexpr int32_t kUnsortedBucketsLengthThreshold = 50;
 
   // Creates a new IntegerIndexStorage instance to index integers (for a single
   // property). If any of the underlying file is missing, then delete the whole
@@ -370,7 +390,6 @@ class IntegerIndexStorage : public PersistentStorage {
   //     into several new buckets with new ranges, and split the data (according
   //     to their keys and the range of new buckets) of the original posting
   //     list into several new posting lists.
-  //     TODO(b/259743562): [Optimization 1] implement split
   //   - Otherwise, just simply add a new key into it, and PostingListAccessor
   //     mechanism will automatically create a new max size posting list and
   //     chain them.

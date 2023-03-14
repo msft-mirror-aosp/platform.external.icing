@@ -37,22 +37,6 @@
 namespace icing {
 namespace lib {
 
-namespace {
-
-uint32_t SelectBlockSize() {
-  // This should be close to the flash page size.
-  static constexpr uint32_t kMinBlockSize = 4096;
-
-  // Determine a good block size.
-  uint32_t page_size = getpagesize();
-  uint32_t block_size = std::max(kMinBlockSize, page_size);
-
-  // Align up to the nearest page size.
-  return math_util::RoundUpTo(block_size, page_size);
-}
-
-}  // namespace
-
 libtextclassifier3::StatusOr<FlashIndexStorage> FlashIndexStorage::Create(
     std::string index_filename, const Filesystem* filesystem,
     PostingListSerializer* serializer, bool in_memory) {
@@ -73,6 +57,18 @@ FlashIndexStorage::~FlashIndexStorage() {
     FlushInMemoryFreeList();
     PersistToDisk();
   }
+}
+
+/* static */ uint32_t FlashIndexStorage::SelectBlockSize() {
+  // This should be close to the flash page size.
+  static constexpr uint32_t kMinBlockSize = 4096;
+
+  // Determine a good block size.
+  uint32_t page_size = getpagesize();
+  uint32_t block_size = std::max(kMinBlockSize, page_size);
+
+  // Align up to the nearest page size.
+  return math_util::RoundUpTo(block_size, page_size);
 }
 
 bool FlashIndexStorage::Init() {

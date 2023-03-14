@@ -156,8 +156,7 @@ JoinablePropertyManager::GetJoinablePropertyMetadata(
                         .property_path_to_id_map.find(property_path);
   if (iter == joinable_property_metadata_cache_[schema_type_id]
                   .property_path_to_id_map.end()) {
-    return absl_ports::NotFoundError(
-        "Property path is not joinable or doesn't exist");
+    return nullptr;
   }
 
   JoinablePropertyId joinable_property_id = iter->second;

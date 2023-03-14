@@ -15,6 +15,7 @@
 #include "icing/schema/schema-util.h"
 
 #include <cstdint>
+#include <queue>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -143,7 +144,7 @@ void AddIncompatibleChangeToDelta(
   auto dependent_types_itr =
       new_schema_dependent_map.find(old_type_config.schema_type());
   if (dependent_types_itr != new_schema_dependent_map.end()) {
-    for (std::string_view dependent_type : dependent_types_itr->second) {
+    for (const auto& [dependent_type, _] : dependent_types_itr->second) {
       // The types from new_schema that depend on the current
       // old_type_config may not present in old_schema.
       // Those types will be listed at schema_delta.schema_types_new
@@ -176,14 +177,15 @@ libtextclassifier3::Status ExpandTranstiveDependents(
     return libtextclassifier3::Status::OK;
   }
   pending_expansions->insert(type);
-  std::unordered_set<std::string_view> expanded_dependents;
+  std::unordered_map<std::string_view, std::vector<const PropertyConfigProto*>>
+      expanded_dependents;
 
   // Add all of the direct dependents.
   expanded_dependents.reserve(itr->second.size());
   expanded_dependents.insert(itr->second.begin(), itr->second.end());
 
   // Iterate through each direct dependent and add their indirect dependents.
-  for (std::string_view dep : itr->second) {
+  for (const auto& [dep, _] : itr->second) {
     // 1. Check if we're in the middle of expanding this type - IOW there's a
     // cycle!
     if (pending_expansions->count(dep) > 0) {
@@ -206,8 +208,12 @@ libtextclassifier3::Status ExpandTranstiveDependents(
     auto dep_expanded_itr = expanded_dependent_map->find(dep);
     expanded_dependents.reserve(expanded_dependents.size() +
                                 dep_expanded_itr->second.size());
-    expanded_dependents.insert(dep_expanded_itr->second.begin(),
-                               dep_expanded_itr->second.end());
+    for (const auto& [dep_dependent, _] : dep_expanded_itr->second) {
+      // Insert a transitive dependent `dep_dependent` for `type`. Also since
+      // there is no direct edge between `type` and `dep_dependent`, the direct
+      // edge (i.e. PropertyConfigProto*) vector is empty.
+      expanded_dependents.insert({dep_dependent, {}});
+    }
   }
   expanded_dependent_map->insert({type, std::move(expanded_dependents)});
   pending_expansions->erase(type);
@@ -283,7 +289,8 @@ BuildTransitiveDependentGraph(const SchemaProto& schema) {
         if (known_types.count(property_schema_type) == 0) {
           unknown_types.insert(property_schema_type);
         }
-        dependent_map[property_schema_type].insert(schema_type);
+        dependent_map[property_schema_type][schema_type].push_back(
+            &property_config);
       }
     }
   }
@@ -304,6 +311,9 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
   // Tracks PropertyConfigs within a SchemaTypeConfig that we've validated
   // already.
   std::unordered_set<std::string_view> known_property_names;
+
+  // Tracks PropertyConfigs containing joinable properties.
+  std::unordered_set<std::string_view> schema_types_with_joinable_property;
 
   // 2. Validate the properties of each type.
   for (const auto& type_config : schema.types()) {
@@ -350,6 +360,55 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
         ICING_RETURN_IF_ERROR(ValidateStringIndexingConfig(
             property_config.string_indexing_config(), data_type, schema_type,
             property_name));
+      }
+
+      ICING_RETURN_IF_ERROR(ValidateJoinableConfig(
+          property_config.joinable_config(), data_type,
+          property_config.cardinality(), schema_type, property_name));
+      if (property_config.joinable_config().value_type() !=
+          JoinableConfig::ValueType::NONE) {
+        schema_types_with_joinable_property.insert(schema_type);
+      }
+    }
+  }
+
+  // BFS traverse the dependent graph to make sure that no nested levels
+  // (properties with DOCUMENT data type) have REPEATED cardinality while
+  // depending on schema types with joinable property.
+  std::queue<std::string_view> frontier;
+  for (const auto& schema_type : schema_types_with_joinable_property) {
+    frontier.push(schema_type);
+  }
+  std::unordered_set<std::string_view> traversed =
+      std::move(schema_types_with_joinable_property);
+  while (!frontier.empty()) {
+    std::string_view schema_type = frontier.front();
+    frontier.pop();
+
+    const auto it = dependent_map.find(schema_type);
+    if (it == dependent_map.end()) {
+      continue;
+    }
+
+    // Check every type that has a property of type schema_type.
+    for (const auto& [next_schema_type, property_configs] : it->second) {
+      // Check all properties in "next_schema_type" that are of type
+      // "schema_type".
+      for (const PropertyConfigProto* property_config : property_configs) {
+        if (property_config != nullptr &&
+            property_config->cardinality() ==
+                PropertyConfigProto::Cardinality::REPEATED) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Schema type '", next_schema_type,
+              "' cannot have REPEATED nested document property '",
+              property_config->property_name(),
+              "' while connecting to some joinable properties"));
+        }
+      }
+
+      if (traversed.count(next_schema_type) == 0) {
+        traversed.insert(next_schema_type);
+        frontier.push(next_schema_type);
       }
     }
   }
@@ -435,6 +494,35 @@ libtextclassifier3::Status SchemaUtil::ValidateStringIndexingConfig(
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("Indexed string property '", property_name,
                            "' cannot have a tokenizer type of NONE"));
+  }
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status SchemaUtil::ValidateJoinableConfig(
+    const JoinableConfig& config, PropertyConfigProto::DataType::Code data_type,
+    PropertyConfigProto::Cardinality::Code cardinality,
+    std::string_view schema_type, std::string_view property_name) {
+  if (config.value_type() == JoinableConfig::ValueType::QUALIFIED_ID) {
+    if (data_type != PropertyConfigProto::DataType::STRING) {
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Qualified id joinable property '", property_name,
+                             "' is required to have STRING data type"));
+    }
+
+    if (cardinality == PropertyConfigProto::Cardinality::REPEATED) {
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Qualified id joinable property '", property_name,
+                             "' cannot have REPEATED cardinality"));
+    }
+  }
+
+  if (config.propagate_delete() &&
+      config.value_type() != JoinableConfig::ValueType::QUALIFIED_ID) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("Field 'property_name' '", property_name,
+                           "' is required to have QUALIFIED_ID joinable "
+                           "value type with delete propagation enabled"));
   }
 
   return libtextclassifier3::Status::OK;

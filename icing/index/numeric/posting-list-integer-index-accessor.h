@@ -50,7 +50,7 @@ class PostingListIntegerIndexAccessor : public PostingListAccessor {
   Create(FlashIndexStorage* storage,
          PostingListIntegerIndexSerializer* serializer);
 
-  // Create a PostingListIntegerIndexAccessor with an existing posting list
+  // Creates a PostingListIntegerIndexAccessor with an existing posting list
   // identified by existing_posting_list_id.
   //
   // RETURNS:
@@ -64,17 +64,30 @@ class PostingListIntegerIndexAccessor : public PostingListAccessor {
 
   PostingListSerializer* GetSerializer() override { return serializer_; }
 
-  // Retrieve the next batch of data in the posting list chain
+  // Retrieves the next batch of data in the posting list chain.
   //
   // RETURNS:
   //   - On success, a vector of integer index data in the posting list chain
-  //   - INTERNAL if called on an instance that was created via Create, if
-  //     unable to read the next posting list in the chain or if the posting
-  //     list has been corrupted somehow.
+  //   - FAILED_PRECONDITION_ERROR if called on an instance that was created via
+  //     Create.
+  //   - INTERNAL_ERROR if unable to read the next posting list in the chain or
+  //     if the posting list has been corrupted somehow.
   libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
   GetNextDataBatch();
 
-  // Prepend one data. This may result in flushing the posting list to disk (if
+  // Retrieves all data from the posting list chain and frees all posting
+  // list(s).
+  //
+  // RETURNS:
+  //   - On success, a vector of integer index data in the posting list chain
+  //   - FAILED_PRECONDITION_ERROR if called on an instance that was created via
+  //     Create.
+  //   - INTERNAL_ERROR if unable to read the next posting list in the chain or
+  //     if the posting list has been corrupted somehow.
+  libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
+  GetAllDataAndFree();
+
+  // Prepends one data. This may result in flushing the posting list to disk (if
   // the PostingListIntegerIndexAccessor holds a max-sized posting list that
   // is full) or freeing a pre-existing posting list if it is too small to fit
   // all data necessary.
@@ -87,7 +100,15 @@ class PostingListIntegerIndexAccessor : public PostingListAccessor {
   //     posting list.
   libtextclassifier3::Status PrependData(const IntegerIndexData& data);
 
-  // TODO(b/259743562): [Optimization 1] add GetAndClear, IsFull for split
+  bool WantsSplit() const {
+    const PostingListUsed* current_pl =
+        preexisting_posting_list_ != nullptr
+            ? &preexisting_posting_list_->posting_list
+            : &in_memory_posting_list_;
+    // Only max-sized PLs get split. Smaller PLs just get copied to larger PLs.
+    return current_pl->size_in_bytes() == storage_->max_posting_list_bytes() &&
+           serializer_->IsFull(current_pl);
+  }
 
  private:
   explicit PostingListIntegerIndexAccessor(
@@ -95,6 +116,20 @@ class PostingListIntegerIndexAccessor : public PostingListAccessor {
       PostingListIntegerIndexSerializer* serializer)
       : PostingListAccessor(storage, std::move(in_memory_posting_list)),
         serializer_(serializer) {}
+
+  // Retrieves the next batch of data in the posting list chain.
+  //
+  // - free_posting_list: a boolean flag indicating whether freeing all posting
+  //   lists after retrieving batch data.
+  //
+  // RETURNS:
+  //   - On success, a vector of integer index data in the posting list chain
+  //   - FAILED_PRECONDITION_ERROR if called on an instance that was created via
+  //     Create.
+  //   - INTERNAL_ERROR if unable to read the next posting list in the chain or
+  //     if the posting list has been corrupted somehow.
+  libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
+  GetNextDataBatchImpl(bool free_posting_list);
 
   PostingListIntegerIndexSerializer* serializer_;  // Does not own.
 };

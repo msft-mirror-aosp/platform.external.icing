@@ -1352,6 +1352,53 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, QuerySyntax) {
                                  "subproperty2", ":", "term3"));
 }
 
+TEST_P(IcuLanguageSegmenterAllLocalesTest, MultipleLangSegmentersTest) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(
+          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LanguageSegmenter::Iterator> iterator_one,
+      language_segmenter->Segment(
+          "foo bar baz", LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LanguageSegmenter::Iterator> iterator_two,
+      language_segmenter->Segment(
+          "abra kadabra alakazam",
+          LanguageSegmenter::AccessType::kForwardIterator));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("foo"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("abra"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("kadabra"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+
+  ASSERT_TRUE(iterator_two->Advance());
+  ASSERT_TRUE(iterator_one->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("baz"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("alakazam"));
+
+  ASSERT_FALSE(iterator_two->Advance());
+  ASSERT_FALSE(iterator_one->Advance());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     LocaleName, IcuLanguageSegmenterAllLocalesTest,
     testing::Values(ULOC_US, ULOC_UK, ULOC_CANADA, ULOC_CANADA_FRENCH,

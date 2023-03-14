@@ -16,10 +16,12 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
 #include "icing/join/doc-join-info.h"
@@ -89,8 +91,8 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, InitializeNewFiles) {
 
   // Metadata file should be initialized correctly for both info and crcs
   // sections.
-  const std::string metadata_file_path = absl_ports::StrCat(
-      working_path_, "/", QualifiedIdTypeJoinableIndex::kFilePrefix, ".m");
+  const std::string metadata_file_path =
+      absl_ports::StrCat(working_path_, "/metadata");
   auto metadata_buffer = std::make_unique<uint8_t[]>(
       QualifiedIdTypeJoinableIndex::kMetadataFileSize);
   ASSERT_THAT(
@@ -134,13 +136,13 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
   // Insert some data.
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                 /*ref_document_id=*/0));
+                 /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/20),
-                 /*ref_document_id=*/2));
+                 /*ref_qualified_id_str=*/"namespace#uriB"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20),
-                 /*ref_document_id=*/4));
+                 /*ref_qualified_id_str=*/"namespace#uriC"));
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
@@ -158,13 +160,13 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
   // Insert some data.
   ICING_ASSERT_OK(
       index1->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                  /*ref_document_id=*/0));
+                  /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
       index1->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/20),
-                  /*ref_document_id=*/2));
+                  /*ref_qualified_id_str=*/"namespace#uriB"));
   ICING_ASSERT_OK(
       index1->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20),
-                  /*ref_document_id=*/4));
+                  /*ref_qualified_id_str=*/"namespace#uriC"));
   ASSERT_THAT(index1, Pointee(SizeIs(3)));
 
   // After calling PersistToDisk, all checksums should be recomputed and synced
@@ -178,13 +180,13 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
   EXPECT_THAT(index2, Pointee(SizeIs(3)));
   EXPECT_THAT(
       index2->Get(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20)),
-      IsOkAndHolds(0));
+      IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriA"));
   EXPECT_THAT(
       index2->Get(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/20)),
-      IsOkAndHolds(2));
+      IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriB"));
   EXPECT_THAT(
       index2->Get(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20)),
-      IsOkAndHolds(4));
+      IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriC"));
 }
 
 TEST_F(QualifiedIdTypeJoinableIndexTest,
@@ -198,13 +200,13 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
     // Insert some data.
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/0));
+                   /*ref_qualified_id_str=*/"namespace#uriA"));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/2));
+                   /*ref_qualified_id_str=*/"namespace#uriB"));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/4));
+                   /*ref_qualified_id_str=*/"namespace#uriC"));
     ASSERT_THAT(index, Pointee(SizeIs(3)));
   }
 
@@ -219,13 +221,13 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
     EXPECT_THAT(index, Pointee(SizeIs(3)));
     EXPECT_THAT(index->Get(DocJoinInfo(/*document_id=*/1,
                                        /*joinable_property_id=*/20)),
-                IsOkAndHolds(0));
+                IsOkAndHolds("namespace#uriA"));
     EXPECT_THAT(index->Get(DocJoinInfo(/*document_id=*/3,
                                        /*joinable_property_id=*/20)),
-                IsOkAndHolds(2));
+                IsOkAndHolds("namespace#uriB"));
     EXPECT_THAT(index->Get(DocJoinInfo(/*document_id=*/5,
                                        /*joinable_property_id=*/20)),
-                IsOkAndHolds(4));
+                IsOkAndHolds("namespace#uriC"));
   }
 }
 
@@ -238,15 +240,15 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
         QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/0));
+                   /*ref_qualified_id_str=*/"namespace#uriA"));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
 
   {
     // Manually change magic and update checksum
-    const std::string metadata_file_path = absl_ports::StrCat(
-        working_path_, "/", QualifiedIdTypeJoinableIndex::kFilePrefix, ".m");
+    const std::string metadata_file_path =
+        absl_ports::StrCat(working_path_, "/metadata");
     ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
     ASSERT_THAT(metadata_sfd.is_valid(), IsTrue());
 
@@ -290,14 +292,14 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
         QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/0));
+                   /*ref_qualified_id_str=*/"namespace#uriA"));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
 
   {
-    const std::string metadata_file_path = absl_ports::StrCat(
-        working_path_, "/", QualifiedIdTypeJoinableIndex::kFilePrefix, ".m");
+    const std::string metadata_file_path =
+        absl_ports::StrCat(working_path_, "/metadata");
     ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
     ASSERT_THAT(metadata_sfd.is_valid(), IsTrue());
 
@@ -337,14 +339,14 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
         QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/0));
+                   /*ref_qualified_id_str=*/"namespace#uriA"));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
 
   {
-    const std::string metadata_file_path = absl_ports::StrCat(
-        working_path_, "/", QualifiedIdTypeJoinableIndex::kFilePrefix, ".m");
+    const std::string metadata_file_path =
+        absl_ports::StrCat(working_path_, "/metadata");
     ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
     ASSERT_THAT(metadata_sfd.is_valid(), IsTrue());
 
@@ -376,9 +378,8 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
                        HasSubstr("Invalid info crc")));
 }
 
-TEST_F(
-    QualifiedIdTypeJoinableIndexTest,
-    InitializeExistingFilesWithCorruptedDocumentToQualifiedIdMapperShouldFail) {
+TEST_F(QualifiedIdTypeJoinableIndexTest,
+       InitializeExistingFilesWithCorruptedDocJoinInfoMapperShouldFail) {
   {
     // Create new qualified id type joinable index
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -386,19 +387,18 @@ TEST_F(
         QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
-                   /*ref_document_id=*/0));
+                   /*ref_qualified_id_str=*/"namespace#uriA"));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
 
   {
-    // Corrupt document_to_qualified_id_mapper manually.
-    std::string mapper_working_path = absl_ports::StrCat(
-        working_path_, "/", QualifiedIdTypeJoinableIndex::kFilePrefix,
-        "_mapper");
+    // Corrupt doc_join_info_mapper manually.
+    std::string mapper_working_path =
+        absl_ports::StrCat(working_path_, "/doc_join_info_mapper");
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<PersistentHashMapKeyMapper<DocumentId>> mapper,
-        PersistentHashMapKeyMapper<DocumentId>::Create(
+        std::unique_ptr<PersistentHashMapKeyMapper<int32_t>> mapper,
+        PersistentHashMapKeyMapper<int32_t>::Create(
             filesystem_, std::move(mapper_working_path)));
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, mapper->ComputeChecksum());
     ICING_ASSERT_OK(mapper->Put("foo", 12345));
@@ -408,7 +408,47 @@ TEST_F(
   }
 
   // Attempt to create the qualified id type joinable index with corrupted
-  // document_to_qualified_id_mapper. This should fail.
+  // doc_join_info_mapper. This should fail.
+  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
+                       HasSubstr("Invalid storages crc")));
+}
+
+TEST_F(QualifiedIdTypeJoinableIndexTest,
+       InitializeExistingFilesWithCorruptedQualifiedIdStorageShouldFail) {
+  {
+    // Create new qualified id type joinable index
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
+        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
+    ICING_ASSERT_OK(
+        index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
+                   /*ref_qualified_id_str=*/"namespace#uriA"));
+
+    ICING_ASSERT_OK(index->PersistToDisk());
+  }
+
+  {
+    // Corrupt qualified_id_storage manually.
+    std::string qualified_id_storage_path =
+        absl_ports::StrCat(working_path_, "/qualified_id_storage");
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<FileBackedVector<char>> qualified_id_storage,
+        FileBackedVector<char>::Create(
+            filesystem_, qualified_id_storage_path,
+            MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
+                               qualified_id_storage->ComputeChecksum());
+    ICING_ASSERT_OK(qualified_id_storage->Append('a'));
+    ICING_ASSERT_OK(qualified_id_storage->Append('b'));
+    ICING_ASSERT_OK(qualified_id_storage->PersistToDisk());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
+                               qualified_id_storage->ComputeChecksum());
+    ASSERT_THAT(old_crc, Not(Eq(new_crc)));
+  }
+
+  // Attempt to create the qualified id type joinable index with corrupted
+  // qualified_id_storage. This should fail.
   EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
                        HasSubstr("Invalid storages crc")));
@@ -421,8 +461,9 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, InvalidPut) {
       QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
 
   DocJoinInfo default_invalid;
-  EXPECT_THAT(index->Put(default_invalid, /*ref_document_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(
+      index->Put(default_invalid, /*ref_qualified_id_str=*/"namespace#uriA"),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(QualifiedIdTypeJoinableIndexTest, InvalidGet) {
@@ -438,13 +479,13 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, InvalidGet) {
 
 TEST_F(QualifiedIdTypeJoinableIndexTest, PutAndGet) {
   DocJoinInfo target_info1(/*document_id=*/1, /*joinable_property_id=*/20);
-  DocumentId ref_document1 = 0;
+  std::string_view ref_qualified_id_str_a = "namespace#uriA";
 
   DocJoinInfo target_info2(/*document_id=*/3, /*joinable_property_id=*/13);
-  DocumentId ref_document2 = 2;
+  std::string_view ref_qualified_id_str_b = "namespace#uriB";
 
   DocJoinInfo target_info3(/*document_id=*/4, /*joinable_property_id=*/4);
-  DocumentId ref_document3 = ref_document1;
+  std::string_view ref_qualified_id_str_c = "namespace#uriC";
 
   {
     // Create new qualified id type joinable index
@@ -452,17 +493,14 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, PutAndGet) {
         std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
         QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
 
-    EXPECT_THAT(index->Put(target_info1, /*ref_document_id=*/ref_document1),
-                IsOk());
-    EXPECT_THAT(index->Put(target_info2, /*ref_document_id=*/ref_document2),
-                IsOk());
-    EXPECT_THAT(index->Put(target_info3, /*ref_document_id=*/ref_document3),
-                IsOk());
+    EXPECT_THAT(index->Put(target_info1, ref_qualified_id_str_a), IsOk());
+    EXPECT_THAT(index->Put(target_info2, ref_qualified_id_str_b), IsOk());
+    EXPECT_THAT(index->Put(target_info3, ref_qualified_id_str_c), IsOk());
     EXPECT_THAT(index, Pointee(SizeIs(3)));
 
-    EXPECT_THAT(index->Get(target_info1), IsOkAndHolds(ref_document1));
-    EXPECT_THAT(index->Get(target_info2), IsOkAndHolds(ref_document2));
-    EXPECT_THAT(index->Get(target_info3), IsOkAndHolds(ref_document3));
+    EXPECT_THAT(index->Get(target_info1), IsOkAndHolds(ref_qualified_id_str_a));
+    EXPECT_THAT(index->Get(target_info2), IsOkAndHolds(ref_qualified_id_str_b));
+    EXPECT_THAT(index->Get(target_info3), IsOkAndHolds(ref_qualified_id_str_c));
 
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -472,15 +510,15 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, PutAndGet) {
       std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
       QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
   EXPECT_THAT(index, Pointee(SizeIs(3)));
-  EXPECT_THAT(index->Get(target_info1), IsOkAndHolds(ref_document1));
-  EXPECT_THAT(index->Get(target_info2), IsOkAndHolds(ref_document2));
-  EXPECT_THAT(index->Get(target_info3), IsOkAndHolds(ref_document3));
+  EXPECT_THAT(index->Get(target_info1), IsOkAndHolds(ref_qualified_id_str_a));
+  EXPECT_THAT(index->Get(target_info2), IsOkAndHolds(ref_qualified_id_str_b));
+  EXPECT_THAT(index->Get(target_info3), IsOkAndHolds(ref_qualified_id_str_c));
 }
 
 TEST_F(QualifiedIdTypeJoinableIndexTest,
        GetShouldReturnNotFoundErrorIfNotExist) {
   DocJoinInfo target_info(/*document_id=*/1, /*joinable_property_id=*/20);
-  DocumentId ref_document = 0;
+  std::string_view ref_qualified_id_str = "namespace#uriA";
 
   // Create new qualified id type joinable index
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -491,8 +529,8 @@ TEST_F(QualifiedIdTypeJoinableIndexTest,
   EXPECT_THAT(index->Get(target_info),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  ICING_ASSERT_OK(index->Put(target_info, /*ref_document_id=*/ref_document));
-  ASSERT_THAT(index->Get(target_info), IsOkAndHolds(ref_document));
+  ICING_ASSERT_OK(index->Put(target_info, ref_qualified_id_str));
+  ASSERT_THAT(index->Get(target_info), IsOkAndHolds(ref_qualified_id_str));
 
   // Get another non-existing entry. This should get NOT_FOUND_ERROR.
   DocJoinInfo another_target_info(/*document_id=*/2,
@@ -542,34 +580,30 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, Optimize) {
 
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/10),
-                 /*ref_document_id=*/0));
+                 /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/3),
-                 /*ref_document_id=*/0));
+                 /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/8, /*joinable_property_id=*/9),
-                 /*ref_document_id=*/2));
+                 /*ref_qualified_id_str=*/"namespace#uriB"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/13, /*joinable_property_id=*/4),
-                 /*ref_document_id=*/12));
+                 /*ref_qualified_id_str=*/"namespace#uriC"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/21, /*joinable_property_id=*/12),
-                 /*ref_document_id=*/12));
+                 /*ref_qualified_id_str=*/"namespace#uriC"));
   index->set_last_added_document_id(21);
 
   ASSERT_THAT(index, Pointee(SizeIs(5)));
 
-  // Used doc id: 0, 2, 3, 5, 8, 12, 13, 21.
-  // Delete doc id = 2, 5, compress and keep the rest.
+  // Delete doc id = 5, 8, compress and keep the rest.
   std::vector<DocumentId> document_id_old_to_new(22, kInvalidDocumentId);
-  document_id_old_to_new[0] = 0;
-  document_id_old_to_new[3] = 1;
-  document_id_old_to_new[8] = 2;
-  document_id_old_to_new[12] = 3;
-  document_id_old_to_new[13] = 4;
-  document_id_old_to_new[21] = 5;
+  document_id_old_to_new[3] = 0;
+  document_id_old_to_new[13] = 1;
+  document_id_old_to_new[21] = 2;
 
-  DocumentId new_last_added_document_id = 5;
+  DocumentId new_last_added_document_id = 2;
   EXPECT_THAT(
       index->Optimize(document_id_old_to_new, new_last_added_document_id),
       IsOk());
@@ -577,48 +611,43 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, Optimize) {
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
 
   // Verify Put and Get API still work normally after Optimize().
-  // (old_doc_id=3, joinable_property_id=10) had old referenced doc_id = 0,
-  // which is now (doc_id=1, joinable_property_id=10) and referenced doc_id = 0.
+  // (old_doc_id=3, joinable_property_id=10), which is now (doc_id=0,
+  // joinable_property_id=10), has referenced qualified id str =
+  // "namespace#uriA".
   EXPECT_THAT(
-      index->Get(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/10)),
-      IsOkAndHolds(0));
+      index->Get(DocJoinInfo(/*document_id=*/0, /*joinable_property_id=*/10)),
+      IsOkAndHolds("namespace#uriA"));
 
-  // (old_doc_id=5, joinable_property_id=3) had old referenced doc_id = 0,
-  // which is now not found since we've deleted old_doc_id = 5. It is not
-  // testable via Get() because there is no valid doc_id mapping for old_doc_id
-  // = 5 and we cannot generate a valid DocJoinInfo for it.
+  // (old_doc_id=5, joinable_property_id=3) and (old_doc_id=8,
+  // joinable_property_id=9) are now not found since we've deleted old_doc_id =
+  // 5, 8. It is not testable via Get() because there is no valid doc_id mapping
+  // for old_doc_id = 5, 8 and we cannot generate a valid DocJoinInfo for it.
 
-  // (old_doc_id=8, joinable_property_id=9) had old referenced doc_id = 2,
-  // which is now (doc_id=2, joinable_property_id=9), but since we've deleted
-  // old referenced doc_id = 2, this data should not be found after
-  // optimization.
+  // (old_doc_id=13, joinable_property_id=4), which is now (doc_id=1,
+  // joinable_property_id=4), has referenced qualified id str =
+  // "namespace#uriC".
   EXPECT_THAT(
-      index->Get(DocJoinInfo(/*document_id=*/2, /*joinable_property_id=*/9)),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+      index->Get(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/4)),
+      IsOkAndHolds("namespace#uriC"));
 
-  // (old_doc_id=13, joinable_property_id=4) had old referenced doc_id = 12,
-  // which is now (doc_id=4, joinable_property_id=4) and referenced doc_id = 3.
+  // (old_doc_id=21, joinable_property_id=12), which is now (doc_id=2,
+  // joinable_property_id=12), has referenced qualified id str =
+  // "namespace#uriC".
   EXPECT_THAT(
-      index->Get(DocJoinInfo(/*document_id=*/4, /*joinable_property_id=*/4)),
-      IsOkAndHolds(3));
-
-  // (old_doc_id=21, joinable_property_id=12) had old referenced doc_id = 12,
-  // which is now (doc_id=5, joinable_property_id=12) and referenced doc_id = 3.
-  EXPECT_THAT(
-      index->Get(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/12)),
-      IsOkAndHolds(3));
+      index->Get(DocJoinInfo(/*document_id=*/2, /*joinable_property_id=*/12)),
+      IsOkAndHolds("namespace#uriC"));
 
   // Joinable index should be able to work normally after Optimize().
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/99, /*joinable_property_id=*/2),
-                 /*ref_document_id=*/90));
+                 /*ref_qualified_id_str=*/"namespace#uriD"));
   index->set_last_added_document_id(99);
 
   EXPECT_THAT(index, Pointee(SizeIs(4)));
   EXPECT_THAT(index->last_added_document_id(), Eq(99));
   EXPECT_THAT(index->Get(DocJoinInfo(/*document_id=*/99,
                                      /*joinable_property_id=*/2)),
-              IsOkAndHolds(90));
+              IsOkAndHolds("namespace#uriD"));
 }
 
 TEST_F(QualifiedIdTypeJoinableIndexTest, OptimizeOutOfRangeDocumentId) {
@@ -628,7 +657,7 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, OptimizeOutOfRangeDocumentId) {
 
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/99, /*joinable_property_id=*/10),
-                 /*ref_document_id=*/91));
+                 /*ref_qualified_id_str=*/"namespace#uriA"));
   index->set_last_added_document_id(99);
 
   // Create document_id_old_to_new with size = 1. Optimize should handle out of
@@ -653,19 +682,19 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, OptimizeDeleteAll) {
 
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/10),
-                 /*ref_document_id=*/0));
+                 /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/5, /*joinable_property_id=*/3),
-                 /*ref_document_id=*/0));
+                 /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/8, /*joinable_property_id=*/9),
-                 /*ref_document_id=*/2));
+                 /*ref_qualified_id_str=*/"namespace#uriB"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/13, /*joinable_property_id=*/4),
-                 /*ref_document_id=*/12));
+                 /*ref_qualified_id_str=*/"namespace#uriC"));
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/21, /*joinable_property_id=*/12),
-                 /*ref_document_id=*/12));
+                 /*ref_qualified_id_str=*/"namespace#uriC"));
   index->set_last_added_document_id(21);
 
   // Delete all documents.
@@ -690,9 +719,12 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, Clear) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
       QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_));
-  ICING_ASSERT_OK(index->Put(target_info1, /*ref_document_id=*/0));
-  ICING_ASSERT_OK(index->Put(target_info2, /*ref_document_id=*/2));
-  ICING_ASSERT_OK(index->Put(target_info3, /*ref_document_id=*/4));
+  ICING_ASSERT_OK(
+      index->Put(target_info1, /*ref_qualified_id_str=*/"namespace#uriA"));
+  ICING_ASSERT_OK(
+      index->Put(target_info2, /*ref_qualified_id_str=*/"namespace#uriB"));
+  ICING_ASSERT_OK(
+      index->Put(target_info3, /*ref_qualified_id_str=*/"namespace#uriC"));
   ASSERT_THAT(index, Pointee(SizeIs(3)));
   index->set_last_added_document_id(6);
   ASSERT_THAT(index->last_added_document_id(), Eq(6));
@@ -711,11 +743,12 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, Clear) {
 
   // Joinable index should be able to work normally after Clear().
   DocJoinInfo target_info4(/*document_id=*/2, /*joinable_property_id=*/19);
-  ICING_ASSERT_OK(index->Put(target_info4, /*ref_document_id=*/0));
+  ICING_ASSERT_OK(
+      index->Put(target_info4, /*ref_qualified_id_str=*/"namespace#uriD"));
   index->set_last_added_document_id(2);
 
   EXPECT_THAT(index->last_added_document_id(), Eq(2));
-  EXPECT_THAT(index->Get(target_info4), IsOkAndHolds(0));
+  EXPECT_THAT(index->Get(target_info4), IsOkAndHolds("namespace#uriD"));
 
   ICING_ASSERT_OK(index->PersistToDisk());
   index.reset();
@@ -730,7 +763,7 @@ TEST_F(QualifiedIdTypeJoinableIndexTest, Clear) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(index->Get(target_info3),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(index->Get(target_info4), IsOkAndHolds(0));
+  EXPECT_THAT(index->Get(target_info4), IsOkAndHolds("namespace#uriD"));
 }
 
 }  // namespace

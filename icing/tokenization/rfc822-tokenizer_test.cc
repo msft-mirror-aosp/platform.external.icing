@@ -21,10 +21,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
-#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -32,21 +29,7 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
-class Rfc822TokenizerTest : public testing::Test {
- protected:
-  void SetUp() override {
-    jni_cache_ = GetTestJniCache();
-    language_segmenter_factory::SegmenterOptions options(ULOC_US,
-                                                         jni_cache_.get());
-    ICING_ASSERT_OK_AND_ASSIGN(
-        language_segmenter_,
-        language_segmenter_factory::Create(std::move(options)));
-  }
-  std::unique_ptr<const JniCache> jni_cache_;
-  std::unique_ptr<LanguageSegmenter> language_segmenter_;
-};
-
-TEST_F(Rfc822TokenizerTest, StartingState) {
+TEST(Rfc822TokenizerTest, StartingState) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c";
   auto token_iterator =
@@ -59,7 +42,7 @@ TEST_F(Rfc822TokenizerTest, StartingState) {
   ASSERT_THAT(token_iterator->GetTokens(), Not(IsEmpty()));
 }
 
-TEST_F(Rfc822TokenizerTest, EmptyMiddleToken) {
+TEST(Rfc822TokenizerTest, EmptyMiddleToken) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string s("<alex>,,<tom>");
@@ -77,7 +60,7 @@ TEST_F(Rfc822TokenizerTest, EmptyMiddleToken) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "tom"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Simple) {
+TEST(Rfc822TokenizerTest, Simple) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("<你alex@google.com>");
@@ -94,7 +77,7 @@ TEST_F(Rfc822TokenizerTest, Simple) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Small) {
+TEST(Rfc822TokenizerTest, Small) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string s = "\"a\"";
@@ -127,7 +110,7 @@ TEST_F(Rfc822TokenizerTest, Small) {
                                EqualsToken(Token::Type::RFC822_COMMENT, "a"))));
 }
 
-TEST_F(Rfc822TokenizerTest, PB) {
+TEST(Rfc822TokenizerTest, PB) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("peanut (comment) butter, <alex@google.com>");
@@ -154,7 +137,7 @@ TEST_F(Rfc822TokenizerTest, PB) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NoBrackets) {
+TEST(Rfc822TokenizerTest, NoBrackets) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("alex@google.com");
@@ -171,7 +154,7 @@ TEST_F(Rfc822TokenizerTest, NoBrackets) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, TwoAddresses) {
+TEST(Rfc822TokenizerTest, TwoAddresses) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("<你alex@google.com>; <alexsav@gmail.com>");
@@ -195,7 +178,7 @@ TEST_F(Rfc822TokenizerTest, TwoAddresses) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Comment) {
+TEST(Rfc822TokenizerTest, Comment) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("(a comment) <alex@google.com>");
@@ -214,7 +197,7 @@ TEST_F(Rfc822TokenizerTest, Comment) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NameAndComment) {
+TEST(Rfc822TokenizerTest, NameAndComment) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("\"a name\" also a name <alex@google.com>");
@@ -237,7 +220,7 @@ TEST_F(Rfc822TokenizerTest, NameAndComment) {
 }
 
 // Test from tokenizer_test.cc.
-TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
+TEST(Rfc822TokenizerTest, Rfc822SanityCheck) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string addr1("A name (A comment) <address@domain.com>");
@@ -297,7 +280,7 @@ TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
 }
 
 // Tests from rfc822 converter.
-TEST_F(Rfc822TokenizerTest, SimpleRfcText) {
+TEST(Rfc822TokenizerTest, SimpleRfcText) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string test_string =
       "foo@google.com,bar@google.com,baz@google.com,foo+hello@google.com,baz@"
@@ -349,7 +332,7 @@ TEST_F(Rfc822TokenizerTest, SimpleRfcText) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "corp.google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, ComplicatedRfcText) {
+TEST(Rfc822TokenizerTest, ComplicatedRfcText) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string test_string =
       R"raw("Weird, But&(Also)\\Valid" Name (!With, "an" \\odd\\ cmt too¡) <Foo B(a)r,Baz@g.co>
@@ -390,7 +373,7 @@ TEST_F(Rfc822TokenizerTest, ComplicatedRfcText) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, FromHtmlBugs) {
+TEST(Rfc822TokenizerTest, FromHtmlBugs) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   // This input used to cause HTML parsing exception. We don't do HTML parsing
   // any more (b/8388100) so we are just checking that it does not crash and
@@ -422,7 +405,7 @@ TEST_F(Rfc822TokenizerTest, FromHtmlBugs) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, EmptyComponentsTest) {
+TEST(Rfc822TokenizerTest, EmptyComponentsTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(""),
               IsOkAndHolds(testing::IsEmpty()));
@@ -463,7 +446,7 @@ TEST_F(Rfc822TokenizerTest, EmptyComponentsTest) {
                   EqualsToken(Token::Type::RFC822_COMMENT, "comment"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NameTest) {
+TEST(Rfc822TokenizerTest, NameTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   // Name spread between address or comment.
@@ -529,7 +512,7 @@ TEST_F(Rfc822TokenizerTest, NameTest) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "addr"))));
 }
 
-TEST_F(Rfc822TokenizerTest, CommentEscapeTest) {
+TEST(Rfc822TokenizerTest, CommentEscapeTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   // '(', ')', '\\' chars should be escaped. All other escaped chars should be
   // unescaped.
@@ -564,7 +547,7 @@ TEST_F(Rfc822TokenizerTest, CommentEscapeTest) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 }
 
-TEST_F(Rfc822TokenizerTest, QuoteEscapeTest) {
+TEST(Rfc822TokenizerTest, QuoteEscapeTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   // All names that include non-alphanumeric chars must be quoted and have '\\'
   // and '"' chars escaped.
@@ -593,7 +576,7 @@ TEST_F(Rfc822TokenizerTest, QuoteEscapeTest) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, R"(n\\a\m\"e)"))));
 }
 
-TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
+TEST(Rfc822TokenizerTest, UnterminatedComponentTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   EXPECT_THAT(
@@ -661,7 +644,7 @@ TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Tokenize) {
+TEST(Rfc822TokenizerTest, Tokenize) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string text =
@@ -714,7 +697,7 @@ TEST_F(Rfc822TokenizerTest, Tokenize) {
           EqualsToken(Token::Type::RFC822_COMMENT, "something"))));
 }
 
-TEST_F(Rfc822TokenizerTest, EdgeCases) {
+TEST(Rfc822TokenizerTest, EdgeCases) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   // Text to trigger the scenario where you have a non-alphabetic followed
@@ -776,7 +759,7 @@ TEST_F(Rfc822TokenizerTest, EdgeCases) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NumberInAddress) {
+TEST(Rfc822TokenizerTest, NumberInAddress) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "<3alex@google.com>";
   EXPECT_THAT(
@@ -791,7 +774,7 @@ TEST_F(Rfc822TokenizerTest, NumberInAddress) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
+TEST(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = R"("alex\"")";
   EXPECT_THAT(
@@ -813,7 +796,7 @@ TEST_F(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, R"(alex\\\a)"))));
 }
 
-TEST_F(Rfc822TokenizerTest, TwoEmails) {
+TEST(Rfc822TokenizerTest, TwoEmails) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "tjbarron@google.com alexsav@google.com";
   EXPECT_THAT(
@@ -835,7 +818,7 @@ TEST_F(Rfc822TokenizerTest, TwoEmails) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, BackSlashes) {
+TEST(Rfc822TokenizerTest, BackSlashes) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = R"("\name")";
   EXPECT_THAT(
@@ -859,7 +842,7 @@ TEST_F(Rfc822TokenizerTest, BackSlashes) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "foo\\@gmail"))));
 }
 
-TEST_F(Rfc822TokenizerTest, BigWhitespace) {
+TEST(Rfc822TokenizerTest, BigWhitespace) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "\"quoted\"              <address>";
   EXPECT_THAT(
@@ -872,7 +855,7 @@ TEST_F(Rfc822TokenizerTest, BigWhitespace) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "address"))));
 }
 
-TEST_F(Rfc822TokenizerTest, AtSignFirst) {
+TEST(Rfc822TokenizerTest, AtSignFirst) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "\"@foo\"";
   EXPECT_THAT(
@@ -884,7 +867,7 @@ TEST_F(Rfc822TokenizerTest, AtSignFirst) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "foo"))));
 }
 
-TEST_F(Rfc822TokenizerTest, SlashThenUnicode) {
+TEST(Rfc822TokenizerTest, SlashThenUnicode) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = R"("quoted\你cjk")";
   EXPECT_THAT(
@@ -897,7 +880,7 @@ TEST_F(Rfc822TokenizerTest, SlashThenUnicode) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "quoted\\你cjk"))));
 }
 
-TEST_F(Rfc822TokenizerTest, AddressEmptyAddress) {
+TEST(Rfc822TokenizerTest, AddressEmptyAddress) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "<address> <> Name";
   EXPECT_THAT(
@@ -910,7 +893,7 @@ TEST_F(Rfc822TokenizerTest, AddressEmptyAddress) {
           EqualsToken(Token::Type::RFC822_NAME, "Name"))));
 }
 
-TEST_F(Rfc822TokenizerTest, ProperComment) {
+TEST(Rfc822TokenizerTest, ProperComment) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "(comment)alex@google.com";
   EXPECT_THAT(
@@ -926,7 +909,7 @@ TEST_F(Rfc822TokenizerTest, ProperComment) {
           EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, SmallNameToEmail) {
+TEST(Rfc822TokenizerTest, SmallNameToEmail) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(text),
@@ -958,7 +941,7 @@ TEST_F(Rfc822TokenizerTest, SmallNameToEmail) {
                   EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "g.c"))));
 }
 
-TEST_F(Rfc822TokenizerTest, AtSignLast) {
+TEST(Rfc822TokenizerTest, AtSignLast) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string_view text("<alex@>, tim@");
   EXPECT_THAT(
@@ -974,13 +957,13 @@ TEST_F(Rfc822TokenizerTest, AtSignLast) {
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "tim"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Commas) {
+TEST(Rfc822TokenizerTest, Commas) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = ",,,,,,,,,,,,,,,,,,,,,,,,,,;";
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(text), IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
+TEST(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
   auto token_iterator =
@@ -999,7 +982,7 @@ TEST_F(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
   ASSERT_FALSE(token_iterator->ResetToTokenStartingAfter(6));
 }
 
-TEST_F(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
+TEST(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
   auto token_iterator =

@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <queue>
@@ -37,6 +38,7 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/doc-hit-info-iterator-numeric.h"
+#include "icing/index/numeric/integer-index-bucket-util.h"
 #include "icing/index/numeric/integer-index-data.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/numeric/posting-list-integer-index-accessor.h"
@@ -49,6 +51,41 @@ namespace icing {
 namespace lib {
 
 namespace {
+
+// Helper function to flush data between [it_start, it_end) into posting list(s)
+// and return posting list id.
+// Note: it will sort data between [it_start, it_end) by basic hit value, so the
+// caller should be aware that the data order will be changed after calling this
+// function.
+libtextclassifier3::StatusOr<PostingListIdentifier> FlushDataIntoPostingLists(
+    FlashIndexStorage* flash_index_storage,
+    PostingListIntegerIndexSerializer* posting_list_serializer,
+    const std::vector<IntegerIndexData>::iterator& it_start,
+    const std::vector<IntegerIndexData>::iterator& it_end) {
+  if (it_start == it_end) {
+    return PostingListIdentifier::kInvalid;
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> new_pl_accessor,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage,
+                                              posting_list_serializer));
+
+  std::sort(it_start, it_end);
+  for (auto it = it_end - 1; it >= it_start; --it) {
+    ICING_RETURN_IF_ERROR(new_pl_accessor->PrependData(*it));
+  }
+
+  PostingListAccessor::FinalizeResult result =
+      std::move(*new_pl_accessor).Finalize();
+  if (!result.status.ok()) {
+    return result.status;
+  }
+  if (!result.id.is_valid()) {
+    return absl_ports::InternalError("Fail to flush data into posting list(s)");
+  }
+  return result.id;
+}
 
 // The following 4 methods are helper functions to get the correct file path of
 // metadata/sorted_buckets/unsorted_buckets/flash_index_storage, according to
@@ -510,9 +547,12 @@ libtextclassifier3::Status IntegerIndexStorage::AddKeys(
     mutable_new_arr.SetArray(/*idx=*/0, new_buckets.data(), new_buckets.size());
   }
 
-  // Step 4: merge the unsorted bucket array into the sorted bucket array if the
-  //         length of the unsorted bucket array exceeds the threshold.
-  // TODO(b/259743562): [Optimization 1] implement merge
+  // Step 4: sort and merge the unsorted bucket array into the sorted bucket
+  //         array if the length of the unsorted bucket array exceeds the
+  //         threshold.
+  if (unsorted_buckets_->num_elements() > kUnsortedBucketsLengthThreshold) {
+    ICING_RETURN_IF_ERROR(SortBuckets());
+  }
 
   info().num_data += new_keys.size();
 
@@ -679,29 +719,23 @@ IntegerIndexStorage::InitializeNewFiles(
         absl_ports::StrCat("Failed to create directory: ", working_path));
   }
 
-  // TODO(b/259743562): [Optimization 1] decide max # buckets, unsorted buckets
-  //                    threshold
   // Initialize sorted_buckets
   int32_t pre_mapping_mmap_size = sizeof(Bucket) * (1 << 10);
-  int32_t max_file_size =
-      pre_mapping_mmap_size + FileBackedVector<Bucket>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
       FileBackedVector<Bucket>::Create(
           filesystem, GetSortedBucketsFilePath(working_path),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
 
   // Initialize unsorted_buckets
-  pre_mapping_mmap_size = sizeof(Bucket) * 100;
-  max_file_size =
-      pre_mapping_mmap_size + FileBackedVector<Bucket>::Header::kHeaderSize;
+  pre_mapping_mmap_size = sizeof(Bucket) * kUnsortedBucketsLengthThreshold;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
       FileBackedVector<Bucket>::Create(
           filesystem, GetUnsortedBucketsFilePath(working_path),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
 
   // Initialize flash_index_storage
   ICING_ASSIGN_OR_RETURN(
@@ -785,29 +819,23 @@ IntegerIndexStorage::InitializeExistingFiles(
                                /*pre_mapping_file_offset=*/0,
                                /*pre_mapping_mmap_size=*/kMetadataFileSize));
 
-  // TODO(b/259743562): [Optimization 1] decide max # buckets, unsorted buckets
-  //                    threshold
   // Initialize sorted_buckets
   int32_t pre_mapping_mmap_size = sizeof(Bucket) * (1 << 10);
-  int32_t max_file_size =
-      pre_mapping_mmap_size + FileBackedVector<Bucket>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
       FileBackedVector<Bucket>::Create(
           filesystem, GetSortedBucketsFilePath(working_path),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
 
   // Initialize unsorted_buckets
-  pre_mapping_mmap_size = sizeof(Bucket) * 100;
-  max_file_size =
-      pre_mapping_mmap_size + FileBackedVector<Bucket>::Header::kHeaderSize;
+  pre_mapping_mmap_size = sizeof(Bucket) * kUnsortedBucketsLengthThreshold;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
       FileBackedVector<Bucket>::Create(
           filesystem, GetUnsortedBucketsFilePath(working_path),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
 
   // Initialize flash_index_storage
   ICING_ASSIGN_OR_RETURN(
@@ -845,28 +873,13 @@ IntegerIndexStorage::FlushDataIntoNewSortedBucket(
   }
 
   ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<PostingListIntegerIndexAccessor> new_pl_accessor,
-      PostingListIntegerIndexAccessor::Create(
-          storage->flash_index_storage_.get(),
-          storage->posting_list_serializer_));
-
-  std::sort(data.begin(), data.end());
-  for (auto itr = data.rbegin(); itr != data.rend(); ++itr) {
-    ICING_RETURN_IF_ERROR(new_pl_accessor->PrependData(*itr));
-  }
-
-  PostingListAccessor::FinalizeResult result =
-      std::move(*new_pl_accessor).Finalize();
-  if (!result.status.ok()) {
-    return result.status;
-  }
-  if (!result.id.is_valid()) {
-    return absl_ports::InternalError("Fail to flush data into posting list");
-  }
+      PostingListIdentifier pl_id,
+      FlushDataIntoPostingLists(storage->flash_index_storage_.get(),
+                                storage->posting_list_serializer_, data.begin(),
+                                data.end()));
 
   storage->info().num_data += data.size();
-  return storage->sorted_buckets_->Append(
-      Bucket(key_lower, key_upper, result.id));
+  return storage->sorted_buckets_->Append(Bucket(key_lower, key_upper, pl_id));
 }
 
 libtextclassifier3::Status IntegerIndexStorage::PersistStoragesToDisk() {
@@ -921,20 +934,79 @@ IntegerIndexStorage::AddKeysIntoBucketAndSplitIfNecessary(
   }
 
   for (auto it = it_start; it != it_end; ++it) {
-    // TODO(b/259743562): [Optimization 1] implement split bucket if pl is full
-    //                    and the bucket is splittable
+    if (mutable_bucket.Get().key_lower() < mutable_bucket.Get().key_upper() &&
+        pl_accessor->WantsSplit()) {
+      // If the bucket needs split (max size and full) and is splittable, then
+      // we perform bucket splitting.
+
+      // 1. Finalize the current posting list accessor.
+      PostingListAccessor::FinalizeResult result =
+          std::move(*pl_accessor).Finalize();
+      if (!result.status.ok()) {
+        return result.status;
+      }
+
+      // 2. Create another posting list accessor instance. Read all data and
+      //    free all posting lists.
+      ICING_ASSIGN_OR_RETURN(
+          pl_accessor,
+          PostingListIntegerIndexAccessor::CreateFromExisting(
+              flash_index_storage_.get(), posting_list_serializer_, result.id));
+      ICING_ASSIGN_OR_RETURN(std::vector<IntegerIndexData> all_data,
+                             pl_accessor->GetAllDataAndFree());
+
+      // 3. Append all remaining new data.
+      all_data.reserve(all_data.size() + std::distance(it, it_end));
+      for (; it != it_end; ++it) {
+        all_data.push_back(IntegerIndexData(section_id, document_id, *it));
+      }
+
+      // 4. Run bucket splitting algorithm to decide new buckets and dispatch
+      //    data.
+      std::vector<integer_index_bucket_util::DataRangeAndBucketInfo>
+          new_bucket_infos = integer_index_bucket_util::Split(
+              all_data, mutable_bucket.Get().key_lower(),
+              mutable_bucket.Get().key_upper(),
+              kNumDataThresholdForBucketSplit);
+      if (new_bucket_infos.empty()) {
+        ICING_LOG(WARNING)
+            << "No buckets after splitting. This should not happen.";
+        return absl_ports::InternalError("Split error");
+      }
+
+      // 5. Flush data.
+      std::vector<Bucket> new_buckets;
+      for (int i = 0; i < new_bucket_infos.size(); ++i) {
+        ICING_ASSIGN_OR_RETURN(
+            PostingListIdentifier pl_id,
+            FlushDataIntoPostingLists(
+                flash_index_storage_.get(), posting_list_serializer_,
+                new_bucket_infos[i].start, new_bucket_infos[i].end));
+        if (i == 0) {
+          // Reuse mutable_bucket
+          mutable_bucket.Get().set_key_lower(new_bucket_infos[i].key_lower);
+          mutable_bucket.Get().set_key_upper(new_bucket_infos[i].key_upper);
+          mutable_bucket.Get().set_posting_list_identifier(pl_id);
+        } else {
+          new_buckets.push_back(Bucket(new_bucket_infos[i].key_lower,
+                                       new_bucket_infos[i].key_upper, pl_id));
+        }
+      }
+
+      return new_buckets;
+    }
+
     ICING_RETURN_IF_ERROR(pl_accessor->PrependData(
         IntegerIndexData(section_id, document_id, *it)));
   }
 
-  // TODO(b/259743562): [Optimization 1] implement split and return new buckets.
-  //                    We will change the original bucket (mutable_bucket)
-  //                    in-place to one of the new buckets, and the rest will
-  //                    be returned and added into unsorted buckets in AddKeys.
   PostingListAccessor::FinalizeResult result =
       std::move(*pl_accessor).Finalize();
   if (!result.status.ok()) {
     return result.status;
+  }
+  if (!result.id.is_valid()) {
+    return absl_ports::InternalError("Fail to flush data into posting list(s)");
   }
 
   mutable_bucket.Get().set_posting_list_identifier(result.id);

@@ -49,8 +49,8 @@ class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
   }
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
-    return absl_ports::UnimplementedError(
-        "Cannot trim right most node in numeric operator.");
+    return absl_ports::InvalidArgumentError(
+        "Cannot generate suggestion if the last term is numeric operator.");
   }
 
   int32_t GetNumBlocksInspected() const override { return 0; }

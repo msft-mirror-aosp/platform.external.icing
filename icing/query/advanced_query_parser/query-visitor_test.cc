@@ -232,8 +232,14 @@ TEST_P(QueryVisitorTest, SimpleLessThan) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and "2" isn't a "term" - its a numeric
   // value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -269,8 +275,14 @@ TEST_P(QueryVisitorTest, SimpleLessThanEq) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and "1" isn't a "term" - its a numeric
   // value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -306,8 +318,14 @@ TEST_P(QueryVisitorTest, SimpleEqual) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and "2" isn't a "term" - its a numeric
   // value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -343,8 +361,14 @@ TEST_P(QueryVisitorTest, SimpleGreaterThanEq) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and "1" isn't a "term" - its a numeric
   // value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -380,8 +404,14 @@ TEST_P(QueryVisitorTest, SimpleGreaterThan) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and "1" isn't a "term" - its a numeric
   // value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -418,8 +448,14 @@ TEST_P(QueryVisitorTest, IntMinLessThanEqual) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and int_min isn't a "term" - its a
   // numeric value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -456,8 +492,14 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanEqual) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "price" is a property restrict here and int_max isn't a "term" - its a
   // numeric value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -495,8 +537,14 @@ TEST_P(QueryVisitorTest, NestedPropertyLessThan) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   // "subscription.price" is a property restrict here and int_max isn't a "term"
   // - its a numeric value. So QueryTermIterators should be empty.
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
@@ -637,8 +685,14 @@ TEST_P(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
   EXPECT_THAT(query_results.query_terms, IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
@@ -789,8 +843,14 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kNumericSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kNumericSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
   EXPECT_THAT(query_results.query_terms, IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
@@ -1092,8 +1152,14 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo:bar(baz)"));
@@ -1134,7 +1200,8 @@ TEST_P(QueryVisitorTest, SingleVerbatimTermPrefix) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
   EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+              UnorderedElementsAre(kVerbatimSearchFeature,
+                                   kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("foo:bar("));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
@@ -1185,8 +1252,14 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingQuote) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre(R"(foobar")"));
@@ -1231,8 +1304,14 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingEscape) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre(R"(foobar\)"));
@@ -1279,8 +1358,14 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre(R"(foobary)"));
@@ -1300,8 +1385,14 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre(R"(foobar\y)"));
@@ -1349,8 +1440,14 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("foobar\n"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
@@ -1369,8 +1466,14 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre(R"(foobar\n)"));
@@ -1412,8 +1515,14 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingComplex) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              ElementsAre(kVerbatimSearchFeature));
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature,
+                                     kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kVerbatimSearchFeature));
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre(R"(foo\"bar\nbaz")"));
@@ -1465,7 +1574,12 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
                              std::move(query_visitor).ConsumeResults());
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
   EXPECT_THAT(query_results.query_term_iterators, IsEmpty());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2));
 }
@@ -1511,7 +1625,8 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
   EXPECT_THAT(query_results.query_terms, IsEmpty());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(query_results.query_term_iterators, IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId2));
@@ -1562,7 +1677,8 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "baz"));
@@ -1628,7 +1744,8 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("bar", "baz", "bat"));
@@ -1666,7 +1783,12 @@ TEST_P(QueryVisitorTest, ImplicitAndTerms) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "bar"));
@@ -1704,7 +1826,12 @@ TEST_P(QueryVisitorTest, ExplicitAndTerms) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "bar"));
@@ -1742,7 +1869,12 @@ TEST_P(QueryVisitorTest, OrTerms) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "bar"));
@@ -1782,7 +1914,12 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "bar", "baz"));
@@ -1802,7 +1939,12 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "bar", "baz"));
@@ -1821,7 +1963,12 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "bar", "baz"));
@@ -1876,7 +2023,8 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""],
               UnorderedElementsAre("foo", "baz"));
@@ -1895,7 +2043,8 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   EXPECT_THAT(query_results.query_terms[""], UnorderedElementsAre("foo"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
@@ -1961,7 +2110,12 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("foo"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("foo"));
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
@@ -2030,7 +2184,8 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
   EXPECT_THAT(query_results.query_terms["prop2"], UnorderedElementsAre("foo"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("foo"));
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
@@ -2123,7 +2278,12 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
   EXPECT_THAT(query_results.query_terms["PROP1"], UnorderedElementsAre("foo"));
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("foo"));
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(kDocumentId1, kDocumentId0));
 }
@@ -2181,7 +2341,8 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"],
@@ -2244,7 +2405,8 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("foo"));
@@ -2264,7 +2426,8 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("foo"));
@@ -2326,7 +2489,8 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
@@ -2346,7 +2510,8 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
@@ -2408,7 +2573,8 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
   EXPECT_THAT(query_results.query_term_iterators, IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
@@ -2428,7 +2594,8 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms), IsEmpty());
   EXPECT_THAT(query_results.query_term_iterators, IsEmpty());
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
@@ -2492,7 +2659,8 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("bar"));
@@ -2514,7 +2682,8 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"], UnorderedElementsAre("bar"));
@@ -2592,7 +2761,12 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms), UnorderedElementsAre(""));
   if (IsCfStringTokenization()) {
     EXPECT_THAT(query_results.query_terms[""],
@@ -2705,7 +2879,12 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  if (GetParam() == QueryType::kSearch) {
+    EXPECT_THAT(query_results.features_in_use,
+                UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  } else {
+    EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  }
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("", "prop1"));
   EXPECT_THAT(query_results.query_terms[""],
@@ -2815,7 +2994,8 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop2"));
   EXPECT_THAT(query_results.query_terms["prop0"], UnorderedElementsAre("val0"));
@@ -2998,7 +3178,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"],
@@ -3021,7 +3202,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"],
@@ -3044,7 +3226,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop1"));
   EXPECT_THAT(query_results.query_terms["prop1"],
@@ -3162,7 +3345,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop1", "prop2", "prop3", "prop4",
                                    "prop5", "prop6", "prop7"));
@@ -3193,7 +3377,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop2", "prop4", "prop6"));
   EXPECT_THAT(query_results.query_terms["prop0"], UnorderedElementsAre("foo"));
@@ -3218,7 +3403,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop6"));
   EXPECT_THAT(query_results.query_terms["prop0"], UnorderedElementsAre("foo"));
@@ -3231,7 +3417,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
 
 // This test will nest `search` calls together with the set of restricts
 // narrowing at each level so that the set of docs matching the query shrinks.
-TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpandinging) {
+TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
   PropertyConfigProto prop =
       PropertyConfigBuilder()
           .SetName("prop0")
@@ -3336,7 +3522,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpandinging) {
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop6"));
   EXPECT_THAT(query_results.query_terms["prop0"], UnorderedElementsAre("foo"));
@@ -3359,7 +3546,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpandinging) {
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop6"));
   EXPECT_THAT(query_results.query_terms["prop0"], UnorderedElementsAre("foo"));
@@ -3383,7 +3571,8 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpandinging) {
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
 
-  EXPECT_THAT(query_results.features_in_use, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
   EXPECT_THAT(ExtractKeys(query_results.query_terms),
               UnorderedElementsAre("prop0", "prop6"));
   EXPECT_THAT(query_results.query_terms["prop0"], UnorderedElementsAre("foo"));

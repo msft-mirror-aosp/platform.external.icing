@@ -89,17 +89,6 @@ constexpr int32_t kUriMapperMaxSize = 36 * 1024 * 1024;  // 36 MiB
 constexpr int32_t kNamespaceMapperMaxSize = 3 * 128 * 1024;  // 384 KiB
 constexpr int32_t kCorpusMapperMaxSize = 3 * 128 * 1024;     // 384 KiB
 
-// Whether to use namespace id or namespace name to build up fingerprint for
-// document_key_mapper_ and corpus_mapper_.
-// Note: Changing this flag will require a reconstruction of the internal
-// mappers in the document store. A easy way to trigger a rebuild is to change
-// the kMagic value.
-//
-// TODO(b/259969017) Flip this flag to true at the time when we switch to use
-// persistent hash map for document_key_mapper_ so that we just need one
-// reconstruction of the internal mappers.
-constexpr bool kNamespaceIdFingerprint = false;
-
 DocumentWrapper CreateDocumentWrapper(DocumentProto&& document) {
   DocumentWrapper document_wrapper;
   *document_wrapper.mutable_document() = std::move(document);
@@ -155,23 +144,6 @@ std::string EncodeNamespaceId(NamespaceId namespace_id) {
     encoding.push_back(1);
   }
   return encoding;
-}
-
-std::string MakeFingerprint(NamespaceId namespace_id,
-                            std::string_view namespace_,
-                            std::string_view uri_or_schema) {
-  if (!kNamespaceIdFingerprint) {
-    // Using a 64-bit fingerprint to represent the key could lead to collisions.
-    // But, even with 200K unique keys, the probability of collision is about
-    // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
-    uint64_t fprint = tc3farmhash::Fingerprint64(
-        absl_ports::StrCat(namespace_, uri_or_schema));
-    return fingerprint_util::GetFingerprintString(fprint);
-  } else {
-    return absl_ports::StrCat(EncodeNamespaceId(namespace_id),
-                              encode_util::EncodeIntToCString(
-                                  tc3farmhash::Fingerprint64(uri_or_schema)));
-  }
 }
 
 int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
@@ -236,15 +208,34 @@ std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
 
 }  // namespace
 
+std::string DocumentStore::MakeFingerprint(
+    NamespaceId namespace_id, std::string_view namespace_,
+    std::string_view uri_or_schema) const {
+  if (!namespace_id_fingerprint_) {
+    // Using a 64-bit fingerprint to represent the key could lead to collisions.
+    // But, even with 200K unique keys, the probability of collision is about
+    // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
+    uint64_t fprint = tc3farmhash::Fingerprint64(
+        absl_ports::StrCat(namespace_, uri_or_schema));
+    return fingerprint_util::GetFingerprintString(fprint);
+  } else {
+    return absl_ports::StrCat(EncodeNamespaceId(namespace_id),
+                              encode_util::EncodeIntToCString(
+                                  tc3farmhash::Fingerprint64(uri_or_schema)));
+  }
+}
+
 DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
-                             const SchemaStore* schema_store)
+                             const SchemaStore* schema_store,
+                             bool namespace_id_fingerprint)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
       schema_store_(schema_store),
-      document_validator_(schema_store) {}
+      document_validator_(schema_store),
+      namespace_id_fingerprint_(namespace_id_fingerprint) {}
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
@@ -271,14 +262,14 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
-    bool force_recovery_and_revalidate_documents,
+    bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  auto document_store = std::unique_ptr<DocumentStore>(
-      new DocumentStore(filesystem, base_dir, clock, schema_store));
+  auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
+      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint));
   ICING_ASSIGN_OR_RETURN(
       DataLoss data_loss,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -386,7 +377,8 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic != DocumentStore::Header::kMagic) {
+  if (header.magic !=
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_)) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
@@ -859,7 +851,8 @@ bool DocumentStore::HeaderExists() {
 libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
   // Write the header
   DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
+  header.magic =
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
   header.checksum = checksum.Get();
 
   // This should overwrite the header.

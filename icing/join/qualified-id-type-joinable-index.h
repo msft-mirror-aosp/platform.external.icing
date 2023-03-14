@@ -23,6 +23,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
 #include "icing/join/doc-join-info.h"
@@ -59,8 +60,6 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
 
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
-  static constexpr std::string_view kFilePrefix =
-      "qualified_id_type_joinable_index";
 
   // Creates a QualifiedIdTypeJoinableIndex instance to store qualified ids for
   // future joining search. If any of the underlying file is missing, then
@@ -112,24 +111,26 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   ~QualifiedIdTypeJoinableIndex() override;
 
   // Puts a new data into index: DocJoinInfo (DocumentId, JoinablePropertyId)
-  // references to ref_document_id.
+  // references to ref_qualified_id_str (the identifier of another document).
+  //
+  // REQUIRES: ref_qualified_id_str contains no '\0'.
   //
   // Returns:
   //   - OK on success
   //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
   //   - Any KeyMapper errors
   libtextclassifier3::Status Put(const DocJoinInfo& doc_join_info,
-                                 DocumentId ref_document_id);
+                                 std::string_view ref_qualified_id_str);
 
-  // Gets the referenced DocumentId by DocJoinInfo.
+  // Gets the referenced document's qualified id string by DocJoinInfo.
   //
   // Returns:
-  //   - DocumentId referenced by the given DocJoinInfo (DocumentId,
+  //   - A qualified id string referenced by the given DocJoinInfo (DocumentId,
   //     JoinablePropertyId) on success
   //   - INVALID_ARGUMENT_ERROR if doc_join_info is invalid
   //   - NOT_FOUND_ERROR if doc_join_info doesn't exist
   //   - Any KeyMapper errors
-  libtextclassifier3::StatusOr<DocumentId> Get(
+  libtextclassifier3::StatusOr<std::string_view> Get(
       const DocJoinInfo& doc_join_info) const;
 
   // Reduces internal file sizes by reclaiming space and ids of deleted
@@ -158,7 +159,7 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status Clear();
 
-  int32_t size() const { return document_to_qualified_id_mapper_->num_keys(); }
+  int32_t size() const { return doc_join_info_mapper_->num_keys(); }
 
   bool empty() const { return size() == 0; }
 
@@ -178,11 +179,13 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   explicit QualifiedIdTypeJoinableIndex(
       const Filesystem& filesystem, std::string&& working_path,
       std::unique_ptr<uint8_t[]> metadata_buffer,
-      std::unique_ptr<KeyMapper<DocumentId>> key_mapper)
+      std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper,
+      std::unique_ptr<FileBackedVector<char>> qualified_id_storage)
       : PersistentStorage(filesystem, std::move(working_path),
                           kWorkingPathType),
         metadata_buffer_(std::move(metadata_buffer)),
-        document_to_qualified_id_mapper_(std::move(key_mapper)) {}
+        doc_join_info_mapper_(std::move(doc_join_info_mapper)),
+        qualified_id_storage_(std::move(qualified_id_storage)) {}
 
   static libtextclassifier3::StatusOr<
       std::unique_ptr<QualifiedIdTypeJoinableIndex>>
@@ -255,9 +258,12 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   std::unique_ptr<uint8_t[]> metadata_buffer_;
 
   // Persistent KeyMapper for mapping (encoded) DocJoinInfo (DocumentId,
-  // JoinablePropertyId) to another referenced DocumentId (converted from
-  // qualified id string).
-  std::unique_ptr<KeyMapper<DocumentId>> document_to_qualified_id_mapper_;
+  // JoinablePropertyId) to another referenced document's qualified id string
+  // index in qualified_id_storage_.
+  std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper_;
+
+  // Storage for qualified id strings.
+  std::unique_ptr<FileBackedVector<char>> qualified_id_storage_;
 
   // TODO(b/268521214): add delete propagation storage
 };

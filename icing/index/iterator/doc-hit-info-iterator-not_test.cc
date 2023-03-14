@@ -163,7 +163,7 @@ TEST(DocHitInfoIteratorNotTest, TrimNotIterator) {
   DocHitInfoIteratorNot not_iterator(std::move(to_be_excluded_iterator),
                                      /*document_id_limit=*/5);
   EXPECT_THAT(std::move(not_iterator).TrimRightMostNode(),
-              StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace

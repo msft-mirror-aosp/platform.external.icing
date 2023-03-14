@@ -31,6 +31,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/join/join-children-fetcher.h"
+#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/proto/debug.pb.h"
@@ -474,8 +475,11 @@ class IcingSearchEngine {
   std::unique_ptr<Index> index_ ICING_GUARDED_BY(mutex_);
 
   // Storage for all hits of numeric contents from the document store.
-  // TODO(b/249829533): integrate more functions with integer_index_.
   std::unique_ptr<NumericIndex<int64_t>> integer_index_
+      ICING_GUARDED_BY(mutex_);
+
+  // Storage for all join qualified ids from the document store.
+  std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index_
       ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references
@@ -550,8 +554,8 @@ class IcingSearchEngine {
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Do any initialization/recovery necessary to create a DocumentStore
-  // instance.
+  // Do any initialization/recovery necessary to create term index, integer
+  // index, and qualified id join index instances.
   //
   // Returns:
   //   OK on success
@@ -640,9 +644,10 @@ class IcingSearchEngine {
       OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to restore missing document data in index_. All documents
-  // will be reindexed. This does not clear the index, so it is recommended to
-  // call Index::Reset first.
+  // Helper method to restore missing document data in index_, integer_index_,
+  // and qualified_id_join_index_. All documents will be reindexed. This does
+  // not clear the index, so it is recommended to call ClearAllIndices,
+  // ClearSearchIndices, or ClearJoinIndices first if needed.
   //
   // Returns:
   //   On success, OK and a bool indicating whether or not restoration was
@@ -657,6 +662,7 @@ class IcingSearchEngine {
     libtextclassifier3::Status status;
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
+    bool qualified_id_join_index_needed_restoration;
   };
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -674,13 +680,18 @@ class IcingSearchEngine {
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to create all types of data indexing handlers to index term,
-  // integer, and joinable qualified ids.
+  // integer, and join qualified ids.
   libtextclassifier3::StatusOr<
       std::vector<std::unique_ptr<DataIndexingHandler>>>
   CreateDataIndexingHandlers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to discard parts of (term, integer) indices if they contain
-  // data for document ids greater than last_stored_document_id.
+  // Helper method to discard parts of (term, integer, qualified id join)
+  // indices if they contain data for document ids greater than
+  // last_stored_document_id.
+  //
+  // REQUIRES: last_stored_document_id is valid (!= kInvalidDocumentId). Note:
+  //   if we want to truncate everything in the index, then please call
+  //   ClearSearchIndices/ClearJoinIndices/ClearAllIndices instead.
   //
   // Returns:
   //   On success, a DocumentId indicating the first document to start for
@@ -691,25 +702,45 @@ class IcingSearchEngine {
     DocumentId first_document_to_reindex;
     bool index_needed_restoration;
     bool integer_index_needed_restoration;
+    bool qualified_id_join_index_needed_restoration;
 
-    explicit TruncateIndexResult(DocumentId first_document_to_reindex_in,
-                                 bool index_needed_restoration_in,
-                                 bool integer_index_needed_restoration_in)
+    explicit TruncateIndexResult(
+        DocumentId first_document_to_reindex_in,
+        bool index_needed_restoration_in,
+        bool integer_index_needed_restoration_in,
+        bool qualified_id_join_index_needed_restoration_in)
         : first_document_to_reindex(first_document_to_reindex_in),
           index_needed_restoration(index_needed_restoration_in),
-          integer_index_needed_restoration(
-              integer_index_needed_restoration_in) {}
+          integer_index_needed_restoration(integer_index_needed_restoration_in),
+          qualified_id_join_index_needed_restoration(
+              qualified_id_join_index_needed_restoration_in) {}
   };
   libtextclassifier3::StatusOr<TruncateIndexResult> TruncateIndicesTo(
       DocumentId last_stored_document_id)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to discard the entire (term, integer) indices.
+  // Helper method to discard search (term, integer) indices.
   //
   // Returns:
   //   OK on success
   //   INTERNAL_ERROR on any I/O errors
-  libtextclassifier3::Status ClearIndices()
+  libtextclassifier3::Status ClearSearchIndices()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard join (qualified id) indices.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status ClearJoinIndices()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard all search and join indices.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status ClearAllIndices()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

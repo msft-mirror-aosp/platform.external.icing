@@ -153,6 +153,10 @@ void QueryVisitor::PendingPropertyRestricts::AddValidRestricts(
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
+  if (query_term.is_prefix_val) {
+    // '*' prefix operator was added in list filters
+    features_.insert(kListFilterQueryLanguageFeature);
+  }
   TermMatchType::Code match_type = GetTermMatchType(query_term.is_prefix_val);
   int unnormalized_term_start =
       query_term.raw_term.data() - raw_query_text_.data();
@@ -454,7 +458,8 @@ libtextclassifier3::Status QueryVisitor::ProcessNumericComparator(
                          GetInt64Range(node->operator_text(), int_value));
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<DocHitInfoIterator> iterator,
-      numeric_index_.GetIterator(text_value.term, range.low, range.high));
+      numeric_index_.GetIterator(text_value.term, range.low, range.high,
+                                 document_store_, schema_store_));
 
   features_.insert(kNumericSearchFeature);
   pending_values_.push(PendingValue(std::move(iterator)));
@@ -752,6 +757,9 @@ void QueryVisitor::VisitFunction(const FunctionNode* node) {
   // 5. Pop placeholder in pending_values and add the result of our function.
   pending_values_.pop();
   pending_values_.push(std::move(eval_result).ValueOrDie());
+
+  // Support for custom functions was added in list filters.
+  features_.insert(kListFilterQueryLanguageFeature);
 }
 
 // TODO(b/265312785) Clarify handling of the interaction between HAS and NOT.
@@ -784,6 +792,15 @@ void QueryVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
   if (!status.ok()) {
     pending_error_ = std::move(status);
   }
+
+  if (!is_minus ||
+      pending_property_restricts_.has_active_property_restricts() ||
+      processing_not_) {
+    // 'NOT' operator was added in list filters.
+    // Likewise, mixing property restricts and NOTs were made valid in list
+    // filters.
+    features_.insert(kListFilterQueryLanguageFeature);
+  }
 }
 
 void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
@@ -791,6 +808,13 @@ void QueryVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
     pending_error_ = absl_ports::UnimplementedError(
         "No support for any non-numeric operators.");
     return;
+  }
+
+  if (pending_property_restricts_.has_active_property_restricts() ||
+      processing_not_) {
+    // Likewise, mixing property restricts and NOT with compound statements was
+    // added in list filters.
+    features_.insert(kListFilterQueryLanguageFeature);
   }
 
   if (node->operator_text() == ":") {
