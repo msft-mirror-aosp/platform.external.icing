@@ -101,7 +101,7 @@ class IcuLanguageSegmenter : public LanguageSegmenter {
 
   // The underlying class that does the segmentation, ubrk_close() must be
   // called after using.
-  mutable UBreakIterator* cached_break_iterator_ ICING_LOCKS_EXCLUDED(mutex_);
+  mutable UBreakIterator* cached_break_iterator_ ICING_GUARDED_BY(mutex_);
 
   mutable absl_ports::shared_mutex mutex_;
 };

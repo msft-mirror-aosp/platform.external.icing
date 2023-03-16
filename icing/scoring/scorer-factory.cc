@@ -115,23 +115,27 @@ class UsageScorer : public Scorer {
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator*) override {
-    ICING_ASSIGN_OR_RETURN(
-        UsageStore::UsageScores usage_scores,
-        document_store_.GetUsageScores(hit_info.document_id()), default_score_);
+    std::optional<UsageStore::UsageScores> usage_scores =
+        document_store_.GetUsageScores(hit_info.document_id());
+    if (!usage_scores) {
+      // If there's no UsageScores entry present for this doc, then just
+      // treat it as a default instance.
+      usage_scores = UsageStore::UsageScores();
+    }
 
     switch (ranking_strategy_) {
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:
-        return usage_scores.usage_type1_count;
+        return usage_scores->usage_type1_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT:
-        return usage_scores.usage_type2_count;
+        return usage_scores->usage_type2_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT:
-        return usage_scores.usage_type3_count;
+        return usage_scores->usage_type3_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type1_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type1_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type2_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type2_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type3_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type3_last_used_timestamp_s * 1000.0;
       default:
         // This shouldn't happen if this scorer is used correctly.
         return default_score_;

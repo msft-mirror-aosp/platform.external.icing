@@ -17,6 +17,8 @@
 #include <numeric>
 #include <vector>
 
+#include "icing/absl_ports/canonical_errors.h"
+
 namespace icing {
 namespace lib {
 
@@ -362,25 +364,28 @@ libtextclassifier3::StatusOr<double> DocumentFunctionScoreExpression::eval(
         return absl_ports::InvalidArgumentError(
             "Usage type must be an integer from 1 to 3");
       }
-      ICING_ASSIGN_OR_RETURN(
-          UsageStore::UsageScores usage_scores,
-          document_store_.GetUsageScores(hit_info.document_id()),
-          default_score_);
+      std::optional<UsageStore::UsageScores> usage_scores =
+          document_store_.GetUsageScores(hit_info.document_id());
+      if (!usage_scores) {
+        // If there's no UsageScores entry present for this doc, then just
+        // treat it as a default instance.
+        usage_scores = UsageStore::UsageScores();
+      }
       if (function_type_ == FunctionType::kUsageCount) {
         if (usage_type == 1) {
-          return usage_scores.usage_type1_count;
+          return usage_scores->usage_type1_count;
         } else if (usage_type == 2) {
-          return usage_scores.usage_type2_count;
+          return usage_scores->usage_type2_count;
         } else {
-          return usage_scores.usage_type3_count;
+          return usage_scores->usage_type3_count;
         }
       }
       if (usage_type == 1) {
-        return usage_scores.usage_type1_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type1_last_used_timestamp_s * 1000.0;
       } else if (usage_type == 2) {
-        return usage_scores.usage_type2_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type2_last_used_timestamp_s * 1000.0;
       } else {
-        return usage_scores.usage_type3_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type3_last_used_timestamp_s * 1000.0;
       }
     }
   }

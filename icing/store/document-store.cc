@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -1297,13 +1298,25 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
   return corpus_scoring_data_or.status();
 }
 
-libtextclassifier3::StatusOr<UsageStore::UsageScores>
-DocumentStore::GetUsageScores(DocumentId document_id) const {
-  if (!GetAliveDocumentFilterData(document_id)) {
-    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+// TODO(b/273826815): Decide on and adopt a consistent pattern for handling
+// NOT_FOUND 'errors' returned by our internal classes.
+std::optional<UsageStore::UsageScores> DocumentStore::GetUsageScores(
+    DocumentId document_id) const {
+  std::optional<DocumentFilterData> opt =
+      GetAliveDocumentFilterData(document_id);
+  if (!opt) {
+    return std::nullopt;
   }
-  return usage_store_->GetUsageScores(document_id);
+  if (document_id >= usage_store_->num_elements()) {
+    return std::nullopt;
+  }
+  auto usage_scores_or = usage_store_->GetUsageScores(document_id);
+  if (!usage_scores_or.ok()) {
+    ICING_LOG(ERROR) << "Error retrieving usage for " << document_id << ": "
+                     << usage_scores_or.status().error_message();
+    return std::nullopt;
+  }
+  return std::move(usage_scores_or).ValueOrDie();
 }
 
 libtextclassifier3::Status DocumentStore::ReportUsage(
