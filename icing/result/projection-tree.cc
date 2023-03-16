@@ -16,9 +16,8 @@
 
 #include <algorithm>
 
-#include "icing/absl_ports/str_join.h"
 #include "icing/proto/search.pb.h"
-#include "icing/schema/section-manager.h"
+#include "icing/schema/property-util.h"
 
 namespace icing {
 namespace lib {
@@ -27,7 +26,7 @@ ProjectionTree::ProjectionTree(const TypePropertyMask& type_field_mask) {
   for (const std::string& field_mask : type_field_mask.paths()) {
     Node* current_node = &root_;
     for (std::string_view sub_field_mask :
-         absl_ports::StrSplit(field_mask, kPropertySeparator)) {
+         property_util::SplitPropertyPathExpr(field_mask)) {
       current_node = AddChildNode(sub_field_mask, &current_node->children);
     }
   }

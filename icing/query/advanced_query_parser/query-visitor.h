@@ -20,12 +20,17 @@
 #include <stack>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/query/advanced_query_parser/function.h"
+#include "icing/query/advanced_query_parser/pending-value.h"
 #include "icing/query/query-features.h"
 #include "icing/query/query-results.h"
 #include "icing/schema/schema-store.h"
@@ -44,18 +49,14 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       Index* index, const NumericIndex<int64_t>* numeric_index,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       const Normalizer* normalizer, const Tokenizer* tokenizer,
+      std::string_view raw_query_text,
       DocHitInfoIteratorFilter::Options filter_options,
       TermMatchType::Code match_type, bool needs_term_frequency_info)
-      : index_(*index),
-        numeric_index_(*numeric_index),
-        document_store_(*document_store),
-        schema_store_(*schema_store),
-        normalizer_(*normalizer),
-        tokenizer_(*tokenizer),
-        filter_options_(std::move(filter_options)),
-        match_type_(match_type),
-        needs_term_frequency_info_(needs_term_frequency_info),
-        processing_not_(false) {}
+      : QueryVisitor(index, numeric_index, document_store, schema_store,
+                     normalizer, tokenizer, raw_query_text, filter_options,
+                     match_type, needs_term_frequency_info,
+                     PendingPropertyRestricts(),
+                     /*processing_not=*/false) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
@@ -72,66 +73,68 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<QueryResults> ConsumeResults() &&;
 
  private:
-  // A holder for intermediate results when processing child nodes.
-  class PendingValue {
+  // An internal class to help manage property restricts being applied at
+  // different levels.
+  class PendingPropertyRestricts {
    public:
-    enum class DataType {
-      kNone,
-      // Values of type STRING will eventually be converted to a
-      // DocHitInfoIterator further upstream.
-      kString,
+    // Add another set of property restricts. Elements of new_restricts that are
+    // not present in active_property_rest
+    void AddValidRestricts(std::set<std::string> new_restricts);
 
-      // Values of type TEXT may be consumed as properties, numbers or converted
-      // to DocHitInfoIterators further upstream.
-      kText,
-      kDocIterator,
-    };
-
-    static PendingValue CreateStringPendingValue(std::string str) {
-      return PendingValue(std::move(str), DataType::kString);
+    // Pops the most recently added set of property restricts.
+    void PopRestricts() {
+      if (has_active_property_restricts()) {
+        pending_property_restricts_.pop_back();
+      }
     }
 
-    static PendingValue CreateTextPendingValue(std::string text) {
-      return PendingValue(std::move(text), DataType::kText);
+    bool has_active_property_restricts() const {
+      return !pending_property_restricts_.empty();
     }
 
-    PendingValue() : data_type_(DataType::kNone) {}
-
-    explicit PendingValue(std::unique_ptr<DocHitInfoIterator> iterator)
-        : iterator_(std::move(iterator)), data_type_(DataType::kDocIterator) {}
-
-    // Placeholder is used to indicate where the children of a particular node
-    // begin.
-    bool is_placeholder() const { return data_type_ == DataType::kNone; }
-
-    DataType data_type() const { return data_type_; }
-
-    std::unique_ptr<DocHitInfoIterator>& iterator() { return iterator_; }
-    const std::unique_ptr<DocHitInfoIterator>& iterator() const {
-      return iterator_;
+    // The set of all property restrictions that are currently being applied.
+    const std::set<std::string>& active_property_restricts() const {
+      return pending_property_restricts_.back();
     }
-
-    std::string& term() { return term_; }
-    const std::string& term() const { return term_; }
 
    private:
-    explicit PendingValue(std::string term, DataType data_type)
-        : term_(std::move(term)), data_type_(data_type) {}
-
-    std::unique_ptr<DocHitInfoIterator> iterator_;
-    std::string term_;
-    DataType data_type_;
+    std::vector<std::set<std::string>> pending_property_restricts_;
   };
+
+  explicit QueryVisitor(
+      Index* index, const NumericIndex<int64_t>* numeric_index,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const Normalizer* normalizer, const Tokenizer* tokenizer,
+      std::string_view raw_query_text,
+      DocHitInfoIteratorFilter::Options filter_options,
+      TermMatchType::Code match_type, bool needs_term_frequency_info,
+      PendingPropertyRestricts pending_property_restricts, bool processing_not)
+      : index_(*index),
+        numeric_index_(*numeric_index),
+        document_store_(*document_store),
+        schema_store_(*schema_store),
+        normalizer_(*normalizer),
+        tokenizer_(*tokenizer),
+        raw_query_text_(raw_query_text),
+        filter_options_(std::move(filter_options)),
+        match_type_(match_type),
+        needs_term_frequency_info_(needs_term_frequency_info),
+        pending_property_restricts_(std::move(pending_property_restricts)),
+        processing_not_(processing_not),
+        expecting_numeric_arg_(false) {
+    RegisterFunctions();
+  }
 
   bool has_pending_error() const { return !pending_error_.ok(); }
 
-  // Creates a DocHitInfoIterator reflecting the provided term. Also populates,
+  // Creates a DocHitInfoIterator reflecting the provided term and whether the
+  // prefix operator has been applied to this term. Also populates,
   // property_query_terms_map_ and query_term_iterators_ as appropriate.
   // Returns:
   //   - On success, a DocHitInfoIterator for the provided term
   //   - INVALID_ARGUMENT if unable to create an iterator for the term.
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-  CreateTermIterator(const std::string& term);
+  CreateTermIterator(const QueryTerm& term);
 
   // Processes the PendingValue at the top of pending_values_, parses it into a
   // int64_t and pops the top.
@@ -143,15 +146,17 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
 
   // Processes the PendingValue at the top of pending_values_ and pops the top.
   // Returns:
-  //   - On success, the string value stored in the text at the top
+  //   - On success, the string value stored in the text at the top and a bool
+  //     indicating whether or not the string value has a prefix operator.
   //   - INVALID_ARGUMENT if pending_values_ is empty or doesn't hold a string.
-  libtextclassifier3::StatusOr<std::string> PopPendingStringValue();
+  libtextclassifier3::StatusOr<QueryTerm> PopPendingStringValue();
 
   // Processes the PendingValue at the top of pending_values_ and pops the top.
   // Returns:
   //   - On success, the string value stored in the text at the top
+  //     indicating whether or not the string value has a prefix operator.
   //   - INVALID_ARGUMENT if pending_values_ is empty or doesn't hold a text.
-  libtextclassifier3::StatusOr<std::string> PopPendingTextValue();
+  libtextclassifier3::StatusOr<QueryTerm> PopPendingTextValue();
 
   // Processes the PendingValue at the top of pending_values_ and pops the top.
   // Returns:
@@ -171,15 +176,35 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<std::vector<std::unique_ptr<DocHitInfoIterator>>>
   PopAllPendingIterators();
 
+  // Processes the unary operator node as a NOT operator. A NOT can have an
+  // operator type of "NOT" or "MINUS"
+  //
+  // RETURNS:
+  //   - OK on success
+  //   - INVALID_ARGUMENT if any errors are encountered while processing
+  //     node->child
+  libtextclassifier3::Status ProcessNotOperator(const UnaryOperatorNode* node);
+
+  // Processes the unary operator node as a negation operator. A negation
+  // operator should have an operator of type "MINUS" and it's children must
+  // resolve to a numeric value.
+  //
+  // RETURNS:
+  //   - OK on success
+  //   - INVALID_ARGUMENT if the node->child can't be resolved to a numeric
+  //     value.
+  libtextclassifier3::Status ProcessNegationOperator(
+      const UnaryOperatorNode* node);
+
   // Processes the NumericComparator represented by node. This must be called
   // *after* this node's children have been visited. The PendingValues added by
   // this node's children will be consumed by this function and the PendingValue
   // for this node will be returned.
   // Returns:
-  //   - On success, then PendingValue representing this node and it's children.
+  //   - On success, OK
   //   - INVALID_ARGUMENT if unable to retrieve string value or int value
   //   - NOT_FOUND if there is no entry in the numeric index for the property
-  libtextclassifier3::StatusOr<PendingValue> ProcessNumericComparator(
+  libtextclassifier3::Status ProcessNumericComparator(
       const NaryOperatorNode* node);
 
   // Processes the AND and OR operators represented by the node. This must be
@@ -204,26 +229,43 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<PendingValue> ProcessOrOperator(
       const NaryOperatorNode* node);
 
-  // Processes the HAS operator represented by the node. This must be called
-  // *after* this node's children have been visited. The PendingValues added by
-  // this node's children will be consumed by this function and the PendingValue
-  // for this node will be returned.
-  // Returns:
-  //   - On success, then PendingValue representing this node and it's children.
-  //   - INVALID_ARGUMENT if unable to properly retrieve an iterator
-  //       representing the second child
-  libtextclassifier3::StatusOr<PendingValue> ProcessHasOperator(
-      const NaryOperatorNode* node);
+  // Populates registered_functions with the currently supported set of
+  // functions.
+  void RegisterFunctions();
 
-  // RETURNS:
-  //   - the current property restrict or empty string if there is no property
-  //     restrict.
-  //   - INVALID_ARGUMENT if the current restrict is invalid (ie is a chain of
-  //     restricts with different properties such as `subject:(body:foo)`).
-  libtextclassifier3::StatusOr<std::string> GetPropertyRestrict() const;
+  // Implementation of `search` custom function in the query language.
+  // Returns:
+  //   - a PendingValue holding the DocHitInfoIterator reflecting the query
+  //     provided to SearchFunction
+  //   - any errors returned by Lexer::ExtractTokens, Parser::ConsumeQuery or
+  //     QueryVisitor::ConsumeResults.
+  libtextclassifier3::StatusOr<PendingValue> SearchFunction(
+      std::vector<PendingValue>&& args);
+
+  // Handles a NaryOperatorNode where the operator is HAS (':') and pushes an
+  // iterator with the proper section filter applied. If the current property
+  // restriction represented by pending_property_restricts and the first child
+  // of this node is unsatisfiable (ex. `prop1:(prop2:foo)`), then a NONE
+  // iterator is returned immediately and subtree represented by the second
+  // child is not traversed.
+  //
+  // Returns:
+  //  - OK on success
+  //  - INVALID_ARGUMENT node does not have exactly two children or the two
+  //    children cannot be resolved to a MEMBER or an iterator respectively.
+  libtextclassifier3::Status ProcessHasOperator(const NaryOperatorNode* node);
+
+  // Returns the correct match type to apply based on both the match type and
+  // whether the prefix operator is currently present.
+  TermMatchType::Code GetTermMatchType(bool is_prefix) const {
+    return (is_prefix) ? TermMatchType::PREFIX : match_type_;
+  }
 
   std::stack<PendingValue> pending_values_;
   libtextclassifier3::Status pending_error_;
+
+  // A map from function name to Function instance.
+  std::unordered_map<std::string, Function> registered_functions_;
 
   SectionRestrictQueryTermsMap property_query_terms_map_;
 
@@ -238,6 +280,7 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   const Normalizer& normalizer_;                // Does not own!
   const Tokenizer& tokenizer_;                  // Does not own!
 
+  std::string_view raw_query_text_;
   DocHitInfoIteratorFilter::Options filter_options_;
   TermMatchType::Code match_type_;
   // Whether or not term_frequency information is needed. This affects:
@@ -246,8 +289,12 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   bool needs_term_frequency_info_;
 
   // The stack of property restricts currently being processed by the visitor.
-  std::vector<std::string> pending_property_restricts_;
+  PendingPropertyRestricts pending_property_restricts_;
   bool processing_not_;
+
+  // Whether we are in the midst of processing a subtree that is expected to
+  // resolve to a numeric argument.
+  bool expecting_numeric_arg_;
 };
 
 }  // namespace lib

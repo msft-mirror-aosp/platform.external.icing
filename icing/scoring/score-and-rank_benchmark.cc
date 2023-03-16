@@ -97,13 +97,13 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -120,7 +120,6 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
                                schema_store.get()));
-
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
 
@@ -160,7 +159,6 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
         PopTopResultsFromHeap(&scored_document_hits, /*num_results=*/20,
                               scored_document_hit_comparator);
   }
-
   // Clean up
   document_store.reset();
   schema_store.reset();
@@ -200,13 +198,13 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -304,13 +302,13 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -402,13 +400,13 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  filesystem.CreateDirectoryRecursively(document_store_dir.c_str());
-  filesystem.CreateDirectoryRecursively(schema_store_dir.c_str());
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem, base_dir, &clock));
+      SchemaStore::Create(&filesystem, schema_store_dir, &clock));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,

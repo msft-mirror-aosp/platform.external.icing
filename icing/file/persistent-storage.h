@@ -268,7 +268,7 @@ class PersistentStorage {
   virtual Crcs& crcs() = 0;
   virtual const Crcs& crcs() const = 0;
 
-  const Filesystem& filesystem_;
+  const Filesystem& filesystem_;  // Does not own
   // Path to the storage. It can be a single file path or a directory path
   // depending on the implementation of the derived class.
   //

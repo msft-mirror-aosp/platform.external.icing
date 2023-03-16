@@ -100,7 +100,6 @@ filegroup {
         "icing/absl_ports/*.cc",
         "icing/file/**/*.cc",
         "icing/index/**/*.cc",
-        "icing/join/*.cc",
         "icing/legacy/**/*.cc",
         "icing/portable/*.cc",
         "icing/query/**/*.cc",

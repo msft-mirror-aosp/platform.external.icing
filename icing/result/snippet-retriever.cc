@@ -27,13 +27,12 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-terms.h"
+#include "icing/schema/property-util.h"
 #include "icing/schema/schema-store.h"
-#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -51,31 +50,13 @@ namespace lib {
 
 namespace {
 
-const PropertyProto* GetProperty(const DocumentProto& document,
-                                 std::string_view property_name) {
-  for (const PropertyProto& property : document.properties()) {
-    if (property.name() == property_name) {
-      return &property;
-    }
-  }
-  return nullptr;
-}
-
-inline std::string AddPropertyToPath(const std::string& current_path,
-                                     std::string_view property) {
-  if (current_path.empty()) {
-    return std::string(property);
-  }
-  return absl_ports::StrCat(current_path, kPropertySeparator, property);
-}
-
 inline std::string AddIndexToPath(int values_size, int index,
                                   const std::string& property_path) {
   if (values_size == 1) {
     return property_path;
   }
-  return absl_ports::StrCat(property_path, kLBracket, std::to_string(index),
-                            kRBracket);
+  return absl_ports::StrCat(
+      property_path, property_util::ConvertToPropertyExprIndexStr(index));
 }
 
 // Returns a string of the normalized text of the input Token. Normalization
@@ -507,7 +488,10 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
         current_property->string_values_size(), /*index=*/i, property_path));
     std::string_view value = current_property->string_values(i);
     std::unique_ptr<Tokenizer::Iterator> iterator =
-        tokenizer->Tokenize(value).ValueOrDie();
+        tokenizer
+            ->Tokenize(value,
+                       LanguageSegmenter::AccessType::kBidirectionalIterator)
+            .ValueOrDie();
     // All iterators are moved through positions sequentially. Constructing them
     // each time resets them to the beginning of the string. This means that,
     // for t tokens and in a string of n chars, each MoveToUtf8 call from the
@@ -639,14 +623,14 @@ void RetrieveSnippetForSection(
     SnippetProto* snippet_proto) {
   std::string_view next_property_name = section_path.at(section_path_index);
   const PropertyProto* current_property =
-      GetProperty(document, next_property_name);
+      property_util::GetPropertyProto(document, next_property_name);
   if (current_property == nullptr) {
     ICING_VLOG(1) << "No property " << next_property_name << " found at path "
                   << current_path;
     return;
   }
-  std::string property_path =
-      AddPropertyToPath(current_path, next_property_name);
+  std::string property_path = property_util::ConcatenatePropertyPathExpr(
+      current_path, next_property_name);
   if (section_path_index == section_path.size() - 1) {
     // We're at the end. Let's check our values.
     GetEntriesFromProperty(current_property, property_path, matcher, tokenizer,
@@ -711,7 +695,7 @@ SnippetProto SnippetRetriever::RetrieveSnippet(
     }
     const SectionMetadata* metadata = section_metadata_or.ValueOrDie();
     std::vector<std::string_view> section_path =
-        absl_ports::StrSplit(metadata->path, kPropertySeparator);
+        property_util::SplitPropertyPathExpr(metadata->path);
 
     // Match type must be as restrictive as possible. Prefix matches for a
     // snippet should only be included if both the query is Prefix and the

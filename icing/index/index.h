@@ -177,15 +177,18 @@ class Index {
   IndexStorageInfoProto GetStorageInfo() const;
 
   // Create an iterator to iterate through all doc hit infos in the index that
-  // match the term. section_id_mask can be set to ignore hits from sections not
-  // listed in the mask. Eg. section_id_mask = 1U << 3; would only return hits
-  // that occur in section 3.
+  // match the term. term_start_index is the start index of the given term in
+  // the search query. unnormalized_term_length is the length of the given
+  // unnormalized term in the search query not listed in the mask.
+  // Eg. section_id_mask = 1U << 3; would only return hits that occur in
+  // section 3.
   //
   // Returns:
   //   unique ptr to a valid DocHitInfoIterator that matches the term
   //   INVALID_ARGUMENT if given an invalid term_match_type
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
-      const std::string& term, SectionIdMask section_id_mask,
+      const std::string& term, int term_start_index,
+      int unnormalized_term_length, SectionIdMask section_id_mask,
       TermMatchType::Code term_match_type, bool need_hit_term_frequency = true);
 
   // Finds terms with the given prefix in the given namespaces. If
@@ -262,6 +265,7 @@ class Index {
     ICING_RETURN_IF_ERROR(main_index_->AddHits(
         *term_id_codec_, std::move(outputs.backfill_map),
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
+    ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
     return lite_index_->Reset();
   }
 
