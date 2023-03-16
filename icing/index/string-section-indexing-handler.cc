@@ -121,9 +121,7 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
   }
 
   if (put_document_stats != nullptr) {
-    // TODO(b/259744228): switch to set individual index latency.
-    put_document_stats->set_index_latency_ms(
-        index_timer->GetElapsedMilliseconds());
+    // TODO(b/259744228): set term index latency.
     put_document_stats->mutable_tokenization_stats()->set_num_tokens_indexed(
         num_tokens);
   }

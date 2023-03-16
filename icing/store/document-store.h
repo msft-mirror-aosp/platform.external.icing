@@ -336,9 +336,8 @@ class DocumentStore {
   //
   // Returns:
   //   UsageScores on success
-  //   NOT_FOUND if document_id no longer exists.
-  //   INVALID_ARGUMENT if document_id is invalid
-  libtextclassifier3::StatusOr<UsageStore::UsageScores> GetUsageScores(
+  //   nullopt if there are no usage scores stored for the requested docid.
+  std::optional<UsageStore::UsageScores> GetUsageScores(
       DocumentId document_id) const;
 
   // Reports usage. The corresponding usage scores of the specified document in

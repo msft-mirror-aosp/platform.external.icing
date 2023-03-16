@@ -14,11 +14,7 @@
 
 #include "icing/index/index-processor.h"
 
-#include <cstdint>
 #include <memory>
-#include <string>
-#include <string_view>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/data-indexing-handler.h"
@@ -33,10 +29,16 @@ namespace lib {
 libtextclassifier3::Status IndexProcessor::IndexDocument(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
     PutDocumentStatsProto* put_document_stats) {
-  // TODO(b/259744228): set overall index latency.
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
+
   for (auto& data_indexing_handler : data_indexing_handlers_) {
     ICING_RETURN_IF_ERROR(data_indexing_handler->Handle(
         tokenized_document, document_id, recovery_mode_, put_document_stats));
+  }
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_index_latency_ms(
+        index_timer->GetElapsedMilliseconds());
   }
 
   return libtextclassifier3::Status::OK;
