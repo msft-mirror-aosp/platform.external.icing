@@ -124,14 +124,15 @@ class VerbatimTokenIterator : public Tokenizer::Iterator {
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>>
-VerbatimTokenizer::Tokenize(std::string_view text) const {
+VerbatimTokenizer::Tokenize(std::string_view text,
+                            LanguageSegmenter::AccessType) const {
   return std::make_unique<VerbatimTokenIterator>(text);
 }
 
 libtextclassifier3::StatusOr<std::vector<Token>> VerbatimTokenizer::TokenizeAll(
     std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
-                         Tokenize(text));
+  std::unique_ptr<Tokenizer::Iterator> iterator =
+      std::make_unique<VerbatimTokenIterator>(text);
   std::vector<Token> tokens;
   while (iterator->Advance()) {
     std::vector<Token> batch = iterator->GetTokens();

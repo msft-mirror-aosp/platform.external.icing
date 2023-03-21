@@ -23,7 +23,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 12
+// Next tag: 14
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -99,6 +99,18 @@ message InitializeStatsProto {
   // Number of consecutive initialization failures that immediately preceded
   // this initialization.
   optional int32 num_previous_init_failures = 11;
+
+  // Possible recovery causes for integer index:
+  // - INCONSISTENT_WITH_GROUND_TRUTH
+  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - IO_ERROR
+  optional RecoveryCause integer_index_restoration_cause = 12;
+
+  // Possible recovery causes for qualified id join index:
+  // - INCONSISTENT_WITH_GROUND_TRUTH
+  // - SCHEMA_CHANGES_OUT_OF_SYNC
+  // - IO_ERROR
+  optional RecoveryCause qualified_id_join_index_restoration_cause = 13;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().

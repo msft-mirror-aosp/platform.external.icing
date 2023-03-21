@@ -22,6 +22,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/token.h"
 #include "icing/util/character-iterator.h"
 
@@ -33,8 +34,10 @@ namespace lib {
 // iterator or a list of tokens. Example usage:
 //
 // std::unique_ptr<Tokenizer> tokenizer = GetTokenizer();
-// ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iter,
-//                  tokenizer->Tokenize(text));
+// ICING_ASSIGN_OR_RETURN(
+//     std::unique_ptr<Tokenizer::Iterator> iter,
+//     tokenizer->Tokenize(text,
+//                         LanguageSegmenter::AccessType::kForwardIterator));
 // ICING_ASSIGN_OR_RETURN(std::vector<Token> tokens,
 // tokenizer->TokenizeAll(text));
 class Tokenizer {
@@ -76,7 +79,10 @@ class Tokenizer {
     // offset. Returns false if there are no valid tokens starting after
     // offset.
     // Ex.
-    // auto iterator = tokenizer.Tokenize("foo bar baz").ValueOrDie();
+    // auto iterator =
+    //     tokenizer.Tokenize("foo bar baz",
+    //                        LanguageSegmenter::AccessType::kForwardIterator)
+    //              .ValueOrDie();
     // iterator.ResetToTokenStartingAfter(4);
     // // The first full token starting after position 4 (the 'b' in "bar") is
     // // "baz".
@@ -89,8 +95,10 @@ class Tokenizer {
     // offset. Returns false if there are no valid tokens ending
     // before offset.
     // Ex.
-    // auto iterator = tokenizer.Tokenize("foo bar baz").ValueOrDie();
-    // iterator.ResetToTokenEndingBefore(4);
+    // auto iterator =
+    //     tokenizer.Tokenize("foo bar baz",
+    //                        LanguageSegmenter::AccessType::kForwardIterator)
+    //              .ValueOrDie();    // iterator.ResetToTokenEndingBefore(4);
     // // The first full token ending before position 4 (the 'b' in "bar") is
     // // "foo".
     // PrintToken(iterator.GetToken());  // prints "foo"
@@ -111,7 +119,8 @@ class Tokenizer {
   //                    types.
   //   INTERNAL_ERROR if any other errors occur
   virtual libtextclassifier3::StatusOr<std::unique_ptr<Iterator>> Tokenize(
-      std::string_view text) const = 0;
+      std::string_view text,
+      LanguageSegmenter::AccessType access_type) const = 0;
 
   // Tokenizes and returns all tokens in the input text. The input text should
   // outlive the returned vector.

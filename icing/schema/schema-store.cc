@@ -35,8 +35,9 @@
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/schema/joinable-property.h"
+#include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
@@ -149,7 +150,7 @@ SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
 
 SchemaStore::~SchemaStore() {
   if (has_schema_successfully_set_ && schema_file_ != nullptr &&
-      schema_type_mapper_ != nullptr && section_manager_ != nullptr) {
+      schema_type_mapper_ != nullptr && schema_type_manager_ != nullptr) {
     if (!PersistToDisk().ok()) {
       ICING_LOG(ERROR) << "Error persisting to disk in SchemaStore destructor";
     }
@@ -245,8 +246,8 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
     type_config_map_.emplace(type_config.schema_type(), type_config);
   }
   ICING_ASSIGN_OR_RETURN(
-      section_manager_,
-      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+      schema_type_manager_,
+      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   return libtextclassifier3::Status::OK;
 }
@@ -267,8 +268,8 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles() {
   }
 
   ICING_ASSIGN_OR_RETURN(
-      section_manager_,
-      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+      schema_type_manager_,
+      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Write the header
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
@@ -366,13 +367,8 @@ SchemaStore::SetSchema(const SchemaProto& new_schema,
 libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
                        bool ignore_errors_and_delete_documents) {
-  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependencyMap new_dependency_map,
+  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependentMap new_dependent_map,
                          SchemaUtil::Validate(new_schema));
-  // TODO(b/256022027): validate and extract joinable properties.
-  //   - Joinable config in non-string properties should be ignored, since
-  //     currently we only support string joining.
-  //   - If set joinable, the property itself and all of its parent (nested doc)
-  //     properties should not have REPEATED cardinality.
 
   SetSchemaResult result;
 
@@ -401,7 +397,7 @@ SchemaStore::SetSchema(SchemaProto&& new_schema,
     // Different schema, track the differences and see if we can still write it
     SchemaUtil::SchemaDelta schema_delta =
         SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema,
-                                              new_dependency_map);
+                                              new_dependent_map);
 
     result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
     result.schema_types_changed_fully_compatible_by_name =
@@ -519,33 +515,33 @@ libtextclassifier3::StatusOr<SchemaTypeId> SchemaStore::GetSchemaTypeId(
   return schema_type_mapper_->Get(schema_type);
 }
 
-libtextclassifier3::StatusOr<std::vector<std::string_view>>
-SchemaStore::GetStringSectionContent(const DocumentProto& document,
-                                     std::string_view section_path) const {
-  ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  return section_manager_->GetSectionContent<std::string_view>(document,
-                                                               section_path);
-}
-
-libtextclassifier3::StatusOr<std::vector<std::string_view>>
-SchemaStore::GetStringSectionContent(const DocumentProto& document,
-                                     SectionId section_id) const {
-  ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  return section_manager_->GetSectionContent<std::string_view>(document,
-                                                               section_id);
-}
-
 libtextclassifier3::StatusOr<const SectionMetadata*>
 SchemaStore::GetSectionMetadata(SchemaTypeId schema_type_id,
                                 SectionId section_id) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  return section_manager_->GetSectionMetadata(schema_type_id, section_id);
+  return schema_type_manager_->section_manager().GetSectionMetadata(
+      schema_type_id, section_id);
 }
 
 libtextclassifier3::StatusOr<SectionGroup> SchemaStore::ExtractSections(
     const DocumentProto& document) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  return section_manager_->ExtractSections(document);
+  return schema_type_manager_->section_manager().ExtractSections(document);
+}
+
+libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+SchemaStore::GetJoinablePropertyMetadata(
+    SchemaTypeId schema_type_id, const std::string& property_path) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return schema_type_manager_->joinable_property_manager()
+      .GetJoinablePropertyMetadata(schema_type_id, property_path);
+}
+
+libtextclassifier3::StatusOr<JoinablePropertyGroup>
+SchemaStore::ExtractJoinableProperties(const DocumentProto& document) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  return schema_type_manager_->joinable_property_manager()
+      .ExtractJoinableProperties(document);
 }
 
 libtextclassifier3::Status SchemaStore::PersistToDisk() {
@@ -571,7 +567,8 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
   int num_types_sections_exhausted = 0;
   for (const SchemaTypeConfigProto& type : schema->types()) {
     auto sections_list_or =
-        section_manager_->GetMetadataList(type.schema_type());
+        schema_type_manager_->section_manager().GetMetadataList(
+            type.schema_type());
     if (!sections_list_or.ok()) {
       continue;
     }
@@ -589,7 +586,7 @@ SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
 
 libtextclassifier3::StatusOr<const std::vector<SectionMetadata>*>
 SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
-  return section_manager_->GetMetadataList(schema_type);
+  return schema_type_manager_->section_manager().GetMetadataList(schema_type);
 }
 
 libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
