@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/icing-search-engine.h"
-
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -26,7 +24,9 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/join-processor.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
@@ -45,6 +45,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -124,18 +125,27 @@ DocumentProto CreateMessageDocument(std::string name_space, std::string uri) {
       .SetKey(std::move(name_space), std::move(uri))
       .SetSchema("Message")
       .AddStringProperty("body", "message body")
+      .AddInt64Property("indexableInteger", 123)
       .SetCreationTimestampMs(kDefaultCreationTimestampMs)
       .Build();
 }
 
-SchemaProto CreateMessageSchema() {
-  return SchemaBuilder()
-      .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-          PropertyConfigBuilder()
-              .SetName("body")
-              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-              .SetCardinality(CARDINALITY_REQUIRED)))
+SchemaTypeConfigProto CreateMessageSchemaTypeConfig() {
+  return SchemaTypeConfigBuilder()
+      .SetType("Message")
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("body")
+                       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                       .SetCardinality(CARDINALITY_REQUIRED))
+      .AddProperty(PropertyConfigBuilder()
+                       .SetName("indexableInteger")
+                       .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                       .SetCardinality(CARDINALITY_REQUIRED))
       .Build();
+}
+
+SchemaProto CreateMessageSchema() {
+  return SchemaBuilder().AddType(CreateMessageSchemaTypeConfig()).Build();
 }
 
 ScoringSpecProto GetDefaultScoringSpec() {
@@ -143,6 +153,10 @@ ScoringSpecProto GetDefaultScoringSpec() {
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   return scoring_spec;
 }
+
+// TODO(b/272145329): create SearchSpecBuilder, JoinSpecBuilder,
+// SearchResultProtoBuilder and ResultProtoBuilder for unit tests and build all
+// instances by them.
 
 TEST_F(IcingSearchEngineSchemaTest,
        CircularReferenceCreateSectionManagerReturnsInvalidArgument) {
@@ -612,12 +626,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
   property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
 
   SchemaProto schema_with_email_and_message = schema_with_email;
-  type = schema_with_email_and_message.add_types();
-  type->set_schema_type("Message");
-  property = type->add_properties();
-  property->set_property_name("body");
-  property->set_data_type(PropertyConfigProto::DataType::STRING);
-  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+  *schema_with_email_and_message.add_types() = CreateMessageSchemaTypeConfig();
 
   // Create an arbitrary invalid schema
   SchemaProto invalid_schema;
@@ -663,58 +672,217 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema) {
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
-       SetSchemaNewIndexedPropertyTriggersIndexRestorationAndReturnsOk) {
+       SetSchemaNewIndexedStringPropertyTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-  SchemaProto schema_with_no_indexed_property = CreateMessageSchema();
-  schema_with_no_indexed_property.mutable_types(0)
-      ->mutable_properties(0)
-      ->clear_string_indexing_config();
+  // Create a schema with 2 properties:
+  // - 'a': string type, unindexed. No section id assigned.
+  // - 'b': int64 type, indexed. Section id = 0.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Schema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
 
-  SetSchemaResultProto set_schema_result =
-      icing.SetSchema(schema_with_no_indexed_property);
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_latency_ms();
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
-  expected_set_schema_result.mutable_new_schema_types()->Add("Message");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
-  // Nothing will be index and Search() won't return anything.
-  EXPECT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
-              ProtoIsOk());
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("Schema")
+          .AddStringProperty("a", "message body")
+          .AddInt64Property("b", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  // Only 'b' will be indexed.
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
-  SearchSpecProto search_spec;
-  search_spec.set_query("message");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
 
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
 
+  // Verify term search: won't get anything.
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("a:message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
-  SchemaProto schema_with_indexed_property = CreateMessageSchema();
+  // Verify numeric (integer) search: will get document.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("b == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Change the schema to:
+  // - 'a': string type, indexed. Section id = 0.
+  // - 'b': int64 type, indexed. Section id = 1.
+  SchemaProto schema_two = schema_one;
+  schema_two.mutable_types(0)
+      ->mutable_properties(0)
+      ->mutable_string_indexing_config()
+      ->set_term_match_type(TERM_MATCH_PREFIX);
+  schema_two.mutable_types(0)
+      ->mutable_properties(0)
+      ->mutable_string_indexing_config()
+      ->set_tokenizer_type(TOKENIZER_PLAIN);
   // Index restoration should be triggered here because new schema requires more
-  // properties to be indexed.
-  set_schema_result = icing.SetSchema(schema_with_indexed_property);
+  // properties to be indexed. Also new section ids will be reassigned and index
+  // restoration should use new section ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_latency_ms();
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
-      ->Add("Message");
+      ->Add("Schema");
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify term search: will get document now.
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search: will still get document.
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       SetSchemaNewIndexedIntegerPropertyTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create a schema with 2 properties:
+  // - 'a': int64 type, unindexed. No section id assigned.
+  // - 'b': string type, indexed. Section id = 0.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Schema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("a")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("b")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetSchema("Schema")
+          .AddInt64Property("a", 123)
+          .AddStringProperty("b", "message body")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  // Only 'b' will be indexed.
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
-      CreateMessageDocument("namespace", "uri");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+      document;
+
+  SearchResultProto empty_result;
+  empty_result.mutable_status()->set_code(StatusProto::OK);
+
+  // Verify term search: will get document.
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("b:message");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search: won't get anything.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("a == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Change the schema to:
+  // - 'a': int64 type, indexed. Section id = 0.
+  // - 'b': string type, indexed. Section id = 1.
+  SchemaProto schema_two = schema_one;
+  schema_two.mutable_types(0)
+      ->mutable_properties(0)
+      ->mutable_integer_indexing_config()
+      ->set_numeric_match_type(NUMERIC_MATCH_RANGE);
+  // Index restoration should be triggered here because new schema requires more
+  // properties to be indexed. Also new section ids will be reassigned and index
+  // restoration should use new section ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
+      ->Add("Schema");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify term search: will still get document.
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search: will get document now.
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
@@ -733,7 +901,16 @@ TEST_F(IcingSearchEngineSchemaTest,
                   .SetName("name")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
+  // Create a schema with nested properties:
+  // - "sender.age": int64 type, (nested) indexed. Section id = 0.
+  // - "sender.name": string type, (nested) indexed. Section id = 1.
+  // - "subject": string type, indexed. Section id = 2.
+  // - "timestamp": int64 type, indexed. Section id = 3.
   SchemaProto nested_schema =
       SchemaBuilder()
           .AddType(person_proto)
@@ -749,6 +926,10 @@ TEST_F(IcingSearchEngineSchemaTest,
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -773,39 +954,67 @@ TEST_F(IcingSearchEngineSchemaTest,
                                    .SetKey("namespace1", "uri1")
                                    .SetSchema("Person")
                                    .AddStringProperty("name", "Bill Lundbergh")
+                                   .AddInt64Property("age", 20)
                                    .Build())
+          .AddInt64Property("timestamp", 1234)
           .Build();
 
-  // "sender.name" should get assigned property id 0 and subject should get
-  // property id 1.
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
-  // document should match a query for 'Bill' in 'sender.name', but not in
-  // 'subject'
-  SearchSpecProto search_spec;
-  search_spec.set_query("sender.name:Bill");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto result;
-  result.mutable_status()->set_code(StatusProto::OK);
-  *result.mutable_results()->Add()->mutable_document() = document;
-
-  SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
 
   SearchResultProto empty_result;
   empty_result.mutable_status()->set_code(StatusProto::OK);
-  search_spec.set_query("subject:Bill");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+
+  // Verify term search
+  // document should match a query for 'Bill' in 'sender.name', but not in
+  // 'subject'
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("sender.name:Bill");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec1.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Verify numeric (integer) search
+  // document should match a query for 20 in 'sender.age', but not in
+  // 'timestamp'
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("sender.age == 20");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec2.set_query("timestamp == 20");
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
   // Now update the schema with index_nested_properties=false. This should
-  // reassign property ids, lead to an index rebuild and ensure that nothing
-  // match a query for "Bill".
+  // reassign section ids, lead to an index rebuild and ensure that nothing
+  // match a query for "Bill" or 20.
+  // - "sender.age": int64 type, (nested) unindexed. No section id assigned.
+  // - "sender.name": string type, (nested) unindexed. No section id assigned.
+  // - "subject": string type, indexed. Section id = 0.
+  // - "timestamp": int64 type, indexed. Section id = 1.
   SchemaProto no_nested_schema =
       SchemaBuilder()
           .AddType(person_proto)
@@ -821,6 +1030,10 @@ TEST_F(IcingSearchEngineSchemaTest,
                                         .SetName("subject")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -833,28 +1046,247 @@ TEST_F(IcingSearchEngineSchemaTest,
       ->Add("Email");
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
+  // Verify term search
   // document shouldn't match a query for 'Bill' in either 'sender.name' or
   // 'subject'
-  search_spec.set_query("sender.name:Bill");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+  search_spec1.set_query("sender.name:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 
-  search_spec.set_query("subject:Bill");
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+  search_spec1.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Verify numeric (integer) search
+  // document shouldn't match a query for 20 in either 'sender.age' or
+  // 'timestamp'
+  search_spec2.set_query("sender.age == 20");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  search_spec2.set_query("timestamp == 20");
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
-       ForceSetSchemaPropertyDeletionTriggersIndexRestorationAndReturnsOk) {
+       SetSchemaNewJoinablePropertyTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-  // 'body' should have a property id of 0 and 'subject' should have a property
-  // id of 1.
+  // Create "Message" schema with 3 properties:
+  // - "subject": string type, non-joinable. No joinable property id assigned.
+  //   It is indexed and used for searching only.
+  // - "receiverQualifiedId": string type, non-joinable. No joinable property id
+  //   assigned.
+  // - "senderQualifiedId": string type, Qualified Id type joinable. Joinable
+  //   property id = 0.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("receiverQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("Message");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person one")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person two")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto message =
+      DocumentBuilder()
+          .SetKey("namespace", "message1")
+          .SetSchema("Message")
+          .AddStringProperty("subject", "message")
+          .AddStringProperty("receiverQualifiedId", "namespace#person1")
+          .AddStringProperty("senderQualifiedId", "namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  EXPECT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `receiverQualifiedId` field.
+  // Since "receiverQualifiedId" is not JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+  // joining on that property should only return the "left-side" (`name:person`)
+  // of the join.
+  SearchSpecProto search_spec_join_by_receiver;
+  search_spec_join_by_receiver.set_query("name:person");
+  search_spec_join_by_receiver.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec_join_by_receiver.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("receiverQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:message");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  SearchResultProto expected_empty_child_search_result_proto;
+  expected_empty_child_search_result_proto.mutable_status()->set_code(
+      StatusProto::OK);
+  *expected_empty_child_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person2;
+  *expected_empty_child_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person1;
+  SearchResultProto actual_results =
+      icing.Search(search_spec_join_by_receiver, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_empty_child_search_result_proto));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `senderQualifiedId` field.
+  // Since "senderQualifiedId" is JOINABLE_VALUE_TYPE_QUALIFIED_ID, joining on
+  // that property should return both "left-side" (`name:person`) and
+  // "right-side" (`subject:message`) of the join.
+  SearchSpecProto search_spec_join_by_sender = search_spec_join_by_receiver;
+  join_spec = search_spec_join_by_sender.mutable_join_spec();
+  join_spec->set_child_property_expression("senderQualifiedId");
+
+  SearchResultProto expected_join_by_sender_search_result_proto;
+  expected_join_by_sender_search_result_proto.mutable_status()->set_code(
+      StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_join_by_sender_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person2;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = message;
+  *expected_join_by_sender_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person1;
+  actual_results =
+      icing.Search(search_spec_join_by_sender, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_join_by_sender_search_result_proto));
+
+  // Change "Message" schema to:
+  // - "subject": string type, non-joinable. No joinable property id assigned.
+  // - "receiverQualifiedId": string type, Qualified Id joinable. Joinable
+  //   property id = 0.
+  // - "senderQualifiedId": string type, Qualified Id joinable. Joinable
+  //   property id = 1.
+  SchemaProto schema_two = schema_one;
+  schema_two.mutable_types(1)
+      ->mutable_properties(1)
+      ->mutable_joinable_config()
+      ->set_value_type(JOINABLE_VALUE_TYPE_QUALIFIED_ID);
+  // Index restoration should be triggered here because new schema requires more
+  // joinable properties. Also new joinable property ids will be reassigned and
+  // index restoration should use new joinable property ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Message");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `receiverQualifiedId` field.
+  // Since we've changed "receiverQualifiedId" to be
+  // JOINABLE_VALUE_TYPE_QUALIFIED_ID, joining on that property should return
+  // should return both "left-side" (`name:person`) and "right-side"
+  // (`subject:message`) of the join now.
+  SearchResultProto expected_join_by_receiver_search_result_proto;
+  expected_join_by_receiver_search_result_proto.mutable_status()->set_code(
+      StatusProto::OK);
+  result_proto =
+      expected_join_by_receiver_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person1;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = message;
+  *expected_join_by_receiver_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person2;
+  actual_results =
+      icing.Search(search_spec_join_by_receiver, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(
+                  expected_join_by_receiver_search_result_proto));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:message` based on the child's `senderQualifiedId` field. We should
+  // get the same set of result since `senderQualifiedId` is unchanged.
+  actual_results =
+      icing.Search(search_spec_join_by_sender, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_join_by_sender_search_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchemaIndexedPropertyDeletionTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create a schema with 4 properties:
+  // - "body": string type, indexed. Section id = 0.
+  // - "subject": string type, indexed. Section id = 1.
+  // - "timestamp1": int64 type, indexed. Section id = 2.
+  // - "timestamp2": int64 type, indexed. Section id = 3.
   SchemaProto email_with_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -868,6 +1300,14 @@ TEST_F(IcingSearchEngineSchemaTest,
                                         .SetName("body")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp1")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp2")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -880,7 +1320,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
-  // Create a document with only a subject property.
+  // Create a document with only subject and timestamp2 property.
   DocumentProto document =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -888,36 +1328,64 @@ TEST_F(IcingSearchEngineSchemaTest,
           .SetCreationTimestampMs(1000)
           .AddStringProperty("subject",
                              "Did you get the memo about TPS reports?")
+          .AddInt64Property("timestamp2", 1234)
           .Build();
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  SearchSpecProto search_spec;
-  search_spec.set_query("subject:tps");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto result;
-  result.mutable_status()->set_code(StatusProto::OK);
-  *result.mutable_results()->Add()->mutable_document() = document;
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("subject:tps");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 
-  // Now update the schema to remove the 'body' field. This is backwards
-  // incompatible, but document should be preserved because it doesn't contain a
-  // 'body' field. If the index is correctly rebuilt, then 'subject' will now
-  // have a property id of 0. If not, then the hits in the index will still have
-  // have a property id of 1 and therefore it won't be found.
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp2'.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("timestamp2 == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Now update the schema to remove the 'body' and 'timestamp1' field. This is
+  // backwards incompatible, but document should be preserved because it doesn't
+  // contain a 'body' or 'timestamp1' field.
+  // - "subject": string type, indexed. Section id = 0.
+  // - "timestamp2": int64 type, indexed. Section id = 1.
+  //
+  // If the index is not correctly rebuilt, then the hits of 'subject' and
+  // 'timestamp2' in the index will still have old section ids of 1, 3 and
+  // therefore they won't be found.
   SchemaProto email_no_body_schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("subject")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp2")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   set_schema_result = icing.SetSchema(
@@ -931,22 +1399,191 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  search_spec.set_query("subject:tps");
+  search_spec1.set_query("subject:tps");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp'.
+  search_spec2.set_query("timestamp2 == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       ForceSetSchemaJoinablePropertyDeletionTriggersIndexRestoration) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Email" schema with 2 joinable properties:
+  // - "receiverQualifiedId": qualified id joinable. Joinable property id = 0.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 1.
+  SchemaProto email_with_receiver_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("receiverQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(email_with_receiver_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(1000)
+                             .AddStringProperty("name", "person")
+                             .Build();
+  // Create an email document with only "senderQualifiedId" joinable property.
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .Build();
+
+  EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should be
+  // able to join person and email documents by this property.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("name:person");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("senderQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:tps");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Now update the schema to remove "receiverQualifiedId" fields. This is
+  // backwards incompatible, but document should be preserved because it doesn't
+  // contain "receiverQualifiedId" field. Also since it is join incompatible, we
+  // have to rebuild join index.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 0.
+  //
+  // If the index is not correctly rebuilt, then the joinable data of
+  // "senderQualifiedId" in the joinable index will still have old joinable
+  // property id of 1 and therefore won't take effect for join search query.
+  SchemaProto email_without_receiver_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Although we've just deleted an existing property "receiverQualifiedId" from
+  // schema "Email", some email documents will still be preserved because they
+  // don't have "receiverQualifiedId" property.
+  set_schema_result =
+      icing.SetSchema(email_without_receiver_schema,
+                      /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should
+  // still be able to join person and email documents by this property.
   actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 }
 
 TEST_F(
     IcingSearchEngineSchemaTest,
-    ForceSetSchemaPropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
+    ForceSetSchemaIndexedPropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
 
-  // 'body' should have a property id of 0 and 'subject' should have a property
-  // id of 1.
+  // Create a schema with 3 properties:
+  // - "body": string type, indexed. Section id = 0.
+  // - "subject": string type, indexed. Section id = 1.
+  // - "timestamp": int64 type, indexed. Section id = 2.
   SchemaProto email_with_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -960,6 +1597,10 @@ TEST_F(
                                         .SetName("body")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -972,7 +1613,7 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
-  // Create a document with only a subject property.
+  // Create a document with only subject and timestamp property.
   DocumentProto document =
       DocumentBuilder()
           .SetKey("namespace1", "uri1")
@@ -980,30 +1621,52 @@ TEST_F(
           .SetCreationTimestampMs(1000)
           .AddStringProperty("subject",
                              "Did you get the memo about TPS reports?")
+          .AddInt64Property("timestamp", 1234)
           .Build();
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
 
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  SearchSpecProto search_spec;
-  search_spec.set_query("subject:tps");
-  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-
-  SearchResultProto result;
-  result.mutable_status()->set_code(StatusProto::OK);
-  *result.mutable_results()->Add()->mutable_document() = document;
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("subject:tps");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
 
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
                    ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp'.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("timestamp == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 
   // Now update the schema to remove the 'body' field. This is backwards
   // incompatible, but document should be preserved because it doesn't contain a
-  // 'body' field. If the index is correctly rebuilt, then 'subject' and 'to'
-  // will now have property ids of 0 and 1 respectively. If not, then the hits
-  // in the index will still have have a property id of 1 and therefore it won't
-  // be found.
+  // 'body' field.
+  // - "subject": string type, indexed. Section id = 0.
+  // - "timestamp": int64 type, indexed. Section id = 1.
+  // - "to": string type, indexed. Section id = 2.
+  //
+  // If the index is not correctly rebuilt, then the hits of 'subject' and
+  // 'timestamp' in the index will still have old section ids of 1, 2 and
+  // therefore they won't be found.
   SchemaProto email_no_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
@@ -1017,6 +1680,10 @@ TEST_F(
                                         .SetName("to")
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -1031,12 +1698,182 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
+  // Verify term search
   // We should be able to retrieve the document by searching for 'tps' in
   // 'subject'.
-  search_spec.set_query("subject:tps");
+  search_spec1.set_query("subject:tps");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  // We should be able to retrieve the document by searching for 1234 in
+  // 'timestamp'.
+  search_spec2.set_query("timestamp == 1234");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchemaJoinablePropertyDeletionAndAdditionTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create "Email" schema with 2 joinable properties:
+  // - "receiverQualifiedId": qualified id joinable. Joinable property id = 0.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 1.
+  SchemaProto email_with_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("receiverQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(email_with_body_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto person = DocumentBuilder()
+                             .SetKey("namespace", "person")
+                             .SetSchema("Person")
+                             .SetCreationTimestampMs(1000)
+                             .AddStringProperty("name", "person")
+                             .Build();
+  // Create an email document with only subject and timestamp property.
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddStringProperty("senderQualifiedId", "namespace#person")
+          .Build();
+
+  EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(email).status(), ProtoIsOk());
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should be
+  // able to join person and email documents by this property.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("name:person");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("senderQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("subject:tps");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Now update the schema to remove the "receiverQualified" field and add
+  // "zQualifiedId". This is backwards incompatible, but document should
+  // be preserved because it doesn't contain a "receiverQualified" field and
+  // "zQualifiedId" is optional.
+  // - "senderQualifiedId": qualified id joinable. Joinable property id = 0.
+  // - "zQualifiedId": qualified id joinable. Joinable property id = 1.
+  //
+  // If the index is not correctly rebuilt, then the joinable data of
+  // "senderQualifiedId" in the joinable index will still have old joinable
+  // property id of 1 and therefore won't take effect for join search query.
+  SchemaProto email_no_body_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("zQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result = icing.SetSchema(
+      email_no_body_schema, /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Email");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `subject:tps` based on the child's `senderQualifiedId` field. We should
+  // still be able to join person and email documents by this property.
   actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(result));
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineSchemaTest,
@@ -1155,9 +1992,6 @@ TEST_F(IcingSearchEngineSchemaTest,
       icing.Get("namespace1", "uri2", GetResultSpecProto::default_instance());
   EXPECT_THAT(get_result.status(), ProtoStatusIs(StatusProto::NOT_FOUND));
 }
-
-// TODO(b/256022027): add unit tests for join incompatible schema change to make
-//   sure the joinable cache is rebuilt correctly.
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -1401,18 +2235,13 @@ TEST_F(IcingSearchEngineSchemaTest,
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaCanDetectPreviousSchemaWasLost) {
-  SchemaProto schema;
-  auto type = schema.add_types();
-  type->set_schema_type("Message");
+  SchemaTypeConfigProto message_schema_type_config =
+      CreateMessageSchemaTypeConfig();
+  message_schema_type_config.mutable_properties(0)->set_cardinality(
+      CARDINALITY_OPTIONAL);
 
-  auto body = type->add_properties();
-  body->set_property_name("body");
-  body->set_data_type(PropertyConfigProto::DataType::STRING);
-  body->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-  body->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::PREFIX);
-  body->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+  SchemaProto schema;
+  *schema.add_types() = message_schema_type_config;
 
   // Make an incompatible schema, a previously OPTIONAL field is REQUIRED
   SchemaProto incompatible_schema = schema;
@@ -1663,6 +2492,8 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   ASSERT_THAT(icing.Put(email_collection).status(), ProtoIsOk());
 
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
   const std::vector<std::string> query_terms = {
       "first1", "last2",   "email3@gmail.com", "000-000-001",
       "body",   "subject", "2022-08-02",       "3\\:00"};
@@ -1671,8 +2502,6 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
   *expected_document.mutable_results()->Add()->mutable_document() =
       email_collection;
   for (const std::string& query_term : query_terms) {
-    SearchSpecProto search_spec;
-    search_spec.set_term_match_type(TermMatchType::PREFIX);
     search_spec.set_query(query_term);
     SearchResultProto actual_results =
         icing.Search(search_spec, GetDefaultScoringSpec(),
@@ -1681,8 +2510,6 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
                 EqualsSearchResultIgnoreStatsAndScores(expected_document));
   }
 
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
   search_spec.set_query("foo");
   SearchResultProto expected_no_documents;
   expected_no_documents.mutable_status()->set_code(StatusProto::OK);
