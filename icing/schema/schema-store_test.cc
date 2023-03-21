@@ -320,6 +320,9 @@ TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(store->GetSectionMetadata(/*schema_type_id=*/0, /*section_id=*/0),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetJoinablePropertyMetadata(/*schema_type_id=*/0,
+                                                 /*property_path=*/"A"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   // The apis to extract content from a document should fail gracefully.
   DocumentProto doc;
@@ -327,11 +330,9 @@ TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
   prop->set_name("name");
   prop->add_string_values("foo bar baz");
 
-  EXPECT_THAT(store->GetStringSectionContent(doc, /*section_id=*/0),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(store->GetStringSectionContent(doc, "name"),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(store->ExtractSections(doc),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->ExtractJoinableProperties(doc),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   // The apis to persist and checksum data should succeed.

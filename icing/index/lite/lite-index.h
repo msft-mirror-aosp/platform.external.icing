@@ -181,12 +181,13 @@ class LiteIndex {
 
   uint32_t size() const ICING_LOCKS_EXCLUDED(mutex_) {
     absl_ports::shared_lock l(&mutex_);
-    return header_->cur_size();
+    return sizeLocked();
   }
 
   bool WantsMerge() const ICING_LOCKS_EXCLUDED(mutex_) {
-    return size() >= (options_.hit_buffer_want_merge_bytes /
-                      sizeof(TermIdHitPair::Value));
+    absl_ports::shared_lock l(&mutex_);
+    return is_full() || sizeLocked() >= (options_.hit_buffer_want_merge_bytes /
+                        sizeof(TermIdHitPair::Value));
   }
 
   class const_iterator {
@@ -324,6 +325,10 @@ class LiteIndex {
 
   // Check if the hit buffer has reached its capacity.
   bool is_full() const ICING_SHARED_LOCKS_REQUIRED(mutex_);
+
+  uint32_t sizeLocked() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+    return header_->cur_size();
+  }
 
   // Non-locking implementation for empty().
   bool empty_impl() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {

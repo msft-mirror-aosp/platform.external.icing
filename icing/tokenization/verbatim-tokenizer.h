@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer.h"
 
 namespace icing {
@@ -29,7 +30,7 @@ namespace lib {
 class VerbatimTokenizer : public Tokenizer {
  public:
   libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>> Tokenize(
-      std::string_view text) const override;
+      std::string_view text, LanguageSegmenter::AccessType) const override;
 
   libtextclassifier3::StatusOr<std::vector<Token>> TokenizeAll(
       std::string_view text) const override;

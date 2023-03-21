@@ -453,9 +453,15 @@ void IcingMonkeyTestRunner::DoOptimize() {
 }
 
 void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
+  std::uniform_int_distribution<> dist(0, 1);
+
   IcingSearchEngineOptions icing_options;
   icing_options.set_index_merge_size(config_.index_merge_size);
   icing_options.set_base_dir(icing_dir_->dir());
+  // The method will be called every time when we ReloadFromDisk(), so randomly
+  // flip this flag to test document store's compatibility.
+  icing_options.set_document_store_namespace_id_fingerprint(
+      (bool)dist(random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

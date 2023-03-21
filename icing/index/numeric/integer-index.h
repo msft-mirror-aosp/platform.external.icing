@@ -23,12 +23,16 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/index/numeric/integer-index-storage.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/index/numeric/wildcard-property-storage.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -45,6 +49,11 @@ class IntegerIndex : public NumericIndex<int64_t> {
  public:
   using PropertyToStorageMapType =
       std::unordered_map<std::string, std::unique_ptr<IntegerIndexStorage>>;
+
+  // Maximum number of individual property storages that this index will allow
+  // before falling back to placing hits for any new properties into the
+  // 'wildcard' storage.
+  static constexpr int kMaxPropertyStorages = 32;
 
   struct Info {
     static constexpr int32_t kMagic = 0x238a3dcb;
@@ -90,36 +99,131 @@ class IntegerIndex : public NumericIndex<int64_t> {
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>> Create(
       const Filesystem& filesystem, std::string working_path);
 
-  ~IntegerIndex() override;
-
-  // TODO(b/249829533): implement these functions and add comments.
-  std::unique_ptr<typename NumericIndex<int64_t>::Editor> Edit(
-      std::string_view property_path, DocumentId document_id,
-      SectionId section_id) override;
-
-  libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
-      std::string_view property_path, int64_t key_lower,
-      int64_t key_upper) const override;
-
-  // Clears all integer index data.
+  // Deletes IntegerIndex under working_path.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status Reset() override;
+  static libtextclassifier3::Status Discard(const Filesystem& filesystem,
+                                            const std::string& working_path) {
+    return PersistentStorage::Discard(filesystem, working_path,
+                                      kWorkingPathType);
+  }
+
+  ~IntegerIndex() override;
+
+  // Returns an Editor instance for adding new records into integer index for a
+  // given property, DocumentId and SectionId. See Editor for more details.
+  std::unique_ptr<typename NumericIndex<int64_t>::Editor> Edit(
+      std::string_view property_path, DocumentId document_id,
+      SectionId section_id) override {
+    return std::make_unique<Editor>(property_path, document_id, section_id,
+                                    *this);
+  }
+
+  // Returns a DocHitInfoIterator for iterating through all docs which have the
+  // specified (integer) property contents in range [query_key_lower,
+  // query_key_upper].
+  // When iterating through all relevant doc hits, it:
+  // - Merges multiple SectionIds of doc hits with same DocumentId into a single
+  //   SectionIdMask and constructs DocHitInfo.
+  // - Returns DocHitInfo in descending DocumentId order.
+  //
+  // Returns:
+  //   - On success: a DocHitInfoIterator instance
+  //   - NOT_FOUND_ERROR if the given property_path doesn't exist
+  //   - Any IntegerIndexStorage errors
+  libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
+      std::string_view property_path, int64_t key_lower, int64_t key_upper,
+      const DocumentStore& document_store,
+      const SchemaStore& schema_store) const override;
+
+  // Reduces internal file sizes by reclaiming space and ids of deleted
+  // documents. Integer index will convert all data (hits) to the new document
+  // ids and regenerate all index files. If all data in a property path are
+  // completely deleted, then the underlying storage will be discarded as well.
+  //
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the integer index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on IO error
+  libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) override;
+
+  // Clears all integer index data by discarding all existing storages, and set
+  // last_added_document_id to kInvalidDocumentId.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status Clear() override;
+
+  DocumentId last_added_document_id() const override {
+    return info().last_added_document_id;
+  }
+
+  void set_last_added_document_id(DocumentId document_id) override {
+    Info& info_ref = info();
+    if (info_ref.last_added_document_id == kInvalidDocumentId ||
+        document_id > info_ref.last_added_document_id) {
+      info_ref.last_added_document_id = document_id;
+    }
+  }
+
+  int num_property_indices() const override {
+    return property_to_storage_map_.size() +
+           ((wildcard_index_storage_ == nullptr) ? 0 : 1);
+  }
 
  private:
-  explicit IntegerIndex(const Filesystem& filesystem,
-                        std::string&& working_path,
-                        std::unique_ptr<PostingListIntegerIndexSerializer>
-                            posting_list_serializer,
-                        std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
-                        PropertyToStorageMapType&& property_to_storage_map)
+  class Editor : public NumericIndex<int64_t>::Editor {
+   public:
+    explicit Editor(std::string_view property_path, DocumentId document_id,
+                    SectionId section_id, IntegerIndex& integer_index)
+        : NumericIndex<int64_t>::Editor(property_path, document_id, section_id),
+          integer_index_(integer_index) {}
+
+    ~Editor() override = default;
+
+    libtextclassifier3::Status BufferKey(int64_t key) override {
+      seen_keys_.push_back(key);
+      return libtextclassifier3::Status::OK;
+    }
+
+    libtextclassifier3::Status IndexAllBufferedKeys() && override;
+
+   private:
+    // Vector for caching all seen keys. Since IntegerIndexStorage::AddKeys
+    // sorts and dedupes keys, we can just simply use vector here and move it to
+    // AddKeys().
+    std::vector<int64_t> seen_keys_;
+
+    IntegerIndex& integer_index_;  // Does not own.
+  };
+
+  explicit IntegerIndex(
+      const Filesystem& filesystem, std::string&& working_path,
+      std::unique_ptr<PostingListIntegerIndexSerializer>
+          posting_list_serializer,
+      std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
+      PropertyToStorageMapType&& property_to_storage_map,
+      std::unique_ptr<FileBackedProto<WildcardPropertyStorage>>
+          wildcard_property_storage,
+      std::unordered_set<std::string> wildcard_properties_set,
+      std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage)
       : NumericIndex<int64_t>(filesystem, std::move(working_path),
                               kWorkingPathType),
         posting_list_serializer_(std::move(posting_list_serializer)),
         metadata_mmapped_file_(std::move(metadata_mmapped_file)),
-        property_to_storage_map_(std::move(property_to_storage_map)) {}
+        property_to_storage_map_(std::move(property_to_storage_map)),
+        wildcard_property_storage_(std::move(wildcard_property_storage)),
+        wildcard_properties_set_(std::move(wildcard_properties_set)),
+        wildcard_index_storage_(std::move(wildcard_index_storage)) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
   InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path);
@@ -127,6 +231,52 @@ class IntegerIndex : public NumericIndex<int64_t> {
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
   InitializeExistingFiles(const Filesystem& filesystem,
                           std::string&& working_path);
+
+  // Adds the property path to the list of properties using wildcard storage.
+  // This will both update the in-memory list (wildcard_properties_set_) and
+  // the persistent list (wilcard_property_storage_).
+  //
+  // RETURNS:
+  //   - OK on success
+  //   - INTERNAL_ERROR if unable to successfully persist updated properties
+  //     list in wildcard_property_storage_.
+  libtextclassifier3::Status AddPropertyToWildcardStorage(
+      const std::string& property_path);
+
+  // Transfers integer index data from the current integer index to
+  // new_integer_index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error. This could potentially leave the storages
+  //     in an invalid state and the caller should handle it properly (e.g.
+  //     discard and rebuild)
+  libtextclassifier3::Status TransferIndex(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      IntegerIndex* new_integer_index) const;
+
+  // Transfers integer index data from old_storage to new_integer_index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error. This could potentially leave the storages
+  //     in an invalid state and the caller should handle it properly (e.g.
+  //     discard and rebuild)
+  libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
+  TransferIntegerIndexStorage(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const IntegerIndexStorage* old_storage, const std::string& property_path,
+      IntegerIndex* new_integer_index) const;
+
+  // Transfers the persistent and in-memory list of properties using the
+  // wildcard storage from old_storage to new_integer_index.
+  //
+  // RETURNS:
+  //   - OK on success
+  //   - INTERNAL_ERROR if unable to successfully persist updated properties
+  //     list in new_integer_index.
+  libtextclassifier3::Status TransferWildcardStorage(
+      IntegerIndex* new_integer_index) const;
 
   // Flushes contents of all storages to underlying files.
   //
@@ -148,8 +298,9 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //   - Crc of the Info on success
   libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
 
-  // Computes and returns all storages checksum. Checksums of bucket_storage_,
-  // entry_storage_ and kv_storage_ will be combined together by XOR.
+  // Computes and returns all storages checksum. Checksums of (storage_crc,
+  // property_path) for all existing property paths will be combined together by
+  // XOR.
   //
   // Returns:
   //   - Crc of all storages on success
@@ -166,14 +317,14 @@ class IntegerIndex : public NumericIndex<int64_t> {
                                           kCrcsMetadataFileOffset);
   }
 
-  Info* info() {
-    return reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
-                                   kInfoMetadataFileOffset);
+  Info& info() {
+    return *reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
+                                    kInfoMetadataFileOffset);
   }
 
-  const Info* info() const {
-    return reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
-                                         kInfoMetadataFileOffset);
+  const Info& info() const {
+    return *reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
+                                          kInfoMetadataFileOffset);
   }
 
   std::unique_ptr<PostingListIntegerIndexSerializer> posting_list_serializer_;
@@ -182,6 +333,19 @@ class IntegerIndex : public NumericIndex<int64_t> {
 
   // Property path to integer index storage map.
   PropertyToStorageMapType property_to_storage_map_;
+
+  // Persistent list of properties that have added content to
+  // wildcard_index_storage_.
+  std::unique_ptr<FileBackedProto<WildcardPropertyStorage>>
+      wildcard_property_storage_;
+
+  // In-memory list of properties that have added content to
+  // wildcard_index_storage_.
+  std::unordered_set<std::string> wildcard_properties_set_;
+
+  // The index storage that is used once we have already created
+  // kMaxPropertyStorages in property_to_storage_map.
+  std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage_;
 };
 
 }  // namespace lib

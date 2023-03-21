@@ -135,7 +135,8 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
 
   std::unique_ptr<DocHitInfoIteratorTermLiteExact> iter =
       std::make_unique<DocHitInfoIteratorTermLiteExact>(
-          term_id_codec_.get(), lite_index_.get(), term, kSectionIdMaskAll,
+          term_id_codec_.get(), lite_index_.get(), term, /*term_start_index=*/0,
+          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
           /*need_hit_term_frequency=*/true);
 
   ASSERT_THAT(iter->Advance(), IsOk());

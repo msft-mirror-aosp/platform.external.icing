@@ -60,6 +60,8 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   int32_t GetNumBlocksInspected() const override;
 
   int32_t GetNumLeafAdvanceCalls() const override;
