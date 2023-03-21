@@ -93,7 +93,7 @@ TEST_F(PostingListHitAccessorTest, HitsAddAndRetrieveProperly) {
                              flash_index_storage_->GetPostingList(result.id));
   EXPECT_THAT(serializer_->GetHits(&pl_holder.posting_list),
               IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
-  EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
+  EXPECT_THAT(pl_holder.next_block_index, Eq(kInvalidBlockIndex));
 }
 
 TEST_F(PostingListHitAccessorTest, PreexistingPLKeepOnSameBlock) {
@@ -223,7 +223,7 @@ TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
               ElementsAreArray(hits1.rbegin(), first_block_hits_start));
 
   // Now retrieve all of the hits that were on the first block.
-  uint32_t first_block_id = pl_holder.block.next_block_index();
+  uint32_t first_block_id = pl_holder.next_block_index;
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
@@ -290,7 +290,7 @@ TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
               ElementsAreArray(hits1.rbegin(), first_block_hits_start));
 
   // Now retrieve all of the hits that were on the first block.
-  uint32_t first_block_id = pl_holder.block.next_block_index();
+  uint32_t first_block_id = pl_holder.next_block_index;
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,

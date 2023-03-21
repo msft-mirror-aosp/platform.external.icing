@@ -31,18 +31,13 @@
 namespace icing {
 namespace lib {
 
-namespace {
-// Chosen based on results in go/reverse-jni-benchmarks
-static constexpr int kBatchSize = 100;
-}  // namespace
-
 // -----------------------------------------------------------------------------
 // Implementations that call out to JVM. Behold the beauty.
 // -----------------------------------------------------------------------------
 libtextclassifier3::StatusOr<std::unique_ptr<ReverseJniBreakIterator>>
 ReverseJniBreakIterator::Create(const JniCache* jni_cache,
-                                std::string_view text,
-                                std::string_view locale) {
+                                std::string_view text, std::string_view locale,
+                                int batch_size) {
   if (jni_cache == nullptr) {
     return absl_ports::InvalidArgumentError(
         "Create must be called with a valid JniCache pointer!");
@@ -90,15 +85,17 @@ ReverseJniBreakIterator::Create(const JniCache* jni_cache,
   ICING_RETURN_IF_ERROR(libtextclassifier3::JniHelper::CallVoidMethod(
       jenv, iterator_batcher.get(), jni_cache->breakiterator_settext,
       java_text.get()));
-  return std::unique_ptr<ReverseJniBreakIterator>(
-      new ReverseJniBreakIterator(jni_cache, std::move(iterator_batcher)));
+  return std::unique_ptr<ReverseJniBreakIterator>(new ReverseJniBreakIterator(
+      jni_cache, std::move(iterator_batcher), batch_size));
 }
 
 ReverseJniBreakIterator::ReverseJniBreakIterator(
     const JniCache* jni_cache,
-    libtextclassifier3::ScopedGlobalRef<jobject> iterator_batcher)
+    libtextclassifier3::ScopedGlobalRef<jobject> iterator_batcher,
+    int batch_size)
     : jni_cache_(jni_cache),
       iterator_batcher_(std::move(iterator_batcher)),
+      batch_size_(batch_size),
       is_done_(false),
       is_almost_done_(false) {}
 
@@ -113,7 +110,7 @@ int ReverseJniBreakIterator::Next() {
       is_done_ = true;
       return ReverseJniBreakIterator::kDone;
     }
-    is_almost_done_ = break_indices_cache_.size() < kBatchSize;
+    is_almost_done_ = break_indices_cache_.size() < batch_size_;
   }
   int break_index = break_indices_cache_.front();
   break_indices_cache_.pop();
@@ -156,7 +153,7 @@ int ReverseJniBreakIterator::FetchNextBatch() {
       libtextclassifier3::ScopedLocalRef<jintArray> break_indices,
       libtextclassifier3::JniHelper::CallObjectMethod<jintArray>(
           jni_cache_->GetEnv(), iterator_batcher_.get(),
-          jni_cache_->breakiterator_next, kBatchSize),
+          jni_cache_->breakiterator_next, batch_size_),
       ReverseJniBreakIterator::kDone);
   if (break_indices == nullptr || jni_cache_->ExceptionCheckAndClear()) {
     return ReverseJniBreakIterator::kDone;

@@ -81,6 +81,14 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorTermMain::TrimRightMostNode() && {
+  // Leaf iterator should trim itself.
+  DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
+                                          unnormalized_term_length_};
+  return node;
+}
+
 libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
   DocHitInfo last_doc_hit_info;
   if (!cached_doc_hit_infos_.empty()) {

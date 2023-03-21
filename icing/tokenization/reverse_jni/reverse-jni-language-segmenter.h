@@ -34,7 +34,8 @@ class ReverseJniLanguageSegmenter : public LanguageSegmenter {
       : locale_(std::move(locale)), jni_cache_(jni_cache) {}
 
   libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter::Iterator>>
-  Segment(std::string_view text) const override;
+  Segment(std::string_view text,
+          LanguageSegmenter::AccessType access_type) const override;
 
   libtextclassifier3::StatusOr<std::vector<std::string_view>> GetAllTerms(
       std::string_view text) const override;

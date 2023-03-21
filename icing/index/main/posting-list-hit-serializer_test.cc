@@ -53,11 +53,9 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
   static const int kNumHits = 2551;
   static const size_t kHitsSize = kNumHits * sizeof(Hit);
 
-  std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kHitsSize);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()), kHitsSize));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, kHitsSize));
 
   // Make used.
   Hit hit0(/*section_id=*/0, 0, /*term_frequency=*/56);
@@ -102,11 +100,9 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
   PostingListHitSerializer serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   // Fill up the compressed region.
   // Transitions:
@@ -171,14 +167,10 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitAlmostFull) {
 TEST(PostingListHitSerializerTest, PostingListUsedMinSize) {
   PostingListHitSerializer serializer;
 
-  std::unique_ptr<char[]> hits_buf =
-      std::make_unique<char[]>(serializer.GetMinPostingListSize());
-
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()),
-          serializer.GetMinPostingListSize()));
+          &serializer, serializer.GetMinPostingListSize()));
   // PL State: EMPTY
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(0));
   EXPECT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(IsEmpty()));
@@ -220,15 +212,11 @@ TEST(PostingListHitSerializerTest,
      PostingListPrependHitArrayMinSizePostingList) {
   PostingListHitSerializer serializer;
 
-  constexpr int kFinalSize = 1025;
-  std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kFinalSize);
-
   // Min Size = 10
   int size = serializer.GetMinPostingListSize();
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   std::vector<HitElt> hits_in;
   hits_in.emplace_back(Hit(1, 0, Hit::kDefaultTermFrequency));
@@ -270,11 +258,9 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
 
   // Size = 30
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   std::vector<HitElt> hits_in;
   hits_in.emplace_back(Hit(1, 0, Hit::kDefaultTermFrequency));
@@ -442,8 +428,6 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
   static constexpr size_t kHitsSize =
       ((kNumHits * (kDeltaSize + kTermFrequencySize)) / 5) * 5;
 
-  std::unique_ptr<char[]> hits_buf = std::make_unique<char[]>(kHitsSize);
-
   // Create an array with one too many hits
   std::vector<Hit> hits_in_too_many =
       CreateHits(kNumHits + 1, /*desired_byte_length=*/1);
@@ -454,8 +438,7 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
       PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()),
-          serializer.GetMinPostingListSize()));
+          &serializer, serializer.GetMinPostingListSize()));
 
   // PrependHitArray should fail because hit_elts_in_too_many is far too large
   // for the minimum size pl.
@@ -467,8 +450,7 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf.get()), kHitsSize));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, kHitsSize));
   // PrependHitArray should fail because hit_elts_in_too_many is one hit too
   // large for this pl.
   num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
@@ -483,10 +465,9 @@ TEST(PostingListHitSerializerTest,
   PostingListHitSerializer serializer;
 
   const uint32_t pl_size = 3 * sizeof(Hit);
-  char hits_buf[pl_size];
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl,
-                             PostingListUsed::CreateFromUnitializedRegion(
-                                 &serializer, hits_buf, pl_size));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListUsed pl,
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
   ICING_ASSERT_OK(serializer.PrependHit(&pl, Hit(Hit::kInvalidValue - 1, 0)));
   uint32_t bytes_used = serializer.GetBytesUsed(&pl);
   // Status not full.
@@ -503,10 +484,10 @@ TEST(PostingListHitSerializerTest,
 TEST(PostingListHitSerializerTest, DeltaOverflow) {
   PostingListHitSerializer serializer;
 
-  char hits_buf[1000];
-  ICING_ASSERT_OK_AND_ASSIGN(PostingListUsed pl,
-                             PostingListUsed::CreateFromUnitializedRegion(
-                                 &serializer, hits_buf, 4 * sizeof(Hit)));
+  const uint32_t pl_size = 4 * sizeof(Hit);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListUsed pl,
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
 
   static const Hit::Value kOverflow[4] = {
       Hit::kInvalidValue >> 2,
@@ -521,8 +502,8 @@ TEST(PostingListHitSerializerTest, DeltaOverflow) {
   }
 
   // Cannot fit 4 overflow values.
-  ICING_ASSERT_OK_AND_ASSIGN(pl, PostingListUsed::CreateFromUnitializedRegion(
-                                     &serializer, hits_buf, 4 * sizeof(Hit)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      pl, PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
   ICING_EXPECT_OK(serializer.PrependHit(&pl, Hit(kOverflow[3])));
   ICING_EXPECT_OK(serializer.PrependHit(&pl, Hit(kOverflow[2])));
 
@@ -536,22 +517,18 @@ TEST(PostingListHitSerializerTest, MoveFrom) {
   PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit &hit : hits1) {
     ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
   }
 
-  std::unique_ptr<char[]> hits_buf2 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf2.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits2 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/2);
   for (const Hit &hit : hits2) {
@@ -568,11 +545,9 @@ TEST(PostingListHitSerializerTest, MoveFromNullArgumentReturnsInvalidArgument) {
   PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits = CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit &hit : hits) {
     ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
@@ -589,22 +564,18 @@ TEST(PostingListHitSerializerTest,
   PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit &hit : hits1) {
     ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
   }
 
-  std::unique_ptr<char[]> hits_buf2 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf2.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits2 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/2);
   for (const Hit &hit : hits2) {
@@ -613,7 +584,7 @@ TEST(PostingListHitSerializerTest,
 
   // Write invalid hits to the beginning of pl_used1 to make it invalid.
   Hit invalid_hit;
-  Hit *first_hit = reinterpret_cast<Hit *>(hits_buf1.get());
+  Hit *first_hit = reinterpret_cast<Hit *>(pl_used1.posting_list_buffer());
   *first_hit = invalid_hit;
   ++first_hit;
   *first_hit = invalid_hit;
@@ -628,22 +599,18 @@ TEST(PostingListHitSerializerTest,
   PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit &hit : hits1) {
     ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
   }
 
-  std::unique_ptr<char[]> hits_buf2 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf2.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits2 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/2);
   for (const Hit &hit : hits2) {
@@ -652,7 +619,7 @@ TEST(PostingListHitSerializerTest,
 
   // Write invalid hits to the beginning of pl_used2 to make it invalid.
   Hit invalid_hit;
-  Hit *first_hit = reinterpret_cast<Hit *>(hits_buf2.get());
+  Hit *first_hit = reinterpret_cast<Hit *>(pl_used2.posting_list_buffer());
   *first_hit = invalid_hit;
   ++first_hit;
   *first_hit = invalid_hit;
@@ -666,24 +633,19 @@ TEST(PostingListHitSerializerTest, MoveToPostingListTooSmall) {
   PostingListHitSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<Hit> hits1 =
       CreateHits(/*num_hits=*/5, /*desired_byte_length=*/1);
   for (const Hit &hit : hits1) {
     ICING_ASSERT_OK(serializer.PrependHit(&pl_used1, hit));
   }
 
-  std::unique_ptr<char[]> hits_buf2 =
-      std::make_unique<char[]>(serializer.GetMinPostingListSize());
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
       PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf2.get()),
-          serializer.GetMinPostingListSize()));
+          &serializer, serializer.GetMinPostingListSize()));
   std::vector<Hit> hits2 =
       CreateHits(/*num_hits=*/1, /*desired_byte_length=*/2);
   for (const Hit &hit : hits2) {
@@ -702,11 +664,9 @@ TEST(PostingListHitSerializerTest, PopHitsWithScores) {
   PostingListHitSerializer serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> hits_buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void *>(hits_buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   // This posting list is 20-bytes. Create four hits that will have deltas of
   // two bytes each and all of whom will have a non-default score. This posting
