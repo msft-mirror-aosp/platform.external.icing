@@ -128,6 +128,13 @@ class PropertyConfigBuilder {
     return *this;
   }
 
+  PropertyConfigBuilder& SetJoinable(
+      JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
+    property_.mutable_joinable_config()->set_value_type(join_value_type);
+    property_.mutable_joinable_config()->set_propagate_delete(propagate_delete);
+    return *this;
+  }
+
   PropertyConfigBuilder& SetCardinality(
       PropertyConfigProto::Cardinality::Code cardinality) {
     property_.set_cardinality(cardinality);

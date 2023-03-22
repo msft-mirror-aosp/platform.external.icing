@@ -147,7 +147,9 @@ PersistentHashMap::Create(const Filesystem& filesystem,
       !filesystem.FileExists(
           GetKeyValueStorageFilePath(working_path).c_str())) {
     // Discard working_path if any of them is missing, and reinitialize.
-    ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
+    if (filesystem.DirectoryExists(working_path.c_str())) {
+      ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
+    }
     return InitializeNewFiles(filesystem, std::move(working_path),
                               std::move(options));
   }

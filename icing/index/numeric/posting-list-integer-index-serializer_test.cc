@@ -43,11 +43,9 @@ TEST(PostingListIntegerIndexSerializerTest, GetMinPostingListSizeToFitNotNull) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 2551 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   ASSERT_THAT(serializer.PrependData(
                   &pl_used, IntegerIndexData(/*section_id=*/0,
@@ -69,11 +67,9 @@ TEST(PostingListIntegerIndexSerializerTest,
   PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   ASSERT_THAT(serializer.PrependData(
                   &pl_used, IntegerIndexData(/*section_id=*/0,
@@ -90,11 +86,9 @@ TEST(PostingListIntegerIndexSerializerTest, GetMinPostingListSizeToFitFull) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   ASSERT_THAT(serializer.PrependData(
                   &pl_used, IntegerIndexData(/*section_id=*/0,
@@ -115,11 +109,9 @@ TEST(PostingListIntegerIndexSerializerTest, PrependDataNotFull) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 2551 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   // Make used.
   IntegerIndexData data0(/*section_id=*/0, /*document_id=*/0, /*key=*/2);
@@ -153,11 +145,9 @@ TEST(PostingListIntegerIndexSerializerTest, PrependDataAlmostFull) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 4 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   // Fill up the compressed region.
   // Transitions:
@@ -197,11 +187,9 @@ TEST(PostingListIntegerIndexSerializerTest, PrependDataPostingListUsedMinSize) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   // PL State: EMPTY
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(0));
@@ -235,11 +223,9 @@ TEST(PostingListIntegerIndexSerializerTest,
   PostingListIntegerIndexSerializer serializer;
 
   int size = 6 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   std::vector<IntegerIndexData> data_in;
   std::vector<IntegerIndexData> data_pushed;
@@ -315,11 +301,9 @@ TEST(PostingListIntegerIndexSerializerTest, PrependDataArrayKeepPrepended) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 6 * sizeof(IntegerIndexData);
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   std::vector<IntegerIndexData> data_in;
   std::vector<IntegerIndexData> data_pushed;
@@ -371,11 +355,9 @@ TEST(PostingListIntegerIndexSerializerTest, MoveFrom) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> buf1 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf1.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   std::vector<IntegerIndexData> data_arr1 = {
       IntegerIndexData(/*section_id=*/0, /*document_id=*/0, /*key=*/2),
@@ -385,11 +367,9 @@ TEST(PostingListIntegerIndexSerializerTest, MoveFrom) {
                                   /*keep_prepended=*/false),
       Eq(data_arr1.size()));
 
-  std::unique_ptr<char[]> buf2 = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf2.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<IntegerIndexData> data_arr2 = {
       IntegerIndexData(/*section_id=*/0, /*document_id=*/2, /*key=*/0),
       IntegerIndexData(/*section_id=*/0, /*document_id=*/3, /*key=*/-3),
@@ -413,11 +393,9 @@ TEST(PostingListIntegerIndexSerializerTest,
   PostingListIntegerIndexSerializer serializer;
 
   int size = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
   std::vector<IntegerIndexData> data_arr = {
       IntegerIndexData(/*section_id=*/0, /*document_id=*/0, /*key=*/2),
       IntegerIndexData(/*section_id=*/0, /*document_id=*/1, /*key=*/5)};
@@ -443,11 +421,9 @@ TEST(PostingListIntegerIndexSerializerTest, MoveToPostingListTooSmall) {
   PostingListIntegerIndexSerializer serializer;
 
   int size1 = 3 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> buf1 = std::make_unique<char[]>(size1);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used1,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf1.get()), size1));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size1));
   std::vector<IntegerIndexData> data_arr1 = {
       IntegerIndexData(/*section_id=*/0, /*document_id=*/0, /*key=*/2),
       IntegerIndexData(/*section_id=*/0, /*document_id=*/1, /*key=*/5),
@@ -460,11 +436,9 @@ TEST(PostingListIntegerIndexSerializerTest, MoveToPostingListTooSmall) {
       Eq(data_arr1.size()));
 
   int size2 = serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> buf2 = std::make_unique<char[]>(size2);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf2.get()), size2));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size2));
   std::vector<IntegerIndexData> data_arr2 = {
       IntegerIndexData(/*section_id=*/0, /*document_id=*/5, /*key=*/-200)};
   ASSERT_THAT(
@@ -486,11 +460,9 @@ TEST(PostingListIntegerIndexSerializerTest, PopFrontData) {
   PostingListIntegerIndexSerializer serializer;
 
   int size = 2 * serializer.GetMinPostingListSize();
-  std::unique_ptr<char[]> buf = std::make_unique<char[]>(size);
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used,
-      PostingListUsed::CreateFromUnitializedRegion(
-          &serializer, static_cast<void*>(buf.get()), size));
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, size));
 
   std::vector<IntegerIndexData> data_arr = {
       IntegerIndexData(/*section_id=*/0, /*document_id=*/0, /*key=*/2),
