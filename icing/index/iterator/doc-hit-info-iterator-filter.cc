@@ -105,6 +105,18 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
   return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
 }
 
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorFilter::TrimRightMostNode() && {
+  ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_delegate,
+                         std::move(*delegate_).TrimRightMostNode());
+  if (trimmed_delegate.iterator_ != nullptr) {
+    trimmed_delegate.iterator_ = std::make_unique<DocHitInfoIteratorFilter>(
+        std::move(trimmed_delegate.iterator_), &document_store_, &schema_store_,
+        options_);
+  }
+  return trimmed_delegate;
+}
+
 int32_t DocHitInfoIteratorFilter::GetNumBlocksInspected() const {
   return delegate_->GetNumBlocksInspected();
 }

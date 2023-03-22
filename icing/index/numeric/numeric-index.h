@@ -23,8 +23,10 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/persistent-storage.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -67,7 +69,7 @@ class NumericIndex : public PersistentStorage {
     // Returns:
     //   - OK on success
     //   - Any other errors, depending on the actual implementation
-    virtual libtextclassifier3::Status IndexAllBufferedKeys() = 0;
+    virtual libtextclassifier3::Status IndexAllBufferedKeys() && = 0;
 
    protected:
     std::string property_path_;
@@ -126,12 +128,46 @@ class NumericIndex : public PersistentStorage {
   //   - INVALID_ARGUMENT_ERROR if key_lower > key_upper
   //   - Any other errors, depending on the actual implementation
   virtual libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-  GetIterator(std::string_view property_path, T key_lower,
-              T key_upper) const = 0;
+  GetIterator(std::string_view property_path, T key_lower, T key_upper,
+              const DocumentStore& document_store,
+              const SchemaStore& schema_store) const = 0;
 
-  // Clears all files created by the index. Returns OK if all files were
-  // cleared.
-  virtual libtextclassifier3::Status Reset() = 0;
+  // Reduces internal file sizes by reclaiming space and ids of deleted
+  // documents. Numeric index will convert all data (hits) to the new document
+  // ids and regenerate all index files. If all data in a property path are
+  // completely deleted, then the underlying storage must be discarded as well.
+  //
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the numeric index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - Any other errors, depending on the actual implementation
+  virtual libtextclassifier3::Status Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) = 0;
+
+  // Clears all data in the integer index and set last_added_document_id to
+  // kInvalidDocumentId.
+  //
+  // Returns:
+  //   - OK on success
+  //   - Any other errors, depending on the actual implementation
+  virtual libtextclassifier3::Status Clear() = 0;
+
+  // Returns the largest document_id added to the index. Note that DocumentIds
+  // are always inserted in increasing order.
+  virtual DocumentId last_added_document_id() const = 0;
+
+  // Sets last_added_document_id to document_id so long as document_id >
+  // last_added_document_id() or last_added_document_id() is invalid.
+  virtual void set_last_added_document_id(DocumentId document_id) = 0;
+
+  // The number of individual indices that the NumericIndex has created to
+  // search over all indexed properties thus far.
+  virtual int num_property_indices() const = 0;
 
  protected:
   explicit NumericIndex(const Filesystem& filesystem,

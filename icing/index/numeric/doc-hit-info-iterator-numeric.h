@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/util/status-macros.h"
@@ -35,10 +36,21 @@ class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
       : numeric_index_iter_(std::move(numeric_index_iter)) {}
 
   libtextclassifier3::Status Advance() override {
+    // If the query property path doesn't exist (i.e. the storage doesn't
+    // exist), then numeric_index_iter_ will be nullptr.
+    if (numeric_index_iter_ == nullptr) {
+      return absl_ports::ResourceExhaustedError("End of iterator");
+    }
+
     ICING_RETURN_IF_ERROR(numeric_index_iter_->Advance());
 
     doc_hit_info_ = numeric_index_iter_->GetDocHitInfo();
     return libtextclassifier3::Status::OK;
+  }
+
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
+    return absl_ports::InvalidArgumentError(
+        "Cannot generate suggestion if the last term is numeric operator.");
   }
 
   int32_t GetNumBlocksInspected() const override { return 0; }

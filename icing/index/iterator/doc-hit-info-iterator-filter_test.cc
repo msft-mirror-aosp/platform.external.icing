@@ -25,6 +25,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
@@ -876,6 +877,55 @@ TEST_F(DocHitInfoIteratorFilterTest, GetNumLeafAdvanceCalls) {
                                              schema_store_.get(), options);
 
   EXPECT_THAT(filtered_iterator.GetNumLeafAdvanceCalls(), Eq(6));
+}
+
+TEST_F(DocHitInfoIteratorFilterTest, TrimFilterIterator) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store_->Put(document1_namespace1_schema1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store_->Put(document2_namespace1_schema1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store_->Put(document3_namespace2_schema1_));
+
+  // Build an interator tree like:
+  //                Filter
+  //                   |
+  //                  AND
+  //             /           \
+  //          {1, 3}         {2}
+  std::vector<DocHitInfo> left_vector = {DocHitInfo(document_id1),
+                                         DocHitInfo(document_id3)};
+  std::vector<DocHitInfo> right_vector = {DocHitInfo(document_id2)};
+
+  std::unique_ptr<DocHitInfoIterator> left_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(left_vector);
+  std::unique_ptr<DocHitInfoIterator> right_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(right_vector, "term", 10);
+
+  std::unique_ptr<DocHitInfoIterator> original_iterator =
+      std::make_unique<DocHitInfoIteratorAnd>(std::move(left_iter),
+                                              std::move(right_iter));
+
+  DocHitInfoIteratorFilter::Options options;
+  // Filters out document3 by namespace
+  options.namespaces = std::vector<std::string_view>{namespace1_};
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options);
+
+  // The trimmed tree.
+  //          Filter
+  //             |
+  //          {1, 3}
+  ICING_ASSERT_OK_AND_ASSIGN(DocHitInfoIterator::TrimmedNode trimmed_node,
+                             std::move(filtered_iterator).TrimRightMostNode());
+  EXPECT_THAT(trimmed_node.term_, Eq("term"));
+  EXPECT_THAT(trimmed_node.term_start_index_, Eq(10));
+  EXPECT_THAT(GetDocumentIds(trimmed_node.iterator_.get()),
+              ElementsAre(document_id1));
 }
 
 }  // namespace

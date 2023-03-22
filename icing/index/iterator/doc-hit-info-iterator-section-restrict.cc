@@ -38,13 +38,15 @@ namespace lib {
 DocHitInfoIteratorSectionRestrict::DocHitInfoIteratorSectionRestrict(
     std::unique_ptr<DocHitInfoIterator> delegate,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    std::string target_section)
+    std::set<std::string> target_sections)
     : delegate_(std::move(delegate)),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      target_section_(std::move(target_section)) {}
+      target_sections_(std::move(target_sections)) {}
 
 libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
+  doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+  hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
   while (delegate_->Advance().ok()) {
     DocumentId document_id = delegate_->doc_hit_info().document_id();
 
@@ -61,8 +63,8 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
     // Guaranteed that the DocumentFilterData exists at this point
     SchemaTypeId schema_type_id = data_optional.value().schema_type_id();
 
-    // A hit can be in multiple sections at once, need to check that at least
-    // one of the confirmed section ids match the name of the target section
+    // A hit can be in multiple sections at once, need to check which of the
+    // section ids match the target sections
     while (section_id_mask != 0) {
       // There was a hit in this section id
       SectionId section_id = __builtin_ctzll(section_id_mask);
@@ -74,11 +76,10 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
         const SectionMetadata* section_metadata =
             section_metadata_or.ValueOrDie();
 
-        if (section_metadata->path == target_section_) {
+        if (target_sections_.find(section_metadata->path) !=
+            target_sections_.end()) {
           // The hit was in the target section name, return OK/found
-          doc_hit_info_ = delegate_->doc_hit_info();
-          hit_intersect_section_ids_mask_ = UINT64_C(1) << section_id;
-          return libtextclassifier3::Status::OK;
+          hit_intersect_section_ids_mask_ |= UINT64_C(1) << section_id;
         }
       }
 
@@ -86,13 +87,33 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
       section_id_mask &= ~(UINT64_C(1) << section_id);
     }
 
+    if (hit_intersect_section_ids_mask_ != kSectionIdMaskNone) {
+      doc_hit_info_ = delegate_->doc_hit_info();
+      doc_hit_info_.set_hit_section_ids_mask(hit_intersect_section_ids_mask_);
+      return libtextclassifier3::Status::OK;
+    }
     // Didn't find a matching section name for this hit. Continue.
   }
 
   // Didn't find anything on the delegate iterator.
-  doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-  hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
   return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
+}
+
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorSectionRestrict::TrimRightMostNode() && {
+  ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_delegate,
+                         std::move(*delegate_).TrimRightMostNode());
+  if (trimmed_delegate.iterator_ == nullptr) {
+    // TODO(b/228240987): Update TrimmedNode and downstream code to handle
+    // multiple section restricts.
+    trimmed_delegate.target_section_ = std::move(*target_sections_.begin());
+    return trimmed_delegate;
+  }
+  trimmed_delegate.iterator_ =
+      std::make_unique<DocHitInfoIteratorSectionRestrict>(
+          std::move(trimmed_delegate.iterator_), &document_store_,
+          &schema_store_, std::move(target_sections_));
+  return std::move(trimmed_delegate);
 }
 
 int32_t DocHitInfoIteratorSectionRestrict::GetNumBlocksInspected() const {
@@ -104,7 +125,8 @@ int32_t DocHitInfoIteratorSectionRestrict::GetNumLeafAdvanceCalls() const {
 }
 
 std::string DocHitInfoIteratorSectionRestrict::ToString() const {
-  return absl_ports::StrCat(target_section_, ": ", delegate_->ToString());
+  return absl_ports::StrCat("(", absl_ports::StrJoin(target_sections_, ","),
+                            "): ", delegate_->ToString());
 }
 
 }  // namespace lib

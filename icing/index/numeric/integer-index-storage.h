@@ -30,6 +30,7 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index-data.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -77,7 +78,7 @@ class IntegerIndexStorage : public PersistentStorage {
     static constexpr int32_t kMagic = 0xc4bf0ccc;
 
     int32_t magic;
-    int32_t num_keys;
+    int32_t num_data;
 
     Crc32 ComputeChecksum() const {
       return Crc32(
@@ -116,6 +117,10 @@ class IntegerIndexStorage : public PersistentStorage {
     int64_t key_lower() const { return key_lower_; }
 
     int64_t key_upper() const { return key_upper_; }
+
+    void set_key_lower(int64_t key_lower) { key_lower_ = key_lower; }
+
+    void set_key_upper(int64_t key_upper) { key_upper_ = key_upper; }
 
     PostingListIdentifier posting_list_identifier() const {
       return posting_list_identifier_;
@@ -175,6 +180,29 @@ class IntegerIndexStorage : public PersistentStorage {
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
   static constexpr std::string_view kFilePrefix = "integer_index_storage";
+
+  // # of data threshold for bucket merging during optimization (TransferIndex).
+  // If total # data of adjacent buckets exceed this value, then flush the
+  // accumulated data. Otherwise merge buckets and their data.
+  //
+  // Calculated by: 0.7 * (kMaxPostingListSize / sizeof(IntegerIndexData)),
+  // where kMaxPostingListSize = (kPageSize - sizeof(IndexBlock::BlockHeader)).
+  static constexpr int32_t kNumDataThresholdForBucketMerge = 240;
+
+  // # of data threshold for bucket splitting during indexing (AddKeys).
+  // When the posting list of a bucket is full, we will try to split data into
+  // multiple buckets according to their keys. In order to achieve good
+  // (amortized) time complexity, we want # of data in new buckets to be at most
+  // half # of elements in a full posting list.
+  //
+  // Calculated by: 0.5 * (kMaxPostingListSize / sizeof(IntegerIndexData)),
+  // where kMaxPostingListSize = (kPageSize - sizeof(IndexBlock::BlockHeader)).
+  static constexpr int32_t kNumDataThresholdForBucketSplit = 170;
+
+  // Length threshold to sort and merge unsorted buckets into sorted buckets. If
+  // the length of unsorted_buckets exceed the threshold, then call
+  // SortBuckets().
+  static constexpr int32_t kUnsortedBucketsLengthThreshold = 50;
 
   // Creates a new IntegerIndexStorage instance to index integers (for a single
   // property). If any of the underlying file is missing, then delete the whole
@@ -258,6 +286,26 @@ class IntegerIndexStorage : public PersistentStorage {
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
       int64_t query_key_lower, int64_t query_key_upper) const;
 
+  // Transfers integer index data from the current storage to new_storage and
+  // optimizes buckets (for new_storage only), i.e. merging adjacent buckets if
+  // total # of data among them are less than or equal to
+  // kNumDataThresholdForBucketMerge.
+  //
+  // REQUIRES: new_storage should be a newly created storage instance, i.e. not
+  //   contain any data. Otherwise, existing data and posting lists won't be
+  //   freed and space will be wasted.
+  //
+  // Returns:
+  //   - OK on success
+  //   - OUT_OF_RANGE_ERROR if sorted buckets length exceeds the limit after
+  //     merging
+  //   - INTERNAL_ERROR on IO error
+  libtextclassifier3::Status TransferIndex(
+      const std::vector<DocumentId>& document_id_old_to_new,
+      IntegerIndexStorage* new_storage) const;
+
+  int32_t num_data() const { return info().num_data; }
+
  private:
   explicit IntegerIndexStorage(
       const Filesystem& filesystem, std::string&& working_path,
@@ -288,6 +336,18 @@ class IntegerIndexStorage : public PersistentStorage {
       Options&& options,
       PostingListIntegerIndexSerializer* posting_list_serializer);
 
+  // Flushes data into posting list(s), creates a new bucket with range
+  // [key_lower, key_upper], and appends it into sorted buckets for storage.
+  // It is a helper function for TransferIndex.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR if fails to write existing data into posting list(s)
+  //   - Any FileBackedVector or PostingList errors
+  static libtextclassifier3::Status FlushDataIntoNewSortedBucket(
+      int64_t key_lower, int64_t key_upper,
+      std::vector<IntegerIndexData>&& data, IntegerIndexStorage* storage);
+
   // Flushes contents of all storages to underlying files.
   //
   // Returns:
@@ -308,8 +368,9 @@ class IntegerIndexStorage : public PersistentStorage {
   //   - Crc of the Info on success
   libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
 
-  // Computes and returns all storages checksum. Checksums of bucket_storage_,
-  // entry_storage_ and kv_storage_ will be combined together by XOR.
+  // Computes and returns all storages checksum. Checksums of sorted_buckets_,
+  // unsorted_buckets_ will be combined together by XOR.
+  // TODO(b/259744228): implement and include flash_index_storage checksum
   //
   // Returns:
   //   - Crc of all storages on success
@@ -329,7 +390,6 @@ class IntegerIndexStorage : public PersistentStorage {
   //     into several new buckets with new ranges, and split the data (according
   //     to their keys and the range of new buckets) of the original posting
   //     list into several new posting lists.
-  //     TODO(b/259743562): [Optimization 1] implement split
   //   - Otherwise, just simply add a new key into it, and PostingListAccessor
   //     mechanism will automatically create a new max size posting list and
   //     chain them.
@@ -344,6 +404,16 @@ class IntegerIndexStorage : public PersistentStorage {
       const std::vector<int64_t>::const_iterator& it_start,
       const std::vector<int64_t>::const_iterator& it_end,
       FileBackedVector<Bucket>::MutableView& mutable_bucket);
+
+  // Merges all unsorted buckets into sorted buckets and clears unsorted
+  // buckets.
+  //
+  // Returns:
+  //   - OK on success
+  //   - OUT_OF_RANGE_ERROR if sorted buckets length exceeds the limit after
+  //     merging
+  //   - Any FileBackedVector errors
+  libtextclassifier3::Status SortBuckets();
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +

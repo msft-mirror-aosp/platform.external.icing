@@ -778,14 +778,15 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>>
-Rfc822Tokenizer::Tokenize(std::string_view text) const {
+Rfc822Tokenizer::Tokenize(std::string_view text,
+                          LanguageSegmenter::AccessType) const {
   return std::make_unique<Rfc822TokenIterator>(text);
 }
 
 libtextclassifier3::StatusOr<std::vector<Token>> Rfc822Tokenizer::TokenizeAll(
     std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
-                         Tokenize(text));
+  std::unique_ptr<Tokenizer::Iterator> iterator =
+      std::make_unique<Rfc822TokenIterator>(text);
   std::vector<Token> tokens;
   while (iterator->Advance()) {
     std::vector<Token> batch_tokens = iterator->GetTokens();
