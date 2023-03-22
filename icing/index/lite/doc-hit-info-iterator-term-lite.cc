@@ -15,6 +15,7 @@
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <numeric>
 
@@ -71,6 +72,14 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
   doc_hit_info_ = cached_hits_.at(cached_hits_idx_);
   hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorTermLite::TrimRightMostNode() && {
+  // Leaf iterator should trim itself.
+  DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
+                                          unnormalized_term_length_};
+  return node;
 }
 
 libtextclassifier3::Status DocHitInfoIteratorTermLiteExact::RetrieveMoreHits() {

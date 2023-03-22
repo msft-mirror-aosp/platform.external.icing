@@ -240,33 +240,7 @@ void BM_IndexLatency(benchmark::State& state) {
 }
 BENCHMARK(BM_IndexLatency)
     // Arguments: num_indexed_documents, num_sections
-    ->ArgPair(1, 1)
-    ->ArgPair(2, 1)
-    ->ArgPair(8, 1)
-    ->ArgPair(32, 1)
-    ->ArgPair(128, 1)
-    ->ArgPair(1 << 10, 1)
-    ->ArgPair(1 << 13, 1)
-    ->ArgPair(1 << 15, 1)
-    ->ArgPair(1 << 17, 1)
-    ->ArgPair(1, 5)
-    ->ArgPair(2, 5)
-    ->ArgPair(8, 5)
-    ->ArgPair(32, 5)
-    ->ArgPair(128, 5)
-    ->ArgPair(1 << 10, 5)
-    ->ArgPair(1 << 13, 5)
-    ->ArgPair(1 << 15, 5)
-    ->ArgPair(1 << 17, 5)
-    ->ArgPair(1, 10)
-    ->ArgPair(2, 10)
-    ->ArgPair(8, 10)
-    ->ArgPair(32, 10)
-    ->ArgPair(128, 10)
-    ->ArgPair(1 << 10, 10)
-    ->ArgPair(1 << 13, 10)
-    ->ArgPair(1 << 15, 10)
-    ->ArgPair(1 << 17, 10);
+    ->ArgPair(1000000, 5);
 
 void BM_QueryLatency(benchmark::State& state) {
   // Initialize the filesystem
@@ -303,7 +277,7 @@ void BM_QueryLatency(benchmark::State& state) {
 
   SearchSpecProto search_spec = CreateSearchSpec(
       language.at(0), std::vector<std::string>(), TermMatchType::PREFIX);
-  ResultSpecProto result_spec = CreateResultSpec(1000000, 1000000, 1000000);
+  ResultSpecProto result_spec = CreateResultSpec(1, 1000000, 1000000);
   ScoringSpecProto scoring_spec =
       CreateScoringSpec(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
   for (auto _ : state) {
@@ -313,10 +287,7 @@ void BM_QueryLatency(benchmark::State& state) {
 }
 BENCHMARK(BM_QueryLatency)
     // Arguments: num_indexed_documents, num_sections
-    ->ArgPair(32, 2)
-    ->ArgPair(128, 2)
-    ->ArgPair(1 << 10, 2)
-    ->ArgPair(1 << 13, 2);
+    ->ArgPair(1000000, 2);
 
 void BM_IndexThroughput(benchmark::State& state) {
   // Initialize the filesystem

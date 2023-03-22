@@ -42,6 +42,10 @@ using SectionIdMask = int64_t;
 inline constexpr SectionIdMask kSectionIdMaskAll = ~SectionIdMask{0};
 inline constexpr SectionIdMask kSectionIdMaskNone = SectionIdMask{0};
 
+static_assert(kSectionIdBits < 8 * sizeof(SectionId),
+              "Cannot exhaust all bits of SectionId since it is a signed "
+              "integer and the most significant bit should be preserved.");
+
 static_assert(
     kMaxSectionId < 8 * sizeof(SectionIdMask),
     "SectionIdMask is not large enough to represent all section values!");
@@ -132,6 +136,9 @@ struct Section {
 
 // Groups of different type sections. Callers can access sections with types
 // they want and avoid going through non-desired ones.
+//
+// REQUIRES: lifecycle of the property must be longer than this object, since we
+//   use std::string_view for extracting its string_values.
 struct SectionGroup {
   std::vector<Section<std::string_view>> string_sections;
   std::vector<Section<int64_t>> integer_sections;
