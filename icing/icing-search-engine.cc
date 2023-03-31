@@ -68,6 +68,7 @@
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
@@ -1782,6 +1783,7 @@ SearchResultProto IcingSearchEngine::Search(
 
   const JoinSpecProto& join_spec = search_spec.join_spec();
   std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
+  std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
   if (!join_spec.parent_property_expression().empty() &&
       !join_spec.child_property_expression().empty()) {
     // Process child query
@@ -1810,6 +1812,13 @@ SearchResultProto IcingSearchEngine::Search(
     }
     join_children_fetcher = std::make_unique<JoinChildrenFetcher>(
         std::move(join_children_fetcher_or).ValueOrDie());
+
+    // Assign child's ResultAdjustmentInfo.
+    child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+        join_spec.nested_spec().search_spec(),
+        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().result_spec(),
+        std::move(nested_query_scoring_results.query_terms));
   }
 
   // Process parent query
@@ -1835,6 +1844,11 @@ SearchResultProto IcingSearchEngine::Search(
     result_status->set_code(StatusProto::OK);
     return result_proto;
   }
+
+  // Construct parent's result adjustment info.
+  auto parent_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+      search_spec, scoring_spec, result_spec,
+      std::move(query_scoring_results.query_terms));
 
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
   if (join_children_fetcher != nullptr) {
@@ -1892,9 +1906,9 @@ SearchResultProto IcingSearchEngine::Search(
 
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
-          std::move(ranker), std::move(query_scoring_results.query_terms),
-          search_spec, scoring_spec, result_spec, *document_store_,
-          *result_retriever);
+          std::move(ranker), std::move(parent_result_adjustment_info),
+          std::move(child_result_adjustment_info), result_spec,
+          *document_store_, *result_retriever);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(

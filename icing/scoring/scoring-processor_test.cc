@@ -144,7 +144,7 @@ CreateAndInsertsDocumentsWithScores(DocumentStore* document_store,
 }
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64 timestamp_ms,
+                              int64_t timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);
