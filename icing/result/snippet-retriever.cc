@@ -502,91 +502,86 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
     CharacterIterator start_itr(value);
     CharacterIterator end_itr(value);
     CharacterIterator reset_itr(value);
+    bool encountered_error = false;
     while (iterator->Advance()) {
       std::vector<Token> batch_tokens = iterator->GetTokens();
       if (batch_tokens.empty()) {
         continue;
       }
 
-      // As snippet matching may move iterator around, we save a reset iterator
-      // so that we can reset to the initial iterator state, and continue
-      // Advancing in order in the next round.
+      bool needs_reset = false;
       reset_itr.MoveToUtf8(batch_tokens.at(0).text.begin() - value.begin());
-
-      for (const Token& token : batch_tokens) {
+      start_itr = reset_itr;
+      end_itr = start_itr;
+      for (int i = 0; i < batch_tokens.size(); ++i) {
+        const Token& token = batch_tokens.at(i);
         CharacterIterator submatch_end = matcher->Matches(token);
         // If the token matched a query term, then submatch_end will point to an
         // actual position within token.text.
-        if (submatch_end.utf8_index() != -1) {
-          if (!start_itr.MoveToUtf8(token.text.begin() - value.begin())) {
-            // We can't get the char_iterator to a valid position, so there's no
-            // way for us to provide valid utf-16 indices. There's nothing more
-            // we can do here, so just return whatever we've built up so far.
-            if (!snippet_entry.snippet_matches().empty()) {
-              *snippet_proto->add_entries() = std::move(snippet_entry);
-            }
-            return;
-          }
-          if (!end_itr.MoveToUtf8(token.text.end() - value.begin())) {
-            // Same as above
-            if (!snippet_entry.snippet_matches().empty()) {
-              *snippet_proto->add_entries() = std::move(snippet_entry);
-            }
-            return;
-          }
-          SectionData data = {property_path, value};
-          auto match_or = RetrieveMatch(match_options->snippet_spec, data,
-                                        iterator.get(), start_itr, end_itr);
-          if (!match_or.ok()) {
-            if (absl_ports::IsAborted(match_or.status())) {
-              // Only an aborted. We can't get this match, but we might be able
-              // to retrieve others. Just continue.
-              continue;
-            } else {
-              // Probably an internal error. The tokenizer iterator is probably
-              // in an invalid state. There's nothing more we can do here, so
-              // just return whatever we've built up so far.
-              if (!snippet_entry.snippet_matches().empty()) {
-                *snippet_proto->add_entries() = std::move(snippet_entry);
-              }
-              return;
-            }
-          }
-          SnippetMatchProto match = std::move(match_or).ValueOrDie();
-          // submatch_end refers to a position *within* token.text.
-          // This, conveniently enough, means that index that submatch_end
-          // points to is the length of the submatch (because the submatch
-          // starts at 0 in token.text).
-          match.set_submatch_byte_length(submatch_end.utf8_index());
-          match.set_submatch_utf16_length(submatch_end.utf16_index());
-          // Add the values for the submatch.
-          snippet_entry.mutable_snippet_matches()->Add(std::move(match));
-
-          if (--match_options->max_matches_remaining <= 0) {
-            *snippet_proto->add_entries() = std::move(snippet_entry);
-            return;
+        if (submatch_end.utf8_index() == -1) {
+          continue;
+        }
+        // As snippet matching may move iterator around, we save a reset
+        // iterator so that we can reset to the initial iterator state, and
+        // continue Advancing in order in the next round.
+        if (!start_itr.MoveToUtf8(token.text.begin() - value.begin())) {
+          encountered_error = true;
+          break;
+        }
+        if (!end_itr.MoveToUtf8(token.text.end() - value.begin())) {
+          encountered_error = true;
+          break;
+        }
+        SectionData data = {property_path, value};
+        auto match_or = RetrieveMatch(match_options->snippet_spec, data,
+                                      iterator.get(), start_itr, end_itr);
+        if (!match_or.ok()) {
+          if (absl_ports::IsAborted(match_or.status())) {
+            // Only an aborted. We can't get this match, but we might be able
+            // to retrieve others. Just continue.
+            continue;
+          } else {
+            encountered_error = true;
+            break;
           }
         }
-      }
+        SnippetMatchProto match = std::move(match_or).ValueOrDie();
+        if (match.window_byte_length() > 0) {
+          needs_reset = true;
+        }
+        // submatch_end refers to a position *within* token.text.
+        // This, conveniently enough, means that index that submatch_end
+        // points to is the length of the submatch (because the submatch
+        // starts at 0 in token.text).
+        match.set_submatch_byte_length(submatch_end.utf8_index());
+        match.set_submatch_utf16_length(submatch_end.utf16_index());
+        // Add the values for the submatch.
+        snippet_entry.mutable_snippet_matches()->Add(std::move(match));
 
-      // RetrieveMatch calls DetermineWindowStart/End, which may change the
-      // position of the iterator. So, reset the iterator back to the original
-      // position. The first token of the token batch will be the token to reset
-      // to.
-
-      bool success = false;
-      if (reset_itr.utf8_index() > 0) {
-        success =
-            iterator->ResetToTokenStartingAfter(reset_itr.utf32_index() - 1);
-      } else {
-        success = iterator->ResetToStart();
-      }
-
-      if (!success) {
-        if (!snippet_entry.snippet_matches().empty()) {
+        if (--match_options->max_matches_remaining <= 0) {
           *snippet_proto->add_entries() = std::move(snippet_entry);
+          return;
         }
-        return;
+      }
+
+      if (encountered_error) {
+        break;
+      }
+
+      // RetrieveMatch may call DetermineWindowStart/End if windowing is
+      // requested, which may change the position of the iterator. So, reset the
+      // iterator back to the original position. The first token of the token
+      // batch will be the token to reset to.
+      if (needs_reset) {
+        if (reset_itr.utf8_index() > 0) {
+          encountered_error =
+              !iterator->ResetToTokenStartingAfter(reset_itr.utf32_index() - 1);
+        } else {
+          encountered_error = !iterator->ResetToStart();
+        }
+      }
+      if (encountered_error) {
+        break;
       }
     }
     if (!snippet_entry.snippet_matches().empty()) {

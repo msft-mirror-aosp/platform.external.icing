@@ -26,7 +26,6 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -48,12 +47,6 @@ using ::testing::Ge;
 using ::testing::Not;
 using ::testing::SizeIs;
 using PageResultInfo = std::pair<uint64_t, PageResult>;
-
-ScoringSpecProto CreateScoringSpec() {
-  ScoringSpecProto scoring_spec;
-  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  return scoring_spec;
-}
 
 ResultSpecProto CreateResultSpec(int num_per_page) {
   ResultSpecProto result_spec;
@@ -163,9 +156,8 @@ TEST_F(ResultStateManagerThreadSafetyTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
-          *result_retriever_));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -264,9 +256,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
-          *result_retriever_));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -394,8 +385,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
             std::make_unique<
                 PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
                 std::move(scored_document_hits_copy), /*is_descending=*/false),
-            /*query_terms=*/{}, SearchSpecProto::default_instance(),
-            CreateScoringSpec(), CreateResultSpec(kNumPerPage),
+            /*parent_adjustment_info=*/nullptr,
+            /*child_adjustment_info=*/nullptr, CreateResultSpec(kNumPerPage),
             *document_store_, *result_retriever));
     EXPECT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
     for (int i = 0; i < kNumPerPage; ++i) {

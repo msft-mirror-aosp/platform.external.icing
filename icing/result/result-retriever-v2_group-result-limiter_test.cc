@@ -22,7 +22,6 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
@@ -31,7 +30,6 @@
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-id.h"
-#include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -107,22 +105,6 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
   FakeClock fake_clock_;
 };
 
-// TODO(sungyc): Refactor helper functions below (builder classes or common test
-//               utility).
-
-SearchSpecProto CreateSearchSpec(TermMatchType::Code match_type) {
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(match_type);
-  return search_spec;
-}
-
-ScoringSpecProto CreateScoringSpec(bool is_descending_order) {
-  ScoringSpecProto scoring_spec;
-  scoring_spec.set_order_by(is_descending_order ? ScoringSpecProto::Order::DESC
-                                                : ScoringSpecProto::Order::ASC);
-  return scoring_spec;
-}
-
 ResultSpecProto CreateResultSpec(
     int num_per_page, ResultSpecProto::ResultGroupingType result_group_type) {
   ResultSpecProto result_spec;
@@ -172,9 +154,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -233,9 +214,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -310,9 +290,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -398,9 +377,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -460,9 +438,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -522,9 +499,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -629,9 +605,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -738,9 +713,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -850,9 +824,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -914,9 +887,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -974,9 +946,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1078,9 +1049,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *document_store_);
   {
     absl_ports::shared_lock l(&result_state.mutex);
 
