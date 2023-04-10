@@ -27,7 +27,7 @@
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
-#include "icing/index/main/posting-list-used-hit-serializer.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -52,7 +52,7 @@ class FlashIndexStorageTest : public testing::Test {
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(test_dir_.c_str()));
 
     // TODO(b/249829533): test different serializers
-    serializer_ = std::make_unique<PostingListUsedHitSerializer>();
+    serializer_ = std::make_unique<PostingListHitSerializer>();
   }
 
   void TearDown() override {
@@ -64,7 +64,7 @@ class FlashIndexStorageTest : public testing::Test {
   std::string test_dir_;
   std::string file_name_;
   Filesystem filesystem_;
-  std::unique_ptr<PostingListUsedHitSerializer> serializer_;
+  std::unique_ptr<PostingListHitSerializer> serializer_;
 };
 
 TEST_F(FlashIndexStorageTest, CorruptHeader) {

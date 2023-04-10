@@ -38,6 +38,11 @@ namespace lib {
 // segmenter->GetAllTerms(text));
 class LanguageSegmenter {
  public:
+  enum class AccessType {
+    kForwardIterator,
+    kBidirectionalIterator,
+  };
+
   virtual ~LanguageSegmenter() = default;
 
   // An iterator helping to find terms in the input text.
@@ -165,7 +170,7 @@ class LanguageSegmenter {
   // outlives the returned iterator.
   virtual libtextclassifier3::StatusOr<
       std::unique_ptr<LanguageSegmenter::Iterator>>
-  Segment(std::string_view text) const = 0;
+  Segment(std::string_view text, AccessType access_type) const = 0;
 
   // Segments and returns all terms in the input text.
   //

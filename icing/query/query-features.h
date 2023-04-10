@@ -16,17 +16,41 @@
 #define ICING_QUERY_QUERY_FEATURES_H_
 
 #include <string_view>
+#include <unordered_set>
 
 namespace icing {
 namespace lib {
 
 // A feature used in a query.
-using Feature = std::string_view;
-
 // All feature values here must be kept in sync with its counterpart in:
 // androidx-main/frameworks/support/appsearch/appsearch/src/main/java/androidx/appsearch/app/Features.java
-inline constexpr Feature kNumericSearchFeature =
+using Feature = std::string_view;
+
+// This feature relates to the use of the numeric comparison operators in the
+// advanced query language. Ex. `price < 10`.
+constexpr Feature kNumericSearchFeature =
     "NUMERIC_SEARCH";  // Features#NUMERIC_SEARCH
+
+// This feature relates to the use of the STRING terminal in the advanced query
+// language. Ex. `"foo?bar"` is treated as a single term - `foo?bar`.
+constexpr Feature kVerbatimSearchFeature =
+    "VERBATIM_SEARCH";  // Features#VERBATIM_SEARCH
+
+// This feature covers all additions (other than numeric search and verbatim
+// search) to the query language to bring it into better alignment with the list
+// filters spec.
+// This includes:
+//   - support for function calls
+//   - expanding support for negation and property restriction expressions
+//   - prefix operator '*'
+//   - 'NOT' operator
+constexpr Feature kListFilterQueryLanguageFeature =
+    "LIST_FILTER_QUERY_LANGUAGE";  // Features#LIST_FILTER_QUERY_LANGUAGE
+
+inline std::unordered_set<Feature> GetQueryFeaturesSet() {
+  return {kNumericSearchFeature, kVerbatimSearchFeature,
+          kListFilterQueryLanguageFeature};
+}
 
 }  // namespace lib
 }  // namespace icing

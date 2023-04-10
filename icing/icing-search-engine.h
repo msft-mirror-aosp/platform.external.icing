@@ -26,9 +26,12 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/join-children-fetcher.h"
+#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/proto/debug.pb.h"
@@ -472,8 +475,11 @@ class IcingSearchEngine {
   std::unique_ptr<Index> index_ ICING_GUARDED_BY(mutex_);
 
   // Storage for all hits of numeric contents from the document store.
-  // TODO(b/249829533): integrate more functions with integer_index_.
   std::unique_ptr<NumericIndex<int64_t>> integer_index_
+      ICING_GUARDED_BY(mutex_);
+
+  // Storage for all join qualified ids from the document store.
+  std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index_
       ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references
@@ -548,8 +554,8 @@ class IcingSearchEngine {
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Do any initialization/recovery necessary to create a DocumentStore
-  // instance.
+  // Do any initialization/recovery necessary to create term index, integer
+  // index, and qualified id join index instances.
   //
   // Returns:
   //   OK on success
@@ -587,10 +593,11 @@ class IcingSearchEngine {
           parse_query_latency_ms(parse_query_latency_ms_in),
           scoring_latency_ms(scoring_latency_ms_in) {}
   };
-  QueryScoringResults ProcessQueryAndScore(const SearchSpecProto& search_spec,
-                                           const ScoringSpecProto& scoring_spec,
-                                           const ResultSpecProto& result_spec)
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  QueryScoringResults ProcessQueryAndScore(
+      const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+      const ResultSpecProto& result_spec,
+      const JoinChildrenFetcher* join_children_fetcher)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
   // Check that everything is consistent with each other so that we're not
@@ -637,9 +644,10 @@ class IcingSearchEngine {
       OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to restore missing document data in index_. All documents
-  // will be reindexed. This does not clear the index, so it is recommended to
-  // call Index::Reset first.
+  // Helper method to restore missing document data in index_, integer_index_,
+  // and qualified_id_join_index_. All documents will be reindexed. This does
+  // not clear the index, so it is recommended to call ClearAllIndices,
+  // ClearSearchIndices, or ClearJoinIndices first if needed.
   //
   // Returns:
   //   On success, OK and a bool indicating whether or not restoration was
@@ -652,7 +660,9 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on any IO errors
   struct IndexRestorationResult {
     libtextclassifier3::Status status;
-    bool needed_restoration;
+    bool index_needed_restoration;
+    bool integer_index_needed_restoration;
+    bool qualified_id_join_index_needed_restoration;
   };
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
@@ -667,6 +677,70 @@ class IcingSearchEngine {
   //   bool indicating if we had a schema and unintentionally lost it
   //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<bool> LostPreviousSchema()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to create all types of data indexing handlers to index term,
+  // integer, and join qualified ids.
+  libtextclassifier3::StatusOr<
+      std::vector<std::unique_ptr<DataIndexingHandler>>>
+  CreateDataIndexingHandlers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard parts of (term, integer, qualified id join)
+  // indices if they contain data for document ids greater than
+  // last_stored_document_id.
+  //
+  // REQUIRES: last_stored_document_id is valid (!= kInvalidDocumentId). Note:
+  //   if we want to truncate everything in the index, then please call
+  //   ClearSearchIndices/ClearJoinIndices/ClearAllIndices instead.
+  //
+  // Returns:
+  //   On success, a DocumentId indicating the first document to start for
+  //     reindexing and 2 bool flags indicating whether term or integer index
+  //     needs restoration.
+  //   INTERNAL on any I/O errors
+  struct TruncateIndexResult {
+    DocumentId first_document_to_reindex;
+    bool index_needed_restoration;
+    bool integer_index_needed_restoration;
+    bool qualified_id_join_index_needed_restoration;
+
+    explicit TruncateIndexResult(
+        DocumentId first_document_to_reindex_in,
+        bool index_needed_restoration_in,
+        bool integer_index_needed_restoration_in,
+        bool qualified_id_join_index_needed_restoration_in)
+        : first_document_to_reindex(first_document_to_reindex_in),
+          index_needed_restoration(index_needed_restoration_in),
+          integer_index_needed_restoration(integer_index_needed_restoration_in),
+          qualified_id_join_index_needed_restoration(
+              qualified_id_join_index_needed_restoration_in) {}
+  };
+  libtextclassifier3::StatusOr<TruncateIndexResult> TruncateIndicesTo(
+      DocumentId last_stored_document_id)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard search (term, integer) indices.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status ClearSearchIndices()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard join (qualified id) indices.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status ClearJoinIndices()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to discard all search and join indices.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status ClearAllIndices()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

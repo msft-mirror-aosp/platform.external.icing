@@ -30,6 +30,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
@@ -114,6 +115,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
   uint64_t file_size;
   IcingTimer timer;
 
+  absl_ports::unique_lock l(&mutex_);
   if (!lexicon_.CreateIfNotExist(options_.lexicon_options) ||
       !lexicon_.Init()) {
     return absl_ports::InternalError("Failed to initialize lexicon trie");
@@ -241,6 +243,7 @@ Crc32 LiteIndex::ComputeChecksum() {
 libtextclassifier3::Status LiteIndex::Reset() {
   IcingTimer timer;
 
+  absl_ports::unique_lock l(&mutex_);
   // TODO(b/140436942): When these components have been changed to return errors
   // they should be propagated from here.
   lexicon_.Clear();
@@ -253,11 +256,13 @@ libtextclassifier3::Status LiteIndex::Reset() {
 }
 
 void LiteIndex::Warm() {
+  absl_ports::shared_lock l(&mutex_);
   hit_buffer_.Warm();
   lexicon_.Warm();
 }
 
 libtextclassifier3::Status LiteIndex::PersistToDisk() {
+  absl_ports::unique_lock l(&mutex_);
   bool success = true;
   if (!lexicon_.Sync()) {
     ICING_VLOG(1) << "Failed to sync the lexicon.";
@@ -279,6 +284,7 @@ void LiteIndex::UpdateChecksum() {
 libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
     const std::string& term, TermMatchType::Code term_match_type,
     NamespaceId namespace_id) {
+  absl_ports::unique_lock l(&mutex_);
   uint32_t tvi;
   libtextclassifier3::Status status =
       lexicon_.Insert(term.c_str(), "", &tvi, false);
@@ -287,12 +293,18 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::InsertTerm(
                    << status.error_message();
     return status;
   }
-  ICING_RETURN_IF_ERROR(UpdateTermProperties(
+  ICING_RETURN_IF_ERROR(UpdateTermPropertiesImpl(
       tvi, term_match_type == TermMatchType::PREFIX, namespace_id));
   return tvi;
 }
 
 libtextclassifier3::Status LiteIndex::UpdateTermProperties(
+    uint32_t tvi, bool hasPrefixHits, NamespaceId namespace_id) {
+  absl_ports::unique_lock l(&mutex_);
+  return UpdateTermPropertiesImpl(tvi, hasPrefixHits, namespace_id);
+}
+
+libtextclassifier3::Status LiteIndex::UpdateTermPropertiesImpl(
     uint32_t tvi, bool hasPrefixHits, NamespaceId namespace_id) {
   if (hasPrefixHits &&
       !lexicon_.SetProperty(tvi, GetHasHitsInPrefixSectionPropertyId())) {
@@ -309,6 +321,7 @@ libtextclassifier3::Status LiteIndex::UpdateTermProperties(
 }
 
 libtextclassifier3::Status LiteIndex::AddHit(uint32_t term_id, const Hit& hit) {
+  absl_ports::unique_lock l(&mutex_);
   if (is_full()) {
     return absl_ports::ResourceExhaustedError("Hit buffer is full!");
   }
@@ -329,6 +342,7 @@ libtextclassifier3::Status LiteIndex::AddHit(uint32_t term_id, const Hit& hit) {
 
 libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
     const std::string& term) const {
+  absl_ports::shared_lock l(&mutex_);
   char dummy;
   uint32_t tvi;
   if (!lexicon_.Find(term.c_str(), &dummy, &tvi)) {
@@ -338,7 +352,7 @@ libtextclassifier3::StatusOr<uint32_t> LiteIndex::GetTermId(
   return tvi;
 }
 
-int LiteIndex::AppendHits(
+int LiteIndex::FetchHits(
     uint32_t term_id, SectionIdMask section_id_mask,
     bool only_from_prefix_sections,
     SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
@@ -349,9 +363,27 @@ int LiteIndex::AppendHits(
   DocumentId last_document_id = kInvalidDocumentId;
   // Record whether the last document belongs to the given namespaces.
   bool is_last_document_desired = false;
-  for (uint32_t idx = Seek(term_id); idx < header_->cur_size(); idx++) {
-    TermIdHitPair term_id_hit_pair(
-        hit_buffer_.array_cast<TermIdHitPair>()[idx]);
+
+  if (NeedSort()) {
+    // Transition from shared_lock in NeedSort to unique_lock here is safe
+    // because it doesn't hurt to sort again if sorting was done already by
+    // another thread after NeedSort is evaluated. NeedSort is called before
+    // sorting to improve concurrency as threads can avoid acquiring the unique
+    // lock if no sorting is needed.
+    absl_ports::unique_lock l(&mutex_);
+    SortHits();
+  }
+
+  // This downgrade from an unique_lock to a shared_lock is safe because we're
+  // searching for the term in the searchable (sorted) section of the HitBuffer
+  // only in Seek().
+  // Any operations that might execute in between the transition of downgrading
+  // the lock here are guaranteed not to alter the searchable section (or the
+  // LiteIndex due to a global lock in IcingSearchEngine).
+  absl_ports::shared_lock l(&mutex_);
+  for (uint32_t idx = Seek(term_id); idx < header_->searchable_end(); idx++) {
+    TermIdHitPair term_id_hit_pair =
+        hit_buffer_.array_cast<TermIdHitPair>()[idx];
     if (term_id_hit_pair.term_id() != term_id) break;
 
     const Hit& hit = term_id_hit_pair.hit();
@@ -422,7 +454,7 @@ libtextclassifier3::StatusOr<int> LiteIndex::ScoreHits(
     uint32_t term_id,
     SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
     const SuggestionResultChecker* suggestion_result_checker) {
-  return AppendHits(term_id, kSectionIdMaskAll,
+  return FetchHits(term_id, kSectionIdMaskAll,
                     /*only_from_prefix_sections=*/false, score_by,
                     suggestion_result_checker,
                     /*hits_out=*/nullptr);
@@ -434,6 +466,7 @@ bool LiteIndex::is_full() const {
 }
 
 std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) {
+  absl_ports::unique_lock l(&mutex_);
   std::string res;
   std::string lexicon_info;
   lexicon_.GetDebugInfo(verbosity, &lexicon_info);
@@ -468,6 +501,7 @@ libtextclassifier3::StatusOr<int64_t> LiteIndex::GetElementsSize() const {
 
 IndexStorageInfoProto LiteIndex::GetStorageInfo(
     IndexStorageInfoProto storage_info) const {
+  absl_ports::shared_lock l(&mutex_);
   int64_t header_and_hit_buffer_file_size =
       filesystem_->GetFileSize(hit_buffer_fd_.get());
   storage_info.set_lite_index_hit_buffer_size(
@@ -512,9 +546,7 @@ void LiteIndex::SortHits() {
   UpdateChecksum();
 }
 
-uint32_t LiteIndex::Seek(uint32_t term_id) {
-  SortHits();
-
+uint32_t LiteIndex::Seek(uint32_t term_id) const {
   // Binary search for our term_id.  Make sure we get the first
   // element.  Using kBeginSortValue ensures this for the hit value.
   TermIdHitPair term_id_hit_pair(
@@ -522,14 +554,21 @@ uint32_t LiteIndex::Seek(uint32_t term_id) {
 
   const TermIdHitPair::Value* array =
       hit_buffer_.array_cast<TermIdHitPair::Value>();
+  if (header_->searchable_end() != header_->cur_size()) {
+    ICING_LOG(WARNING) << "Lite index: hit buffer searchable end != current "
+                       << "size during Seek(): "
+                       << header_->searchable_end() << " vs "
+                       << header_->cur_size();
+  }
   const TermIdHitPair::Value* ptr = std::lower_bound(
-      array, array + header_->cur_size(), term_id_hit_pair.value());
+      array, array + header_->searchable_end(), term_id_hit_pair.value());
   return ptr - array;
 }
 
 libtextclassifier3::Status LiteIndex::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
     const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id) {
+  absl_ports::unique_lock l(&mutex_);
   header_->set_last_added_docid(new_last_added_document_id);
   if (header_->cur_size() == 0) {
     return libtextclassifier3::Status::OK;

@@ -24,6 +24,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -262,6 +263,27 @@ TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("len(10, 11, 12, 13, 14)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(5));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("sum(10, 11, 12, 13, 14)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10 + 11 + 12 + 13 + 14));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("avg(10, 11, 12, 13, 14)"),
+          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+  EXPECT_THAT(scorer->GetScore(docHitInfo), Eq((10 + 11 + 12 + 13 + 14) / 5.));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("sqrt(2)"),
                              /*default_score=*/10, document_store_.get(),
                              schema_store_.get()));
@@ -428,6 +450,119 @@ TEST_F(AdvancedScorerTest, RelevanceScoreFunctionScoreExpression) {
   EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr), Eq(10));
 }
 
+TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
+  const double default_score = 123;
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id_1,
+      document_store_->Put(CreateDocument("namespace", "uri1")));
+  DocHitInfo docHitInfo1 = DocHitInfo(document_id_1);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id_2,
+      document_store_->Put(CreateDocument("namespace", "uri2")));
+  DocHitInfo docHitInfo2 = DocHitInfo(document_id_2);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id_3,
+      document_store_->Put(CreateDocument("namespace", "uri3")));
+  DocHitInfo docHitInfo3 = DocHitInfo(document_id_3);
+
+  // Create a JoinChildrenFetcher that matches:
+  //   document_id_1 to fake_child1 with score 1 and fake_child2 with score 2.
+  //   document_id_2 to fake_child3 with score 4.
+  //   document_id_3 has no child.
+  JoinSpecProto join_spec;
+  join_spec.set_parent_property_expression("this.qualifiedId()");
+  join_spec.set_child_property_expression("sender");
+  std::unordered_map<DocumentId, std::vector<ScoredDocumentHit>>
+      map_joinable_qualified_id;
+  ScoredDocumentHit fake_child1(/*document_id=*/10, kSectionIdMaskNone,
+                                /*score=*/1.0);
+  ScoredDocumentHit fake_child2(/*document_id=*/11, kSectionIdMaskNone,
+                                /*score=*/2.0);
+  ScoredDocumentHit fake_child3(/*document_id=*/12, kSectionIdMaskNone,
+                                /*score=*/4.0);
+  map_joinable_qualified_id[document_id_1].push_back(fake_child1);
+  map_joinable_qualified_id[document_id_1].push_back(fake_child2);
+  map_joinable_qualified_id[document_id_2].push_back(fake_child3);
+  JoinChildrenFetcher fetcher(join_spec, std::move(map_joinable_qualified_id));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("len(this.childrenScores())"),
+          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+  // document_id_1 has two children.
+  EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(2));
+  // document_id_2 has one child.
+  EXPECT_THAT(scorer->GetScore(docHitInfo2, /*query_it=*/nullptr), Eq(1));
+  // document_id_3 has no child.
+  EXPECT_THAT(scorer->GetScore(docHitInfo3, /*query_it=*/nullptr), Eq(0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("sum(this.childrenScores())"),
+          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+  // document_id_1 has two children with scores 1 and 2.
+  EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3));
+  // document_id_2 has one child with score 4.
+  EXPECT_THAT(scorer->GetScore(docHitInfo2, /*query_it=*/nullptr), Eq(4));
+  // document_id_3 has no child.
+  EXPECT_THAT(scorer->GetScore(docHitInfo3, /*query_it=*/nullptr), Eq(0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("avg(this.childrenScores())"),
+          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+  // document_id_1 has two children with scores 1 and 2.
+  EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
+  // document_id_2 has one child with score 4.
+  EXPECT_THAT(scorer->GetScore(docHitInfo2, /*query_it=*/nullptr), Eq(4 / 1.));
+  // document_id_3 has no child.
+  // This is an evaluation error, so default_score will be returned.
+  EXPECT_THAT(scorer->GetScore(docHitInfo3, /*query_it=*/nullptr),
+              Eq(default_score));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      scorer,
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec(
+              // Equivalent to "avg(this.childrenScores())"
+              "sum(this.childrenScores()) / len(this.childrenScores())"),
+          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+  // document_id_1 has two children with scores 1 and 2.
+  EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
+  // document_id_2 has one child with score 4.
+  EXPECT_THAT(scorer->GetScore(docHitInfo2, /*query_it=*/nullptr), Eq(4 / 1.));
+  // document_id_3 has no child.
+  // This is an evaluation error, so default_score will be returned.
+  EXPECT_THAT(scorer->GetScore(docHitInfo3, /*query_it=*/nullptr),
+              Eq(default_score));
+}
+
+TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
+  const double default_score = 123;
+
+  // Without join_children_fetcher provided, "len(this.childrenScores())" cannot
+  // be created.
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("len(this.childrenScores())"),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  /*join_children_fetcher=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // The root expression can only be of double type, but here it is of list
+  // type.
+  JoinChildrenFetcher fake_fetcher(JoinSpecProto::default_instance(),
+                                   /*map_joinable_qualified_id=*/{});
+  EXPECT_THAT(
+      AdvancedScorer::Create(CreateAdvancedScoringSpec("this.childrenScores()"),
+                             default_score, document_store_.get(),
+                             schema_store_.get(), &fake_fetcher),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
 TEST_F(AdvancedScorerTest, ComplexExpression) {
   const int64_t creation_timestamp_ms = 123;
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -437,7 +572,7 @@ TEST_F(AdvancedScorerTest, ComplexExpression) {
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<Scorer> scorer,
+      std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec(
                                  "pow(sin(2), 2)"
                                  // This is this.usageCount(1)
@@ -449,19 +584,32 @@ TEST_F(AdvancedScorerTest, ComplexExpression) {
                                  "+ this.relevanceScore()"),
                              /*default_score=*/10, document_store_.get(),
                              schema_store_.get()));
+  EXPECT_FALSE(scorer->is_constant());
   scorer->PrepareToScore(/*query_term_iterators=*/{});
 
   ICING_ASSERT_OK(document_store_->ReportUsage(
       CreateUsageReport("namespace", "uri", 0, UsageReport::USAGE_TYPE1)));
   ICING_ASSERT_OK(document_store_->ReportUsage(
       CreateUsageReport("namespace", "uri", 0, UsageReport::USAGE_TYPE1)));
-  EXPECT_THAT(scorer->GetScore(docHitInfo),
+  EXPECT_THAT(scorer->GetScore(docHitInfo, /*query_it=*/nullptr),
               DoubleNear(pow(sin(2), 2) +
                              2 / 12.34 *
                                  (10 * pow(2 * 1, sin(2)) +
                                   10 * (2 + 10 + creation_timestamp_ms)) +
                              10,
                          kEps));
+}
+
+TEST_F(AdvancedScorerTest, ConstantExpression) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AdvancedScorer> scorer,
+      AdvancedScorer::Create(CreateAdvancedScoringSpec(
+                                 "pow(sin(2), 2)"
+                                 "+ log(2, 122) / 12.34"
+                                 "* (10 * pow(2 * 1, sin(2)) + 10 * (2 + 10))"),
+                             /*default_score=*/10, document_store_.get(),
+                             schema_store_.get()));
+  EXPECT_TRUE(scorer->is_constant());
 }
 
 // Should be a parsing Error

@@ -31,8 +31,9 @@
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/schema/joinable-property.h"
+#include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
-#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
@@ -113,6 +114,11 @@ class SchemaStore {
     // but invalidated the index. Represented by the `schema_type` field in the
     // SchemaTypeConfigProto.
     std::unordered_set<std::string> schema_types_index_incompatible_by_name;
+
+    // Schema types that were changed in a way that was backwards compatible,
+    // but invalidated the joinable cache. Represented by the `schema_type`
+    // field in the SchemaTypeConfigProto.
+    std::unordered_set<std::string> schema_types_join_incompatible_by_name;
   };
 
   // Factory function to create a SchemaStore which does not take ownership
@@ -187,44 +193,20 @@ class SchemaStore {
   libtextclassifier3::StatusOr<SchemaTypeId> GetSchemaTypeId(
       std::string_view schema_type) const;
 
-  // Finds content of a section by section path (e.g. property1.property2)
-  //
-  // Returns:
-  //   A string of content on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   NOT_FOUND if:
-  //     1. Property is optional and not found in the document
-  //     2. section_path is invalid
-  //     3. Content is empty
-  libtextclassifier3::StatusOr<std::vector<std::string_view>>
-  GetStringSectionContent(const DocumentProto& document,
-                          std::string_view section_path) const;
-
-  // Finds content of a section by id
-  //
-  // Returns:
-  //   A string of content on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   INVALID_ARGUMENT if section id is invalid
-  //   NOT_FOUND if type config name of document not found
-  libtextclassifier3::StatusOr<std::vector<std::string_view>>
-  GetStringSectionContent(const DocumentProto& document,
-                          SectionId section_id) const;
-
   // Returns the SectionMetadata associated with the SectionId that's in the
   // SchemaTypeId.
   //
   // Returns:
-  //   pointer to SectionMetadata on success
+  //   Valid pointer to SectionMetadata on success
   //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   INVALID_ARGUMENT if schema type id or section is invalid
+  //   INVALID_ARGUMENT if schema type id or section id is invalid
   libtextclassifier3::StatusOr<const SectionMetadata*> GetSectionMetadata(
       SchemaTypeId schema_type_id, SectionId section_id) const;
 
   // Extracts all sections of different types from the given document and group
   // them by type.
   // - Each Section vector is sorted by section Id in ascending order. The
-  //   sorted section Ids may not be continuous, since not all section Ids are
+  //   sorted section ids may not be continuous, since not all sections are
   //   present in the document.
   // - Sections with empty content won't be returned.
   // - For example, we may extract:
@@ -236,6 +218,34 @@ class SchemaStore {
   //   FAILED_PRECONDITION if schema hasn't been set yet
   //   NOT_FOUND if type config name of document not found
   libtextclassifier3::StatusOr<SectionGroup> ExtractSections(
+      const DocumentProto& document) const;
+
+  // Returns the JoinablePropertyMetadata associated with property_path that's
+  // in the SchemaTypeId.
+  //
+  // Returns:
+  //   Valid pointer to JoinablePropertyMetadata on success
+  //   nullptr if property_path doesn't exist (or is not joinable) in the
+  //     joinable metadata list of the schema
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   INVALID_ARGUMENT if schema type id is invalid
+  libtextclassifier3::StatusOr<const JoinablePropertyMetadata*>
+  GetJoinablePropertyMetadata(SchemaTypeId schema_type_id,
+                              const std::string& property_path) const;
+
+  // Extracts all joinable property contents of different types from the given
+  // document and group them by joinable value type.
+  // - Joinable properties are sorted by joinable property id in ascending
+  //   order. The sorted joinable property ids may not be continuous, since not
+  //   all joinable properties are present in the document.
+  // - Joinable property ids start from 0.
+  // - Joinable properties with empty content won't be returned.
+  //
+  // Returns:
+  //   A JoinablePropertyGroup instance on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   NOT_FOUND if the type config name of document not found
+  libtextclassifier3::StatusOr<JoinablePropertyGroup> ExtractJoinableProperties(
       const DocumentProto& document) const;
 
   // Syncs all the data changes to disk.
@@ -387,8 +397,9 @@ class SchemaStore {
   // Maps schema types to a densely-assigned unique id.
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
-  // Manager of indexed section related metadata.
-  std::unique_ptr<const SectionManager> section_manager_;
+  // Manager of section (indexable property) and joinable property related
+  // metadata for all Schemas.
+  std::unique_ptr<const SchemaTypeManager> schema_type_manager_;
 };
 
 }  // namespace lib

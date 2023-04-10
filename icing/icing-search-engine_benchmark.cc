@@ -240,33 +240,7 @@ void BM_IndexLatency(benchmark::State& state) {
 }
 BENCHMARK(BM_IndexLatency)
     // Arguments: num_indexed_documents, num_sections
-    ->ArgPair(1, 1)
-    ->ArgPair(2, 1)
-    ->ArgPair(8, 1)
-    ->ArgPair(32, 1)
-    ->ArgPair(128, 1)
-    ->ArgPair(1 << 10, 1)
-    ->ArgPair(1 << 13, 1)
-    ->ArgPair(1 << 15, 1)
-    ->ArgPair(1 << 17, 1)
-    ->ArgPair(1, 5)
-    ->ArgPair(2, 5)
-    ->ArgPair(8, 5)
-    ->ArgPair(32, 5)
-    ->ArgPair(128, 5)
-    ->ArgPair(1 << 10, 5)
-    ->ArgPair(1 << 13, 5)
-    ->ArgPair(1 << 15, 5)
-    ->ArgPair(1 << 17, 5)
-    ->ArgPair(1, 10)
-    ->ArgPair(2, 10)
-    ->ArgPair(8, 10)
-    ->ArgPair(32, 10)
-    ->ArgPair(128, 10)
-    ->ArgPair(1 << 10, 10)
-    ->ArgPair(1 << 13, 10)
-    ->ArgPair(1 << 15, 10)
-    ->ArgPair(1 << 17, 10);
+    ->ArgPair(1000000, 5);
 
 void BM_QueryLatency(benchmark::State& state) {
   // Initialize the filesystem
@@ -303,7 +277,7 @@ void BM_QueryLatency(benchmark::State& state) {
 
   SearchSpecProto search_spec = CreateSearchSpec(
       language.at(0), std::vector<std::string>(), TermMatchType::PREFIX);
-  ResultSpecProto result_spec = CreateResultSpec(1000000, 1000000, 1000000);
+  ResultSpecProto result_spec = CreateResultSpec(1, 1000000, 1000000);
   ScoringSpecProto scoring_spec =
       CreateScoringSpec(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
   for (auto _ : state) {
@@ -313,10 +287,7 @@ void BM_QueryLatency(benchmark::State& state) {
 }
 BENCHMARK(BM_QueryLatency)
     // Arguments: num_indexed_documents, num_sections
-    ->ArgPair(32, 2)
-    ->ArgPair(128, 2)
-    ->ArgPair(1 << 10, 2)
-    ->ArgPair(1 << 13, 2);
+    ->ArgPair(1000000, 2);
 
 void BM_IndexThroughput(benchmark::State& state) {
   // Initialize the filesystem
@@ -792,6 +763,65 @@ void BM_PutMaxAllowedDocuments(benchmark::State& state) {
               HasSubstr("Exceeded maximum number of documents"));
 }
 BENCHMARK(BM_PutMaxAllowedDocuments);
+
+void BM_QueryWithSnippet(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  std::string body = "message body";
+  for (int i = 0; i < 100; i++) {
+    body = body +
+           " invent invention inventory invest investigate investigation "
+           "investigator investment nvestor invisible invitation invite "
+           "involve involved involvement IraqiI rish island";
+  }
+  for (int i = 0; i < 50; i++) {
+    DocumentProto document = DocumentBuilder()
+                                 .SetKey("namespace", "uri" + std::to_string(i))
+                                 .SetSchema("Message")
+                                 .AddStringProperty("body", body)
+                                 .Build();
+    ASSERT_THAT(icing->Put(std::move(document)).status(), ProtoIsOk());
+  }
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("i");
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(10000);
+  result_spec.mutable_snippet_spec()->set_max_window_utf32_length(64);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(10000);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(10000);
+
+  for (auto s : state) {
+    SearchResultProto results = icing->Search(
+        search_spec, ScoringSpecProto::default_instance(), result_spec);
+  }
+}
+BENCHMARK(BM_QueryWithSnippet);
 
 }  // namespace
 

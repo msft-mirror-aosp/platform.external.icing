@@ -115,23 +115,27 @@ class UsageScorer : public Scorer {
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator*) override {
-    ICING_ASSIGN_OR_RETURN(
-        UsageStore::UsageScores usage_scores,
-        document_store_.GetUsageScores(hit_info.document_id()), default_score_);
+    std::optional<UsageStore::UsageScores> usage_scores =
+        document_store_.GetUsageScores(hit_info.document_id());
+    if (!usage_scores) {
+      // If there's no UsageScores entry present for this doc, then just
+      // treat it as a default instance.
+      usage_scores = UsageStore::UsageScores();
+    }
 
     switch (ranking_strategy_) {
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:
-        return usage_scores.usage_type1_count;
+        return usage_scores->usage_type1_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_COUNT:
-        return usage_scores.usage_type2_count;
+        return usage_scores->usage_type2_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_COUNT:
-        return usage_scores.usage_type3_count;
+        return usage_scores->usage_type3_count;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type1_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type1_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type2_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type2_last_used_timestamp_s * 1000.0;
       case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
-        return usage_scores.usage_type3_last_used_timestamp_s * 1000.0;
+        return usage_scores->usage_type3_last_used_timestamp_s * 1000.0;
       default:
         // This shouldn't happen if this scorer is used correctly.
         return default_score_;
@@ -163,7 +167,8 @@ namespace scorer_factory {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
-    const DocumentStore* document_store, const SchemaStore* schema_store) {
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const JoinChildrenFetcher* join_children_fetcher) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -211,10 +216,11 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
             "Advanced scoring is enabled, but the expression is empty!");
       }
       return AdvancedScorer::Create(scoring_spec, default_score, document_store,
-                                    schema_store);
+                                    schema_store, join_children_fetcher);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
-      ICING_LOG(WARNING)
-          << "JOIN_AGGREGATE_SCORE not implemented, falling back to NoScorer";
+      // Use join aggregate score to rank. Since the aggregation score is
+      // calculated by child documents after joining (in JoinProcessor), we can
+      // simply use NoScorer for parent documents.
       [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);

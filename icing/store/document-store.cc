@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -58,6 +59,7 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/encode-util.h"
 #include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -126,18 +128,23 @@ std::string MakeCorpusMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kCorpusIdMapperFilename);
 }
 
-// TODO(adorokhine): This class internally uses an 8-byte fingerprint of the
-// Key and stores the key/value in a file-backed-trie that adds an ~80 byte
-// overhead per key. As we know that these fingerprints are always 8-bytes in
-// length and that they're random, we might be able to store them more
-// compactly.
-std::string MakeFingerprint(std::string_view field1, std::string_view field2) {
-  // Using a 64-bit fingerprint to represent the key could lead to collisions.
-  // But, even with 200K unique keys, the probability of collision is about
-  // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
-  uint64_t fprint =
-      tc3farmhash::Fingerprint64(absl_ports::StrCat(field1, field2));
-  return fingerprint_util::GetFingerprintString(fprint);
+// This function will encode a namespace id into a fixed 3 bytes string.
+std::string EncodeNamespaceId(NamespaceId namespace_id) {
+  // encoding should be 1 to 3 bytes based on the value of namespace_id.
+  std::string encoding = encode_util::EncodeIntToCString(namespace_id);
+  // Make encoding to fixed 3 bytes.
+  while (encoding.size() < 3) {
+    // DynamicTrie cannot handle keys with 0 as bytes, so we append it using 1,
+    // just like what we do in encode_util::EncodeIntToCString.
+    //
+    // The reason that this works is because DecodeIntToString decodes a byte
+    // value of 0x01 as 0x00. When EncodeIntToCString returns a namespaceid
+    // encoding that is less than 3 bytes, it means that the id contains
+    // unencoded leading 0x00. So here we're explicitly encoding those bytes as
+    // 0x01.
+    encoding.push_back(1);
+  }
+  return encoding;
 }
 
 int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
@@ -202,15 +209,34 @@ std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
 
 }  // namespace
 
+std::string DocumentStore::MakeFingerprint(
+    NamespaceId namespace_id, std::string_view namespace_,
+    std::string_view uri_or_schema) const {
+  if (!namespace_id_fingerprint_) {
+    // Using a 64-bit fingerprint to represent the key could lead to collisions.
+    // But, even with 200K unique keys, the probability of collision is about
+    // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
+    uint64_t fprint = tc3farmhash::Fingerprint64(
+        absl_ports::StrCat(namespace_, uri_or_schema));
+    return fingerprint_util::GetFingerprintString(fprint);
+  } else {
+    return absl_ports::StrCat(EncodeNamespaceId(namespace_id),
+                              encode_util::EncodeIntToCString(
+                                  tc3farmhash::Fingerprint64(uri_or_schema)));
+  }
+}
+
 DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
-                             const SchemaStore* schema_store)
+                             const SchemaStore* schema_store,
+                             bool namespace_id_fingerprint)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
       schema_store_(schema_store),
-      document_validator_(schema_store) {}
+      document_validator_(schema_store),
+      namespace_id_fingerprint_(namespace_id_fingerprint) {}
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
@@ -222,7 +248,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     DocumentProto&& document, int32_t num_tokens,
     PutDocumentStatsProto* put_document_stats) {
   document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
-  return InternalPut(document, put_document_stats);
+  return InternalPut(std::move(document), put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -237,14 +263,14 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
-    bool force_recovery_and_revalidate_documents,
+    bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
     InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  auto document_store = std::unique_ptr<DocumentStore>(
-      new DocumentStore(filesystem, base_dir, clock, schema_store));
+  auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
+      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint));
   ICING_ASSIGN_OR_RETURN(
       DataLoss data_loss,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -352,7 +378,8 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic != DocumentStore::Header::kMagic) {
+  if (header.magic !=
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_)) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
@@ -489,10 +516,16 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
         continue;
       }
     }
+
+    ICING_ASSIGN_OR_RETURN(
+        NamespaceId namespace_id,
+        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
+                                    namespace_mapper_->num_keys()));
+
     // Updates key mapper and document_id mapper with the new document
     DocumentId new_document_id = document_id_mapper_->num_elements();
     ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-        MakeFingerprint(document_wrapper.document().namespace_(),
+        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
                         document_wrapper.document().uri()),
         new_document_id));
     ICING_RETURN_IF_ERROR(
@@ -517,14 +550,9 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
       schema_type_id = schema_type_id_or.ValueOrDie();
     }
 
-    ICING_ASSIGN_OR_RETURN(
-        NamespaceId namespace_id,
-        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
-                                    namespace_mapper_->num_keys()));
-
     // Update corpus maps
     std::string corpus =
-        MakeFingerprint(document_wrapper.document().namespace_(),
+        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
                         document_wrapper.document().schema());
     ICING_ASSIGN_OR_RETURN(
         CorpusId corpusId,
@@ -824,7 +852,8 @@ bool DocumentStore::HeaderExists() {
 libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
   // Write the header
   DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
+  header.magic =
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
   header.checksum = checksum.Get();
 
   // This should overwrite the header.
@@ -840,7 +869,7 @@ libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
-    DocumentProto& document, PutDocumentStatsProto* put_document_stats) {
+    DocumentProto&& document, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
@@ -892,20 +921,21 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
         "some space.");
   }
 
-  ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-      MakeFingerprint(name_space, uri), new_document_id));
-  ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
-
   // Update namespace maps
   ICING_ASSIGN_OR_RETURN(
       NamespaceId namespace_id,
       namespace_mapper_->GetOrPut(name_space, namespace_mapper_->num_keys()));
 
+  // Updates key mapper and document_id mapper
+  ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
+      MakeFingerprint(namespace_id, name_space, uri), new_document_id));
+  ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
+
   // Update corpus maps
-  ICING_ASSIGN_OR_RETURN(
-      CorpusId corpusId,
-      corpus_mapper_->GetOrPut(MakeFingerprint(name_space, schema),
-                               corpus_mapper_->num_keys()));
+  ICING_ASSIGN_OR_RETURN(CorpusId corpusId,
+                         corpus_mapper_->GetOrPut(
+                             MakeFingerprint(namespace_id, name_space, schema),
+                             corpus_mapper_->num_keys()));
 
   ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
                          GetCorpusAssociatedScoreDataToUpdate(corpusId));
@@ -1023,17 +1053,21 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
     const std::string_view name_space, const std::string_view uri) const {
-  auto document_id_or =
-      document_key_mapper_->Get(MakeFingerprint(name_space, uri));
-  if (!document_id_or.ok()) {
-    return absl_ports::Annotate(
-        document_id_or.status(),
-        absl_ports::StrCat("Failed to find DocumentId by key: ", name_space,
-                           ", ", uri));
+  auto namespace_id_or = namespace_mapper_->Get(name_space);
+  libtextclassifier3::Status status = namespace_id_or.status();
+  if (status.ok()) {
+    NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+    auto document_id_or = document_key_mapper_->Get(
+        MakeFingerprint(namespace_id, name_space, uri));
+    status = document_id_or.status();
+    if (status.ok()) {
+      // Guaranteed to have a DocumentId now
+      return document_id_or.ValueOrDie();
+    }
   }
-
-  // Guaranteed to have a DocumentId now
-  return document_id_or.ValueOrDie();
+  return absl_ports::Annotate(
+      status, absl_ports::StrCat(
+                  "Failed to find DocumentId by key: ", name_space, ", ", uri));
 }
 
 std::vector<std::string> DocumentStore::GetAllNamespaces() const {
@@ -1158,7 +1192,9 @@ libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
 
 libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
     const std::string_view name_space, const std::string_view schema) const {
-  return corpus_mapper_->Get(MakeFingerprint(name_space, schema));
+  ICING_ASSIGN_OR_RETURN(NamespaceId namespace_id,
+                         namespace_mapper_->Get(name_space));
+  return corpus_mapper_->Get(MakeFingerprint(namespace_id, name_space, schema));
 }
 
 libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
@@ -1262,13 +1298,25 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
   return corpus_scoring_data_or.status();
 }
 
-libtextclassifier3::StatusOr<UsageStore::UsageScores>
-DocumentStore::GetUsageScores(DocumentId document_id) const {
-  if (!GetAliveDocumentFilterData(document_id)) {
-    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+// TODO(b/273826815): Decide on and adopt a consistent pattern for handling
+// NOT_FOUND 'errors' returned by our internal classes.
+std::optional<UsageStore::UsageScores> DocumentStore::GetUsageScores(
+    DocumentId document_id) const {
+  std::optional<DocumentFilterData> opt =
+      GetAliveDocumentFilterData(document_id);
+  if (!opt) {
+    return std::nullopt;
   }
-  return usage_store_->GetUsageScores(document_id);
+  if (document_id >= usage_store_->num_elements()) {
+    return std::nullopt;
+  }
+  auto usage_scores_or = usage_store_->GetUsageScores(document_id);
+  if (!usage_scores_or.ok()) {
+    ICING_LOG(ERROR) << "Error retrieving usage for " << document_id << ": "
+                     << usage_scores_or.status().error_message();
+    return std::nullopt;
+  }
+  return std::move(usage_scores_or).ValueOrDie();
 }
 
 libtextclassifier3::Status DocumentStore::ReportUsage(
@@ -1714,7 +1762,7 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
     }
 
     // Guaranteed to have a document now.
-    DocumentProto document_to_keep = document_or.ValueOrDie();
+    DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
 
     libtextclassifier3::StatusOr<DocumentId> new_document_id_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
@@ -1729,11 +1777,12 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
       new_document_id_or = new_doc_store->Put(
-          document_to_keep, tokenized_document.num_string_tokens());
+          std::move(document_to_keep), tokenized_document.num_string_tokens());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      new_document_id_or = new_doc_store->InternalPut(document_to_keep);
+      new_document_id_or =
+          new_doc_store->InternalPut(std::move(document_to_keep));
     }
     if (!new_document_id_or.ok()) {
       ICING_LOG(ERROR) << new_document_id_or.status().error_message()
@@ -1872,8 +1921,7 @@ libtextclassifier3::Status DocumentStore::SetUsageScores(
 libtextclassifier3::StatusOr<
     google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
-  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
-      corpus_info;
+  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
       schema_store_->GetSchema();
   if (!schema_proto_or.ok()) {
@@ -1918,10 +1966,10 @@ DocumentStore::GetDebugInfo(int verbosity) const {
   ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
   debug_info.set_crc(crc.Get());
   if (verbosity > 0) {
-    ICING_ASSIGN_OR_RETURN(google::protobuf::RepeatedPtrField<
-                               DocumentDebugInfoProto::CorpusInfo>
-                               corpus_info,
-                           CollectCorpusInfo());
+    ICING_ASSIGN_OR_RETURN(
+        google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
+            corpus_info,
+        CollectCorpusInfo());
     *debug_info.mutable_corpus_info() = std::move(corpus_info);
   }
   return debug_info;

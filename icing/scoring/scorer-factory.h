@@ -16,6 +16,7 @@
 #define ICING_SCORING_SCORER_FACTORY_H_
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/scoring/scorer.h"
 #include "icing/store/document-store.h"
 
@@ -36,7 +37,8 @@ namespace scorer_factory {
 //   INVALID_ARGUMENT if fails to create an instance
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
-    const DocumentStore* document_store, const SchemaStore* schema_store);
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const JoinChildrenFetcher* join_children_fetcher = nullptr);
 
 }  // namespace scorer_factory
 

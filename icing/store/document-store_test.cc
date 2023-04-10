@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -88,7 +89,9 @@ const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
   // Didn't find our namespace, fail the test.
   EXPECT_TRUE(false) << "Failed to find namespace '" << name_space
                      << "' in DocumentStorageInfoProto.";
-  return std::move(NamespaceStorageInfoProto());
+  static const auto& default_namespace_storage_info =
+      *new NamespaceStorageInfoProto();
+  return default_namespace_storage_info;
 }
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
@@ -205,7 +208,8 @@ class DocumentStoreTest : public ::testing::Test {
     const std::string header_file =
         absl_ports::StrCat(document_store_dir_, "/document_store_header");
     DocumentStore::Header header;
-    header.magic = DocumentStore::Header::kMagic;
+    header.magic = DocumentStore::Header::GetCurrentMagic(
+        /*namespace_id_fingerprint=*/false);
     header.checksum = 10;  // Arbitrary garbage checksum
     filesystem_.DeleteFile(header_file.c_str());
     filesystem_.Write(header_file.c_str(), &header, sizeof(header));
@@ -1836,8 +1840,9 @@ TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ASSERT_THAT(doc_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
+                                    doc_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Delete the document.
   ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
@@ -1848,9 +1853,7 @@ TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                HasSubstr("Couldn't report usage on a nonexistent document")));
 
-  ASSERT_THAT(doc_store->GetUsageScores(document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
-                       HasSubstr("Can't get usage scores")));
+  EXPECT_FALSE(doc_store->GetUsageScores(document_id));
 }
 
 TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
@@ -1884,8 +1887,9 @@ TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ASSERT_THAT(doc_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
+                                    doc_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Some arbitrary time past the document's creation time (10) + ttl (100)
   fake_clock_.SetSystemTimeMilliseconds(200);
@@ -1896,9 +1900,7 @@ TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                HasSubstr("Couldn't report usage on a nonexistent document")));
 
-  ASSERT_THAT(doc_store->GetUsageScores(document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
-                       HasSubstr("Can't get usage scores")));
+  EXPECT_FALSE(doc_store->GetUsageScores(document_id));
 }
 
 TEST_F(DocumentStoreTest,
@@ -2866,8 +2868,10 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_last_used_timestamp_s = 1;
   ++expected_scores.usage_type1_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 1 and time 5, time should be updated.
   UsageReport usage_report_type1_time5 = CreateUsageReport(
@@ -2877,8 +2881,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type1_last_used_timestamp_s = 5;
   ++expected_scores.usage_type1_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 2 and time 1.
   UsageReport usage_report_type2_time1 = CreateUsageReport(
@@ -2888,8 +2893,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type2_last_used_timestamp_s = 1;
   ++expected_scores.usage_type2_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 2 and time 5.
   UsageReport usage_report_type2_time5 = CreateUsageReport(
@@ -2899,8 +2905,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type2_last_used_timestamp_s = 5;
   ++expected_scores.usage_type2_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 3 and time 1.
   UsageReport usage_report_type3_time1 = CreateUsageReport(
@@ -2910,8 +2917,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type3_last_used_timestamp_s = 1;
   ++expected_scores.usage_type3_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 3 and time 5.
   UsageReport usage_report_type3_time5 = CreateUsageReport(
@@ -2921,8 +2929,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type3_last_used_timestamp_s = 5;
   ++expected_scores.usage_type3_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
@@ -2944,8 +2953,10 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   ++expected_scores.usage_type1_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 2.
   UsageReport usage_report_type2 = CreateUsageReport(
@@ -2954,8 +2965,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type2));
 
   ++expected_scores.usage_type2_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 3.
   UsageReport usage_report_type3 = CreateUsageReport(
@@ -2964,8 +2976,9 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type3));
 
   ++expected_scores.usage_type3_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
@@ -2989,8 +3002,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
     ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
 
     ++expected_scores.usage_type1_count;
-    ASSERT_THAT(document_store->GetUsageScores(document_id),
-                IsOkAndHolds(expected_scores));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        UsageStore::UsageScores actual_scores,
+        document_store->GetUsageScores(document_id));
+    EXPECT_THAT(actual_scores, Eq(expected_scores));
   }
 
   CorruptDocStoreHeaderChecksumFile();
@@ -3003,8 +3018,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
       std::move(create_result.document_store);
 
   // Usage scores should be the same.
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
@@ -3028,8 +3045,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
     ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
 
     ++expected_scores.usage_type1_count;
-    ASSERT_THAT(document_store->GetUsageScores(document_id),
-                IsOkAndHolds(expected_scores));
+    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+        UsageStore::UsageScores actual_scores,
+        document_store->GetUsageScores(document_id));
+    EXPECT_THAT(actual_scores, Eq(expected_scores));
   }
 
   // "Corrupt" the content written in the log by adding non-checksummed data to
@@ -3053,8 +3072,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
       std::move(create_result.document_store);
 
   // Usage scores should still be available.
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
@@ -3077,8 +3098,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
 
   UsageStore::UsageScores expected_scores;
   ++expected_scores.usage_type1_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      document_store->GetUsageScores(document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Update the document.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -3088,8 +3111,9 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
 
   // Usage scores should be the same.
-  EXPECT_THAT(document_store->GetUsageScores(updated_document_id),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores, document_store->GetUsageScores(updated_document_id));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
@@ -3116,8 +3140,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
 
   UsageStore::UsageScores expected_scores;
   ++expected_scores.usage_type1_count;
-  ASSERT_THAT(document_store->GetUsageScores(document_id2),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      document_store->GetUsageScores(document_id2));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Run optimize
   std::string optimized_dir = document_store_dir_ + "/optimize_test";
@@ -3134,8 +3160,10 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
 
   // Usage scores should be the same.
   // The original document_id2 should have become document_id2 - 1.
-  ASSERT_THAT(optimized_document_store->GetUsageScores(document_id2 - 1),
-              IsOkAndHolds(expected_scores));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      actual_scores,
+      optimized_document_store->GetUsageScores(document_id2 - 1));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, DetectPartialDataLoss) {
@@ -3283,10 +3311,10 @@ TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get(),
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            &initialize_stats));
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          /*namespace_id_fingerprint=*/false, &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   // The document log is using the legacy v0 format so that a migration is
@@ -3487,10 +3515,10 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/true,
+            /*namespace_id_fingerprint=*/false, &initialize_stats));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -3873,10 +3901,10 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, document_store_dir, &fake_clock_,
-                            schema_store.get(),
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            &initialize_stats));
+      DocumentStore::Create(
+          &filesystem_, document_store_dir, &fake_clock_, schema_store.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          /*namespace_id_fingerprint=*/false, &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 

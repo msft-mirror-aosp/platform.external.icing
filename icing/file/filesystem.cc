@@ -127,6 +127,9 @@ bool ListDirectoryInternal(const char* dir_name,
     return false;
   }
 
+  // According to linux man page
+  // (https://man7.org/linux/man-pages/man3/readdir.3.html#RETURN_VALUE), dirent
+  // may be statically allocated, so don't free it.
   dirent* p;
   // readdir's implementation seems to be thread safe.
   while ((p = readdir(dir)) != nullptr) {
