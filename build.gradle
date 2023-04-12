@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import static androidx.build.SupportConfig.*
+import androidx.build.SupportConfig
 
 buildscript {
     dependencies {
@@ -28,12 +28,12 @@ plugins {
 }
 
 android {
-    buildToolsVersion BUILD_TOOLS_VERSION
-    compileSdkVersion COMPILE_SDK_VERSION
+    buildToolsVersion SupportConfig.buildToolsVersion(project)
+    compileSdkVersion SupportConfig.COMPILE_SDK_VERSION
     defaultConfig {
-        minSdkVersion DEFAULT_MIN_SDK_VERSION
-        targetSdkVersion TARGET_SDK_VERSION
-        testInstrumentationRunner INSTRUMENTATION_RUNNER
+        minSdkVersion SupportConfig.DEFAULT_MIN_SDK_VERSION
+        targetSdkVersion SupportConfig.TARGET_SDK_VERSION
+        testInstrumentationRunner SupportConfig.INSTRUMENTATION_RUNNER
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
