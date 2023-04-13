@@ -160,19 +160,16 @@ IndexStorageInfoProto MainIndex::GetStorageInfo(
   return storage_info;
 }
 
-libtextclassifier3::StatusOr<std::unique_ptr<PostingListAccessor>>
+libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
 MainIndex::GetAccessorForExactTerm(const std::string& term) {
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
   if (!main_lexicon_->Find(term.c_str(), &posting_list_id)) {
     return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
         "Term %s is not present in main lexicon.", term.c_str()));
   }
-  ICING_ASSIGN_OR_RETURN(
-      PostingListAccessor accessor,
-      PostingListAccessor::CreateFromExisting(
-          flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
-          posting_list_id));
-  return std::make_unique<PostingListAccessor>(std::move(accessor));
+  return PostingListHitAccessor::CreateFromExisting(
+      flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
+      posting_list_id);
 }
 
 libtextclassifier3::StatusOr<MainIndex::GetPrefixAccessorResult>
@@ -202,13 +199,11 @@ MainIndex::GetAccessorForPrefixTerm(const std::string& prefix) {
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
   memcpy(&posting_list_id, main_itr.GetValue(), sizeof(posting_list_id));
   ICING_ASSIGN_OR_RETURN(
-      PostingListAccessor pl_accessor,
-      PostingListAccessor::CreateFromExisting(
+      std::unique_ptr<PostingListHitAccessor> pl_accessor,
+      PostingListHitAccessor::CreateFromExisting(
           flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
           posting_list_id));
-  GetPrefixAccessorResult result = {
-      std::make_unique<PostingListAccessor>(std::move(pl_accessor)), exact};
-  return result;
+  return GetPrefixAccessorResult(std::move(pl_accessor), exact);
 }
 
 // TODO(tjbarron): Implement a method PropertyReadersAll.HasAnyProperty().
@@ -245,12 +240,12 @@ MainIndex::FindTermsByPrefix(
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
     memcpy(&posting_list_id, term_iterator.GetValue(), sizeof(posting_list_id));
     ICING_ASSIGN_OR_RETURN(
-        PostingListAccessor pl_accessor,
-        PostingListAccessor::CreateFromExisting(
+        std::unique_ptr<PostingListHitAccessor> pl_accessor,
+        PostingListHitAccessor::CreateFromExisting(
             flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
             posting_list_id));
     ICING_ASSIGN_OR_RETURN(std::vector<Hit> hits,
-                           pl_accessor.GetNextHitsBatch());
+                           pl_accessor->GetNextHitsBatch());
     while (!hits.empty()) {
       for (const Hit& hit : hits) {
         // Check whether this Hit is desired.
@@ -297,7 +292,7 @@ MainIndex::FindTermsByPrefix(
         // The term is desired and no need to be scored.
         break;
       }
-      ICING_ASSIGN_OR_RETURN(hits, pl_accessor.GetNextHitsBatch());
+      ICING_ASSIGN_OR_RETURN(hits, pl_accessor->GetNextHitsBatch());
     }
     if (score > 0) {
       term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), score));
@@ -559,14 +554,14 @@ libtextclassifier3::Status MainIndex::AddHits(
     memcpy(&backfill_posting_list_id,
            main_lexicon_->GetValueAtIndex(other_tvi_main_tvi_pair.second),
            sizeof(backfill_posting_list_id));
-    ICING_ASSIGN_OR_RETURN(
-        PostingListAccessor hit_accum,
-        PostingListAccessor::Create(flash_index_storage_.get(),
-                                    posting_list_used_hit_serializer_.get()));
+    ICING_ASSIGN_OR_RETURN(std::unique_ptr<PostingListHitAccessor> hit_accum,
+                           PostingListHitAccessor::Create(
+                               flash_index_storage_.get(),
+                               posting_list_used_hit_serializer_.get()));
     ICING_RETURN_IF_ERROR(
-        AddPrefixBackfillHits(backfill_posting_list_id, &hit_accum));
+        AddPrefixBackfillHits(backfill_posting_list_id, hit_accum.get()));
     PostingListAccessor::FinalizeResult result =
-        PostingListAccessor::Finalize(std::move(hit_accum));
+        std::move(*hit_accum).Finalize();
     if (result.id.is_valid()) {
       main_lexicon_->SetValueAtIndex(other_tvi_main_tvi_pair.first, &result.id);
     }
@@ -578,12 +573,12 @@ libtextclassifier3::Status MainIndex::AddHits(
 libtextclassifier3::Status MainIndex::AddHitsForTerm(
     uint32_t tvi, PostingListIdentifier backfill_posting_list_id,
     const TermIdHitPair* hit_elements, size_t len) {
-  // 1. Create a PostingListAccessor - either from the pre-existing block, if
+  // 1. Create a PostingListHitAccessor - either from the pre-existing block, if
   // one exists, or from scratch.
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
   memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(tvi),
          sizeof(posting_list_id));
-  std::unique_ptr<PostingListAccessor> pl_accessor;
+  std::unique_ptr<PostingListHitAccessor> pl_accessor;
   if (posting_list_id.is_valid()) {
     if (posting_list_id.block_index() >= flash_index_storage_->num_blocks()) {
       ICING_LOG(ERROR) << "Index dropped hits. Invalid block index "
@@ -597,18 +592,16 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
           "Valid posting list has an invalid block index!");
     }
     ICING_ASSIGN_OR_RETURN(
-        PostingListAccessor tmp,
-        PostingListAccessor::CreateFromExisting(
+        pl_accessor,
+        PostingListHitAccessor::CreateFromExisting(
             flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
             posting_list_id));
-    pl_accessor = std::make_unique<PostingListAccessor>(std::move(tmp));
   } else {
     // New posting list.
-    ICING_ASSIGN_OR_RETURN(
-        PostingListAccessor tmp,
-        PostingListAccessor::Create(flash_index_storage_.get(),
-                                    posting_list_used_hit_serializer_.get()));
-    pl_accessor = std::make_unique<PostingListAccessor>(std::move(tmp));
+    ICING_ASSIGN_OR_RETURN(pl_accessor,
+                           PostingListHitAccessor::Create(
+                               flash_index_storage_.get(),
+                               posting_list_used_hit_serializer_.get()));
   }
 
   // 2. Backfill any hits if necessary.
@@ -625,7 +618,7 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
 
   // 4. Finalize this posting list and put its identifier in the lexicon.
   PostingListAccessor::FinalizeResult result =
-      PostingListAccessor::Finalize(std::move(*pl_accessor));
+      std::move(*pl_accessor).Finalize();
   if (result.id.is_valid()) {
     main_lexicon_->SetValueAtIndex(tvi, &result.id);
   }
@@ -634,18 +627,18 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
 
 libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     PostingListIdentifier backfill_posting_list_id,
-    PostingListAccessor* hit_accum) {
+    PostingListHitAccessor* hit_accum) {
   ICING_ASSIGN_OR_RETURN(
-      PostingListAccessor backfill_accessor,
-      PostingListAccessor::CreateFromExisting(
+      std::unique_ptr<PostingListHitAccessor> backfill_accessor,
+      PostingListHitAccessor::CreateFromExisting(
           flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
           backfill_posting_list_id));
   std::vector<Hit> backfill_hits;
   ICING_ASSIGN_OR_RETURN(std::vector<Hit> tmp,
-                         backfill_accessor.GetNextHitsBatch());
+                         backfill_accessor->GetNextHitsBatch());
   while (!tmp.empty()) {
     std::copy(tmp.begin(), tmp.end(), std::back_inserter(backfill_hits));
-    ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor.GetNextHitsBatch());
+    ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor->GetNextHitsBatch());
   }
 
   Hit last_added_hit;
@@ -738,7 +731,7 @@ libtextclassifier3::Status MainIndex::Optimize(
 
 libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
     const std::vector<DocumentId>& document_id_old_to_new, const char* term,
-    PostingListAccessor& old_pl_accessor, MainIndex* new_index) {
+    PostingListHitAccessor& old_pl_accessor, MainIndex* new_index) {
   std::vector<Hit> new_hits;
   bool has_no_exact_hits = true;
   bool has_hits_in_prefix_section = false;
@@ -776,15 +769,14 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
   }
 
   ICING_ASSIGN_OR_RETURN(
-      PostingListAccessor hit_accum,
-      PostingListAccessor::Create(
+      std::unique_ptr<PostingListHitAccessor> hit_accum,
+      PostingListHitAccessor::Create(
           new_index->flash_index_storage_.get(),
           new_index->posting_list_used_hit_serializer_.get()));
   for (auto itr = new_hits.rbegin(); itr != new_hits.rend(); ++itr) {
-    ICING_RETURN_IF_ERROR(hit_accum.PrependHit(*itr));
+    ICING_RETURN_IF_ERROR(hit_accum->PrependHit(*itr));
   }
-  PostingListAccessor::FinalizeResult result =
-      PostingListAccessor::Finalize(std::move(hit_accum));
+  PostingListAccessor::FinalizeResult result = std::move(*hit_accum).Finalize();
   if (!result.id.is_valid()) {
     return absl_ports::InternalError(
         absl_ports::StrCat("Failed to add translated hits for term: ", term));
@@ -826,14 +818,14 @@ libtextclassifier3::Status MainIndex::TransferIndex(
       continue;
     }
     ICING_ASSIGN_OR_RETURN(
-        PostingListAccessor pl_accessor,
-        PostingListAccessor::CreateFromExisting(
+        std::unique_ptr<PostingListHitAccessor> pl_accessor,
+        PostingListHitAccessor::CreateFromExisting(
             flash_index_storage_.get(), posting_list_used_hit_serializer_.get(),
             posting_list_id));
     ICING_ASSIGN_OR_RETURN(
         DocumentId curr_largest_document_id,
         TransferAndAddHits(document_id_old_to_new, term_itr.GetKey(),
-                           pl_accessor, new_index));
+                           *pl_accessor, new_index));
     if (curr_largest_document_id == kInvalidDocumentId) {
       continue;
     }

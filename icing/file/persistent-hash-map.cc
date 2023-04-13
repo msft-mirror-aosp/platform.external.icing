@@ -180,13 +180,66 @@ std::string GetKeyValueStorageFilePath(std::string_view base_dir) {
                             ".k");
 }
 
+// Calculates how many buckets we need given num_entries and
+// max_load_factor_percent. Round it up to 2's power.
+//
+// REQUIRES: 0 < num_entries <= Entry::kMaxNumEntries &&
+//           max_load_factor_percent > 0
+int32_t CalculateNumBucketsRequired(int32_t num_entries,
+                                    int32_t max_load_factor_percent) {
+  // Calculate ceil(num_entries * 100 / max_load_factor_percent)
+  int32_t num_entries_100 = num_entries * 100;
+  int32_t num_buckets_required =
+      num_entries_100 / max_load_factor_percent +
+      (num_entries_100 % max_load_factor_percent == 0 ? 0 : 1);
+  if ((num_buckets_required & (num_buckets_required - 1)) != 0) {
+    // not 2's power
+    return 1 << (32 - __builtin_clz(num_buckets_required));
+  }
+  return num_buckets_required;
+}
+
 }  // namespace
+
+bool PersistentHashMap::Options::IsValid() const {
+  if (!(value_type_size > 0 && value_type_size <= kMaxValueTypeSize &&
+        max_num_entries > 0 && max_num_entries <= Entry::kMaxNumEntries &&
+        max_load_factor_percent > 0 && average_kv_byte_size > 0 &&
+        init_num_buckets > 0 && init_num_buckets <= Bucket::kMaxNumBuckets)) {
+    return false;
+  }
+
+  // We've ensured (static_assert) that storing kMaxNumBuckets buckets won't
+  // exceed FileBackedVector::kMaxFileSize, so only need to verify # of buckets
+  // required won't exceed kMaxNumBuckets.
+  if (CalculateNumBucketsRequired(max_num_entries, max_load_factor_percent) >
+      Bucket::kMaxNumBuckets) {
+    return false;
+  }
+
+  // Verify # of key value pairs can fit into kv_storage.
+  if (average_kv_byte_size > kMaxKVTotalByteSize / max_num_entries) {
+    return false;
+  }
+
+  // Verify init_num_buckets is 2's power. Requiring init_num_buckets to be 2^n
+  // guarantees that num_buckets will eventually grow to be exactly
+  // max_num_buckets since CalculateNumBucketsRequired rounds it up to 2^n.
+  if ((init_num_buckets & (init_num_buckets - 1)) != 0) {
+    return false;
+  }
+
+  return true;
+}
 
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
 PersistentHashMap::Create(const Filesystem& filesystem,
-                          std::string_view base_dir, int32_t value_type_size,
-                          int32_t max_load_factor_percent,
-                          int32_t init_num_buckets) {
+                          std::string_view base_dir, const Options& options) {
+  if (!options.IsValid()) {
+    return absl_ports::InvalidArgumentError(
+        "Invalid PersistentHashMap options");
+  }
+
   if (!filesystem.FileExists(
           GetMetadataFilePath(base_dir, kSubDirectory).c_str()) ||
       !filesystem.FileExists(
@@ -195,11 +248,9 @@ PersistentHashMap::Create(const Filesystem& filesystem,
           GetEntryStorageFilePath(base_dir, kSubDirectory).c_str()) ||
       !filesystem.FileExists(GetKeyValueStorageFilePath(base_dir).c_str())) {
     // TODO: erase all files if missing any.
-    return InitializeNewFiles(filesystem, base_dir, value_type_size,
-                              max_load_factor_percent, init_num_buckets);
+    return InitializeNewFiles(filesystem, base_dir, options);
   }
-  return InitializeExistingFiles(filesystem, base_dir, value_type_size,
-                                 max_load_factor_percent);
+  return InitializeExistingFiles(filesystem, base_dir, options);
 }
 
 PersistentHashMap::~PersistentHashMap() {
@@ -398,9 +449,7 @@ libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeChecksum() {
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
 PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
                                       std::string_view base_dir,
-                                      int32_t value_type_size,
-                                      int32_t max_load_factor_percent,
-                                      int32_t init_num_buckets) {
+                                      const Options& options) {
   // Create directory.
   const std::string dir_path = absl_ports::StrCat(base_dir, "/", kSubDirectory);
   if (!filesystem.CreateDirectoryRecursively(dir_path.c_str())) {
@@ -408,32 +457,54 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
         absl_ports::StrCat("Failed to create directory: ", dir_path));
   }
 
-  // Initialize 3 storages
+  int32_t max_num_buckets_required =
+      std::max(options.init_num_buckets,
+               CalculateNumBucketsRequired(options.max_num_entries,
+                                           options.max_load_factor_percent));
+
+  // Initialize bucket_storage
+  int32_t pre_mapping_mmap_size = sizeof(Bucket) * max_num_buckets_required;
+  int32_t max_file_size =
+      pre_mapping_mmap_size + FileBackedVector<Bucket>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> bucket_storage,
       FileBackedVector<Bucket>::Create(
           filesystem, GetBucketStorageFilePath(base_dir, kSubDirectory),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
+          pre_mapping_mmap_size));
+
+  // Initialize entry_storage
+  pre_mapping_mmap_size = sizeof(Entry) * options.max_num_entries;
+  max_file_size =
+      pre_mapping_mmap_size + FileBackedVector<Entry>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Entry>> entry_storage,
       FileBackedVector<Entry>::Create(
           filesystem, GetEntryStorageFilePath(base_dir, kSubDirectory),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
+          pre_mapping_mmap_size));
+
+  // Initialize kv_storage
+  pre_mapping_mmap_size =
+      options.average_kv_byte_size * options.max_num_entries;
+  max_file_size =
+      pre_mapping_mmap_size + FileBackedVector<char>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<FileBackedVector<char>> kv_storage,
                          FileBackedVector<char>::Create(
                              filesystem, GetKeyValueStorageFilePath(base_dir),
-                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+                             max_file_size, pre_mapping_mmap_size));
 
   // Initialize buckets.
-  ICING_RETURN_IF_ERROR(
-      bucket_storage->Set(/*idx=*/0, /*len=*/init_num_buckets, Bucket()));
+  ICING_RETURN_IF_ERROR(bucket_storage->Set(
+      /*idx=*/0, /*len=*/options.init_num_buckets, Bucket()));
   ICING_RETURN_IF_ERROR(bucket_storage->PersistToDisk());
 
   // Create and initialize new info
   Info new_info;
   new_info.version = kVersion;
-  new_info.value_type_size = value_type_size;
-  new_info.max_load_factor_percent = max_load_factor_percent;
+  new_info.value_type_size = options.value_type_size;
+  new_info.max_load_factor_percent = options.max_load_factor_percent;
   new_info.num_deleted_entries = 0;
   new_info.num_deleted_key_value_bytes = 0;
 
@@ -458,7 +529,7 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
       /*file_offset=*/0, /*mmap_size=*/sizeof(Crcs) + sizeof(Info)));
 
   return std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
-      filesystem, base_dir, std::move(metadata_mmapped_file),
+      filesystem, base_dir, options, std::move(metadata_mmapped_file),
       std::move(bucket_storage), std::move(entry_storage),
       std::move(kv_storage)));
 }
@@ -466,8 +537,7 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
 PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
                                            std::string_view base_dir,
-                                           int32_t value_type_size,
-                                           int32_t max_load_factor_percent) {
+                                           const Options& options) {
   // Mmap the content of the crcs and info.
   ICING_ASSIGN_OR_RETURN(
       MemoryMappedFile metadata_mmapped_file,
@@ -477,21 +547,41 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
   ICING_RETURN_IF_ERROR(metadata_mmapped_file.Remap(
       /*file_offset=*/0, /*mmap_size=*/sizeof(Crcs) + sizeof(Info)));
 
-  // Initialize 3 storages
+  int32_t max_num_buckets_required = CalculateNumBucketsRequired(
+      options.max_num_entries, options.max_load_factor_percent);
+
+  // Initialize bucket_storage
+  int32_t pre_mapping_mmap_size = sizeof(Bucket) * max_num_buckets_required;
+  int32_t max_file_size =
+      pre_mapping_mmap_size + FileBackedVector<Bucket>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Bucket>> bucket_storage,
       FileBackedVector<Bucket>::Create(
           filesystem, GetBucketStorageFilePath(base_dir, kSubDirectory),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
+          pre_mapping_mmap_size));
+
+  // Initialize entry_storage
+  pre_mapping_mmap_size = sizeof(Entry) * options.max_num_entries;
+  max_file_size =
+      pre_mapping_mmap_size + FileBackedVector<Entry>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<FileBackedVector<Entry>> entry_storage,
       FileBackedVector<Entry>::Create(
           filesystem, GetEntryStorageFilePath(base_dir, kSubDirectory),
-          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
+          pre_mapping_mmap_size));
+
+  // Initialize kv_storage
+  pre_mapping_mmap_size =
+      options.average_kv_byte_size * options.max_num_entries;
+  max_file_size =
+      pre_mapping_mmap_size + FileBackedVector<char>::Header::kHeaderSize;
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<FileBackedVector<char>> kv_storage,
                          FileBackedVector<char>::Create(
                              filesystem, GetKeyValueStorageFilePath(base_dir),
-                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
+                             max_file_size, pre_mapping_mmap_size));
 
   Crcs* crcs_ptr = reinterpret_cast<Crcs*>(
       metadata_mmapped_file.mutable_region() + Crcs::kFileOffset);
@@ -499,8 +589,24 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
       metadata_mmapped_file.mutable_region() + Info::kFileOffset);
 
   // Value type size should be consistent.
-  if (value_type_size != info_ptr->value_type_size) {
+  if (options.value_type_size != info_ptr->value_type_size) {
     return absl_ports::FailedPreconditionError("Incorrect value type size");
+  }
+
+  // Current # of entries should not exceed options.max_num_entries
+  // We compute max_file_size of 3 storages by options.max_num_entries. Since we
+  // won't recycle space of deleted entries (and key-value bytes), they're still
+  // occupying space in storages. Even if # of "active" entries doesn't exceed
+  // options.max_num_entries, the new kvp to be inserted still potentially
+  // exceeds max_file_size.
+  // Therefore, we should use entry_storage->num_elements() instead of # of
+  // "active" entries
+  // (i.e. entry_storage->num_elements() - info_ptr->num_deleted_entries) to
+  // check. This feature avoids storages being grown extremely large when there
+  // are many Delete() and Put() operations.
+  if (entry_storage->num_elements() > options.max_num_entries) {
+    return absl_ports::FailedPreconditionError(
+        "Current # of entries exceeds max num entries");
   }
 
   // Validate checksums of info and 3 storages.
@@ -509,12 +615,12 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
                         entry_storage.get(), kv_storage.get()));
 
   // Allow max_load_factor_percent_ change.
-  if (max_load_factor_percent != info_ptr->max_load_factor_percent) {
+  if (options.max_load_factor_percent != info_ptr->max_load_factor_percent) {
     ICING_VLOG(2) << "Changing max_load_factor_percent from "
                   << info_ptr->max_load_factor_percent << " to "
-                  << max_load_factor_percent;
+                  << options.max_load_factor_percent;
 
-    info_ptr->max_load_factor_percent = max_load_factor_percent;
+    info_ptr->max_load_factor_percent = options.max_load_factor_percent;
     crcs_ptr->component_crcs.info_crc = info_ptr->ComputeChecksum().Get();
     crcs_ptr->all_crc = crcs_ptr->component_crcs.ComputeChecksum().Get();
     ICING_RETURN_IF_ERROR(metadata_mmapped_file.PersistToDisk());
@@ -522,7 +628,7 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
 
   auto persistent_hash_map =
       std::unique_ptr<PersistentHashMap>(new PersistentHashMap(
-          filesystem, base_dir, std::move(metadata_mmapped_file),
+          filesystem, base_dir, options, std::move(metadata_mmapped_file),
           std::move(bucket_storage), std::move(entry_storage),
           std::move(kv_storage)));
   ICING_RETURN_IF_ERROR(
@@ -576,8 +682,17 @@ libtextclassifier3::Status PersistentHashMap::CopyEntryValue(
 libtextclassifier3::Status PersistentHashMap::Insert(int32_t bucket_idx,
                                                      std::string_view key,
                                                      const void* value) {
-  // If size() + 1 exceeds Entry::kMaxNumEntries, then return error.
-  if (size() > Entry::kMaxNumEntries - 1) {
+  // If entry_storage_->num_elements() + 1 exceeds options_.max_num_entries,
+  // then return error.
+  // We compute max_file_size of 3 storages by options_.max_num_entries. Since
+  // we won't recycle space of deleted entries (and key-value bytes), they're
+  // still occupying space in storages. Even if # of "active" entries (i.e.
+  // size()) doesn't exceed options_.max_num_entries, the new kvp to be inserted
+  // still potentially exceeds max_file_size.
+  // Therefore, we should use entry_storage_->num_elements() instead of size()
+  // to check. This feature avoids storages being grown extremely large when
+  // there are many Delete() and Put() operations.
+  if (entry_storage_->num_elements() > options_.max_num_entries - 1) {
     return absl_ports::ResourceExhaustedError("Cannot insert new entry");
   }
 

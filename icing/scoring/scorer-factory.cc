@@ -12,16 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/scoring/scorer.h"
+#include "icing/scoring/scorer-factory.h"
 
 #include <memory>
+#include <unordered_map>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/scoring/advanced_scoring/advanced-scorer.h"
 #include "icing/scoring/bm25f-calculator.h"
+#include "icing/scoring/scorer.h"
 #include "icing/scoring/section-weights.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
@@ -156,11 +159,21 @@ class NoScorer : public Scorer {
   double default_score_;
 };
 
-libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
+namespace scorer_factory {
+
+libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
     const DocumentStore* document_store, const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
+
+  if (!scoring_spec.advanced_scoring_expression().empty() &&
+      scoring_spec.rank_by() !=
+          ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION) {
+    return absl_ports::InvalidArgumentError(
+        "Advanced scoring is not enabled, but the advanced scoring expression "
+        "is not empty!");
+  }
 
   switch (scoring_spec.rank_by()) {
     case ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE:
@@ -192,14 +205,24 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Scorer::Create(
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
       return std::make_unique<UsageScorer>(
           document_store, scoring_spec.rank_by(), default_score);
+    case ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION:
+      if (scoring_spec.advanced_scoring_expression().empty()) {
+        return absl_ports::InvalidArgumentError(
+            "Advanced scoring is enabled, but the expression is empty!");
+      }
+      return AdvancedScorer::Create(scoring_spec, default_score, document_store,
+                                    schema_store);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
-      ICING_LOG(WARNING)
-          << "JOIN_AGGREGATE_SCORE not implemented, falling back to NoScorer";
+      // Use join aggregate score to rank. Since the aggregation score is
+      // calculated by child documents after joining (in JoinProcessor), we can
+      // simply use NoScorer for parent documents.
       [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::NONE:
       return std::make_unique<NoScorer>(default_score);
   }
 }
+
+}  // namespace scorer_factory
 
 }  // namespace lib
 }  // namespace icing

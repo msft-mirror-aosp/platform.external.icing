@@ -25,8 +25,6 @@ namespace lib {
 using PostingListIndex = int32_t;
 inline constexpr PostingListIndex kInvalidPostingListIndex = ~0U;
 
-inline constexpr uint32_t kNumSpecialData = 2;
-
 inline constexpr uint32_t kInvalidBlockIndex = 0;
 
 }  //  namespace lib

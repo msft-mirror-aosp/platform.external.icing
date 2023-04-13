@@ -40,42 +40,12 @@ using ::testing::Le;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAreArray;
 
-inline constexpr int kNumTypes = 30;
-const std::vector<int> kPossibleNumProperties = {0,
-                                                 1,
-                                                 2,
-                                                 4,
-                                                 8,
-                                                 16,
-                                                 kTotalNumSections / 2,
-                                                 kTotalNumSections,
-                                                 kTotalNumSections + 1,
-                                                 kTotalNumSections * 2};
-inline constexpr int kNumNamespaces = 100;
-inline constexpr int kNumURIs = 1000;
-
-// Merge per 131072 hits
-const int kIndexMergeSize = 1024 * 1024;
-
-// An array of pairs of monkey test APIs with frequencies.
-// If f_sum is the sum of all the frequencies, an operation with frequency f
-// means for every f_sum iterations, the operation is expected to run f times.
-const std::vector<
-    std::pair<std::function<void(IcingMonkeyTestRunner*)>, uint32_t>>
-    kMonkeyAPISchedules = {{&IcingMonkeyTestRunner::DoPut, 500},
-                           {&IcingMonkeyTestRunner::DoSearch, 200},
-                           {&IcingMonkeyTestRunner::DoGet, 70},
-                           {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
-                           {&IcingMonkeyTestRunner::DoDelete, 50},
-                           {&IcingMonkeyTestRunner::DoDeleteByNamespace, 50},
-                           {&IcingMonkeyTestRunner::DoDeleteBySchemaType, 50},
-                           {&IcingMonkeyTestRunner::DoDeleteByQuery, 20},
-                           {&IcingMonkeyTestRunner::DoOptimize, 5},
-                           {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
-
-SchemaProto GenerateRandomSchema(MonkeyTestRandomEngine* random) {
+SchemaProto GenerateRandomSchema(
+    const IcingMonkeyTestRunnerConfiguration& config,
+    MonkeyTestRandomEngine* random) {
   MonkeySchemaGenerator schema_generator(random);
-  return schema_generator.GenerateSchema(kNumTypes, kPossibleNumProperties);
+  return schema_generator.GenerateSchema(config.num_types,
+                                         config.possible_num_properties);
 }
 
 SearchSpecProto GenerateRandomSearchSpecProto(
@@ -166,18 +136,20 @@ void SortDocuments(std::vector<DocumentProto>& documents) {
 
 }  // namespace
 
-IcingMonkeyTestRunner::IcingMonkeyTestRunner(uint32_t seed)
-    : random_(seed), in_memory_icing_() {
-  ICING_LOG(INFO) << "Monkey test runner started with seed: " << seed;
+IcingMonkeyTestRunner::IcingMonkeyTestRunner(
+    const IcingMonkeyTestRunnerConfiguration& config)
+    : config_(config), random_(config.seed), in_memory_icing_() {
+  ICING_LOG(INFO) << "Monkey test runner started with seed: " << config_.seed;
 
-  SchemaProto schema = GenerateRandomSchema(&random_);
+  SchemaProto schema = GenerateRandomSchema(config_, &random_);
   ICING_LOG(DBG) << "Schema Generated: " << schema.DebugString();
 
   in_memory_icing_ =
       std::make_unique<InMemoryIcingSearchEngine>(&random_, std::move(schema));
 
   document_generator_ = std::make_unique<MonkeyDocumentGenerator>(
-      &random_, in_memory_icing_->GetSchema(), kNumNamespaces, kNumURIs);
+      &random_, in_memory_icing_->GetSchema(), config_.possible_num_tokens_,
+      config_.num_namespaces, config_.num_uris);
 
   std::string dir = GetTestTempDir() + "/icing/monkey";
   filesystem_.DeleteDirectoryRecursively(dir.c_str());
@@ -190,20 +162,21 @@ void IcingMonkeyTestRunner::Run(uint32_t num) {
          "CreateIcingSearchEngineWithSchema() first";
 
   uint32_t frequency_sum = 0;
-  for (const auto& schedule : kMonkeyAPISchedules) {
+  for (const auto& schedule : config_.monkey_api_schedules) {
     frequency_sum += schedule.second;
   }
   std::uniform_int_distribution<> dist(0, frequency_sum - 1);
   for (; num; --num) {
     int p = dist(random_);
-    for (const auto& schedule : kMonkeyAPISchedules) {
+    for (const auto& schedule : config_.monkey_api_schedules) {
       if (p < schedule.second) {
         ASSERT_NO_FATAL_FAILURE(schedule.first(this));
         break;
       }
       p -= schedule.second;
     }
-    ICING_LOG(INFO) << "Documents in the in-memory icing: "
+    ICING_LOG(INFO) << "Completed Run #" << num
+                    << ". Documents in the in-memory icing: "
                     << in_memory_icing_->GetNumAliveDocuments();
   }
 }
@@ -404,6 +377,11 @@ void IcingMonkeyTestRunner::DoSearch() {
     search_result = icing_->GetNextPage(search_result.next_page_token());
     ASSERT_THAT(search_result.status(), ProtoIsOk());
   }
+  // The maximum number of scored documents allowed in Icing is 30000, in which
+  // case we are not able to compare the results with the in-memory Icing.
+  if (exp_documents.size() >= 30000) {
+    return;
+  }
   if (snippet_spec.num_matches_per_property() > 0) {
     ASSERT_THAT(num_snippeted,
                 Eq(std::min<uint32_t>(exp_documents.size(),
@@ -432,7 +410,7 @@ void IcingMonkeyTestRunner::DoOptimize() {
 
 void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   IcingSearchEngineOptions icing_options;
-  icing_options.set_index_merge_size(kIndexMergeSize);
+  icing_options.set_index_merge_size(config_.index_merge_size);
   icing_options.set_base_dir(icing_dir_->dir());
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());

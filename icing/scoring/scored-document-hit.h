@@ -24,11 +24,19 @@
 namespace icing {
 namespace lib {
 
+class JoinedScoredDocumentHit;
+
 // A data class containing information about the document, hit sections, and a
 // score. The score is calculated against both the document and the hit
 // sections.
 class ScoredDocumentHit {
  public:
+  class Converter {
+   public:
+    JoinedScoredDocumentHit operator()(
+        ScoredDocumentHit&& scored_doc_hit) const;
+  };
+
   ScoredDocumentHit(DocumentId document_id, SectionIdMask hit_section_id_mask,
                     double score)
       : document_id_(document_id),
@@ -84,6 +92,65 @@ class ScoredDocumentHitComparator {
  private:
   bool is_descending_;
 };
+
+// A data class containing information about a composite document after joining,
+// including final score, parent ScoredDocumentHit, and a vector of all child
+// ScoredDocumentHits. The final score is calculated by the strategy specified
+// in join spec/rank strategy. It could be aggregated score, raw parent doc
+// score, or anything else.
+//
+// ScoredDocumentHitsRanker may store ScoredDocumentHit or
+// JoinedScoredDocumentHit.
+// - We could've created a virtual class for them and ScoredDocumentHitsRanker
+//   uses the abstract type.
+// - However, Icing lib caches ScoredDocumentHitsRanker (which contains a list
+//   of (Joined)ScoredDocumentHits) in ResultState. Inheriting the virtual class
+//   makes both classes have additional 8 bytes for vtable, which increases 40%
+//   and 15% memory usage respectively.
+// - Also since JoinedScoredDocumentHit is a super-set of ScoredDocumentHit,
+//   let's avoid the common virtual class and instead implement a convert
+//   function (original type -> JoinedScoredDocumentHit) for each class, so
+//   ScoredDocumentHitsRanker::PopNext can return a common type (i.e.
+//   JoinedScoredDocumentHit).
+class JoinedScoredDocumentHit {
+ public:
+  class Converter {
+   public:
+    JoinedScoredDocumentHit operator()(
+        JoinedScoredDocumentHit&& scored_doc_hit) const {
+      return scored_doc_hit;
+    }
+  };
+
+  explicit JoinedScoredDocumentHit(
+      double final_score, ScoredDocumentHit parent_scored_document_hit,
+      std::vector<ScoredDocumentHit> child_scored_document_hits)
+      : final_score_(final_score),
+        parent_scored_document_hit_(std::move(parent_scored_document_hit)),
+        child_scored_document_hits_(std::move(child_scored_document_hits)) {}
+
+  bool operator<(const JoinedScoredDocumentHit& other) const {
+    if (final_score_ != other.final_score_) {
+      return final_score_ < other.final_score_;
+    }
+    return parent_scored_document_hit_ < other.parent_scored_document_hit_;
+  }
+
+  double final_score() const { return final_score_; }
+
+  const ScoredDocumentHit& parent_scored_document_hit() const {
+    return parent_scored_document_hit_;
+  }
+
+  const std::vector<ScoredDocumentHit>& child_scored_document_hits() const {
+    return child_scored_document_hits_;
+  }
+
+ private:
+  double final_score_;
+  ScoredDocumentHit parent_scored_document_hit_;
+  std::vector<ScoredDocumentHit> child_scored_document_hits_;
+} __attribute__((packed));
 
 }  // namespace lib
 }  // namespace icing

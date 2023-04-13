@@ -164,10 +164,33 @@ message IntegerIndexingConfig {
   optional NumericMatchType.Code numeric_match_type = 1;
 }
 
+// Describes how a property can be used to join this document with another
+// document. See JoinSpecProto (in search.proto) for more details.
+// Next tag: 2
+message JoinableConfig {
+  // OPTIONAL: Indicates what joinable type the content value of this property
+  // is.
+  //
+  // The default value is NONE.
+  message ValueType {
+    enum Code {
+      // Value in this property is not joinable.
+      NONE = 0;
+
+      // Value in this property is a joinable (string) qualified id, which is
+      // composed of namespace and uri.
+      // See JoinSpecProto (in search.proto) and DocumentProto (in
+      // document.proto) for more details about qualified id, namespace and uri.
+      QUALIFIED_ID = 1;
+    }
+  }
+  optional ValueType.Code value_type = 1;
+}
+
 // Describes the schema of a single property of Documents that belong to a
 // specific SchemaTypeConfigProto. These can be considered as a rich, structured
 // type for each property of Documents accepted by IcingSearchEngine.
-// Next tag: 8
+// Next tag: 9
 message PropertyConfigProto {
   // REQUIRED: Name that uniquely identifies a property within an Document of
   // a specific SchemaTypeConfigProto.
@@ -248,6 +271,16 @@ message PropertyConfigProto {
   // OPTIONAL: Describes how int64 properties should be indexed. Int64
   // properties that do not set the indexing config will not be indexed.
   optional IntegerIndexingConfig integer_indexing_config = 7;
+
+  // OPTIONAL: Describes how string properties can be used as a document joining
+  // matcher.
+  //
+  // Note: currently we only support STRING single joining, so if a property is
+  // set as joinable (i.e. joinable_config.content_type is not NONE), then:
+  // - DataType should be STRING. Otherwise joinable_config will be ignored.
+  // - The property itself and any upper-level (nested doc) property should
+  //   contain at most one element (i.e. Cardinality is OPTIONAL or REQUIRED).
+  optional JoinableConfig joinable_config = 8;
 }
 
 // List of all supported types constitutes the schema used by Icing.
