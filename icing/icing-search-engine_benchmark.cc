@@ -34,6 +34,7 @@
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
@@ -51,7 +52,7 @@
 //    //icing:icing-search-engine_benchmark
 //
 //    $ blaze-bin/icing/icing-search-engine_benchmark
-//    --benchmarks=all --benchmark_memory_usage
+//    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -61,7 +62,8 @@
 //    $ adb push blaze-bin/icing/icing-search-engine_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/icing-search-engine_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/icing-search-engine_benchmark
+//    --benchmark_filter=all
 
 namespace icing {
 namespace lib {
@@ -222,24 +224,19 @@ void BM_IndexLatency(benchmark::State& state) {
   std::unique_ptr<IcingSearchEngine> icing =
       std::make_unique<IcingSearchEngine>(options);
 
-  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
-
   int num_docs = state.range(0);
   std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
   const std::vector<DocumentProto> random_docs =
       GenerateRandomDocuments(&type_selector, num_docs, language);
-  Timer timer;
-  for (const DocumentProto& doc : random_docs) {
-    ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+  for (auto _ : state) {
+    state.PauseTiming();
+    ASSERT_THAT(icing->Reset().status(), ProtoIsOk());
+    ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+    state.ResumeTiming();
+    for (const DocumentProto& doc : random_docs) {
+      ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+    }
   }
-  int64_t time_taken_ns = timer.GetElapsedNanoseconds();
-  int64_t time_per_doc_ns = time_taken_ns / num_docs;
-  std::cout << "Number of indexed documents:\t" << num_docs
-            << "\t\tNumber of indexed sections:\t" << state.range(1)
-            << "\t\tTime taken (ms):\t" << time_taken_ns / 1000000
-            << "\t\tTime taken per doc (us):\t" << time_per_doc_ns / 1000
-            << std::endl;
 }
 BENCHMARK(BM_IndexLatency)
     // Arguments: num_indexed_documents, num_sections
