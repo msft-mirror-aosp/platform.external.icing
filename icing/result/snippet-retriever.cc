@@ -489,8 +489,7 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
     std::string_view value = current_property->string_values(i);
     std::unique_ptr<Tokenizer::Iterator> iterator =
         tokenizer
-            ->Tokenize(value,
-                       LanguageSegmenter::AccessType::kBidirectionalIterator)
+            ->Tokenize(value, LanguageSegmenter::AccessType::kForwardIterator)
             .ValueOrDie();
     // All iterators are moved through positions sequentially. Constructing them
     // each time resets them to the beginning of the string. This means that,

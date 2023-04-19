@@ -383,6 +383,56 @@ TEST_F(IcingSearchEngineInitializationTest,
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
+TEST_F(IcingSearchEngineInitializationTest,
+       NegativeCompressionLevelReturnsInvalidArgument) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(-1);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       GreaterThanMaxCompressionLevelReturnsInvalidArgument) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(10);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineInitializationTest, GoodCompressionLevelReturnsOk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(0);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       ReinitializingWithDifferentCompressionLevelReturnsOk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(3);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    DocumentProto document = CreateMessageDocument("namespace", "uri");
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  }
+  options.set_compression_level(9);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  }
+  options.set_compression_level(0);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  }
+}
+
 TEST_F(IcingSearchEngineInitializationTest, FailToCreateDocStore) {
   auto mock_filesystem = std::make_unique<MockFilesystem>();
   // This fails DocumentStore::Create()
@@ -980,7 +1030,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get()));
+                              schema_store.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
