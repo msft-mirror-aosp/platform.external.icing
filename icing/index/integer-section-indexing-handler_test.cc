@@ -163,7 +163,12 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
         DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
   }
 

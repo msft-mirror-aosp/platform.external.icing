@@ -68,7 +68,12 @@ class ResultStateV2Test : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(&filesystem_, doc_store_base_dir_, &clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     num_total_hits_ = 0;

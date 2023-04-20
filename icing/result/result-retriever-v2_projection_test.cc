@@ -115,7 +115,12 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 

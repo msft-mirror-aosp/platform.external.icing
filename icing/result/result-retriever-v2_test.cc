@@ -197,6 +197,17 @@ ResultSpecProto CreateResultSpec(
   return result_spec;
 }
 
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
+}
+
 TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
       ResultRetrieverV2::Create(/*doc_store=*/nullptr, schema_store_.get(),
@@ -205,8 +216,8 @@ TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -227,8 +238,8 @@ TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
 TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -320,8 +331,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -392,8 +403,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&mock_filesystem, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&mock_filesystem, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -437,8 +448,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
 TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -522,8 +533,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
 TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -621,8 +632,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
 TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -681,8 +692,8 @@ TEST_F(ResultRetrieverV2Test,
        ShouldReturnSingleLargeResultAboveNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -743,8 +754,8 @@ TEST_F(ResultRetrieverV2Test,
        ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 

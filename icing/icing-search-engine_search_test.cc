@@ -3317,6 +3317,7 @@ TEST_P(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_ranking_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_num_joined_results_returned_current_page(0);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Second page, 2 result with 1 snippet
@@ -3333,6 +3334,7 @@ TEST_P(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_num_joined_results_returned_current_page(0);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
   // Third page, 1 result with 0 snippets
@@ -3348,6 +3350,261 @@ TEST_P(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_num_results_with_snippets(0);
   exp_stats.set_latency_ms(5);
   exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_num_joined_results_returned_current_page(0);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+}
+
+TEST_P(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(5);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first1")
+          .AddStringProperty("lastName", "last1")
+          .AddStringProperty("emailAddress", "email1@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(1)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first2")
+          .AddStringProperty("lastName", "last2")
+          .AddStringProperty("emailAddress", "email2@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(2)
+          .Build();
+  DocumentProto person3 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person3")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first3")
+          .AddStringProperty("lastName", "last3")
+          .AddStringProperty("emailAddress", "email3@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(3)
+          .Build();
+
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "email1")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject 1")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(3)
+          .Build();
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "email2")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject 2")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(2)
+          .Build();
+  DocumentProto email3 =
+      DocumentBuilder()
+          .SetKey("namespace", "email3")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject 3")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(1)
+          .Build();
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email3).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+  search_spec.set_search_type(GetParam());
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+  nested_search_spec->set_search_type(GetParam());
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE);
+  scoring_spec.set_order_by(ScoringSpecProto::Order::DESC);
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(1);
+
+  // Since we:
+  // - Use MAX for aggregation scoring strategy.
+  // - (Default) use DOCUMENT_SCORE to score child documents.
+  // - (Default) use DESC as the ranking order.
+  //
+  // person1 + email1 should have the highest aggregated score (3) and be
+  // returned first. person2 + email2 (aggregated score = 2) should be the
+  // second, and person3 + email3 (aggregated score = 1) should be the last.
+  SearchResultProto expected_result1;
+  expected_result1.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto1 =
+      expected_result1.mutable_results()->Add();
+  *result_proto1->mutable_document() = person1;
+  *result_proto1->mutable_joined_results()->Add()->mutable_document() = email1;
+  *result_proto1->mutable_joined_results()->Add()->mutable_document() = email2;
+
+  SearchResultProto expected_result2;
+  expected_result2.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_google::protobuf =
+      expected_result2.mutable_results()->Add();
+  *result_google::protobuf->mutable_document() = person2;
+  *result_google::protobuf->mutable_joined_results()->Add()->mutable_document() = email3;
+
+  SearchResultProto expected_result3;
+  expected_result3.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto3 =
+      expected_result3.mutable_results()->Add();
+  *result_proto3->mutable_document() = person3;
+
+  SearchResultProto search_result =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  uint64_t next_page_token = search_result.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result1.set_next_page_token(next_page_token);
+  ASSERT_THAT(search_result,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result1));
+
+  // Check the stats
+  QueryStatsProto exp_stats;
+  exp_stats.set_query_length(15);
+  exp_stats.set_num_terms(1);
+  exp_stats.set_num_namespaces_filtered(0);
+  exp_stats.set_num_schema_types_filtered(0);
+  exp_stats.set_ranking_strategy(
+      ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE);
+  exp_stats.set_is_first_page(true);
+  exp_stats.set_requested_page_size(1);
+  exp_stats.set_num_results_returned_current_page(1);
+  exp_stats.set_num_documents_scored(3);
+  exp_stats.set_num_results_with_snippets(0);
+  exp_stats.set_latency_ms(5);
+  exp_stats.set_parse_query_latency_ms(5);
+  exp_stats.set_scoring_latency_ms(5);
+  exp_stats.set_ranking_latency_ms(5);
+  exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_num_joined_results_returned_current_page(2);
+  exp_stats.set_join_latency_ms(5);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Second page, 1 child doc.
+  search_result = icing.GetNextPage(next_page_token);
+  next_page_token = search_result.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result2.set_next_page_token(next_page_token);
+  EXPECT_THAT(search_result,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result2));
+
+  exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_requested_page_size(1);
+  exp_stats.set_num_results_returned_current_page(1);
+  exp_stats.set_num_results_with_snippets(0);
+  exp_stats.set_latency_ms(5);
+  exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_num_joined_results_returned_current_page(1);
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  // Third page, 0 child docs.
+  search_result = icing.GetNextPage(next_page_token);
+  next_page_token = search_result.next_page_token();
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), SizeIs(1));
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
+  exp_stats.set_requested_page_size(1);
+  exp_stats.set_num_results_returned_current_page(1);
+  exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_latency_ms(5);
+  exp_stats.set_document_retrieval_latency_ms(5);
+  exp_stats.set_lock_acquisition_latency_ms(5);
+  exp_stats.set_num_results_with_snippets(0);
+  ASSERT_THAT(search_result,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result3));
+  EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
+
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  search_result = icing.GetNextPage(search_result.next_page_token());
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), IsEmpty());
+  ASSERT_THAT(search_result.next_page_token(), Eq(kInvalidNextPageToken));
+
+  exp_stats = QueryStatsProto();
+  exp_stats.set_is_first_page(false);
   exp_stats.set_lock_acquisition_latency_ms(5);
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 }
