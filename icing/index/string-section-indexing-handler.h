@@ -15,9 +15,12 @@
 #ifndef ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
 #define ICING_INDEX_STRING_SECTION_INDEXING_HANDLER_H_
 
+#include <memory>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/index/index.h"
-#include "icing/index/section-indexing-handler.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
 #include "icing/transform/normalizer.h"
@@ -27,25 +30,29 @@
 namespace icing {
 namespace lib {
 
-class StringSectionIndexingHandler : public SectionIndexingHandler {
+class StringSectionIndexingHandler : public DataIndexingHandler {
  public:
-  explicit StringSectionIndexingHandler(const Clock* clock,
-                                        const Normalizer* normalizer,
-                                        Index* index)
-      : SectionIndexingHandler(clock),
-        normalizer_(*normalizer),
-        index_(*index) {}
+  // Creates a StringSectionIndexingHandler instance which does not take
+  // ownership of any input components. All pointers must refer to valid objects
+  // that outlive the created StringSectionIndexingHandler instance.
+  //
+  // Returns:
+  //   - A StringSectionIndexingHandler instance on success
+  //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
+  static libtextclassifier3::StatusOr<
+      std::unique_ptr<StringSectionIndexingHandler>>
+  Create(const Clock* clock, const Normalizer* normalizer, Index* index);
 
   ~StringSectionIndexingHandler() override = default;
 
-  // Handles the string indexing process: add hits into the lite index for all
-  // contents in tokenized_document.tokenized_string_sections and merge lite
+  // Handles the string term indexing process: add hits into the lite index for
+  // all contents in tokenized_document.tokenized_string_sections and merge lite
   // index into main index if necessary.
   //
   /// Returns:
   //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if document_id is less than the document_id of a
-  //     previously indexed document.
+  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
+  //     document_id of a previously indexed document in non recovery mode.
   //   - RESOURCE_EXHAUSTED_ERROR if the index is full and can't add anymore
   //     content.
   //   - DATA_LOSS_ERROR if an attempt to merge the index fails and both indices
@@ -54,11 +61,16 @@ class StringSectionIndexingHandler : public SectionIndexingHandler {
   //   - Any main/lite index errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
-      PutDocumentStatsProto* put_document_stats) override;
+      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
 
  private:
-  const Normalizer& normalizer_;
-  Index& index_;
+  explicit StringSectionIndexingHandler(const Clock* clock,
+                                        const Normalizer* normalizer,
+                                        Index* index)
+      : DataIndexingHandler(clock), normalizer_(*normalizer), index_(*index) {}
+
+  const Normalizer& normalizer_;  // Does not own.
+  Index& index_;                  // Does not own.
 };
 
 }  // namespace lib

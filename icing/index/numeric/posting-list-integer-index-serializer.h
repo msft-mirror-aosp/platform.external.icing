@@ -111,6 +111,12 @@ class PostingListIntegerIndexSerializer : public PostingListSerializer {
   libtextclassifier3::Status PopFrontData(PostingListUsed* posting_list_used,
                                           uint32_t num_data) const;
 
+  // Helper function to determine if posting list is full.
+  bool IsFull(const PostingListUsed* posting_list_used) const {
+    return GetSpecialData(posting_list_used, /*index=*/0).data().is_valid() &&
+           GetSpecialData(posting_list_used, /*index=*/1).data().is_valid();
+  }
+
  private:
   // Posting list layout formats:
   //
@@ -228,11 +234,6 @@ class PostingListIntegerIndexSerializer : public PostingListSerializer {
   // +-----------------+-----------------+---+--------+-----+--------+--------+
 
   // Helpers to determine what state the posting list is in.
-  bool IsFull(const PostingListUsed* posting_list_used) const {
-    return GetSpecialData(posting_list_used, /*index=*/0).data().is_valid() &&
-           GetSpecialData(posting_list_used, /*index=*/1).data().is_valid();
-  }
-
   bool IsAlmostFull(const PostingListUsed* posting_list_used) const {
     return !GetSpecialData(posting_list_used, /*index=*/0).data().is_valid() &&
            GetSpecialData(posting_list_used, /*index=*/1).data().is_valid();

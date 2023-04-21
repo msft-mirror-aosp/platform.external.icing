@@ -39,8 +39,8 @@
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/query-visitor.h"
-#include "icing/query/query-processor.h"
 #include "icing/query/query-features.h"
+#include "icing/query/query-processor.h"
 #include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
 #include "icing/query/query-utils.h"
@@ -203,8 +203,8 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
       ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
   QueryVisitor query_visitor(
       &index_, &numeric_index_, &document_store_, &schema_store_, &normalizer_,
-      plain_tokenizer.get(), std::move(options), search_spec.term_match_type(),
-      needs_term_frequency_info);
+      plain_tokenizer.get(), search_spec.query(), std::move(options),
+      search_spec.term_match_type(), needs_term_frequency_info);
   tree_root->Accept(&query_visitor);
   return std::move(query_visitor).ConsumeResults();
 }
@@ -230,7 +230,6 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
 
   std::stack<ParserStateFrame> frames;
   frames.emplace();
-
   QueryResults results;
   // Process all the tokens
   for (int i = 0; i < tokens.size(); i++) {
@@ -309,11 +308,12 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
         // We do the same amount of disk reads, so it may be dependent on how
         // big the schema is and/or how popular schema type filtering and
         // section filtering is.
-
         ICING_ASSIGN_OR_RETURN(
             result_iterator,
             index_.GetIterator(
-                normalized_text, kSectionIdMaskAll,
+                normalized_text,
+                token.text.data() - search_spec.query().c_str(),
+                token.text.length(), kSectionIdMaskAll,
                 search_spec.term_match_type(),
                 /*need_hit_term_frequency=*/ranking_strategy ==
                     ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
@@ -329,7 +329,9 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
             ICING_ASSIGN_OR_RETURN(
                 std::unique_ptr<DocHitInfoIterator> term_iterator,
                 index_.GetIterator(
-                    normalized_text, kSectionIdMaskAll,
+                    normalized_text,
+                    token.text.data() - search_spec.query().c_str(),
+                    token.text.length(), kSectionIdMaskAll,
                     search_spec.term_match_type(),
                     /*need_hit_term_frequency=*/ranking_strategy ==
                         ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
@@ -344,6 +346,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
         break;
       }
       case Token::Type::INVALID:
+        ICING_LOG(ERROR) << "INVALID";
         [[fallthrough]];
       default:
         // This wouldn't happen if tokenizer and query processor both work
@@ -390,9 +393,11 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
       if (!frames.top().section_restrict.empty()) {
         // We saw a section restrict earlier, wrap the result iterator in
         // the section restrict
+        std::set<std::string> section_restricts;
+        section_restricts.insert(std::move(frames.top().section_restrict));
         result_iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
             std::move(result_iterator), &document_store_, &schema_store_,
-            std::move(frames.top().section_restrict));
+            std::move(section_restricts));
 
         frames.top().section_restrict = "";
       }

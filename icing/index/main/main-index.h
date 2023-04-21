@@ -161,7 +161,7 @@ class MainIndex {
     if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
       return libtextclassifier3::Status::OK;
     }
-    return absl_ports::InternalError("Unable to sync lite index components.");
+    return absl_ports::InternalError("Unable to sync main index components.");
   }
 
   DocumentId last_added_document_id() const {
