@@ -68,6 +68,7 @@
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
@@ -704,7 +705,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
                             schema_store_.get(),
                             force_recovery_and_revalidate_documents,
                             options_.document_store_namespace_id_fingerprint(),
-                            initialize_stats));
+                            options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
 
   return libtextclassifier3::Status::OK;
@@ -1782,6 +1783,7 @@ SearchResultProto IcingSearchEngine::Search(
 
   const JoinSpecProto& join_spec = search_spec.join_spec();
   std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
+  std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
   if (!join_spec.parent_property_expression().empty() &&
       !join_spec.child_property_expression().empty()) {
     // Process child query
@@ -1810,6 +1812,13 @@ SearchResultProto IcingSearchEngine::Search(
     }
     join_children_fetcher = std::make_unique<JoinChildrenFetcher>(
         std::move(join_children_fetcher_or).ValueOrDie());
+
+    // Assign child's ResultAdjustmentInfo.
+    child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+        join_spec.nested_spec().search_spec(),
+        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().result_spec(),
+        std::move(nested_query_scoring_results.query_terms));
   }
 
   // Process parent query
@@ -1836,8 +1845,14 @@ SearchResultProto IcingSearchEngine::Search(
     return result_proto;
   }
 
+  // Construct parent's result adjustment info.
+  auto parent_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+      search_spec, scoring_spec, result_spec,
+      std::move(query_scoring_results.query_terms));
+
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
   if (join_children_fetcher != nullptr) {
+    std::unique_ptr<Timer> join_timer = clock_->GetNewTimer();
     // Join 2 scored document hits
     JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
                                  qualified_id_join_index_.get());
@@ -1851,7 +1866,8 @@ SearchResultProto IcingSearchEngine::Search(
     }
     std::vector<JoinedScoredDocumentHit> joined_result_document_hits =
         std::move(joined_result_document_hits_or).ValueOrDie();
-    // TODO(b/256022027): set join latency
+
+    query_stats->set_join_latency_ms(join_timer->GetElapsedMilliseconds());
 
     std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
     // Ranks results
@@ -1892,9 +1908,9 @@ SearchResultProto IcingSearchEngine::Search(
 
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
-          std::move(ranker), std::move(query_scoring_results.query_terms),
-          search_spec, scoring_spec, result_spec, *document_store_,
-          *result_retriever);
+          std::move(ranker), std::move(parent_result_adjustment_info),
+          std::move(child_result_adjustment_info), result_spec,
+          *document_store_, *result_retriever);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -1907,8 +1923,11 @@ SearchResultProto IcingSearchEngine::Search(
   // Assembles the final search result proto
   result_proto.mutable_results()->Reserve(
       page_result_info.second.results.size());
+
+  int32_t child_count = 0;
   for (SearchResultProto::ResultProto& result :
        page_result_info.second.results) {
+    child_count += result.joined_results_size();
     result_proto.mutable_results()->Add(std::move(result));
   }
 
@@ -1921,6 +1940,9 @@ SearchResultProto IcingSearchEngine::Search(
       component_timer->GetElapsedMilliseconds());
   query_stats->set_num_results_returned_current_page(
       result_proto.results_size());
+
+  query_stats->set_num_joined_results_returned_current_page(child_count);
+
   query_stats->set_num_results_with_snippets(
       page_result_info.second.num_results_with_snippets);
   return result_proto;
@@ -2041,8 +2063,11 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   // Assembles the final search result proto
   result_proto.mutable_results()->Reserve(
       page_result_info.second.results.size());
+
+  int32_t child_count = 0;
   for (SearchResultProto::ResultProto& result :
        page_result_info.second.results) {
+    child_count += result.joined_results_size();
     result_proto.mutable_results()->Add(std::move(result));
   }
 
@@ -2061,6 +2086,8 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
       result_proto.results_size());
   query_stats->set_num_results_with_snippets(
       page_result_info.second.num_results_with_snippets);
+  query_stats->set_num_joined_results_returned_current_page(child_count);
+
   return result_proto;
 }
 
@@ -2092,7 +2119,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   // Copies valid document data to tmp directory
   libtextclassifier3::StatusOr<std::vector<DocumentId>>
       document_id_old_to_new_or = document_store_->OptimizeInto(
-          temporary_document_dir, language_segmenter_.get(), optimize_stats);
+          temporary_document_dir, language_segmenter_.get(),
+          options_.document_store_namespace_id_fingerprint(), optimize_stats);
 
   // Handles error if any
   if (!document_id_old_to_new_or.ok()) {
@@ -2129,7 +2157,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     auto create_result_or = DocumentStore::Create(
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-        options_.document_store_namespace_id_fingerprint());
+        options_.document_store_namespace_id_fingerprint(),
+        options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
     if (!create_result_or.ok()) {
@@ -2156,7 +2185,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   auto create_result_or = DocumentStore::Create(
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-      options_.document_store_namespace_id_fingerprint());
+      options_.document_store_namespace_id_fingerprint(),
+      options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
     // and return INTERNAL.
