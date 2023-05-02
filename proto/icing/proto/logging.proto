@@ -143,7 +143,7 @@ message PutDocumentStatsProto {
 
 // Stats of the top-level function IcingSearchEngine::Search() and
 // IcingSearchEngine::GetNextPage().
-// Next tag: 21
+// Next tag: 23
 message QueryStatsProto {
   // The UTF-8 length of the query string
   optional int32 query_length = 16;
@@ -206,6 +206,12 @@ message QueryStatsProto {
 
   // Time used to send protos across the JNI boundary from native to java side.
   optional int32 native_to_java_jni_latency_ms = 20;
+
+  // The native latency due to the join operation.
+  optional int32 join_latency_ms = 21;
+
+  // Number of documents scored.
+  optional int32 num_joined_results_returned_current_page = 22;
 
   reserved 9;
 }

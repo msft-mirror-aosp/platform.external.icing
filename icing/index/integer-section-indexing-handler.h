@@ -48,9 +48,10 @@ class IntegerSectionIndexingHandler : public DataIndexingHandler {
   // all contents in tokenized_document.integer_sections.
   //
   // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
-  //     document_id of a previously indexed document in non recovery mode.
+  //   - OK on success.
+  //   - INVALID_ARGUMENT_ERROR if document_id is invalid OR document_id is less
+  //     than or equal to the document_id of a previously indexed document in
+  //     non recovery mode.
   //   - Any NumericIndex<int64_t>::Editor errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,

@@ -459,5 +459,58 @@ ChildrenScoresFunctionScoreExpression::eval_list(
   return std::move(children_scores);
 }
 
+libtextclassifier3::StatusOr<
+    std::unique_ptr<PropertyWeightsFunctionScoreExpression>>
+PropertyWeightsFunctionScoreExpression::Create(
+    std::vector<std::unique_ptr<ScoreExpression>> args,
+    const DocumentStore* document_store,
+    const SectionWeights* section_weights) {
+  if (args.size() != 1) {
+    return absl_ports::InvalidArgumentError(
+        "propertyWeights must have 1 argument.");
+  }
+  ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
+
+  if (args[0]->type() != ScoreExpressionType::kDocument) {
+    return absl_ports::InvalidArgumentError(
+        "propertyWeights must take \"this\" as its argument.");
+  }
+  return std::unique_ptr<PropertyWeightsFunctionScoreExpression>(
+      new PropertyWeightsFunctionScoreExpression(document_store,
+                                                 section_weights));
+}
+
+libtextclassifier3::StatusOr<std::vector<double>>
+PropertyWeightsFunctionScoreExpression::eval_list(
+    const DocHitInfo& hit_info, const DocHitInfoIterator*) const {
+  std::vector<double> weights;
+  SectionIdMask sections = hit_info.hit_section_ids_mask();
+  SchemaTypeId schema_type_id = GetSchemaTypeId(hit_info.document_id());
+
+  while (sections != 0) {
+    SectionId section_id = __builtin_ctzll(sections);
+    sections &= ~(UINT64_C(1) << section_id);
+    weights.push_back(section_weights_.GetNormalizedSectionWeight(
+        schema_type_id, section_id));
+  }
+  return weights;
+}
+
+SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
+    DocumentId document_id) const {
+  auto filter_data_optional =
+      document_store_.GetAliveDocumentFilterData(document_id);
+  if (!filter_data_optional) {
+    // This should never happen. The only failure case for
+    // GetDocumentFilterData is if the document_id is outside of the range of
+    // allocated document_ids, which shouldn't be possible since we're getting
+    // this document_id from the posting lists.
+    ICING_LOG(WARNING) << "No document filter data for document ["
+                       << document_id << "]";
+    return kInvalidSchemaTypeId;
+  }
+  return filter_data_optional.value().schema_type_id();
+}
+
 }  // namespace lib
 }  // namespace icing

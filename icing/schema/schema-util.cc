@@ -280,6 +280,15 @@ BuildTransitiveDependentGraph(const SchemaProto& schema) {
     }
     known_types.insert(schema_type);
     unknown_types.erase(schema_type);
+    if (!type_config.parent_type().empty()) {
+      std::string_view parent_schema_type(type_config.parent_type());
+      if (known_types.count(parent_schema_type) == 0) {
+        unknown_types.insert(parent_schema_type);
+      }
+      // Try to add schema_type to the parent type's dependent map when it is
+      // not present already, in which case the value will be an empty vector.
+      dependent_map[parent_schema_type].insert({schema_type, {}});
+    }
     for (const auto& property_config : type_config.properties()) {
       if (property_config.data_type() ==
           PropertyConfigProto::DataType::DOCUMENT) {
