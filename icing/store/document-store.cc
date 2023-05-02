@@ -230,13 +230,15 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
                              const SchemaStore* schema_store,
-                             bool namespace_id_fingerprint)
+                             bool namespace_id_fingerprint,
+                             int32_t compression_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
       schema_store_(schema_store),
       document_validator_(schema_store),
-      namespace_id_fingerprint_(namespace_id_fingerprint) {}
+      namespace_id_fingerprint_(namespace_id_fingerprint),
+      compression_level_(compression_level) {}
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
@@ -264,13 +266,14 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
     bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
-    InitializeStatsProto* initialize_stats) {
+    int32_t compression_level, InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
-      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint));
+      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint,
+      compression_level));
   ICING_ASSIGN_OR_RETURN(
       DataLoss data_loss,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -285,7 +288,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
-  auto create_result_or = DocumentLogCreator::Create(filesystem_, base_dir_);
+  auto create_result_or =
+      DocumentLogCreator::Create(filesystem_, base_dir_, compression_level_);
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -1725,6 +1729,7 @@ libtextclassifier3::Status DocumentStore::Optimize() {
 libtextclassifier3::StatusOr<std::vector<DocumentId>>
 DocumentStore::OptimizeInto(const std::string& new_directory,
                             const LanguageSegmenter* lang_segmenter,
+                            bool namespace_id_fingerprint,
                             OptimizeStatsProto* stats) {
   // Validates directory
   if (new_directory == base_dir_) {
@@ -1732,9 +1737,12 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
         "New directory is the same as the current one.");
   }
 
-  ICING_ASSIGN_OR_RETURN(auto doc_store_create_result,
-                         DocumentStore::Create(filesystem_, new_directory,
-                                               &clock_, schema_store_));
+  ICING_ASSIGN_OR_RETURN(
+      auto doc_store_create_result,
+      DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            namespace_id_fingerprint, compression_level_,
+                            /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
 
