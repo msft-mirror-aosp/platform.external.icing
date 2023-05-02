@@ -49,6 +49,11 @@ libtextclassifier3::Status QualifiedIdJoinablePropertyIndexingHandler::Handle(
   // TODO(b/263890397): set qualified id join index processing latency and other
   // stats.
 
+  if (!IsDocumentIdValid(document_id)) {
+    return absl_ports::InvalidArgumentError(
+        IcingStringUtil::StringPrintf("Invalid DocumentId %d", document_id));
+  }
+
   if (qualified_id_join_index_.last_added_document_id() != kInvalidDocumentId &&
       document_id <= qualified_id_join_index_.last_added_document_id()) {
     if (recovery_mode) {

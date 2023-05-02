@@ -1753,6 +1753,87 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
 }
 
+TEST_F(IcingSearchEngineOptimizeTest,
+       OptimizationRewritesDocsWithNewCompressionLevel) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body one")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body two")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_compression_level(3);
+  int64_t document_log_size_compression_3;
+  int64_t document_log_size_after_opti_no_compression;
+  int64_t document_log_size_after_opti_compression_3;
+  const std::string document_log_path =
+      icing_options.base_dir() + "/document_dir/" +
+      DocumentLogCreator::GetDocumentLogFilename();
+  {
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+    document_log_size_compression_3 =
+        filesystem()->GetFileSize(document_log_path.c_str());
+  }  // Destroys IcingSearchEngine to make sure nothing is cached.
+
+  // Turn off compression
+  icing_options.set_compression_level(0);
+
+  {
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    // Document log size is the same even after reopening with a different
+    // compression level
+    ASSERT_EQ(document_log_size_compression_3,
+              filesystem()->GetFileSize(document_log_path.c_str()));
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    document_log_size_after_opti_no_compression =
+        filesystem()->GetFileSize(document_log_path.c_str());
+    // Document log size is larger after optimizing since optimizing rewrites
+    // with the new compression level which is 0 or none
+    ASSERT_GT(document_log_size_after_opti_no_compression,
+              document_log_size_compression_3);
+  }
+
+  // Restore the original compression level
+  icing_options.set_compression_level(3);
+
+  {
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    // Document log size is the same even after reopening with a different
+    // compression level
+    ASSERT_EQ(document_log_size_after_opti_no_compression,
+              filesystem()->GetFileSize(document_log_path.c_str()));
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    document_log_size_after_opti_compression_3 =
+        filesystem()->GetFileSize(document_log_path.c_str());
+    // Document log size should be the same as it was originally
+    ASSERT_EQ(document_log_size_after_opti_compression_3,
+              document_log_size_compression_3);
+  }
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing

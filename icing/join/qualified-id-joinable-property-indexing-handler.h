@@ -47,9 +47,10 @@ class QualifiedIdJoinablePropertyIndexingHandler : public DataIndexingHandler {
   // qualified id type joinable cache.
   //
   /// Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
-  //     document_id of a previously indexed document in non recovery mode.
+  //   - OK on success.
+  //   - INVALID_ARGUMENT_ERROR if document_id is invalid OR document_id is less
+  //     than or equal to the document_id of a previously indexed document in
+  //     non recovery mode.
   //   - INTERNAL_ERROR if any other errors occur.
   //   - Any QualifiedIdTypeJoinableIndex errors.
   libtextclassifier3::Status Handle(
