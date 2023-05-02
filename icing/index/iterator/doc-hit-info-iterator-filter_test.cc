@@ -48,6 +48,17 @@ using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
+}
+
 class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
  protected:
   DocHitInfoIteratorDeletedFilterTest()
@@ -73,8 +84,8 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -240,8 +251,8 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -395,8 +406,8 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -535,8 +546,8 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -563,8 +574,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -595,8 +606,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -627,8 +638,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -660,8 +671,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -735,8 +746,8 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -770,8 +781,8 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 

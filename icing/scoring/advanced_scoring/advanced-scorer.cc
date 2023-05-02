@@ -46,10 +46,10 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<SectionWeights> section_weights,
                          SectionWeights::Create(schema_store, scoring_spec));
   std::unique_ptr<Bm25fCalculator> bm25f_calculator =
-      std::make_unique<Bm25fCalculator>(document_store,
-                                        std::move(section_weights));
+      std::make_unique<Bm25fCalculator>(document_store, section_weights.get());
   ScoringVisitor visitor(default_score, document_store, schema_store,
-                         bm25f_calculator.get(), join_children_fetcher);
+                         section_weights.get(), bm25f_calculator.get(),
+                         join_children_fetcher);
   tree_root->Accept(&visitor);
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<ScoreExpression> expression,
@@ -58,8 +58,9 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
     return absl_ports::InvalidArgumentError(
         "The root scoring expression is not of double type.");
   }
-  return std::unique_ptr<AdvancedScorer>(new AdvancedScorer(
-      std::move(expression), std::move(bm25f_calculator), default_score));
+  return std::unique_ptr<AdvancedScorer>(
+      new AdvancedScorer(std::move(expression), std::move(section_weights),
+                         std::move(bm25f_calculator), default_score));
 }
 
 }  // namespace lib

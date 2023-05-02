@@ -188,6 +188,8 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest, HandleJoinableProperty) {
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
 
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kInvalidDocumentId));
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
@@ -196,7 +198,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest, HandleJoinableProperty) {
   EXPECT_THAT(
       handler->Handle(tokenized_document, kDefaultDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::OK));
+      IsOk());
 
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(kDefaultDocumentId));
@@ -240,6 +242,8 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 nested_document));
 
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kInvalidDocumentId));
   // Handle nested_document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
@@ -248,7 +252,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
   EXPECT_THAT(handler->Handle(tokenized_document, kDefaultDocumentId,
                               /*recovery_mode=*/false,
                               /*put_document_stats=*/nullptr),
-              StatusIs(libtextclassifier3::StatusCode::OK));
+              IsOk());
 
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(kDefaultDocumentId));
@@ -279,7 +283,11 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
       TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
                                 document));
 
-  // Handle document. Handle() should ignore invalid format qualified id.
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kInvalidDocumentId));
+  // Handle document. Should ignore invalid format qualified id.
+  // Index data should remain unchanged since there is no valid qualified id,
+  // but last_added_document_id should be updated.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
       QualifiedIdJoinablePropertyIndexingHandler::Create(
@@ -287,8 +295,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
   EXPECT_THAT(
       handler->Handle(tokenized_document, kDefaultDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::OK));
-
+      IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(kDefaultDocumentId));
   EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
@@ -309,7 +316,10 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
                                 document));
   ASSERT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
 
-  // Handle document. Handle() should ignore invalid format qualified id.
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kInvalidDocumentId));
+  // Handle document. Index data should remain unchanged since there is no
+  // qualified id, but last_added_document_id should be updated.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
       QualifiedIdJoinablePropertyIndexingHandler::Create(
@@ -317,13 +327,196 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
   EXPECT_THAT(
       handler->Handle(tokenized_document, kDefaultDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::OK));
-
+      IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(kDefaultDocumentId));
   EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
                   kDefaultDocumentId, kQualifiedIdJoinablePropertyId)),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+       HandleInvalidDocumentIdShouldReturnInvalidArgumentError) {
+  DocumentProto referenced_document =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyQualifiedId),
+                             "pkg$db/ns#ref_type/1")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+
+  qualified_id_join_index_->set_last_added_document_id(kDefaultDocumentId);
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
+      QualifiedIdJoinablePropertyIndexingHandler::Create(
+          &fake_clock_, qualified_id_join_index_.get()));
+
+  // Handling document with kInvalidDocumentId should cause a failure, and both
+  // index data and last_added_document_id should remain unchanged.
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kInvalidDocumentId, kQualifiedIdJoinablePropertyId)),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Recovery mode should get the same result.
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kInvalidDocumentId,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kInvalidDocumentId, kQualifiedIdJoinablePropertyId)),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+       HandleOutOfOrderDocumentIdShouldReturnInvalidArgumentError) {
+  DocumentProto referenced_document =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyQualifiedId),
+                             "pkg$db/ns#ref_type/1")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+
+  qualified_id_join_index_->set_last_added_document_id(kDefaultDocumentId);
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
+      QualifiedIdJoinablePropertyIndexingHandler::Create(
+          &fake_clock_, qualified_id_join_index_.get()));
+
+  // Handling document with document_id < last_added_document_id should cause a
+  // failure, and both index data and last_added_document_id should remain
+  // unchanged.
+  ASSERT_THAT(IsDocumentIdValid(kDefaultDocumentId - 1), IsTrue());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kDefaultDocumentId - 1,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kDefaultDocumentId, kQualifiedIdJoinablePropertyId)),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Handling document with document_id == last_added_document_id should cause a
+  // failure, and both index data and last_added_document_id should remain
+  // unchanged.
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kDefaultDocumentId,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kDefaultDocumentId, kQualifiedIdJoinablePropertyId)),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+       HandleRecoveryModeShouldIgnoreDocsLELastAddedDocId) {
+  DocumentProto referenced_document =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyQualifiedId),
+                             "pkg$db/ns#ref_type/1")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+
+  qualified_id_join_index_->set_last_added_document_id(kDefaultDocumentId);
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
+      QualifiedIdJoinablePropertyIndexingHandler::Create(
+          &fake_clock_, qualified_id_join_index_.get()));
+
+  // Handle document with document_id < last_added_document_id in recovery mode.
+  // We should not get any error, but the handler should ignore the document, so
+  // both index data and last_added_document_id should remain unchanged.
+  ASSERT_THAT(IsDocumentIdValid(kDefaultDocumentId - 1), IsTrue());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kDefaultDocumentId - 1,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kDefaultDocumentId, kQualifiedIdJoinablePropertyId)),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Handle document with document_id == last_added_document_id in recovery
+  // mode. We should not get any error, but the handler should ignore the
+  // document, so both index data and last_added_document_id should remain
+  // unchanged.
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kDefaultDocumentId,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kDefaultDocumentId, kQualifiedIdJoinablePropertyId)),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Handle document with document_id > last_added_document_id in recovery mode.
+  // The handler should index this document and update last_added_document_id.
+  ASSERT_THAT(IsDocumentIdValid(kDefaultDocumentId + 1), IsTrue());
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, kDefaultDocumentId + 1,
+                      /*recovery_mode=*/true, /*put_document_stats=*/nullptr),
+      IsOk());
+  EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kDefaultDocumentId + 1));
+  EXPECT_THAT(qualified_id_join_index_->Get(DocJoinInfo(
+                  kDefaultDocumentId + 1, kQualifiedIdJoinablePropertyId)),
+              IsOkAndHolds("pkg$db/ns#ref_type/1"));
 }
 
 }  // namespace

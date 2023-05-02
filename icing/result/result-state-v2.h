@@ -22,13 +22,10 @@
 #include <vector>
 
 #include "icing/absl_ports/mutex.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/result/projection-tree.h"
-#include "icing/result/snippet-context.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -39,8 +36,8 @@ class ResultStateV2 {
  public:
   explicit ResultStateV2(
       std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker_in,
-      SectionRestrictQueryTermsMap query_terms,
-      const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+      std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
+      std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
       const ResultSpecProto& result_spec, const DocumentStore& document_store);
 
   ~ResultStateV2();
@@ -60,14 +57,28 @@ class ResultStateV2 {
   void IncrementNumTotalHits(int increment_by)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 
-  const SnippetContext& snippet_context() const
-      ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return snippet_context_;
+  // Returns a nullable pointer to parent adjustment info.
+  ResultAdjustmentInfo* parent_adjustment_info()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
+    return parent_adjustment_info_.get();
   }
 
-  const std::unordered_map<std::string, ProjectionTree>& projection_tree_map()
-      const ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return projection_tree_map_;
+  // Returns a nullable pointer to parent adjustment info.
+  const ResultAdjustmentInfo* parent_adjustment_info() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return parent_adjustment_info_.get();
+  }
+
+  // Returns a nullable pointer to child adjustment info.
+  ResultAdjustmentInfo* child_adjustment_info()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
+    return child_adjustment_info_.get();
+  }
+
+  // Returns a nullable pointer to child adjustment info.
+  const ResultAdjustmentInfo* child_adjustment_info() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return child_adjustment_info_.get();
   }
 
   const std::unordered_map<int32_t, int>& entry_id_group_id_map() const
@@ -110,11 +121,16 @@ class ResultStateV2 {
   int num_returned ICING_GUARDED_BY(mutex);
 
  private:
-  // Information needed for snippeting.
-  SnippetContext snippet_context_ ICING_GUARDED_BY(mutex);
+  // Adjustment information for parent documents, including snippet and
+  // projection. Can be nullptr if there is no adjustment info for parent
+  // documents.
+  std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info_
+      ICING_GUARDED_BY(mutex);
 
-  // Information needed for projection.
-  std::unordered_map<std::string, ProjectionTree> projection_tree_map_
+  // Adjustment information for child documents, including snippet and
+  // projection. This is only used for join query. Can be nullptr if there is no
+  // adjustment info for child documents.
+  std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info_
       ICING_GUARDED_BY(mutex);
 
   // A map between result grouping entry id and the id of the group that it
