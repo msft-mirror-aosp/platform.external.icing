@@ -34,7 +34,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 6
+// Next tag: 7
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that uniquely identifies the structured, logical
   // schema being defined.
@@ -59,6 +59,12 @@ message SchemaTypeConfigProto {
   // succeeds. Clients are free to leave the version number unset, in which case
   // it will default to value == 0.
   optional int32 version = 5;
+
+  // An experimental field to make the type as a subtype of parent_type, which
+  // enables parent_type to be interpreted as its subtypes in the context of the
+  // Search APIs, including schema type filters and projections specified in
+  // TypePropertyMask.
+  optional string parent_type = 6;
 
   reserved 2, 3;
 }

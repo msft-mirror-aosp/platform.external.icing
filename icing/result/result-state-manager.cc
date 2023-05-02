@@ -18,9 +18,8 @@
 #include <queue>
 #include <utility>
 
-#include "icing/proto/search.pb.h"
-#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -43,8 +42,8 @@ ResultStateManager::ResultStateManager(int max_total_hits,
 libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
 ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ScoredDocumentHitsRanker> ranker,
-    SectionRestrictQueryTermsMap query_terms,
-    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
+    std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
     const ResultSpecProto& result_spec, const DocumentStore& document_store,
     const ResultRetrieverV2& result_retriever) {
   if (ranker == nullptr) {
@@ -54,8 +53,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
   // Create shared pointer of ResultState.
   // ResultState should be created by ResultStateManager only.
   std::shared_ptr<ResultStateV2> result_state = std::make_shared<ResultStateV2>(
-      std::move(ranker), std::move(query_terms), search_spec, scoring_spec,
-      result_spec, document_store);
+      std::move(ranker), std::move(parent_adjustment_info),
+      std::move(child_adjustment_info), result_spec, document_store);
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.

@@ -109,6 +109,11 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     // childrenScores function
     expression = ChildrenScoresFunctionScoreExpression::Create(
         std::move(args), join_children_fetcher_);
+  } else if (function_name ==
+             PropertyWeightsFunctionScoreExpression::kFunctionName) {
+    // propertyWeights function
+    expression = PropertyWeightsFunctionScoreExpression::Create(
+        std::move(args), &document_store_, &section_weights_);
   } else if (MathFunctionScoreExpression::kFunctionNames.find(function_name) !=
              MathFunctionScoreExpression::kFunctionNames.end()) {
     // Math functions
