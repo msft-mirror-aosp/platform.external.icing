@@ -43,6 +43,11 @@ libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
   // TODO(b/259744228): set integer indexing latency and other stats
 
+  if (!IsDocumentIdValid(document_id)) {
+    return absl_ports::InvalidArgumentError(
+        IcingStringUtil::StringPrintf("Invalid DocumentId %d", document_id));
+  }
+
   if (integer_index_.last_added_document_id() != kInvalidDocumentId &&
       document_id <= integer_index_.last_added_document_id()) {
     if (recovery_mode) {

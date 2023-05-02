@@ -36,6 +36,7 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::Pointee;
+using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
 
 // Properties/fields in a schema type
@@ -463,6 +464,229 @@ TEST(SchemaUtilTest, NonExistentType) {
 
   SchemaProto schema =
       SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(SchemaUtilTest, SimpleInheritance) {
+  // Create a schema with the following inheritance relation:
+  // A <- B
+  SchemaTypeConfigProto type_a = SchemaTypeConfigBuilder().SetType("A").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, SizeIs(1));
+  EXPECT_THAT(d_map["A"], UnorderedElementsAre(Pair("B", IsEmpty())));
+}
+
+TEST(SchemaUtilTest, ComplexInheritance) {
+  // Create a schema with the following inheritance relation:
+  //       A
+  //     /   \
+  //    B     E
+  //   /  \
+  //  C    D
+  //       |
+  //       F
+  SchemaTypeConfigProto type_a = SchemaTypeConfigBuilder().SetType("A").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder().SetType("C").SetParentType("B").Build();
+  SchemaTypeConfigProto type_d =
+      SchemaTypeConfigBuilder().SetType("D").SetParentType("B").Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder().SetType("E").SetParentType("A").Build();
+  SchemaTypeConfigProto type_f =
+      SchemaTypeConfigBuilder().SetType("F").SetParentType("D").Build();
+
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_a)
+                           .AddType(type_b)
+                           .AddType(type_c)
+                           .AddType(type_d)
+                           .AddType(type_e)
+                           .AddType(type_f)
+                           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, SizeIs(3));
+  EXPECT_THAT(d_map["A"],
+              UnorderedElementsAre(Pair("B", IsEmpty()), Pair("C", IsEmpty()),
+                                   Pair("D", IsEmpty()), Pair("E", IsEmpty()),
+                                   Pair("F", IsEmpty())));
+  EXPECT_THAT(d_map["B"],
+              UnorderedElementsAre(Pair("C", IsEmpty()), Pair("D", IsEmpty()),
+                                   Pair("F", IsEmpty())));
+  EXPECT_THAT(d_map["D"], UnorderedElementsAre(Pair("F", IsEmpty())));
+}
+
+TEST(SchemaUtilTest, InheritanceCycle) {
+  // Create a schema with the following inheritance relation:
+  // C <- A <- B <- C
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder().SetType("A").SetParentType("C").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder().SetType("C").SetParentType("B").Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(SchemaUtilTest, SelfInheritance) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder().SetType("A").SetParentType("A").Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(SchemaUtilTest, NonExistentParentType) {
+  // Create a schema with the following inheritance relation:
+  // (does not exist) X <- A <- B <- C
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder().SetType("A").SetParentType("X").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder().SetType("C").SetParentType("B").Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST(SchemaUtilTest, SimpleInheritanceWithNestedType) {
+  // Create a schema with the following dependent relation:
+  // A - B (via inheritance)
+  // B - C (via nested document)
+  SchemaTypeConfigProto type_a = SchemaTypeConfigBuilder().SetType("A").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder()
+          .SetType("C")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(type_a).AddType(type_b).AddType(type_c).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, SizeIs(2));
+  EXPECT_THAT(d_map["A"],
+              UnorderedElementsAre(Pair("B", IsEmpty()), Pair("C", IsEmpty())));
+  EXPECT_THAT(d_map["B"], UnorderedElementsAre(Pair(
+                              "C", UnorderedElementsAre(Pointee(
+                                       EqualsProto(type_c.properties(0)))))));
+}
+
+TEST(SchemaUtilTest, ComplexInheritanceWithNestedType) {
+  // Create a schema with the following dependent relation:
+  //       A
+  //     /   \
+  //    B     E
+  //   /  \
+  //  C    D
+  //       |
+  //       F
+  // Approach:
+  //   B extends A
+  //   C extends B
+  //   D has a nested document of type B
+  //   E has a nested document of type A
+  //   F has a nested document of type D
+  SchemaTypeConfigProto type_a = SchemaTypeConfigBuilder().SetType("A").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder().SetType("C").SetParentType("B").Build();
+  SchemaTypeConfigProto type_d =
+      SchemaTypeConfigBuilder()
+          .SetType("D")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder()
+          .SetType("E")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_f =
+      SchemaTypeConfigBuilder()
+          .SetType("F")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("d")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("D", /*index_nested_properties=*/true))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_a)
+                           .AddType(type_b)
+                           .AddType(type_c)
+                           .AddType(type_d)
+                           .AddType(type_e)
+                           .AddType(type_f)
+                           .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap d_map,
+                             SchemaUtil::Validate(schema));
+  EXPECT_THAT(d_map, SizeIs(3));
+  EXPECT_THAT(
+      d_map["A"],
+      UnorderedElementsAre(
+          Pair("B", IsEmpty()), Pair("C", IsEmpty()), Pair("D", IsEmpty()),
+          Pair("E", UnorderedElementsAre(
+                        Pointee(EqualsProto(type_e.properties(0))))),
+          Pair("F", IsEmpty())));
+  EXPECT_THAT(
+      d_map["B"],
+      UnorderedElementsAre(Pair("C", IsEmpty()),
+                           Pair("D", UnorderedElementsAre(Pointee(
+                                         EqualsProto(type_d.properties(0))))),
+                           Pair("F", IsEmpty())));
+  EXPECT_THAT(d_map["D"], UnorderedElementsAre(Pair(
+                              "F", UnorderedElementsAre(Pointee(
+                                       EqualsProto(type_f.properties(0)))))));
+}
+
+TEST(SchemaUtilTest, InheritanceWithNestedTypeCycle) {
+  // Create a schema that A and B depend on each other, in the sense that B
+  // extends A but A has a nested document of type B.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").SetParentType("A").Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
   EXPECT_THAT(SchemaUtil::Validate(schema),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }

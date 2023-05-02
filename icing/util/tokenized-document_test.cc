@@ -46,7 +46,7 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::testing::EqualsProto;
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 

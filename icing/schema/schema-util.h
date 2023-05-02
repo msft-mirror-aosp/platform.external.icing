@@ -34,15 +34,20 @@ class SchemaUtil {
       std::unordered_map<std::string, const SchemaTypeConfigProto>;
 
   // If A -> B is indicated in the map, then type A must be built before
-  // building type B, i.e. B has a property of type A. Also include all
-  // PropertyConfigProto (with DOCUMENT data_type) pointers which directly
-  // connects type A and B. IOW, this vector of PropertyConfigProto* are "direct
-  // edges" connecting A and B directly. It will be an empty vector if A and B
-  // are not "directly" connected, but instead via another intermediate level of
-  // schema type. For example, the actual dependency is A -> C -> B, so there
-  // will be A -> C and C -> B with valid PropertyConfigProto* respectively in
-  // this map, but we will also expand transitive dependents: add A -> B into
-  // dependent map with empty vector of "edges".
+  // building type B, which implies one of the following situations.
+  //
+  // 1. B has a property of type A.
+  // 2. A is a parent type of B via polymorphism.
+  //
+  // For the first case, this map will also include all PropertyConfigProto
+  // (with DOCUMENT data_type) pointers which *directly* connects type A and B.
+  // IOW, this vector of PropertyConfigProto* are "direct edges" connecting A
+  // and B directly. It will be an empty vector if A and B are not "directly"
+  // connected, but instead via another intermediate level of schema type. For
+  // example, the actual dependency is A -> C -> B, so there will be A -> C and
+  // C -> B with valid PropertyConfigProto* respectively in this map, but we
+  // will also expand transitive dependents: add A -> B into dependent map with
+  // empty vector of "edges".
   using DependentMap = std::unordered_map<
       std::string_view,
       std::unordered_map<std::string_view,
