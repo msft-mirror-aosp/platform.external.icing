@@ -25,6 +25,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/schema-builder.h"
@@ -114,7 +115,12 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -149,9 +155,6 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
   std::unique_ptr<DocumentStore> document_store_;
   FakeClock fake_clock_;
 };
-
-// TODO(sungyc): Refactor helper functions below (builder classes or common test
-//               utility).
 
 SectionIdMask CreateSectionIdMask(const std::vector<SectionId>& section_ids) {
   SectionIdMask mask = 0;
@@ -225,10 +228,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -321,10 +326,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -428,10 +435,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -539,10 +548,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -633,10 +644,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -710,10 +723,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -788,10 +803,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -868,10 +885,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      //*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -952,10 +971,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1040,10 +1061,12 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1137,10 +1160,12 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1238,10 +1263,12 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*query_terms=*/SectionRestrictQueryTermsMap{},
-      CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-      *document_store_);
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1276,6 +1303,147 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                              .Build();
   EXPECT_THAT(page_result.results.at(1).document(),
               EqualsProto(projected_document_two));
+}
+
+TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
+  // 1. Add one Person document
+  DocumentProto person_document =
+      DocumentBuilder()
+          .SetKey("namespace", "Person/1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .AddStringProperty("emailAddress", "ny152@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id,
+                             document_store_->Put(person_document));
+
+  // 2. Add two Email documents
+  DocumentProto email_document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "Email/1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("name", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id1,
+                             document_store_->Put(email_document1));
+
+  DocumentProto email_document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "Email/2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("name", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id2,
+                             document_store_->Put(email_document2));
+
+  // 3. Setup the joined scored results.
+  std::vector<SectionId> person_hit_section_ids = {
+      GetSectionId("Person", "name")};
+  std::vector<SectionId> email_hit_section_ids = {
+      GetSectionId("Email", "name"), GetSectionId("Email", "body")};
+  SectionIdMask person_hit_section_id_mask =
+      CreateSectionIdMask(person_hit_section_ids);
+  SectionIdMask email_hit_section_id_mask =
+      CreateSectionIdMask(email_hit_section_ids);
+
+  ScoredDocumentHit person_scored_doc_hit(
+      person_document_id, person_hit_section_id_mask, /*score=*/0);
+  ScoredDocumentHit email1_scored_doc_hit(
+      email_document_id1, email_hit_section_id_mask, /*score=*/0);
+  ScoredDocumentHit email2_scored_doc_hit(
+      email_document_id2, email_hit_section_id_mask, /*score=*/0);
+  // Create JoinedScoredDocumentHits mapping Person to Email1 and Email2
+  std::vector<JoinedScoredDocumentHit> joined_scored_document_hits = {
+      JoinedScoredDocumentHit(
+          /*final_score=*/0,
+          /*parent_scored_document_hit=*/person_scored_doc_hit,
+          /*child_scored_document_hits=*/
+          {email1_scored_doc_hit, email2_scored_doc_hit})};
+
+  // 4. Create parent ResultSpec with type property mask.
+  ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/2);
+  TypePropertyMask* type_property_mask =
+      parent_result_spec.add_type_property_masks();
+  type_property_mask->set_schema_type("Person");
+  type_property_mask->add_paths("name");
+
+  // 5. Create child ResultSpec with type property mask.
+  ResultSpecProto child_result_spec;
+  type_property_mask = child_result_spec.add_type_property_masks();
+  type_property_mask->set_schema_type("Email");
+  type_property_mask->add_paths("body");
+
+  // 6. Create ResultState with custom ResultSpecs.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
+          std::move(joined_scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
+          SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
+          SectionRestrictQueryTermsMap()),
+      parent_result_spec, *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // 7. Verify that the returned results:
+  //    - Person docs only contain the "name" property.
+  //    - Email docs only contain the "body" property.
+  PageResult page_result =
+      result_retriever->RetrieveNextPage(result_state).first;
+  ASSERT_THAT(page_result.results, SizeIs(1));
+
+  // Check parent doc.
+  DocumentProto projected_person_document =
+      DocumentBuilder()
+          .SetKey("namespace", "Person/1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).document(),
+              EqualsProto(projected_person_document));
+
+  // Check child docs.
+  ASSERT_THAT(page_result.results.at(0).joined_results(), SizeIs(2));
+  // Check Email1
+  DocumentProto projected_email_document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "Email/1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).joined_results(0).document(),
+              EqualsProto(projected_email_document1));
+  // Check Email2
+  DocumentProto projected_email_document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "Email/2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).joined_results(1).document(),
+              EqualsProto(projected_email_document2));
 }
 
 }  // namespace

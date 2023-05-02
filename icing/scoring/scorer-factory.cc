@@ -78,8 +78,10 @@ class DocumentCreationTimestampScorer : public Scorer {
 class RelevanceScoreScorer : public Scorer {
  public:
   explicit RelevanceScoreScorer(
+      std::unique_ptr<SectionWeights> section_weights,
       std::unique_ptr<Bm25fCalculator> bm25f_calculator, double default_score)
-      : bm25f_calculator_(std::move(bm25f_calculator)),
+      : section_weights_(std::move(section_weights)),
+        bm25f_calculator_(std::move(bm25f_calculator)),
         default_score_(default_score) {}
 
   void PrepareToScore(
@@ -99,6 +101,7 @@ class RelevanceScoreScorer : public Scorer {
   }
 
  private:
+  std::unique_ptr<SectionWeights> section_weights_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   double default_score_;
 };
@@ -193,8 +196,9 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
           SectionWeights::Create(schema_store, scoring_spec));
 
       auto bm25f_calculator = std::make_unique<Bm25fCalculator>(
-          document_store, std::move(section_weights));
-      return std::make_unique<RelevanceScoreScorer>(std::move(bm25f_calculator),
+          document_store, section_weights.get());
+      return std::make_unique<RelevanceScoreScorer>(std::move(section_weights),
+                                                    std::move(bm25f_calculator),
                                                     default_score);
     }
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE1_COUNT:

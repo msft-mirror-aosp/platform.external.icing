@@ -115,7 +115,12 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, store_dir_, &clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_.c_str(),
@@ -3581,6 +3586,125 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
               UnorderedElementsAre("foo"));
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(docid6, docid0));
+}
+
+TEST_F(QueryVisitorTest,
+       PropertyDefinedFunctionWithNoArgumentReturnsInvalidArgument) {
+  std::string query = "propertyDefined()";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(
+    QueryVisitorTest,
+    PropertyDefinedFunctionWithMoreThanOneTextArgumentReturnsInvalidArgument) {
+  std::string query = "propertyDefined(foo, bar)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(QueryVisitorTest,
+       PropertyDefinedFunctionWithStringArgumentReturnsInvalidArgument) {
+  // The argument type is STRING, not TEXT here.
+  std::string query = "propertyDefined(\"foo\")";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(QueryVisitorTest,
+       PropertyDefinedFunctionWithNonTextArgumentReturnsInvalidArgument) {
+  std::string query = "propertyDefined(1 < 2)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
+  // Set up two schemas, one with a "url" field and one without.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("typeWithUrl")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
+          .Build()));
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("typeWithoutUrl")
+                                           .Build()));
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri2").SetSchema("typeWithUrl").Build()));
+  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
+
+  std::string query = CreateQuery("foo propertyDefined(url)");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(
+      query_results.features_in_use,
+      UnorderedElementsAre(kPropertyDefinedInSchemaCustomFunctionFeature,
+                           kListFilterQueryLanguageFeature));
+
+  // TODO(b/268680462): Update once the feature is actually implemented.
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0, kDocumentId1));
 }
 
 INSTANTIATE_TEST_SUITE_P(QueryVisitorTest, QueryVisitorTest,
