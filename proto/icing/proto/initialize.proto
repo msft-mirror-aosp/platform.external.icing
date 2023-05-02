@@ -23,7 +23,7 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Next tag: 7
+// Next tag: 8
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -75,6 +75,13 @@ message IcingSearchEngineOptions {
   //
   // Default to 0 for better rollout of the new index optimize.
   optional float optimize_rebuild_index_threshold = 6 [default = 0.0];
+
+  // Level of compression, NO_COMPRESSION = 0, BEST_SPEED = 1,
+  // BEST_COMPRESSION = 9
+  // Valid values: [0, 9]
+  // Optional.
+  optional int32 compression_level = 7 [default = 3];
+
   reserved 2;
 }
 
