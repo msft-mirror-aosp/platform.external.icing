@@ -42,11 +42,9 @@ constexpr float k1_ = 1.2f;
 constexpr float b_ = 0.7f;
 
 // TODO(b/158603900): add tests for Bm25fCalculator
-Bm25fCalculator::Bm25fCalculator(
-    const DocumentStore* document_store,
-    std::unique_ptr<SectionWeights> section_weights)
-    : document_store_(document_store),
-      section_weights_(std::move(section_weights)) {}
+Bm25fCalculator::Bm25fCalculator(const DocumentStore* document_store,
+                                 SectionWeights* section_weights)
+    : document_store_(document_store), section_weights_(*section_weights) {}
 
 // During initialization, Bm25fCalculator iterates through
 // hit-iterators for each query term to pre-compute n(q_i) for each corpus under
@@ -219,7 +217,7 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
     sections &= ~(UINT64_C(1) << section_id);
 
     Hit::TermFrequency tf = term_match_info.term_frequencies[section_id];
-    double weighted_tf = tf * section_weights_->GetNormalizedSectionWeight(
+    double weighted_tf = tf * section_weights_.GetNormalizedSectionWeight(
                                   schema_type_id, section_id);
     if (tf != Hit::kNoTermFrequency) {
       sum += weighted_tf;

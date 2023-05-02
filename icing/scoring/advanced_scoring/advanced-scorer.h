@@ -66,9 +66,11 @@ class AdvancedScorer : public Scorer {
 
  private:
   explicit AdvancedScorer(std::unique_ptr<ScoreExpression> score_expression,
+                          std::unique_ptr<SectionWeights> section_weights,
                           std::unique_ptr<Bm25fCalculator> bm25f_calculator,
                           double default_score)
       : score_expression_(std::move(score_expression)),
+        section_weights_(std::move(section_weights)),
         bm25f_calculator_(std::move(bm25f_calculator)),
         default_score_(default_score) {
     if (is_constant()) {
@@ -78,6 +80,7 @@ class AdvancedScorer : public Scorer {
   }
 
   std::unique_ptr<ScoreExpression> score_expression_;
+  std::unique_ptr<SectionWeights> section_weights_;
   std::unique_ptr<Bm25fCalculator> bm25f_calculator_;
   double default_score_;
 };

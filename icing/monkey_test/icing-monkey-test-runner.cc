@@ -455,9 +455,15 @@ void IcingMonkeyTestRunner::DoOptimize() {
 void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   std::uniform_int_distribution<> dist(0, 1);
 
+  bool always_rebuild_index_optimize = dist(random_);
+  float optimize_rebuild_index_threshold =
+      always_rebuild_index_optimize ? 0.0 : 0.9;
+
   IcingSearchEngineOptions icing_options;
   icing_options.set_index_merge_size(config_.index_merge_size);
   icing_options.set_base_dir(icing_dir_->dir());
+  icing_options.set_optimize_rebuild_index_threshold(
+      optimize_rebuild_index_threshold);
   // The method will be called every time when we ReloadFromDisk(), so randomly
   // flip this flag to test document store's compatibility.
   icing_options.set_document_store_namespace_id_fingerprint(
