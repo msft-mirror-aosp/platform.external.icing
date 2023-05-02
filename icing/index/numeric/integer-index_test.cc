@@ -84,7 +84,12 @@ class NumericIndexIntegerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
         DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -132,7 +137,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
     }
     ICING_ASSIGN_OR_RETURN(
         std::vector<DocumentId> docid_map,
-        doc_store_->OptimizeInto(document_store_compact_dir, nullptr));
+        doc_store_->OptimizeInto(document_store_compact_dir, nullptr,
+                                 /*namespace_id_fingerprint=*/false));
 
     doc_store_.reset();
     if (!filesystem_.SwapFiles(document_store_dir.c_str(),
@@ -147,7 +153,12 @@ class NumericIndexIntegerTest : public ::testing::Test {
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::CreateResult doc_store_create_result,
         DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return docid_map;
   }

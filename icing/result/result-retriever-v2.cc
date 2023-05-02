@@ -15,7 +15,6 @@
 #include "icing/result/result-retriever-v2.h"
 
 #include <memory>
-#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,8 +25,11 @@
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"
+#include "icing/result/result-adjustment-info.h"
+#include "icing/result/result-state-v2.h"
 #include "icing/result/snippet-context.h"
 #include "icing/result/snippet-retriever.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
@@ -37,6 +39,55 @@
 
 namespace icing {
 namespace lib {
+
+namespace {
+
+void ApplyProjection(const ResultAdjustmentInfo* adjustment_info,
+                     DocumentProto* document) {
+  if (adjustment_info == nullptr) {
+    return;
+  }
+
+  auto itr = adjustment_info->projection_tree_map.find(document->schema());
+  if (itr != adjustment_info->projection_tree_map.end()) {
+    projector::Project(itr->second.root().children, document);
+  } else {
+    auto wildcard_projection_tree_itr =
+        adjustment_info->projection_tree_map.find(
+            std::string(ProjectionTree::kSchemaTypeWildcard));
+    if (wildcard_projection_tree_itr !=
+        adjustment_info->projection_tree_map.end()) {
+      projector::Project(wildcard_projection_tree_itr->second.root().children,
+                         document);
+    }
+  }
+}
+
+bool ApplySnippet(ResultAdjustmentInfo* adjustment_info,
+                  const SnippetRetriever& snippet_retriever,
+                  const DocumentProto& document, SectionIdMask section_id_mask,
+                  SearchResultProto::ResultProto* result) {
+  if (adjustment_info == nullptr) {
+    return false;
+  }
+
+  const SnippetContext& snippet_context = adjustment_info->snippet_context;
+  int& remaining_num_to_snippet = adjustment_info->remaining_num_to_snippet;
+
+  if (snippet_context.snippet_spec.num_matches_per_property() > 0 &&
+      remaining_num_to_snippet > 0) {
+    SnippetProto snippet_proto = snippet_retriever.RetrieveSnippet(
+        snippet_context.query_terms, snippet_context.match_type,
+        snippet_context.snippet_spec, document, section_id_mask);
+    *result->mutable_snippet() = std::move(snippet_proto);
+    --remaining_num_to_snippet;
+    return true;
+  }
+
+  return false;
+}
+
+}  // namespace
 
 bool GroupResultLimiterV2::ShouldBeRemoved(
     const ScoredDocumentHit& scored_document_hit,
@@ -103,19 +154,6 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       result_state.scored_document_hits_ranker->size();
   int num_results_with_snippets = 0;
 
-  const SnippetContext& snippet_context = result_state.snippet_context();
-  const std::unordered_map<std::string, ProjectionTree>& projection_tree_map =
-      result_state.projection_tree_map();
-  auto wildcard_projection_tree_itr = projection_tree_map.find(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
-
-  // Calculates how many snippets to return for this page.
-  int remaining_num_to_snippet =
-      snippet_context.snippet_spec.num_to_snippet() - result_state.num_returned;
-  if (remaining_num_to_snippet < 0) {
-    remaining_num_to_snippet = 0;
-  }
-
   // Retrieve info
   std::vector<SearchResultProto::ResultProto> results;
   int32_t num_total_bytes = 0;
@@ -141,25 +179,16 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     }
 
     DocumentProto document = std::move(document_or).ValueOrDie();
-    // Apply projection
-    auto itr = projection_tree_map.find(document.schema());
-    if (itr != projection_tree_map.end()) {
-      projector::Project(itr->second.root().children, &document);
-    } else if (wildcard_projection_tree_itr != projection_tree_map.end()) {
-      projector::Project(wildcard_projection_tree_itr->second.root().children,
-                         &document);
-    }
+    // Apply parent projection
+    ApplyProjection(result_state.parent_adjustment_info(), &document);
 
     SearchResultProto::ResultProto result;
-    // Add the snippet if requested.
-    if (snippet_context.snippet_spec.num_matches_per_property() > 0 &&
-        remaining_num_to_snippet > results.size()) {
-      SnippetProto snippet_proto = snippet_retriever_->RetrieveSnippet(
-          snippet_context.query_terms, snippet_context.match_type,
-          snippet_context.snippet_spec, document,
-          next_best_document_hit.parent_scored_document_hit()
-              .hit_section_id_mask());
-      *result.mutable_snippet() = std::move(snippet_proto);
+    // Add parent snippet if requested.
+    if (ApplySnippet(result_state.parent_adjustment_info(), *snippet_retriever_,
+                     document,
+                     next_best_document_hit.parent_scored_document_hit()
+                         .hit_section_id_mask(),
+                     &result)) {
       ++num_results_with_snippets;
     }
 
@@ -181,10 +210,16 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       }
 
       DocumentProto child_document = std::move(child_document_or).ValueOrDie();
-      // TODO(b/256022027): apply projection and add snippet for child doc
+      ApplyProjection(result_state.child_adjustment_info(), &child_document);
 
       SearchResultProto::ResultProto* child_result =
           result.add_joined_results();
+      // Add child snippet if requested.
+      ApplySnippet(result_state.child_adjustment_info(), *snippet_retriever_,
+                   child_document,
+                   child_scored_document_hit.hit_section_id_mask(),
+                   child_result);
+
       *child_result->mutable_document() = std::move(child_document);
       child_result->set_score(child_scored_document_hit.score());
     }
