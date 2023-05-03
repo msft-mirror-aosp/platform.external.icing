@@ -303,6 +303,38 @@ class ChildrenScoresFunctionScoreExpression : public ScoreExpression {
   const JoinChildrenFetcher& join_children_fetcher_;
 };
 
+class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
+ public:
+  static constexpr std::string_view kFunctionName = "propertyWeights";
+
+  // RETURNS:
+  //   - A PropertyWeightsFunctionScoreExpression instance on success.
+  //   - FAILED_PRECONDITION on any null pointer in children.
+  //   - INVALID_ARGUMENT on type errors.
+  static libtextclassifier3::StatusOr<
+      std::unique_ptr<PropertyWeightsFunctionScoreExpression>>
+  Create(std::vector<std::unique_ptr<ScoreExpression>> args,
+         const DocumentStore* document_store,
+         const SectionWeights* section_weights);
+
+  libtextclassifier3::StatusOr<std::vector<double>> eval_list(
+      const DocHitInfo& hit_info, const DocHitInfoIterator*) const override;
+
+  ScoreExpressionType type() const override {
+    return ScoreExpressionType::kDoubleList;
+  }
+
+  SchemaTypeId GetSchemaTypeId(DocumentId document_id) const;
+
+ private:
+  explicit PropertyWeightsFunctionScoreExpression(
+      const DocumentStore* document_store,
+      const SectionWeights* section_weights)
+      : document_store_(*document_store), section_weights_(*section_weights) {}
+  const DocumentStore& document_store_;
+  const SectionWeights& section_weights_;
+};
+
 }  // namespace lib
 }  // namespace icing
 
