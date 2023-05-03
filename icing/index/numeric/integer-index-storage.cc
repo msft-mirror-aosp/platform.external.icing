@@ -818,6 +818,9 @@ IntegerIndexStorage::InitializeExistingFiles(
                                /*max_file_size=*/kMetadataFileSize,
                                /*pre_mapping_file_offset=*/0,
                                /*pre_mapping_mmap_size=*/kMetadataFileSize));
+  if (metadata_mmapped_file.available_size() != kMetadataFileSize) {
+    return absl_ports::FailedPreconditionError("Incorrect metadata file size");
+  }
 
   // Initialize sorted_buckets
   int32_t pre_mapping_mmap_size = sizeof(Bucket) * (1 << 10);
