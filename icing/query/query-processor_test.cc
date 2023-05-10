@@ -63,6 +63,17 @@ using ::testing::IsEmpty;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
 
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
+}
+
 class QueryProcessorTest
     : public ::testing::TestWithParam<SearchSpecProto::SearchType::Code> {
  protected:
@@ -96,8 +107,8 @@ class QueryProcessorTest
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, store_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
@@ -141,7 +152,7 @@ class QueryProcessorTest
     std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
         numeric_index_->Edit(property, document_id, section_id);
     ICING_RETURN_IF_ERROR(editor->BufferKey(value));
-    return editor->IndexAllBufferedKeys();
+    return std::move(*editor).IndexAllBufferedKeys();
   }
 
   void TearDown() override {
@@ -2501,8 +2512,8 @@ TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, store_dir_, &fake_clock,
+                          schema_store_.get()));
   document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -2559,8 +2570,8 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, store_dir_, &fake_clock,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, store_dir_, &fake_clock,
+                          schema_store_.get()));
   document_store_ = std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(

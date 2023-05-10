@@ -33,12 +33,25 @@ class SchemaUtil {
   using TypeConfigMap =
       std::unordered_map<std::string, const SchemaTypeConfigProto>;
 
-  // Maps from a child type to the parent types that depend on it.
-  // Ex. type A has a single property of type B
-  // The dependency map will be { { "B", { "A" } } }
-  using DependencyMap =
+  // If A -> B is indicated in the map, then type A must be built before
+  // building type B, which implies one of the following situations.
+  //
+  // 1. B has a property of type A.
+  // 2. A is a parent type of B via polymorphism.
+  //
+  // For the first case, this map will also include all PropertyConfigProto
+  // (with DOCUMENT data_type) pointers which *directly* connects type A and B.
+  // IOW, this vector of PropertyConfigProto* are "direct edges" connecting A
+  // and B directly. It will be an empty vector if A and B are not "directly"
+  // connected, but instead via another intermediate level of schema type. For
+  // example, the actual dependency is A -> C -> B, so there will be A -> C and
+  // C -> B with valid PropertyConfigProto* respectively in this map, but we
+  // will also expand transitive dependents: add A -> B into dependent map with
+  // empty vector of "edges".
+  using DependentMap = std::unordered_map<
+      std::string_view,
       std::unordered_map<std::string_view,
-                         std::unordered_set<std::string_view>>;
+                         std::vector<const PropertyConfigProto*>>>;
 
   struct SchemaDelta {
     // Which schema types were present in the old schema, but were deleted from
@@ -115,16 +128,21 @@ class SchemaUtil {
   //      itself, thus creating an infinite loop.
   //  13. Two SchemaTypeConfigProtos cannot have properties that reference each
   //      other's schema_type, thus creating an infinite loop.
+  //  14. PropertyConfigProtos.joinable_config must be valid. See
+  //      ValidateJoinableConfig for more details.
+  //  15. Any PropertyConfigProtos with nested DOCUMENT data type must not have
+  //      REPEATED cardinality if they reference a schema type containing
+  //      joinable property.
   //
   //  TODO(b/171996137): Clarify 12 and 13 are only for indexed properties, once
   //  document properties can be opted out of indexing.
   //
   // Returns:
-  //   On success, a dependency map from each child types to all parent types
+  //   On success, a dependent map from each types to their dependent types
   //   that depend on it directly or indirectly.
   //   ALREADY_EXISTS for case 1 and 2
-  //   INVALID_ARGUMENT for 3-13
-  static libtextclassifier3::StatusOr<DependencyMap> Validate(
+  //   INVALID_ARGUMENT for 3-15
+  static libtextclassifier3::StatusOr<DependentMap> Validate(
       const SchemaProto& schema);
 
   // Creates a mapping of schema type -> schema type config proto. The
@@ -147,6 +165,8 @@ class SchemaUtil {
   //      `SchemaDelta.schema_types_deleted`
   //   3. A schema type's new definition would mean any existing data of the old
   //      definition is now incompatible.
+  //   4. The derived join index would be incompatible. This is held in
+  //      `SchemaDelta.join_incompatible`.
   //
   // For case 1, the two schemas would result in an incompatible index if:
   //   1.1. The new SchemaProto has a different set of indexed properties than
@@ -169,13 +189,18 @@ class SchemaUtil {
   //        scale defined as:
   //          LEAST <REPEATED - OPTIONAL - REQUIRED> MOST
   //
+  // For case 4, the two schemas would result in an incompatible join if:
+  //   4.1. A SchematypeConfig exists in the new SchemaProto that has a
+  //        different set of joinable properties than it did in the old
+  //        SchemaProto.
+  //
   // A property is defined by the combination of the
   // SchemaTypeConfig.schema_type and the PropertyConfigProto.property_name.
   //
   // Returns a SchemaDelta that captures the aforementioned differences.
   static const SchemaDelta ComputeCompatibilityDelta(
       const SchemaProto& old_schema, const SchemaProto& new_schema,
-      const DependencyMap& new_schema_dependency_map);
+      const DependentMap& new_schema_dependent_map);
 
   // Validates the 'property_name' field.
   //   1. Can't be an empty string
@@ -228,6 +253,22 @@ class SchemaUtil {
   static libtextclassifier3::Status ValidateStringIndexingConfig(
       const StringIndexingConfig& config,
       PropertyConfigProto::DataType::Code data_type,
+      std::string_view schema_type, std::string_view property_name);
+
+  // Checks that the 'joinable_config' satisfies the following rules:
+  //   1. If the data type matches joinable value type
+  //      a. Only STRING data types can use QUALIFIED_ID joinable value type
+  //   2. Only QUALIFIED_ID joinable value type can have delete propagation
+  //      enabled
+  //   3. Any joinable property should have non-REPEATED cardinality
+  //
+  // Returns:
+  //   INVALID_ARGUMENT if any of the rules are not followed
+  //   OK on success
+  static libtextclassifier3::Status ValidateJoinableConfig(
+      const JoinableConfig& config,
+      PropertyConfigProto::DataType::Code data_type,
+      PropertyConfigProto::Cardinality::Code cardinality,
       std::string_view schema_type, std::string_view property_name);
 };
 

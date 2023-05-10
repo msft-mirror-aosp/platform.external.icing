@@ -27,6 +27,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
@@ -45,24 +46,34 @@ namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::testing::EqualsProto;
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
 // schema types
-constexpr std::string_view kFakeType = "FakeType";
+static constexpr std::string_view kFakeType = "FakeType";
 
 // Indexable properties and section Id. Section Id is determined by the
 // lexicographical order of indexable property path.
-constexpr std::string_view kIndexableIntegerProperty1 = "indexableInteger1";
-constexpr std::string_view kIndexableIntegerProperty2 = "indexableInteger2";
-constexpr std::string_view kStringExactProperty = "stringExact";
-constexpr std::string_view kStringPrefixProperty = "stringPrefix";
+static constexpr std::string_view kIndexableIntegerProperty1 =
+    "indexableInteger1";
+static constexpr std::string_view kIndexableIntegerProperty2 =
+    "indexableInteger2";
+static constexpr std::string_view kStringExactProperty = "stringExact";
+static constexpr std::string_view kStringPrefixProperty = "stringPrefix";
 
-constexpr SectionId kIndexableInteger1SectionId = 0;
-constexpr SectionId kIndexableInteger2SectionId = 1;
-constexpr SectionId kStringExactSectionId = 2;
-constexpr SectionId kStringPrefixSectionId = 3;
+static constexpr SectionId kIndexableInteger1SectionId = 0;
+static constexpr SectionId kIndexableInteger2SectionId = 1;
+static constexpr SectionId kStringExactSectionId = 2;
+static constexpr SectionId kStringPrefixSectionId = 3;
+
+// Joinable properties and joinable property id. Joinable property id is
+// determined by the lexicographical order of joinable property path.
+static constexpr std::string_view kQualifiedId1 = "qualifiedId1";
+static constexpr std::string_view kQualifiedId2 = "qualifiedId2";
+
+static constexpr JoinablePropertyId kQualifiedId1JoinablePropertyId = 0;
+static constexpr JoinablePropertyId kQualifiedId2JoinablePropertyId = 1;
 
 const SectionMetadata kIndexableInteger1SectionMetadata(
     kIndexableInteger1SectionId, TYPE_INT64, TOKENIZER_NONE, TERM_MATCH_UNKNOWN,
@@ -80,7 +91,15 @@ const SectionMetadata kStringPrefixSectionMetadata(
     kStringPrefixSectionId, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_PREFIX,
     NUMERIC_MATCH_UNKNOWN, std::string(kStringPrefixProperty));
 
-// Other non-indexable properties.
+const JoinablePropertyMetadata kQualifiedId1JoinablePropertyMetadata(
+    kQualifiedId1JoinablePropertyId, TYPE_STRING,
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId1));
+
+const JoinablePropertyMetadata kQualifiedId2JoinablePropertyMetadata(
+    kQualifiedId2JoinablePropertyId, TYPE_STRING,
+    JOINABLE_VALUE_TYPE_QUALIFIED_ID, std::string(kQualifiedId2));
+
+// Other non-indexable/joinable properties.
 constexpr std::string_view kUnindexedStringProperty = "unindexedString";
 constexpr std::string_view kUnindexedIntegerProperty = "unindexedInteger";
 
@@ -137,6 +156,16 @@ class TokenizedDocumentTest : public ::testing::Test {
                                      .SetName(kStringPrefixProperty)
                                      .SetDataTypeString(TERM_MATCH_PREFIX,
                                                         TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kQualifiedId1)
+                                     .SetDataTypeJoinableString(
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kQualifiedId2)
+                                     .SetDataTypeJoinableString(
+                                         JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(schema));
@@ -177,6 +206,8 @@ TEST_F(TokenizedDocumentTest, CreateAll) {
           .AddInt64Property(std::string(kUnindexedIntegerProperty), 789)
           .AddInt64Property(std::string(kIndexableIntegerProperty1), 1, 2, 3)
           .AddInt64Property(std::string(kIndexableIntegerProperty2), 456)
+          .AddStringProperty(std::string(kQualifiedId1), "pkg$db/ns#uri1")
+          .AddStringProperty(std::string(kQualifiedId2), "pkg$db/ns#uri2")
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -210,6 +241,17 @@ TEST_F(TokenizedDocumentTest, CreateAll) {
               Eq(kIndexableInteger2SectionMetadata));
   EXPECT_THAT(tokenized_document.integer_sections().at(1).content,
               ElementsAre(456));
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), SizeIs(2));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(0).metadata,
+              Eq(kQualifiedId1JoinablePropertyMetadata));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(0).values,
+              ElementsAre("pkg$db/ns#uri1"));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(1).metadata,
+              Eq(kQualifiedId2JoinablePropertyMetadata));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(1).values,
+              ElementsAre("pkg$db/ns#uri2"));
 }
 
 TEST_F(TokenizedDocumentTest, CreateNoIndexableIntegerProperties) {
@@ -233,6 +275,9 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableIntegerProperties) {
 
   // integer sections
   EXPECT_THAT(tokenized_document.integer_sections(), IsEmpty());
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
 }
 
 TEST_F(TokenizedDocumentTest, CreateMultipleIndexableIntegerProperties) {
@@ -266,6 +311,9 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableIntegerProperties) {
               Eq(kIndexableInteger2SectionMetadata));
   EXPECT_THAT(tokenized_document.integer_sections().at(1).content,
               ElementsAre(456));
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
 }
 
 TEST_F(TokenizedDocumentTest, CreateNoIndexableStringProperties) {
@@ -290,6 +338,9 @@ TEST_F(TokenizedDocumentTest, CreateNoIndexableStringProperties) {
 
   // integer sections
   EXPECT_THAT(tokenized_document.integer_sections(), IsEmpty());
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
 }
 
 TEST_F(TokenizedDocumentTest, CreateMultipleIndexableStringProperties) {
@@ -327,6 +378,73 @@ TEST_F(TokenizedDocumentTest, CreateMultipleIndexableStringProperties) {
 
   // integer sections
   EXPECT_THAT(tokenized_document.integer_sections(), IsEmpty());
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
+}
+
+TEST_F(TokenizedDocumentTest, CreateNoJoinQualifiedIdProperties) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kUnindexedStringProperty),
+                             "hello world unindexed")
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+
+  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
+
+  // string sections
+  EXPECT_THAT(tokenized_document.tokenized_string_sections(), IsEmpty());
+
+  // integer sections
+  EXPECT_THAT(tokenized_document.integer_sections(), IsEmpty());
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
+}
+
+TEST_F(TokenizedDocumentTest, CreateMultipleJoinQualifiedIdProperties) {
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kUnindexedStringProperty),
+                             "hello world unindexed")
+          .AddStringProperty(std::string(kQualifiedId1), "pkg$db/ns#uri1")
+          .AddStringProperty(std::string(kQualifiedId2), "pkg$db/ns#uri2")
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                document));
+
+  EXPECT_THAT(tokenized_document.document(), EqualsProto(document));
+  EXPECT_THAT(tokenized_document.num_string_tokens(), Eq(0));
+
+  // string sections
+  EXPECT_THAT(tokenized_document.tokenized_string_sections(), IsEmpty());
+
+  // integer sections
+  EXPECT_THAT(tokenized_document.integer_sections(), IsEmpty());
+
+  // Qualified id join properties
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties(), SizeIs(2));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(0).metadata,
+              Eq(kQualifiedId1JoinablePropertyMetadata));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(0).values,
+              ElementsAre("pkg$db/ns#uri1"));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(1).metadata,
+              Eq(kQualifiedId2JoinablePropertyMetadata));
+  EXPECT_THAT(tokenized_document.qualified_id_join_properties().at(1).values,
+              ElementsAre("pkg$db/ns#uri2"));
 }
 
 }  // namespace

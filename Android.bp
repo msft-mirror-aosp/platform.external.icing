@@ -98,19 +98,32 @@ filegroup {
     // TODO(b/193244409): Utilize globs once all build errors are fixed.
     srcs: [
         "icing/absl_ports/*.cc",
-        "icing/text_classifier/lib3/utils/base/*.cc",
+        "icing/file/**/*.cc",
+        "icing/index/**/*.cc",
+        "icing/legacy/**/*.cc",
         "icing/portable/*.cc",
-        "icing/file/file-backed-bitmap.cc",
-        "icing/file/filesystem.cc",
-        "icing/file/memory-mapped-file.cc",
-        "icing/file/persistent-hash-map.cc",
-        "icing/file/persistent-storage.cc",
-        "icing/legacy/core/icing-string-util.cc",
-        "icing/testing/tmp-directory.cc",
-        "icing/testing/common-matchers.cc",
-        "icing/util/crc32.cc",
-        "icing/util/logging.cc",
-        "icing/util/logging_raw.cc",
+        "icing/query/**/*.cc",
+        "icing/schema/*.cc",
+        "icing/scoring/**/*.cc",
+        "icing/store/*.cc",
+        "icing/testing/*.cc",
+        "icing/text_classifier/lib3/utils/base/*.cc",
+        "icing/text_classifier/lib3/utils/hash/*.cc",
+        "icing/tokenization/*.cc",
+        "icing/util/*.cc",
+    ],
+    // TODO(b/193244409): Remove after all the excluded tests are passing.
+    exclude_srcs: [
+        "icing/**/*_benchmark.cc",
+        "icing/**/*-jni-layer.cc",
+        "icing/index/**/*_test.cc",
+        "icing/legacy/**/*_test.cc",
+        "icing/query/**/*_test.cc",
+        "icing/scoring/**/*_test.cc",
+        "icing/store/*_test.cc",
+        "icing/testing/*test*.cc",
+        "icing/tokenization/*_test.cc",
+        "icing/util/*_test.cc",
     ],
 }
 
@@ -121,15 +134,16 @@ cc_test {
     // TODO(b/193244409): Implement globs for additional tests.
     srcs: [
         ":libicing_test_common",
-        "icing/file/*_test.cc",
     ],
     static_libs: [
         "icing-c-proto",
         "libgmock",
+        "libgoogle-benchmark",
         "libgtest",
     ],
     shared_libs: [
         "libicu",
+        "libicu_cts_stub",
         "liblog",
         "libprotobuf-cpp-lite",
         "libz",

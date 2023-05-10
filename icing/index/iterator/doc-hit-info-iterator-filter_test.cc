@@ -25,6 +25,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/document.pb.h"
@@ -46,6 +47,17 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
+}
 
 class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
  protected:
@@ -72,8 +84,8 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -239,8 +251,8 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -394,8 +406,8 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -534,8 +546,8 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -562,8 +574,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -594,8 +606,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -626,8 +638,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -659,8 +671,8 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -734,8 +746,8 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+        CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -769,8 +781,8 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -876,6 +888,55 @@ TEST_F(DocHitInfoIteratorFilterTest, GetNumLeafAdvanceCalls) {
                                              schema_store_.get(), options);
 
   EXPECT_THAT(filtered_iterator.GetNumLeafAdvanceCalls(), Eq(6));
+}
+
+TEST_F(DocHitInfoIteratorFilterTest, TrimFilterIterator) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id1,
+      document_store_->Put(document1_namespace1_schema1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id2,
+      document_store_->Put(document2_namespace1_schema1_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id3,
+      document_store_->Put(document3_namespace2_schema1_));
+
+  // Build an interator tree like:
+  //                Filter
+  //                   |
+  //                  AND
+  //             /           \
+  //          {1, 3}         {2}
+  std::vector<DocHitInfo> left_vector = {DocHitInfo(document_id1),
+                                         DocHitInfo(document_id3)};
+  std::vector<DocHitInfo> right_vector = {DocHitInfo(document_id2)};
+
+  std::unique_ptr<DocHitInfoIterator> left_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(left_vector);
+  std::unique_ptr<DocHitInfoIterator> right_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(right_vector, "term", 10);
+
+  std::unique_ptr<DocHitInfoIterator> original_iterator =
+      std::make_unique<DocHitInfoIteratorAnd>(std::move(left_iter),
+                                              std::move(right_iter));
+
+  DocHitInfoIteratorFilter::Options options;
+  // Filters out document3 by namespace
+  options.namespaces = std::vector<std::string_view>{namespace1_};
+  DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
+                                             document_store_.get(),
+                                             schema_store_.get(), options);
+
+  // The trimmed tree.
+  //          Filter
+  //             |
+  //          {1, 3}
+  ICING_ASSERT_OK_AND_ASSIGN(DocHitInfoIterator::TrimmedNode trimmed_node,
+                             std::move(filtered_iterator).TrimRightMostNode());
+  EXPECT_THAT(trimmed_node.term_, Eq("term"));
+  EXPECT_THAT(trimmed_node.term_start_index_, Eq(10));
+  EXPECT_THAT(GetDocumentIds(trimmed_node.iterator_.get()),
+              ElementsAre(document_id1));
 }
 
 }  // namespace

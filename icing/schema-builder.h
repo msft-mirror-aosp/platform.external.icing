@@ -128,6 +128,13 @@ class PropertyConfigBuilder {
     return *this;
   }
 
+  PropertyConfigBuilder& SetJoinable(
+      JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
+    property_.mutable_joinable_config()->set_value_type(join_value_type);
+    property_.mutable_joinable_config()->set_propagate_delete(propagate_delete);
+    return *this;
+  }
+
   PropertyConfigBuilder& SetCardinality(
       PropertyConfigProto::Cardinality::Code cardinality) {
     property_.set_cardinality(cardinality);
@@ -148,6 +155,11 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetType(std::string_view type) {
     type_config_.set_schema_type(std::string(type));
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetParentType(std::string_view parent_type) {
+    type_config_.set_parent_type(std::string(parent_type));
     return *this;
   }
 
