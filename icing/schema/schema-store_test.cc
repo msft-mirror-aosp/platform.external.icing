@@ -25,6 +25,7 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
@@ -2591,6 +2592,468 @@ TEST_F(SchemaStoreTest, LoadSchemaNoOverlayHeaderMissing) {
     EXPECT_THAT(
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
         StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaCompatibleNoChange) {
+  // Create a schema that is rollback incompatible and will trigger us to create
+  // a backup schema.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kCompatible,
+      version_util::kVersion));
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaUpgradeNoChange) {
+  // Create a schema that is rollback incompatible and will trigger us to create
+  // a backup schema.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kUpgrade,
+      version_util::kVersion + 1));
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaVersionZeroUpgradeNoChange) {
+  // Because we are upgrading from version zero, the schema must be compatible
+  // with version zero.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  ICING_EXPECT_OK(
+      SchemaStore::MigrateSchema(&filesystem_, schema_store_dir_,
+                                 version_util::StateChange::kVersionZeroUpgrade,
+                                 version_util::kVersion + 1));
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
+  // Because we are upgrading from version zero, the schema must be compatible
+  // with version zero.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Rollback to a version before kVersion. The schema header will declare that
+  // the overlay is compatible with any version starting with kVersion. So
+  // kVersion - 1 is incompatible and will throw out the schema.
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
+      version_util::kVersion - 1));
+
+  {
+    // Create a new of the schema store and check that we fell back to the
+    // base schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    SchemaTypeConfigProto other_type_a =
+        SchemaTypeConfigBuilder()
+            .SetType("type_a")
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("propRfc")
+                             .SetCardinality(CARDINALITY_OPTIONAL)
+                             .SetDataType(TYPE_STRING))
+            .Build();
+    SchemaProto base_schema = SchemaBuilder().AddType(other_type_a).Build();
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(base_schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaCompatibleRollbackKeepsOverlaySchema) {
+  // Because we are upgrading from version zero, the schema must be compatible
+  // with version zero.
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Rollback to kVersion. The schema header will declare that the overlay is
+  // compatible with any version starting with kVersion. So we will be
+  // compatible and retain the overlay schema.
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
+      version_util::kVersion));
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Rollback to a version before kVersion. The schema header will declare that
+  // the overlay is compatible with any version starting with kVersion. So
+  // kVersion - 1 is incompatible and will throw out the schema.
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
+      version_util::kVersion - 1));
+
+  SchemaTypeConfigProto other_type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("propRfc")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetDataType(TYPE_STRING))
+          .Build();
+  SchemaProto base_schema = SchemaBuilder().AddType(other_type_a).Build();
+
+  {
+    // Create a new of the schema store and check that we fell back to the
+    // base schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(base_schema))));
+  }
+
+  // Now rollforward to a new version. This should accept whatever schema is
+  // present (currently base schema)
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kRollForward,
+      version_util::kVersion));
+  {
+    // Create a new of the schema store and check that we fell back to the
+    // base schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(base_schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsOverlaySchema) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Rollback to kVersion. The schema header will declare that the overlay is
+  // compatible with any version starting with kVersion. So we will be
+  // compatible and retain the overlay schema.
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
+      version_util::kVersion));
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Now rollforward to a new version. This should accept whatever schema is
+  // present (currently overlay schema)
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kRollForward,
+      version_util::kVersion));
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest,
+       MigrateSchemaVersionZeroRollforwardDiscardsOverlaySchema) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // A VersionZeroRollforward will always discard the overlay schema because it
+  // could be stale.
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_,
+      version_util::StateChange::kVersionZeroRollForward,
+      version_util::kVersion));
+
+  SchemaTypeConfigProto other_type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("propRfc")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetDataType(TYPE_STRING))
+          .Build();
+  SchemaProto base_schema = SchemaBuilder().AddType(other_type_a).Build();
+
+  {
+    // Create a new of the schema store and check that we fell back to the
+    // base schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(base_schema))));
+  }
+}
+
+TEST_F(SchemaStoreTest, MigrateSchemaVersionUndeterminedDiscardsOverlaySchema) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).Build();
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // An Undetermined will always discard the overlay schema because it doesn't
+  // know which state we're in and so it fallback to the base schema because
+  // it should always be valid.
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, version_util::StateChange::kUndetermined,
+      version_util::kVersion));
+
+  SchemaTypeConfigProto other_type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("propRfc")
+                           .SetCardinality(CARDINALITY_OPTIONAL)
+                           .SetDataType(TYPE_STRING))
+          .Build();
+  SchemaProto base_schema = SchemaBuilder().AddType(other_type_a).Build();
+
+  {
+    // Create a new of the schema store and check that we fell back to the
+    // base schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(base_schema))));
   }
 }
 

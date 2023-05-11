@@ -281,7 +281,7 @@ INSTANTIATE_TEST_SUITE_P(
         VersionUtilStateChangeTestParam(
             /*existing_version_info_in=*/VersionInfo(0, 1),
             /*curr_version_in=*/2,
-            /*expected_state_change_in=*/StateChange::kVersionZeroUpgrade),
+            /*expected_state_change_in=*/StateChange::kVersionZeroRollForward),
 
         // - version 0, max_version 2
         // - Current version = 2

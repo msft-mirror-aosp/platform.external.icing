@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -67,10 +68,19 @@ class SchemaStore {
    public:
     static constexpr int32_t kMagic = 0x72650d0a;
 
-    explicit Header() : magic_(kMagic), checksum_(0), overlay_created_(false) {
+    explicit Header()
+        : magic_(kMagic),
+          checksum_(0),
+          overlay_created_(false),
+          min_overlay_version_compatibility_(
+              std::numeric_limits<int32_t>::max()) {
       memset(padding, 0, kPaddingSize);
     }
 
+    // RETURNS:
+    //   - On success, a valid Header instance
+    //   - NOT_FOUND if header file doesn't exist
+    //   - INTERNAL if unable to read header
     static libtextclassifier3::StatusOr<Header> Read(
         const Filesystem* filesystem, const std::string& path);
 
@@ -83,8 +93,15 @@ class SchemaStore {
     void set_checksum(uint32_t checksum) { checksum_ = checksum; }
 
     bool overlay_created() const { return overlay_created_; }
-    void set_overlay_created(bool overlay_created) {
+
+    int32_t min_overlay_version_compatibility() const {
+      return min_overlay_version_compatibility_;
+    }
+
+    void SetOverlayInfo(bool overlay_created,
+                        int32_t min_overlay_version_compatibility) {
       overlay_created_ = overlay_created;
+      min_overlay_version_compatibility_ = min_overlay_version_compatibility;
     }
 
    private:
@@ -96,8 +113,10 @@ class SchemaStore {
 
     bool overlay_created_;
 
-    static constexpr int kPaddingSize =
-        1024 - sizeof(magic_) - sizeof(checksum_) - sizeof(overlay_created_);
+    int32_t min_overlay_version_compatibility_;
+
+    static constexpr int kPaddingSize = 1008;
+    // Padding exists just to reserve space for additional values.
     uint8_t padding[kPaddingSize];
   };
   static_assert(sizeof(Header) == 1024);
@@ -193,7 +212,7 @@ class SchemaStore {
   //   OK on success or nothing to migrate
   static libtextclassifier3::Status MigrateSchema(
       const Filesystem* filesystem, const std::string& base_dir,
-      version_util::StateChange version_state_change);
+      version_util::StateChange version_state_change, int32_t new_version);
 
   // Discards all derived data in the schema store.
   //
@@ -403,6 +422,15 @@ class SchemaStore {
   explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,
                        const Clock* clock);
 
+  // Deletes the overlay schema and ensures that the Header is correctly set.
+  //
+  // RETURNS:
+  //   OK on success
+  //   INTERNAL_ERROR on any IO errors
+  static libtextclassifier3::Status DiscardOverlaySchema(
+      const Filesystem* filesystem, const std::string& base_dir,
+      Header& header);
+
   // Verifies that there is no error retrieving a previously set schema. Then
   // initializes like normal.
   //
@@ -483,6 +511,13 @@ class SchemaStore {
                : absl_ports::FailedPreconditionError("Schema not set yet.");
   }
 
+  // Correctly loads the Header, schema_file_ and (if present) the
+  // overlay_schema_file_.
+  // RETURNS:
+  //   - OK on success
+  //   - INTERNAL if an IO error is encountered when reading the Header or
+  //   schemas.
+  //     Or an invalid schema configuration is present.
   libtextclassifier3::Status LoadSchema();
 
   const Filesystem* filesystem_;

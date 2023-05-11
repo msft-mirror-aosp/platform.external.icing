@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -151,7 +152,11 @@ SchemaStore::Header::Read(const Filesystem* filesystem,
           absl_ports::StrCat("Invalid header kMagic for file: ", path));
     }
   } else {
-    return absl_ports::InternalError("");
+    int legacy_header_size = sizeof(LegacyHeader);
+    int header_size = sizeof(Header);
+    return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+        "Unexpected header size %" PRId64 ". Expected %d or %d", file_size,
+        legacy_header_size, header_size));
   }
   return header;
 }
@@ -201,9 +206,27 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
   return schema_store;
 }
 
+/* static */ libtextclassifier3::Status SchemaStore::DiscardOverlaySchema(
+    const Filesystem* filesystem, const std::string& base_dir, Header& header) {
+  std::string header_filename = MakeHeaderFilename(base_dir);
+  if (header.overlay_created()) {
+    header.SetOverlayInfo(
+        /*overlay_created=*/false,
+        /*min_overlay_version_compatibility=*/ std::numeric_limits<
+            int32_t>::max());
+    ICING_RETURN_IF_ERROR(header.Write(filesystem, header_filename));
+  }
+  std::string schema_overlay_filename = MakeOverlaySchemaFilename(base_dir);
+  if (!filesystem->DeleteFile(schema_overlay_filename.c_str())) {
+    return absl_ports::InternalError(
+        "Unable to delete stale schema overlay file.");
+  }
+  return libtextclassifier3::Status::OK;
+}
+
 /* static */ libtextclassifier3::Status SchemaStore::MigrateSchema(
     const Filesystem* filesystem, const std::string& base_dir,
-    version_util::StateChange version_state_change) {
+    version_util::StateChange version_state_change, int32_t new_version) {
   if (!filesystem->DirectoryExists(base_dir.c_str())) {
     // Situations when schema store directory doesn't exist:
     // - Initializing new Icing instance: don't have to do anything now. The
@@ -215,8 +238,64 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     return libtextclassifier3::Status::OK;
   }
 
-  // TODO(b/280697513): implement schema migration (backup and new) according to
-  // version_state_change.
+  std::string overlay_schema_filename = MakeOverlaySchemaFilename(base_dir);
+  if (!filesystem->FileExists(overlay_schema_filename.c_str())) {
+    // The overlay doesn't exist. So there should be nothing particularly
+    // interesting to worry about.
+    return libtextclassifier3::Status::OK;
+  }
+
+  std::string header_filename = MakeHeaderFilename(base_dir);
+  libtextclassifier3::StatusOr<Header> header_or;
+  switch (version_state_change) {
+    // No necessary actions for normal upgrades or no version change. The data
+    // that was produced by the previous version is fully compatible with this
+    // version and there's no stale data for us to clean up.
+    // The same is true for a normal rollforward. A normal rollforward implies
+    // that the previous version was one that understood the concept of the
+    // overlay schema and would have already discarded it if it was unusable.
+    case version_util::StateChange::kVersionZeroUpgrade:
+      // fallthrough
+    case version_util::StateChange::kUpgrade:
+      // fallthrough
+    case version_util::StateChange::kRollForward:
+      // fallthrough
+    case version_util::StateChange::kCompatible:
+      return libtextclassifier3::Status::OK;
+    case version_util::StateChange::kVersionZeroRollForward:
+      // We've rolled forward. The schema overlay file, if it exists, is
+      // possibly stale. We must throw it out.
+      header_or = Header::Read(filesystem, header_filename);
+      if (!header_or.ok()) {
+        return header_or.status();
+      }
+      return SchemaStore::DiscardOverlaySchema(filesystem, base_dir,
+                                               header_or.ValueOrDie());
+    case version_util::StateChange::kRollBack:
+      header_or = Header::Read(filesystem, header_filename);
+      if (!header_or.ok()) {
+        return header_or.status();
+      }
+      if (header_or.ValueOrDie().min_overlay_version_compatibility() <=
+          new_version) {
+        // We've been rolled back, but the overlay schema claims that it
+        // supports this version. So we can safely return.
+        return libtextclassifier3::Status::OK;
+      }
+      // We've been rolled back to a version that the overlay schema doesn't
+      // support. We must throw it out.
+      return SchemaStore::DiscardOverlaySchema(filesystem, base_dir,
+                                               header_or.ValueOrDie());
+    case version_util::StateChange::kUndetermined:
+      // It's not clear what version we're on, but the base schema should always
+      // be safe to use. Throw out the overlay.
+      header_or = Header::Read(filesystem, header_filename);
+      if (!header_or.ok()) {
+        return header_or.status();
+      }
+      return SchemaStore::DiscardOverlaySchema(filesystem, base_dir,
+                                               header_or.ValueOrDie());
+  }
   return libtextclassifier3::Status::OK;
 }
 
@@ -320,7 +399,13 @@ libtextclassifier3::Status SchemaStore::LoadSchema() {
 
   // Something has gone wrong. We've lost part of the schema ground truth.
   // Return an error.
-  return absl_ports::InternalError("");
+  bool overlay_created = header_->overlay_created();
+  bool base_schema_exists = base_schema_state.ok();
+  return absl_ports::InternalError(IcingStringUtil::StringPrintf(
+      "Unable to properly load schema. Header {exists:%d, overlay_created:%d}, "
+      "base schema exists: %d, overlay_schema_exists: %d",
+      header_exists, overlay_created, base_schema_exists,
+      overlay_schema_file_exists));
 }
 
 libtextclassifier3::Status SchemaStore::InitializeInternal(
@@ -399,8 +484,9 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
           std::make_unique<SchemaProto>(std::move(base_schema));
       ICING_RETURN_IF_ERROR(schema_file_->Write(std::move(base_schema_ptr)));
 
-      header_->set_overlay_created(true);
-
+      header_->SetOverlayInfo(
+          /*overlay_created=*/true,
+          /*min_overlay_version_compatibility=*/version_util::kVersionOne);
       // Rebuild in memory data - references to the old schema will be invalid
       // now.
       BuildInMemoryCache();

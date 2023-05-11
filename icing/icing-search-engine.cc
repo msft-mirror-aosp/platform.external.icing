@@ -581,7 +581,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // Step 1: migrate schema according to the version state change.
     ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
         filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
-        version_state_change));
+        version_state_change, version_util::kVersion));
 
     // Step 2: discard all derived data
     ICING_RETURN_IF_ERROR(DiscardDerivedFiles());

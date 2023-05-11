@@ -30,6 +30,7 @@ namespace version_util {
 // - Version 0: Android T. Can be identified only by flash index magic.
 // - Version 1: mainline release 2023-06.
 inline static constexpr int32_t kVersion = 1;
+inline static constexpr int32_t kVersionOne = 1;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
 

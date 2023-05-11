@@ -83,7 +83,7 @@ StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
   }
 
   if (existing_version_info.version == 0) {
-    return (existing_version_info.max_version < curr_version)
+    return (existing_version_info.max_version == existing_version_info.version)
                ? StateChange::kVersionZeroUpgrade
                : StateChange::kVersionZeroRollForward;
   }
@@ -93,7 +93,7 @@ StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
   } else if (existing_version_info.version > curr_version) {
     return StateChange::kRollBack;
   } else {  // existing_version_info.version < curr_version
-    return (existing_version_info.max_version < curr_version)
+    return (existing_version_info.max_version == existing_version_info.version)
                ? StateChange::kUpgrade
                : StateChange::kRollForward;
   }
