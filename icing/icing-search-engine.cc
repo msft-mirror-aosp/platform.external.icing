@@ -32,6 +32,7 @@
 #include "icing/file/destructible-file.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index-processor.h"
@@ -41,7 +42,7 @@
 #include "icing/index/numeric/integer-index.h"
 #include "icing/index/string-section-indexing-handler.h"
 #include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-joinable-property-indexing-handler.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
@@ -96,6 +97,7 @@ namespace lib {
 
 namespace {
 
+constexpr std::string_view kVersionFilename = "version";
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kIndexSubfolderName = "index_dir";
 constexpr std::string_view kIntegerIndexSubfolderName = "integer_index_dir";
@@ -214,6 +216,12 @@ libtextclassifier3::Status ValidateSuggestionSpec(
                            std::to_string(configuration.max_query_length)));
   }
   return libtextclassifier3::Status::OK;
+}
+
+// Version file is a single file under base_dir containing version info of the
+// existing data.
+std::string MakeVersionFilePath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kVersionFilename);
 }
 
 // Document store files are in a standalone subfolder for easier file
@@ -454,20 +462,34 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
   // fails, then just assume the value is zero (the most likely reason for
   // failure would be non-existence because the last init was successful
   // anyways).
-  ScopedFd marker_file_fd(filesystem_->OpenForWrite(marker_filepath.c_str()));
+  std::unique_ptr<ScopedFd> marker_file_fd = std::make_unique<ScopedFd>(
+      filesystem_->OpenForWrite(marker_filepath.c_str()));
   libtextclassifier3::Status status;
   if (file_exists &&
-      filesystem_->PRead(marker_file_fd.get(), &network_init_attempts,
+      filesystem_->PRead(marker_file_fd->get(), &network_init_attempts,
                          sizeof(network_init_attempts), /*offset=*/0)) {
     host_init_attempts = GNetworkToHostL(network_init_attempts);
     if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
       // We're tried and failed to init too many times. We need to throw
       // everything out and start from scratch.
       ResetMembers();
+      marker_file_fd.reset();
+
+      // Delete the entire base directory.
       if (!filesystem_->DeleteDirectoryRecursively(
               options_.base_dir().c_str())) {
         return absl_ports::InternalError("Failed to delete icing base dir!");
       }
+
+      // Create the base directory again and reopen marker file.
+      if (!filesystem_->CreateDirectoryRecursively(
+              options_.base_dir().c_str())) {
+        return absl_ports::InternalError("Failed to create icing base dir!");
+      }
+
+      marker_file_fd = std::make_unique<ScopedFd>(
+          filesystem_->OpenForWrite(marker_filepath.c_str()));
+
       status = absl_ports::DataLossError(
           "Encountered failed initialization limit. Cleared all data.");
       host_init_attempts = 0;
@@ -482,10 +504,10 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
   ++host_init_attempts;
   network_init_attempts = GHostToNetworkL(host_init_attempts);
   // Write the updated number of attempts before we get started.
-  if (!filesystem_->PWrite(marker_file_fd.get(), /*offset=*/0,
+  if (!filesystem_->PWrite(marker_file_fd->get(), /*offset=*/0,
                            &network_init_attempts,
                            sizeof(network_init_attempts)) ||
-      !filesystem_->DataSync(marker_file_fd.get())) {
+      !filesystem_->DataSync(marker_file_fd->get())) {
     return absl_ports::InternalError(
         "Failed to write and sync init marker file");
   }
@@ -547,6 +569,31 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     return status;
   }
 
+  // Read version file and determine the state change.
+  const std::string version_filepath = MakeVersionFilePath(options_.base_dir());
+  const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
+  ICING_ASSIGN_OR_RETURN(
+      version_util::VersionInfo version_info,
+      version_util::ReadVersion(*filesystem_, version_filepath, index_dir));
+  version_util::StateChange version_state_change =
+      version_util::GetVersionStateChange(version_info);
+  if (version_state_change != version_util::StateChange::kCompatible) {
+    // Step 1: migrate schema according to the version state change.
+    ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
+        filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
+        version_state_change));
+
+    // Step 2: discard all derived data
+    ICING_RETURN_IF_ERROR(DiscardDerivedFiles());
+
+    // Step 3: update version file
+    version_util::VersionInfo new_version_info(
+        version_util::kVersion,
+        std::max(version_info.max_version, version_util::kVersion));
+    ICING_RETURN_IF_ERROR(version_util::WriteVersion(
+        *filesystem_, version_filepath, new_version_info));
+  }
+
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
   // TODO(b/156383798) : Resolve how to specify the locale.
@@ -567,7 +614,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // and index directories and initialize them from scratch.
     const std::string doc_store_dir =
         MakeDocumentDirectoryPath(options_.base_dir());
-    const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
     const std::string integer_index_dir =
         MakeIntegerIndexWorkingPath(options_.base_dir());
     const std::string qualified_id_join_index_dir =
@@ -597,7 +643,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // We're going to need to build the index from scratch. So just delete its
     // directory now.
     // Discard index directory and instantiate a new one.
-    const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
     Index::Options index_options(index_dir, options_.index_merge_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -649,6 +694,24 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
     initialize_stats->set_qualified_id_join_index_restoration_cause(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
+  } else if (version_state_change != version_util::StateChange::kCompatible) {
+    ICING_RETURN_IF_ERROR(InitializeDocumentStore(
+        /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
+    index_init_status = InitializeIndex(initialize_stats);
+    if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
+      return index_init_status;
+    }
+
+    initialize_stats->set_schema_store_recovery_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_document_store_recovery_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_index_restoration_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_integer_index_restoration_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_qualified_id_join_index_restoration_cause(
+        InitializeStatsProto::VERSION_CHANGED);
   } else {
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
@@ -861,7 +924,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   DestructibleFile marker_file(marker_filepath, filesystem_.get());
 
   auto set_schema_result_or = schema_store_->SetSchema(
-      std::move(new_schema), ignore_errors_and_delete_documents);
+      std::move(new_schema), ignore_errors_and_delete_documents,
+      options_.allow_circular_schema_definitions());
   if (!set_schema_result_or.ok()) {
     TransformStatus(set_schema_result_or.status(), result_status);
     return result_proto;
@@ -1123,12 +1187,13 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   DocumentProto document = std::move(document_or).ValueOrDie();
   std::unique_ptr<ProjectionTree> type_projection_tree;
   std::unique_ptr<ProjectionTree> wildcard_projection_tree;
-  for (const TypePropertyMask& type_field_mask :
-       result_spec.type_property_masks()) {
-    if (type_field_mask.schema_type() == document.schema()) {
+  for (const SchemaStore::ExpandedTypePropertyMask& type_field_mask :
+       schema_store_->ExpandTypePropertyMasks(
+           result_spec.type_property_masks())) {
+    if (type_field_mask.schema_type == document.schema()) {
       type_projection_tree = std::make_unique<ProjectionTree>(type_field_mask);
-    } else if (type_field_mask.schema_type() ==
-               ProjectionTree::kSchemaTypeWildcard) {
+    } else if (type_field_mask.schema_type ==
+               SchemaStore::kSchemaTypeWildcard) {
       wildcard_projection_tree =
           std::make_unique<ProjectionTree>(type_field_mask);
     }
@@ -1817,7 +1882,7 @@ SearchResultProto IcingSearchEngine::Search(
     child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
         join_spec.nested_spec().search_spec(),
         join_spec.nested_spec().scoring_spec(),
-        join_spec.nested_spec().result_spec(),
+        join_spec.nested_spec().result_spec(), schema_store_.get(),
         std::move(nested_query_scoring_results.query_terms));
   }
 
@@ -1847,7 +1912,7 @@ SearchResultProto IcingSearchEngine::Search(
 
   // Construct parent's result adjustment info.
   auto parent_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
-      search_spec, scoring_spec, result_spec,
+      search_spec, scoring_spec, result_spec, schema_store_.get(),
       std::move(query_scoring_results.query_terms));
 
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
@@ -2352,11 +2417,10 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   handlers.push_back(std::move(integer_section_indexing_handler));
 
   // Qualified id joinable property index handler
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>
-          qualified_id_joinable_property_indexing_handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          clock_.get(), qualified_id_join_index_.get()));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                             qualified_id_joinable_property_indexing_handler,
+                         QualifiedIdJoinIndexingHandler::Create(
+                             clock_.get(), qualified_id_join_index_.get()));
   handlers.push_back(
       std::move(qualified_id_joinable_property_indexing_handler));
 
@@ -2452,6 +2516,44 @@ IcingSearchEngine::TruncateIndicesTo(DocumentId last_stored_document_id) {
                              index_needed_restoration,
                              integer_index_needed_restoration,
                              qualified_id_join_index_needed_restoration);
+}
+
+libtextclassifier3::Status IcingSearchEngine::DiscardDerivedFiles() {
+  if (schema_store_ != nullptr || document_store_ != nullptr ||
+      index_ != nullptr || integer_index_ != nullptr ||
+      qualified_id_join_index_ != nullptr) {
+    return absl_ports::FailedPreconditionError(
+        "Cannot discard derived files while having valid instances");
+  }
+
+  // Schema store
+  ICING_RETURN_IF_ERROR(
+      SchemaStore::DiscardDerivedFiles(filesystem_.get(), options_.base_dir()));
+
+  // Document store
+  ICING_RETURN_IF_ERROR(DocumentStore::DiscardDerivedFiles(
+      filesystem_.get(), options_.base_dir()));
+
+  // Term index
+  if (!filesystem_->DeleteDirectoryRecursively(
+          MakeIndexDirectoryPath(options_.base_dir()).c_str())) {
+    return absl_ports::InternalError("Failed to discard index");
+  }
+
+  // Integer index
+  if (!filesystem_->DeleteDirectoryRecursively(
+          MakeIntegerIndexWorkingPath(options_.base_dir()).c_str())) {
+    return absl_ports::InternalError("Failed to discard integer index");
+  }
+
+  // Qualified id join index
+  if (!filesystem_->DeleteDirectoryRecursively(
+          MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir()).c_str())) {
+    return absl_ports::InternalError(
+        "Failed to discard qualified id join index");
+  }
+
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IcingSearchEngine::ClearSearchIndices() {

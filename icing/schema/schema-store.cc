@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -30,12 +31,16 @@
 #include "icing/file/destructible-directory.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/search.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/schema/backup-schema-producer.h"
 #include "icing/schema/joinable-property.h"
+#include "icing/schema/property-util.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
@@ -52,6 +57,7 @@ namespace {
 
 constexpr char kSchemaStoreHeaderFilename[] = "schema_store_header";
 constexpr char kSchemaFilename[] = "schema.pb";
+constexpr char kOverlaySchemaFilename[] = "overlay_schema.pb";
 constexpr char kSchemaTypeMapperFilename[] = "schema_type_mapper";
 
 // A DynamicTrieKeyMapper stores its data across 3 arrays internally. Giving
@@ -59,15 +65,19 @@ constexpr char kSchemaTypeMapperFilename[] = "schema_type_mapper";
 // 384KiB.
 constexpr int32_t kSchemaTypeMapperMaxSize = 3 * 128 * 1024;  // 384 KiB
 
-const std::string MakeHeaderFilename(const std::string& base_dir) {
+std::string MakeHeaderFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kSchemaStoreHeaderFilename);
 }
 
-const std::string MakeSchemaFilename(const std::string& base_dir) {
+std::string MakeSchemaFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kSchemaFilename);
 }
 
-const std::string MakeSchemaTypeMapperFilename(const std::string& base_dir) {
+std::string MakeOverlaySchemaFilename(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kOverlaySchemaFilename);
+}
+
+std::string MakeSchemaTypeMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kSchemaTypeMapperFilename);
 }
 
@@ -108,6 +118,57 @@ std::unordered_set<SchemaTypeId> SchemaTypeIdsChanged(
 
 }  // namespace
 
+/* static */ libtextclassifier3::StatusOr<SchemaStore::Header>
+SchemaStore::Header::Read(const Filesystem* filesystem,
+                          const std::string& path) {
+  Header header;
+  ScopedFd sfd(filesystem->OpenForRead(path.c_str()));
+  if (!sfd.is_valid()) {
+    return absl_ports::NotFoundError("SchemaStore header doesn't exist");
+  }
+
+  // If file is sizeof(LegacyHeader), then it must be LegacyHeader.
+  int64_t file_size = filesystem->GetFileSize(sfd.get());
+  if (file_size == sizeof(LegacyHeader)) {
+    LegacyHeader legacy_header;
+    if (!filesystem->Read(path.c_str(), &legacy_header,
+                          sizeof(legacy_header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Couldn't read: ", path));
+    }
+    if (legacy_header.magic != Header::kMagic) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Invalid header kMagic for file: ", path));
+    }
+    header.set_checksum(legacy_header.checksum);
+  } else if (file_size == sizeof(Header)) {
+    if (!filesystem->Read(path.c_str(), &header, sizeof(header))) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Couldn't read: ", path));
+    }
+    if (header.magic() != Header::kMagic) {
+      return absl_ports::InternalError(
+          absl_ports::StrCat("Invalid header kMagic for file: ", path));
+    }
+  } else {
+    return absl_ports::InternalError("");
+  }
+  return header;
+}
+
+libtextclassifier3::Status SchemaStore::Header::Write(
+    const Filesystem* filesystem, const std::string& path) {
+  ScopedFd scoped_fd(filesystem->OpenForWrite(path.c_str()));
+  // This should overwrite the header.
+  if (!scoped_fd.is_valid() ||
+      !filesystem->Write(scoped_fd.get(), this, sizeof(*this)) ||
+      !filesystem->DataSync(scoped_fd.get())) {
+    return absl_ports::InternalError(
+        absl_ports::StrCat("Failed to write SchemaStore header: ", path));
+  }
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, InitializeStatsProto* initialize_stats) {
@@ -140,6 +201,32 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
   return schema_store;
 }
 
+/* static */ libtextclassifier3::Status SchemaStore::MigrateSchema(
+    const Filesystem* filesystem, const std::string& base_dir,
+    version_util::StateChange version_state_change) {
+  if (!filesystem->DirectoryExists(base_dir.c_str())) {
+    // Situations when schema store directory doesn't exist:
+    // - Initializing new Icing instance: don't have to do anything now. The
+    //   directory will be created later.
+    // - Lose schema store: there is nothing we can do now. The logic will be
+    //   handled later by initializing.
+    //
+    // Therefore, just simply return OK here.
+    return libtextclassifier3::Status::OK;
+  }
+
+  // TODO(b/280697513): implement schema migration (backup and new) according to
+  // version_state_change.
+  return libtextclassifier3::Status::OK;
+}
+
+/* static */ libtextclassifier3::Status SchemaStore::DiscardDerivedFiles(
+    const Filesystem* filesystem, const std::string& base_dir) {
+  // Schema type mapper
+  return DynamicTrieKeyMapper<SchemaTypeId>::Delete(
+      *filesystem, MakeSchemaTypeMapperFilename(base_dir));
+}
+
 SchemaStore::SchemaStore(const Filesystem* filesystem, std::string base_dir,
                          const Clock* clock)
     : filesystem_(filesystem),
@@ -158,6 +245,7 @@ SchemaStore::~SchemaStore() {
 }
 
 libtextclassifier3::Status SchemaStore::Initialize(SchemaProto new_schema) {
+  ICING_RETURN_IF_ERROR(LoadSchema());
   if (!absl_ports::IsNotFound(GetSchema().status())) {
     return absl_ports::FailedPreconditionError(
         "Incorrectly tried to initialize schema store with a new schema, when "
@@ -165,11 +253,13 @@ libtextclassifier3::Status SchemaStore::Initialize(SchemaProto new_schema) {
   }
   ICING_RETURN_IF_ERROR(schema_file_->Write(
       std::make_unique<SchemaProto>(std::move(new_schema))));
-  return InitializeInternal(/*initialize_stats=*/nullptr);
+  return InitializeInternal(/*create_overlay_if_necessary=*/true,
+                            /*initialize_stats=*/nullptr);
 }
 
 libtextclassifier3::Status SchemaStore::Initialize(
     InitializeStatsProto* initialize_stats) {
+  ICING_RETURN_IF_ERROR(LoadSchema());
   auto schema_proto_or = GetSchema();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     // Don't have an existing schema proto, that's fine
@@ -178,11 +268,63 @@ libtextclassifier3::Status SchemaStore::Initialize(
     // Real error when trying to read the existing schema
     return schema_proto_or.status();
   }
-  return InitializeInternal(initialize_stats);
+  return InitializeInternal(/*create_overlay_if_necessary=*/false,
+                            initialize_stats);
+}
+
+libtextclassifier3::Status SchemaStore::LoadSchema() {
+  libtextclassifier3::StatusOr<Header> header_or =
+      Header::Read(filesystem_, MakeHeaderFilename(base_dir_));
+  bool header_exists = false;
+  if (!header_or.ok() && !absl_ports::IsNotFound(header_or.status())) {
+    return header_or.status();
+  } else if (!header_or.ok()) {
+    header_ = std::make_unique<Header>();
+  } else {
+    header_exists = true;
+    header_ = std::make_unique<Header>(std::move(header_or).ValueOrDie());
+  }
+
+  std::string overlay_schema_filename = MakeOverlaySchemaFilename(base_dir_);
+  bool overlay_schema_file_exists =
+      filesystem_->FileExists(overlay_schema_filename.c_str());
+
+  libtextclassifier3::Status base_schema_state = schema_file_->Read().status();
+  if (!base_schema_state.ok() && !absl_ports::IsNotFound(base_schema_state)) {
+    return base_schema_state;
+  }
+
+  // There are three valid cases:
+  // 1. Everything is missing. This is an empty schema store.
+  if (!base_schema_state.ok() && !overlay_schema_file_exists &&
+      !header_exists) {
+    return libtextclassifier3::Status::OK;
+  }
+
+  // 2. There never was a overlay schema. The header exists, the base schema
+  //    exists and the header says the overlay schema shouldn't exist
+  if (base_schema_state.ok() && !overlay_schema_file_exists && header_exists &&
+      !header_->overlay_created()) {
+    // Nothing else to do. Just return safely.
+    return libtextclassifier3::Status::OK;
+  }
+
+  // 3. There is an overlay schema and a base schema and a header. The header
+  // says that the overlay schema should exist.
+  if (base_schema_state.ok() && overlay_schema_file_exists && header_exists &&
+      header_->overlay_created()) {
+    overlay_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
+        *filesystem_, MakeOverlaySchemaFilename(base_dir_));
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Something has gone wrong. We've lost part of the schema ground truth.
+  // Return an error.
+  return absl_ports::InternalError("");
 }
 
 libtextclassifier3::Status SchemaStore::InitializeInternal(
-    InitializeStatsProto* initialize_stats) {
+    bool create_overlay_if_necessary, InitializeStatsProto* initialize_stats) {
   if (!InitializeDerivedFiles().ok()) {
     ICING_VLOG(3)
         << "Couldn't find derived files or failed to initialize them, "
@@ -192,7 +334,7 @@ libtextclassifier3::Status SchemaStore::InitializeInternal(
       initialize_stats->set_schema_store_recovery_cause(
           InitializeStatsProto::IO_ERROR);
     }
-    ICING_RETURN_IF_ERROR(RegenerateDerivedFiles());
+    ICING_RETURN_IF_ERROR(RegenerateDerivedFiles(create_overlay_if_necessary));
     if (initialize_stats != nullptr) {
       initialize_stats->set_schema_store_recovery_latency_ms(
           regenerate_timer->GetElapsedMilliseconds());
@@ -208,24 +350,6 @@ libtextclassifier3::Status SchemaStore::InitializeInternal(
 }
 
 libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
-  if (!HeaderExists()) {
-    // Without a header, we don't know if things are consistent between each
-    // other so the caller should just regenerate everything from ground truth.
-    return absl_ports::InternalError("SchemaStore header doesn't exist");
-  }
-
-  SchemaStore::Header header;
-  if (!filesystem_->Read(MakeHeaderFilename(base_dir_).c_str(), &header,
-                         sizeof(header))) {
-    return absl_ports::InternalError(
-        absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
-  }
-
-  if (header.magic != SchemaStore::Header::kMagic) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
-  }
-
   ICING_ASSIGN_OR_RETURN(
       schema_type_mapper_,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(
@@ -233,78 +357,104 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
           kSchemaTypeMapperMaxSize));
 
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  if (checksum.Get() != header.checksum) {
+  if (checksum.Get() != header_->checksum()) {
     return absl_ports::InternalError(
         "Combined checksum of SchemaStore was inconsistent");
   }
 
-  // Update our in-memory data structures
-  type_config_map_.clear();
-  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
-  for (const SchemaTypeConfigProto& type_config : schema_proto->types()) {
-    // Update our type_config_map_
-    type_config_map_.emplace(type_config.schema_type(), type_config);
-  }
-  ICING_ASSIGN_OR_RETURN(
-      schema_type_manager_,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-
+  BuildInMemoryCache();
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles() {
+libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
+    bool create_overlay_if_necessary) {
   ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
 
   ICING_RETURN_IF_ERROR(ResetSchemaTypeMapper());
-  type_config_map_.clear();
 
   for (const SchemaTypeConfigProto& type_config : schema_proto->types()) {
-    // Update our type_config_map_
-    type_config_map_.emplace(type_config.schema_type(), type_config);
-
     // Assign a SchemaTypeId to the type
     ICING_RETURN_IF_ERROR(schema_type_mapper_->Put(
         type_config.schema_type(), schema_type_mapper_->num_keys()));
   }
+  BuildInMemoryCache();
 
-  ICING_ASSIGN_OR_RETURN(
-      schema_type_manager_,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+  if (create_overlay_if_necessary) {
+    ICING_ASSIGN_OR_RETURN(
+        BackupSchemaProducer producer,
+        BackupSchemaProducer::Create(*schema_proto,
+                                     schema_type_manager_->section_manager()));
+
+    if (producer.is_backup_necessary()) {
+      SchemaProto base_schema = std::move(producer).Produce();
+
+      // The overlay schema should be written to the overlay file location.
+      overlay_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
+          *filesystem_, MakeOverlaySchemaFilename(base_dir_));
+      auto schema_ptr = std::make_unique<SchemaProto>(std::move(*schema_proto));
+      ICING_RETURN_IF_ERROR(overlay_schema_file_->Write(std::move(schema_ptr)));
+
+      // The base schema should be written to the original file
+      auto base_schema_ptr =
+          std::make_unique<SchemaProto>(std::move(base_schema));
+      ICING_RETURN_IF_ERROR(schema_file_->Write(std::move(base_schema_ptr)));
+
+      header_->set_overlay_created(true);
+
+      // Rebuild in memory data - references to the old schema will be invalid
+      // now.
+      BuildInMemoryCache();
+    }
+  }
 
   // Write the header
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
-
-  return libtextclassifier3::Status::OK;
+  header_->set_checksum(checksum.Get());
+  return header_->Write(filesystem_, MakeHeaderFilename(base_dir_));
 }
 
-bool SchemaStore::HeaderExists() {
-  if (!filesystem_->FileExists(MakeHeaderFilename(base_dir_).c_str())) {
-    return false;
+libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
+  ICING_ASSIGN_OR_RETURN(const SchemaProto* schema_proto, GetSchema());
+  ICING_ASSIGN_OR_RETURN(
+      SchemaUtil::InheritanceMap inheritance_map,
+      SchemaUtil::BuildTransitiveInheritanceGraph(*schema_proto));
+
+  reverse_schema_type_mapper_.clear();
+  type_config_map_.clear();
+  schema_subtype_id_map_.clear();
+  for (const SchemaTypeConfigProto& type_config : schema_proto->types()) {
+    std::string_view type_name = type_config.schema_type();
+    ICING_ASSIGN_OR_RETURN(SchemaTypeId type_id,
+                           schema_type_mapper_->Get(type_name));
+
+    // Build reverse_schema_type_mapper_
+    reverse_schema_type_mapper_.insert({type_id, std::string(type_name)});
+
+    // Build type_config_map_
+    type_config_map_.insert({std::string(type_name), type_config});
+
+    // Build schema_subtype_id_map_
+    std::unordered_set<SchemaTypeId>& subtype_id_set =
+        schema_subtype_id_map_[type_id];
+    // Find all child types
+    auto child_types_names = inheritance_map.find(type_name);
+    if (child_types_names != inheritance_map.end()) {
+      subtype_id_set.reserve(child_types_names->second.size() + 1);
+      for (const auto& [child_type_name, is_direct_child] :
+           child_types_names->second) {
+        ICING_ASSIGN_OR_RETURN(SchemaTypeId child_type_id,
+                               schema_type_mapper_->Get(child_type_name));
+        subtype_id_set.insert(child_type_id);
+      }
+    }
+    // Every type is a subtype of itself.
+    subtype_id_set.insert(type_id);
   }
 
-  int64_t file_size =
-      filesystem_->GetFileSize(MakeHeaderFilename(base_dir_).c_str());
-
-  // If it's been truncated to size 0 before, we consider it to be a new file
-  return file_size != 0 && file_size != Filesystem::kBadFileSize;
-}
-
-libtextclassifier3::Status SchemaStore::UpdateHeader(const Crc32& checksum) {
-  // Write the header
-  SchemaStore::Header header;
-  header.magic = SchemaStore::Header::kMagic;
-  header.checksum = checksum.Get();
-
-  ScopedFd scoped_fd(
-      filesystem_->OpenForWrite(MakeHeaderFilename(base_dir_).c_str()));
-  // This should overwrite the header.
-  if (!scoped_fd.is_valid() ||
-      !filesystem_->Write(scoped_fd.get(), &header, sizeof(header)) ||
-      !filesystem_->DataSync(scoped_fd.get())) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to write SchemaStore header: ", MakeHeaderFilename(base_dir_)));
-  }
+  // Build schema_type_manager_
+  ICING_ASSIGN_OR_RETURN(
+      schema_type_manager_,
+      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
   return libtextclassifier3::Status::OK;
 }
 
@@ -331,7 +481,8 @@ libtextclassifier3::Status SchemaStore::ResetSchemaTypeMapper() {
 }
 
 libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
-  auto schema_proto_or = GetSchema();
+  // Base schema checksum
+  auto schema_proto_or = schema_file_->Read();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
     return Crc32();
   }
@@ -339,11 +490,23 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
   Crc32 schema_checksum;
   schema_checksum.Append(schema_proto->SerializeAsString());
 
+  Crc32 overlay_schema_checksum;
+  if (overlay_schema_file_ != nullptr) {
+    auto schema_proto_or = schema_file_->Read();
+    if (schema_proto_or.ok()) {
+      ICING_ASSIGN_OR_RETURN(schema_proto, schema_proto_or);
+      overlay_schema_checksum.Append(schema_proto->SerializeAsString());
+    }
+  }
+
   ICING_ASSIGN_OR_RETURN(Crc32 schema_type_mapper_checksum,
                          schema_type_mapper_->ComputeChecksum());
 
   Crc32 total_checksum;
   total_checksum.Append(std::to_string(schema_checksum.Get()));
+  if (overlay_schema_file_ != nullptr) {
+    total_checksum.Append(std::to_string(overlay_schema_checksum.Get()));
+  }
   total_checksum.Append(std::to_string(schema_type_mapper_checksum.Get()));
 
   return total_checksum;
@@ -351,6 +514,9 @@ libtextclassifier3::StatusOr<Crc32> SchemaStore::ComputeChecksum() const {
 
 libtextclassifier3::StatusOr<const SchemaProto*> SchemaStore::GetSchema()
     const {
+  if (overlay_schema_file_ != nullptr) {
+    return overlay_schema_file_->Read();
+  }
   return schema_file_->Read();
 }
 
@@ -360,15 +526,19 @@ libtextclassifier3::StatusOr<const SchemaProto*> SchemaStore::GetSchema()
 // SetSchema(SchemaProto&& new_schema)
 libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(const SchemaProto& new_schema,
-                       bool ignore_errors_and_delete_documents) {
-  return SetSchema(SchemaProto(new_schema), ignore_errors_and_delete_documents);
+                       bool ignore_errors_and_delete_documents,
+                       bool allow_circular_schema_definitions) {
+  return SetSchema(SchemaProto(new_schema), ignore_errors_and_delete_documents,
+                   allow_circular_schema_definitions);
 }
 
 libtextclassifier3::StatusOr<const SchemaStore::SetSchemaResult>
 SchemaStore::SetSchema(SchemaProto&& new_schema,
-                       bool ignore_errors_and_delete_documents) {
-  ICING_ASSIGN_OR_RETURN(SchemaUtil::DependentMap new_dependent_map,
-                         SchemaUtil::Validate(new_schema));
+                       bool ignore_errors_and_delete_documents,
+                       bool allow_circular_schema_definitions) {
+  ICING_ASSIGN_OR_RETURN(
+      SchemaUtil::DependentMap new_dependent_map,
+      SchemaUtil::Validate(new_schema, allow_circular_schema_definitions));
 
   SetSchemaResult result;
 
@@ -493,6 +663,10 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
   // Manually set them to the correct paths.
   base_dir_ = std::move(old_base_dir);
   schema_file_->SetSwappedFilepath(MakeSchemaFilename(base_dir_));
+  if (overlay_schema_file_ != nullptr) {
+    overlay_schema_file_->SetSwappedFilepath(
+        MakeOverlaySchemaFilename(base_dir_));
+  }
 
   return libtextclassifier3::Status::OK;
 }
@@ -513,6 +687,19 @@ libtextclassifier3::StatusOr<SchemaTypeId> SchemaStore::GetSchemaTypeId(
     std::string_view schema_type) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return schema_type_mapper_->Get(schema_type);
+}
+
+libtextclassifier3::StatusOr<const std::unordered_set<SchemaTypeId>*>
+SchemaStore::GetSchemaTypeIdsWithChildren(std::string_view schema_type) const {
+  ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
+                         GetSchemaTypeId(schema_type));
+  auto iter = schema_subtype_id_map_.find(schema_type_id);
+  if (iter == schema_subtype_id_map_.end()) {
+    // This should never happen, unless there is an inconsistency or IO error.
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Schema type '", schema_type, "' is not found in the subtype map."));
+  }
+  return &iter->second;
 }
 
 libtextclassifier3::StatusOr<const SectionMetadata*>
@@ -551,9 +738,8 @@ libtextclassifier3::Status SchemaStore::PersistToDisk() {
   ICING_RETURN_IF_ERROR(schema_type_mapper_->PersistToDisk());
   // Write the header
   ICING_ASSIGN_OR_RETURN(Crc32 checksum, ComputeChecksum());
-  ICING_RETURN_IF_ERROR(UpdateHeader(checksum));
-
-  return libtextclassifier3::Status::OK;
+  header_->set_checksum(checksum.Get());
+  return header_->Write(filesystem_, MakeHeaderFilename(base_dir_));
 }
 
 SchemaStoreStorageInfoProto SchemaStore::GetStorageInfo() const {
@@ -589,6 +775,50 @@ SchemaStore::GetSectionMetadata(const std::string& schema_type) const {
   return schema_type_manager_->section_manager().GetMetadataList(schema_type);
 }
 
+bool SchemaStore::IsPropertyDefinedInSchema(
+    SchemaTypeId schema_type_id, const std::string& property_path) const {
+  auto schema_name_itr = reverse_schema_type_mapper_.find(schema_type_id);
+  if (schema_name_itr == reverse_schema_type_mapper_.end()) {
+    return false;
+  }
+  const std::string* current_type_name = &schema_name_itr->second;
+
+  std::vector<std::string_view> property_path_parts =
+      property_util::SplitPropertyPathExpr(property_path);
+  for (int i = 0; i < property_path_parts.size(); ++i) {
+    auto type_config_itr = type_config_map_.find(*current_type_name);
+    if (type_config_itr == type_config_map_.end()) {
+      return false;
+    }
+    std::string_view property_name = property_path_parts.at(i);
+    const PropertyConfigProto* selected_property = nullptr;
+    for (const PropertyConfigProto& property :
+         type_config_itr->second.properties()) {
+      if (property.property_name() == property_name) {
+        selected_property = &property;
+        break;
+      }
+    }
+    if (selected_property == nullptr) {
+      return false;
+    }
+    if (i == property_path_parts.size() - 1) {
+      // We've found a property at the final part of the path.
+      return true;
+    }
+    if (selected_property->data_type() !=
+        PropertyConfigProto::DataType::DOCUMENT) {
+      // If this isn't final part of the path, but this property isn't a
+      // document, so we know that this path doesn't exist.
+      return false;
+    }
+    current_type_name = &selected_property->schema_type();
+  }
+
+  // We should never reach this point.
+  return false;
+}
+
 libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
     const {
   SchemaDebugInfoProto debug_info;
@@ -599,6 +829,56 @@ libtextclassifier3::StatusOr<SchemaDebugInfoProto> SchemaStore::GetDebugInfo()
   ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
   debug_info.set_crc(crc.Get());
   return debug_info;
+}
+
+std::vector<SchemaStore::ExpandedTypePropertyMask>
+SchemaStore::ExpandTypePropertyMasks(
+    const google::protobuf::RepeatedPtrField<TypePropertyMask>& type_property_masks)
+    const {
+  std::unordered_map<SchemaTypeId, ExpandedTypePropertyMask> result_map;
+  for (const TypePropertyMask& type_field_mask : type_property_masks) {
+    if (type_field_mask.schema_type() == kSchemaTypeWildcard) {
+      ExpandedTypePropertyMask entry{type_field_mask.schema_type(),
+                                     /*paths=*/{}};
+      entry.paths.insert(type_field_mask.paths().begin(),
+                         type_field_mask.paths().end());
+      result_map.insert({kInvalidSchemaTypeId, std::move(entry)});
+    } else {
+      auto schema_type_ids_or =
+          GetSchemaTypeIdsWithChildren(type_field_mask.schema_type());
+      // If we can't find the SchemaTypeIds, just throw it away
+      if (!schema_type_ids_or.ok()) {
+        continue;
+      }
+      const std::unordered_set<SchemaTypeId>* schema_type_ids =
+          schema_type_ids_or.ValueOrDie();
+      for (SchemaTypeId schema_type_id : *schema_type_ids) {
+        auto schema_type_name_iter =
+            reverse_schema_type_mapper_.find(schema_type_id);
+        if (schema_type_name_iter == reverse_schema_type_mapper_.end()) {
+          // This should never happen, unless there is an inconsistency or IO
+          // error.
+          ICING_LOG(ERROR) << "Got unknown schema type id: " << schema_type_id;
+          continue;
+        }
+
+        auto iter = result_map.find(schema_type_id);
+        if (iter == result_map.end()) {
+          ExpandedTypePropertyMask entry{schema_type_name_iter->second,
+                                         /*paths=*/{}};
+          iter = result_map.insert({schema_type_id, std::move(entry)}).first;
+        }
+        iter->second.paths.insert(type_field_mask.paths().begin(),
+                                  type_field_mask.paths().end());
+      }
+    }
+  }
+  std::vector<ExpandedTypePropertyMask> result;
+  result.reserve(result_map.size());
+  for (auto& entry : result_map) {
+    result.push_back(std::move(entry.second));
+  }
+  return result;
 }
 
 }  // namespace lib

@@ -28,6 +28,7 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
@@ -56,6 +57,7 @@ using ::testing::Not;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
+using ::testing::UnorderedElementsAre;
 
 constexpr int64_t kDefaultTimestamp = 12345678;
 
@@ -114,7 +116,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
   // Create an instance of SchemaStore.
   SchemaProto schema =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+          .AddType(SchemaTypeConfigBuilder().SetType("type_a").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop1")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -125,7 +127,9 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 expected_checksum,
                              schema_store->ComputeChecksum());
 
@@ -138,7 +142,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
                                     "prop1");
-  EXPECT_THAT(move_constructed_schema_store.GetSectionMetadata("TypeA"),
+  EXPECT_THAT(move_constructed_schema_store.GetSectionMetadata("type_a"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
 }
 
@@ -146,7 +150,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
   // Create an instance of SchemaStore.
   SchemaProto schema1 =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+          .AddType(SchemaTypeConfigBuilder().SetType("type_a").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop1")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -157,14 +161,16 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(schema1));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema1, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 expected_checksum,
                              schema_store->ComputeChecksum());
 
   // Construct another instance of SchemaStore
   SchemaProto schema2 =
       SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("TypeB").AddProperty(
+          .AddType(SchemaTypeConfigBuilder().SetType("type_b").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop2")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
@@ -174,7 +180,9 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> move_assigned_schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema2));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema2, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Move assign the first instance into the second one.
   *move_assigned_schema_store = std::move(*schema_store);
@@ -185,7 +193,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
   SectionMetadata expected_metadata(/*id_in=*/0, TYPE_STRING, TOKENIZER_PLAIN,
                                     TERM_MATCH_EXACT, NUMERIC_MATCH_UNKNOWN,
                                     "prop1");
-  EXPECT_THAT(move_assigned_schema_store->GetSectionMetadata("TypeA"),
+  EXPECT_THAT(move_assigned_schema_store->GetSectionMetadata("type_a"),
               IsOkAndHolds(Pointee(ElementsAre(expected_metadata))));
 }
 
@@ -199,7 +207,9 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
     SchemaStore::SetSchemaResult result;
     result.success = true;
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-    EXPECT_THAT(schema_store->SetSchema(schema_),
+    EXPECT_THAT(schema_store->SetSchema(
+                    schema_, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetSchema());
@@ -237,7 +247,9 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
     SchemaStore::SetSchemaResult result;
     result.success = true;
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-    EXPECT_THAT(schema_store->SetSchema(schema_),
+    EXPECT_THAT(schema_store->SetSchema(
+                    schema_, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetSchema());
@@ -254,9 +266,56 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
       absl_ports::StrCat(schema_store_dir_, "/schema_type_mapper");
   filesystem_.DeleteDirectoryRecursively(schema_type_mapper_dir.c_str());
 
+  InitializeStatsProto initialize_stats;
+  fake_clock_.SetTimerElapsedMilliseconds(123);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          &initialize_stats));
+  EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(initialize_stats.schema_store_recovery_latency_ms(), Eq(123));
+
+  // Everything looks fine, ground truth and derived data
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(schema_));
+  EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+}
+
+TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+    // Set it for the first time
+    SchemaStore::SetSchemaResult result;
+    result.success = true;
+    result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
+    EXPECT_THAT(schema_store->SetSchema(
+                    schema_, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
+                IsOkAndHolds(EqualsSetSchemaResult(result)));
+    ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                               schema_store->GetSchema());
+    EXPECT_THAT(*actual_schema, EqualsProto(schema_));
+
+    EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
+  }
+
+  ICING_ASSERT_OK(
+      SchemaStore::DiscardDerivedFiles(&filesystem_, schema_store_dir_));
+
+  InitializeStatsProto initialize_stats;
+  fake_clock_.SetTimerElapsedMilliseconds(123);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          &initialize_stats));
+  EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(initialize_stats.schema_store_recovery_latency_ms(), Eq(123));
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -275,7 +334,9 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
     SchemaStore::SetSchemaResult result;
     result.success = true;
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-    EXPECT_THAT(schema_store->SetSchema(schema_),
+    EXPECT_THAT(schema_store->SetSchema(
+                    schema_, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetSchema());
@@ -289,7 +350,7 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
   // of derived files from ground truth.
   const std::string header_file =
       absl_ports::StrCat(schema_store_dir_, "/schema_store_header");
-  SchemaStore::Header header;
+  SchemaStore::LegacyHeader header;
   header.magic = SchemaStore::Header::kMagic;
   header.checksum = 10;  // Arbitrary garbage checksum
   filesystem_.DeleteFile(header_file.c_str());
@@ -348,7 +409,9 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   schema_store.reset();
@@ -374,7 +437,9 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Verify that our in-memory structures are ok
@@ -419,7 +484,9 @@ TEST_F(SchemaStoreTest, SetNewSchemaOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -435,7 +502,9 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -444,7 +513,9 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   // And one more for fun
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
@@ -459,7 +530,9 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -473,7 +546,9 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
   result.success = false;
   result.schema_types_deleted_by_name.emplace("email");
   result.schema_types_deleted_by_id.emplace(0);
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 }
 
@@ -490,7 +565,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert("email");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -505,7 +582,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_new_by_name.insert("new_type");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
@@ -527,7 +606,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
   result.success = true;
   result.schema_types_new_by_name.insert("email");
   result.schema_types_new_by_name.insert("message");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -552,7 +633,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
       old_email_schema_type_id);
 
   // Can't set the incompatible schema
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(incompatible_result)));
 
   SchemaStore::SetSchemaResult force_result;
@@ -563,7 +646,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
 
   // Force set the incompatible schema
   EXPECT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true),
+                  schema, /*ignore_errors_and_delete_documents=*/true,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(force_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
@@ -585,7 +669,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
   result.success = true;
   result.schema_types_new_by_name.insert("email");
   result.schema_types_new_by_name.insert("message");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -606,7 +692,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
       1);  // Old SchemaTypeId of "message"
 
   // Set the compatible schema
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
@@ -631,7 +719,9 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert("email");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -650,7 +740,9 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_index_incompatible_by_name.insert("email");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
@@ -698,8 +790,11 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   result.success = true;
   result.schema_types_new_by_name.insert("email");
   result.schema_types_new_by_name.insert("person");
-  EXPECT_THAT(schema_store->SetSchema(no_nested_index_schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(no_nested_index_schema,
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false),
+      IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
@@ -709,8 +804,11 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_index_incompatible_by_name.insert("person");
-  EXPECT_THAT(schema_store->SetSchema(nested_index_schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(nested_index_schema,
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false),
+      IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(nested_index_schema));
 
@@ -719,8 +817,11 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_index_incompatible_by_name.insert("person");
-  EXPECT_THAT(schema_store->SetSchema(no_nested_index_schema),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(no_nested_index_schema,
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false),
+      IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
 }
@@ -744,7 +845,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
   SchemaStore::SetSchemaResult result;
   result.success = true;
   result.schema_types_new_by_name.insert("email");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -770,7 +873,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
       old_email_schema_type_id);
 
   // Can't set the incompatible schema
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(incompatible_result)));
 
   SchemaStore::SetSchemaResult force_result;
@@ -781,7 +886,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
 
   // Force set the incompatible schema
   EXPECT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true),
+                  schema, /*ignore_errors_and_delete_documents=*/true,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(force_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
@@ -803,7 +909,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
                   .SetCardinality(CARDINALITY_REPEATED));
   SchemaProto old_schema =
       SchemaBuilder().AddType(contact_point_repeated_label).Build();
-  ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_contact_point_type_id,
                              schema_store->GetSchemaTypeId("ContactPoint"));
 
@@ -839,7 +947,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
   expected_result.schema_types_new_by_name.insert("Person");
   EXPECT_THAT(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/false),
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -850,7 +959,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
   expected_result.success = true;
   EXPECT_THAT(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true),
+                              /*ignore_errors_and_delete_documents=*/true,
+                              /*allow_circular_schema_definitions=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
@@ -873,7 +983,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
                   .SetCardinality(CARDINALITY_REPEATED));
   SchemaProto old_schema =
       SchemaBuilder().AddType(contact_point_prefix_label).Build();
-  ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // 2. Create a type that references the ContactPoint type and make a index
   // backwards incompatible change to ContactPoint
@@ -905,7 +1017,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
   expected_result.schema_types_new_by_name.insert("Person");
   EXPECT_THAT(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/false),
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -928,7 +1041,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
                   .SetCardinality(CARDINALITY_OPTIONAL));
   SchemaProto old_schema =
       SchemaBuilder().AddType(contact_point_optional_label).Build();
-  ICING_EXPECT_OK(schema_store->SetSchema(old_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // 2. Create a type that references the ContactPoint type and make a backwards
   // compatible change to ContactPoint
@@ -960,7 +1075,8 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
       "ContactPoint");
   expected_result.schema_types_new_by_name.insert("Person");
   EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/false),
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetSchema());
@@ -988,7 +1104,9 @@ TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   result.success = true;
   result.schema_types_new_by_name.insert(first_type);
   result.schema_types_new_by_name.insert(second_type);
-  EXPECT_THAT(schema_store->SetSchema(schema_),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema_, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   EXPECT_THAT(schema_store->GetSchemaTypeId(first_type), IsOkAndHolds(0));
@@ -1012,7 +1130,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameBetweenCalls) {
   SchemaProto foo_schema =
       SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(foo_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      foo_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
 
@@ -1028,7 +1148,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumSameAcrossInstances) {
   SchemaProto foo_schema =
       SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(foo_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      foo_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
 
@@ -1049,7 +1171,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
   SchemaProto foo_schema =
       SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(foo_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      foo_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, schema_store->ComputeChecksum());
 
@@ -1060,7 +1184,9 @@ TEST_F(SchemaStoreTest, ComputeChecksumChangesOnModification) {
           .AddType(SchemaTypeConfigBuilder().SetType("bar"))
           .Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(foo_bar_schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      foo_bar_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   EXPECT_THAT(schema_store->ComputeChecksum(), IsOkAndHolds(Not(Eq(checksum))));
 }
@@ -1082,7 +1208,9 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
   SchemaProto schema =
       SchemaBuilder().AddType(SchemaTypeConfigBuilder().SetType("foo")).Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Persisting shouldn't change anything
   ICING_EXPECT_OK(schema_store->PersistToDisk());
@@ -1095,7 +1223,9 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
   schema = SchemaBuilder(schema)
                .AddType(SchemaTypeConfigBuilder().SetType("bar"))
                .Build();
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Should also persist on destruction
   schema_store.reset();
@@ -1138,7 +1268,9 @@ TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
   result.success = true;
   result.schema_types_new_by_name.insert("email");
   result.schema_types_new_by_name.insert("fullSectionsType");
-  EXPECT_THAT(schema_store->SetSchema(schema),
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   SchemaStoreStorageInfoProto storage_info = schema_store->GetStorageInfo();
@@ -1155,7 +1287,9 @@ TEST_F(SchemaStoreTest, GetDebugInfo) {
 
   // Set schema
   ASSERT_THAT(
-      schema_store->SetSchema(schema_),
+      schema_store->SetSchema(schema_,
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(SchemaStore::SetSchemaResult{
           .success = true,
           .schema_types_new_by_name = {schema_.types(0).schema_type()}})));
@@ -1191,7 +1325,9 @@ TEST_F(SchemaStoreTest, InitializeRegenerateDerivedFilesFailure) {
     SchemaProto schema = SchemaBuilder()
                              .AddType(SchemaTypeConfigBuilder().SetType("Type"))
                              .Build();
-    ICING_ASSERT_OK(schema_store->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   auto mock_filesystem = std::make_unique<MockFilesystem>();
@@ -1226,7 +1362,9 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
     SchemaProto schema = SchemaBuilder().AddType(type).Build();
-    ICING_ASSERT_OK(schema_store->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   {
@@ -1244,8 +1382,11 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
             .AddType(type)
             .AddType(SchemaTypeConfigBuilder().SetType("Type2"))
             .Build();
-    EXPECT_THAT(schema_store->SetSchema(std::move(schema)),
-                StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+    EXPECT_THAT(
+        schema_store->SetSchema(std::move(schema),
+                                /*ignore_errors_and_delete_documents=*/false,
+                                /*allow_circular_schema_definitions=*/false),
+        StatusIs(libtextclassifier3::StatusCode::INTERNAL));
     DocumentProto document =
         DocumentBuilder()
             .SetSchema("Type")
@@ -1270,6 +1411,1186 @@ TEST_F(SchemaStoreTest, SetSchemaRegenerateDerivedFilesFailure) {
                 Eq(expected_int_prop1_metadata));
     EXPECT_THAT(section_group.integer_sections.at(0).content,
                 ElementsAre(1, 2, 3));
+  }
+}
+
+TEST_F(SchemaStoreTest, CanCheckForPropertiesDefinedInSchema) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Set it for the first time
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
+
+  // Don't use schema_ defined in the test suite, as we want to make sure that
+  // the test is written correctly without referring to what the suite has
+  // defined.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("email")
+                  .AddProperty(
+                      // Add an indexed property so we generate
+                      // section metadata on it
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("timestamp")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  EXPECT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(result)));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId schema_id,
+                             schema_store->GetSchemaTypeId("email"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(schema_id, "subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(schema_id, "timestamp"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(schema_id, "foobar"));
+}
+
+TEST_F(SchemaStoreTest, GetSchemaTypeIdsWithChildren) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Create a schema with the following inheritance relation:
+  //       A
+  //     /   \
+  //    B     E
+  //   /  \
+  //  C    D
+  //       |
+  //       F
+  SchemaTypeConfigProto type_a = SchemaTypeConfigBuilder().SetType("A").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").AddParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder().SetType("C").AddParentType("B").Build();
+  SchemaTypeConfigProto type_d =
+      SchemaTypeConfigBuilder().SetType("D").AddParentType("B").Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder().SetType("E").AddParentType("A").Build();
+  SchemaTypeConfigProto type_f =
+      SchemaTypeConfigBuilder().SetType("F").AddParentType("D").Build();
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_a)
+                           .AddType(type_b)
+                           .AddType(type_c)
+                           .AddType(type_d)
+                           .AddType(type_e)
+                           .AddType(type_f)
+                           .Build();
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Get schema type id for each type.
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_a_id,
+                             schema_store->GetSchemaTypeId("A"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_b_id,
+                             schema_store->GetSchemaTypeId("B"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_c_id,
+                             schema_store->GetSchemaTypeId("C"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_d_id,
+                             schema_store->GetSchemaTypeId("D"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_e_id,
+                             schema_store->GetSchemaTypeId("E"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_f_id,
+                             schema_store->GetSchemaTypeId("F"));
+
+  // Check the results from GetSchemaTypeIdsWithChildren
+  EXPECT_THAT(
+      schema_store->GetSchemaTypeIdsWithChildren("A"),
+      IsOkAndHolds(Pointee(UnorderedElementsAre(
+          type_a_id, type_b_id, type_c_id, type_d_id, type_e_id, type_f_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("B"),
+              IsOkAndHolds(Pointee(UnorderedElementsAre(
+                  type_b_id, type_c_id, type_d_id, type_f_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("C"),
+              IsOkAndHolds(Pointee(UnorderedElementsAre(type_c_id))));
+  EXPECT_THAT(
+      schema_store->GetSchemaTypeIdsWithChildren("D"),
+      IsOkAndHolds(Pointee(UnorderedElementsAre(type_d_id, type_f_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("E"),
+              IsOkAndHolds(Pointee(UnorderedElementsAre(type_e_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("F"),
+              IsOkAndHolds(Pointee(UnorderedElementsAre(type_f_id))));
+}
+
+TEST_F(SchemaStoreTest, DiamondGetSchemaTypeIdsWithChildren) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // Create a schema with the following inheritance relation:
+  //       A
+  //     /   \
+  //    B     E
+  //   /  \  /
+  //  C    D
+  //   \  /
+  //     F
+  SchemaTypeConfigProto type_a = SchemaTypeConfigBuilder().SetType("A").Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder().SetType("B").AddParentType("A").Build();
+  SchemaTypeConfigProto type_c =
+      SchemaTypeConfigBuilder().SetType("C").AddParentType("B").Build();
+  SchemaTypeConfigProto type_d = SchemaTypeConfigBuilder()
+                                     .SetType("D")
+                                     .AddParentType("B")
+                                     .AddParentType("E")
+                                     .Build();
+  SchemaTypeConfigProto type_e =
+      SchemaTypeConfigBuilder().SetType("E").AddParentType("A").Build();
+  SchemaTypeConfigProto type_f = SchemaTypeConfigBuilder()
+                                     .SetType("F")
+                                     .AddParentType("C")
+                                     .AddParentType("D")
+                                     .Build();
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(type_a)
+                           .AddType(type_b)
+                           .AddType(type_c)
+                           .AddType(type_d)
+                           .AddType(type_e)
+                           .AddType(type_f)
+                           .Build();
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Get schema type id for each type.
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_a_id,
+                             schema_store->GetSchemaTypeId("A"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_b_id,
+                             schema_store->GetSchemaTypeId("B"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_c_id,
+                             schema_store->GetSchemaTypeId("C"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_d_id,
+                             schema_store->GetSchemaTypeId("D"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_e_id,
+                             schema_store->GetSchemaTypeId("E"));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId type_f_id,
+                             schema_store->GetSchemaTypeId("F"));
+
+  // Check the results from GetSchemaTypeIdsWithChildren
+  EXPECT_THAT(
+      schema_store->GetSchemaTypeIdsWithChildren("A"),
+      IsOkAndHolds(Pointee(UnorderedElementsAre(
+          type_a_id, type_b_id, type_c_id, type_d_id, type_e_id, type_f_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("B"),
+              IsOkAndHolds(Pointee(UnorderedElementsAre(
+                  type_b_id, type_c_id, type_d_id, type_f_id))));
+  EXPECT_THAT(
+      schema_store->GetSchemaTypeIdsWithChildren("C"),
+      IsOkAndHolds(Pointee(UnorderedElementsAre(type_c_id, type_f_id))));
+  EXPECT_THAT(
+      schema_store->GetSchemaTypeIdsWithChildren("D"),
+      IsOkAndHolds(Pointee(UnorderedElementsAre(type_d_id, type_f_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("E"),
+              IsOkAndHolds(Pointee(
+                  UnorderedElementsAre(type_e_id, type_d_id, type_f_id))));
+  EXPECT_THAT(schema_store->GetSchemaTypeIdsWithChildren("F"),
+              IsOkAndHolds(Pointee(UnorderedElementsAre(type_f_id))));
+}
+
+TEST_F(SchemaStoreTest, IndexableFieldsAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("senderQualifiedId")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("recipients")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_REPEATED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("recipientIds")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REPEATED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(email_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeEmailSchemaId = 0;
+
+  // Indexables.
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId, "subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "senderQualifiedId"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "recipients"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "recipientIds"));
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId, "timestamp"));
+}
+
+TEST_F(SchemaStoreTest, JoinableFieldsAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        /*propagate_delete=*/true)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("senderQualifiedId")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(email_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeEmailSchemaId = 0;
+
+  // Joinables.
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "tagQualifiedId"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "senderQualifiedId"));
+}
+
+TEST_F(SchemaStoreTest, NonIndexableFieldsAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("attachment")
+                           .SetDataType(TYPE_BYTES)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("nonindexableInteger")
+                           .SetDataType(TYPE_INT64)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(email_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeEmailSchemaId = 0;
+
+  // Non-indexables.
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "attachment"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                      "nonindexableInteger"));
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId, "text"));
+}
+
+TEST_F(SchemaStoreTest, NonExistentFieldsAreUndefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("senderQualifiedId")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/true)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("nonindexableInteger")
+                           .SetDataType(TYPE_INT64)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(email_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeEmailSchemaId = 0;
+
+  // Non-existents.
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId, "foobar"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId,
+                                                       "timestamp.foo"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeEmailSchemaId, "time"));
+}
+
+TEST_F(SchemaStoreTest, NestedIndexableFieldsAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        /*propagate_delete=*/true)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaTypeConfigProto conversation_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Conversation")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("emails")
+                           .SetDataTypeDocument(
+                               "Email", /*index_nested_properties=*/true)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nestedNonIndexable")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(conversation_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeConversationSchemaId = 1;
+
+  // Indexables.
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeConversationSchemaId,
+                                                      "emails.subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeConversationSchemaId,
+                                                      "emails.timestamp"));
+}
+
+TEST_F(SchemaStoreTest, NestedJoinableFieldsAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        /*propagate_delete=*/true)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaTypeConfigProto conversation_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Conversation")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("emails")
+                           .SetDataTypeDocument(
+                               "Email", /*index_nested_properties=*/true)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nestedNonIndexable")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(conversation_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeConversationSchemaId = 1;
+
+  // Joinables.
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeConversationSchemaId,
+                                                      "emails.tagQualifiedId"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "nestedNonIndexable.tagQualifiedId"));
+}
+
+TEST_F(SchemaStoreTest, NestedNonIndexableFieldsAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        /*propagate_delete=*/true)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaTypeConfigProto conversation_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Conversation")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("emails")
+                           .SetDataTypeDocument(
+                               "Email", /*index_nested_properties=*/true)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nestedNonIndexable")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(conversation_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeConversationSchemaId = 1;
+
+  // Non-indexables.
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeConversationSchemaId,
+                                                      "emails.text"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "nestedNonIndexable.subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "nestedNonIndexable.text"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "nestedNonIndexable.timestamp"));
+}
+
+TEST_F(SchemaStoreTest, NestedNonExistentFieldsAreUndefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        /*propagate_delete=*/true)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaTypeConfigProto conversation_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Conversation")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("emails")
+                           .SetDataTypeDocument(
+                               "Email", /*index_nested_properties=*/true)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nestedNonIndexable")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(conversation_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeConversationSchemaId = 1;
+
+  // Non-existents.
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "emails.foobar"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "nestedNonIndexable.foobar"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "emails.timestamp.foo"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(
+      kTypeConversationSchemaId, "emails.time"));
+}
+
+TEST_F(SchemaStoreTest, IntermediateDocumentPropertiesAreDefined) {
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        /*propagate_delete=*/true)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("timestamp")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaTypeConfigProto conversation_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Conversation")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("emails")
+                           .SetDataTypeDocument(
+                               "Email", /*index_nested_properties=*/true)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("nestedNonIndexable")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(conversation_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeConversationSchemaId = 1;
+
+  // Intermediate documents props.
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeConversationSchemaId,
+                                                      "emails"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeConversationSchemaId,
+                                                      "nestedNonIndexable"));
+}
+
+TEST_F(SchemaStoreTest, CyclePathsAreDefined) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeASchemaId = 0;
+  constexpr SchemaTypeId kTypeBSchemaId = 1;
+
+  // A's top-level properties
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b"));
+
+  // A's nested properties in B
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.body"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.a"));
+
+  // A's nested properties in B's nested property in A
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.a.subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.a.b"));
+
+  // B's top-level properties
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "body"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a"));
+
+  // B's nested properties in A
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.subject"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.b"));
+
+  // B's nested properties in A's nested property in B
+  EXPECT_TRUE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.b.body"));
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.b.a"));
+}
+
+TEST_F(SchemaStoreTest, WrongTypeCyclePathsAreUndefined) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeASchemaId = 0;
+  constexpr SchemaTypeId kTypeBSchemaId = 1;
+
+  // The same paths as above, but we check the wrong types instead.
+  // A's top-level properties
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "subject"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "b"));
+
+  // A's nested properties in B
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "b.body"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "b.a"));
+
+  // A's nested properties in B's nested property in A
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "b.a.subject"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "b.a.b"));
+
+  // B's top-level properties
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "body"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "a"));
+
+  // B's nested properties in A
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "a.subject"));
+  EXPECT_FALSE(schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "a.b"));
+
+  // B's nested properties in A's nested property in B
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "a.b.body"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "a.b.a"));
+}
+
+TEST_F(SchemaStoreTest, CyclePathsNonexistentPropertiesAreUndefined) {
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("A")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("B")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/true));
+  constexpr SchemaTypeId kTypeASchemaId = 0;
+  constexpr SchemaTypeId kTypeBSchemaId = 1;
+
+  // Undefined paths in A
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.subject"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.a.body"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.a.a"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeASchemaId, "b.a.subject.b"));
+
+  // Undefined paths in B
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.body"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.b.subject"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.b.b"));
+  EXPECT_FALSE(
+      schema_store->IsPropertyDefinedInSchema(kTypeBSchemaId, "a.b.body.a"));
+}
+
+TEST_F(SchemaStoreTest, LoadsOverlaySchemaOnInit) {
+  // Create a schema that is rollback incompatible and will trigger us to create
+  // an overlay schema.
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("type_b")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+
+    // The overlay should exist
+    std::string overlay_schema_path = schema_store_dir_ + "/overlay_schema.pb";
+    ASSERT_TRUE(filesystem_.FileExists(overlay_schema_path.c_str()));
+
+    // The base schema should hold a compatible schema
+    SchemaTypeConfigProto modified_type_a =
+        SchemaTypeConfigBuilder()
+            .SetType("type_a")
+            .AddProperty(indexed_string_property_builder.SetName("prop0"))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("propRfc")
+                             .SetCardinality(CARDINALITY_OPTIONAL)
+                             .SetDataType(TYPE_STRING))
+            .Build();
+    SchemaProto expected_base_schema =
+        SchemaBuilder().AddType(modified_type_a).AddType(type_b).Build();
+    std::string base_schema_path = schema_store_dir_ + "/schema.pb";
+    auto base_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
+        filesystem_, base_schema_path);
+    ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* base_schema,
+                               base_schema_file_->Read());
+    EXPECT_THAT(*base_schema, EqualsProto(expected_base_schema));
+  }
+}
+
+TEST_F(SchemaStoreTest, LoadsBaseSchemaWithNoOverlayOnInit) {
+  // Create a normal schema that won't require an overlay.
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("type_b")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  {
+    // Create a new instance of the schema store and check that the same schema
+    // is present.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+
+    // Additionally, the overlay should not exist
+    std::string overlay_schema_path = schema_store_dir_ + "/overlay_schema.pb";
+    ASSERT_FALSE(filesystem_.FileExists(overlay_schema_path.c_str()));
+  }
+}
+
+TEST_F(SchemaStoreTest, LoadSchemaBackupSchemaMissing) {
+  // Create a schema that is rollback incompatible and will trigger us to create
+  // a backup schema.
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("type_b")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Delete the backup schema.
+  std::string backup_schema_path = schema_store_dir_ + "/schema.pb";
+  ASSERT_TRUE(filesystem_.DeleteFile(backup_schema_path.c_str()));
+
+  {
+    // Create a new instance of the schema store and check that it fails because
+    // the backup schema is not available.
+    EXPECT_THAT(
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
+        StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(SchemaStoreTest, LoadSchemaOverlaySchemaMissing) {
+  // Create a schema that is rollback incompatible and will trigger us to create
+  // a backup schema.
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("type_b")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Delete the overlay schema.
+  std::string overlay_schema_path = schema_store_dir_ + "/overlay_schema.pb";
+  ASSERT_TRUE(filesystem_.DeleteFile(overlay_schema_path.c_str()));
+
+  {
+    // Create a new instance of the schema store and check that it fails because
+    // the overlay schema is not available when we expected it to be.
+    EXPECT_THAT(
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
+        StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(SchemaStoreTest, LoadSchemaHeaderMissing) {
+  // Create a schema that is rollback incompatible and will trigger us to create
+  // a backup schema.
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("type_b")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Delete the overlay schema.
+  std::string schema_header_path = schema_store_dir_ + "/schema_store_header";
+  ASSERT_TRUE(filesystem_.DeleteFile(schema_header_path.c_str()));
+
+  {
+    // Create a new of the schema store and check that the same schema is
+    // present.
+    EXPECT_THAT(
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
+        StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  }
+}
+
+TEST_F(SchemaStoreTest, LoadSchemaNoOverlayHeaderMissing) {
+  // Create a normal schema that won't require a backup.
+  PropertyConfigBuilder indexed_string_property_builder =
+      PropertyConfigBuilder()
+          .SetCardinality(CARDINALITY_OPTIONAL)
+          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN);
+  SchemaTypeConfigProto type_a =
+      SchemaTypeConfigBuilder()
+          .SetType("type_a")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("propRfc")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto type_b =
+      SchemaTypeConfigBuilder()
+          .SetType("type_b")
+          .AddProperty(indexed_string_property_builder.SetName("prop0"))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(type_a).AddType(type_b).Build();
+
+  {
+    // Create an instance of the schema store and set the schema.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
+
+    EXPECT_THAT(schema_store->GetSchema(),
+                IsOkAndHolds(Pointee(EqualsProto(schema))));
+  }
+
+  // Delete the schema header.
+  std::string schema_header_path = schema_store_dir_ + "/schema_store_header";
+  ASSERT_TRUE(filesystem_.DeleteFile(schema_header_path.c_str()));
+
+  {
+    // Create a new instance of the schema store and check that it fails because
+    // the schema header (which is now a part of the ground truth) is not
+    // available.
+    EXPECT_THAT(
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_),
+        StatusIs(libtextclassifier3::StatusCode::INTERNAL));
   }
 }
 

@@ -54,10 +54,8 @@ TEST_F(LanguageSegmenterIteratorTest, AdvanceAndGetTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          "foo bar", LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
+                             language_segmenter->Segment("foo bar"));
 
   EXPECT_TRUE(iterator->Advance());
   EXPECT_THAT(iterator->GetTerm(), Eq("foo"));
@@ -78,10 +76,8 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          "foo bar", LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
+                             language_segmenter->Segment("foo bar"));
 
   EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/0),
               IsOkAndHolds(3));  // The term " "
@@ -98,10 +94,8 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          "foo bar", LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
+                             language_segmenter->Segment("foo bar"));
 
   EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/-1), IsOk());
 
@@ -119,10 +113,7 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          text, LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
   EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/text.length()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -136,10 +127,7 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          text, LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
   EXPECT_THAT(iterator->ResetToTermStartingAfterUtf32(/*offset=*/100),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -152,10 +140,8 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          "foo bar", LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
+                             language_segmenter->Segment("foo bar"));
 
   EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/6),
               IsOkAndHolds(3));  // The term " "
@@ -172,10 +158,8 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          "foo bar", LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
+                             language_segmenter->Segment("foo bar"));
 
   // Zero is a valid argument, but there aren't any terms that end before it.
   EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/0),
@@ -189,10 +173,8 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          "foo bar", LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator,
+                             language_segmenter->Segment("foo bar"));
 
   EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -209,10 +191,7 @@ TEST_F(LanguageSegmenterIteratorTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
       language_segmenter_factory::Create(std::move(options)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto iterator,
-      language_segmenter->Segment(
-          text, LanguageSegmenter::AccessType::kBidirectionalIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto iterator, language_segmenter->Segment(text));
 
   EXPECT_THAT(iterator->ResetToTermEndingBeforeUtf32(/*offset=*/text.length()),
               IsOk());
