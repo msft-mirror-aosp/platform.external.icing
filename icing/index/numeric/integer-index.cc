@@ -293,6 +293,10 @@ libtextclassifier3::Status IntegerIndex::Optimize(
                                /*max_file_size=*/kMetadataFileSize,
                                /*pre_mapping_file_offset=*/0,
                                /*pre_mapping_mmap_size=*/kMetadataFileSize));
+  if (metadata_mmapped_file.available_size() != kMetadataFileSize) {
+    return absl_ports::InternalError(
+        "Invalid metadata file size after Optimize");
+  }
   metadata_mmapped_file_ =
       std::make_unique<MemoryMappedFile>(std::move(metadata_mmapped_file));
 
@@ -410,6 +414,9 @@ IntegerIndex::InitializeExistingFiles(const Filesystem& filesystem,
                                /*max_file_size=*/kMetadataFileSize,
                                /*pre_mapping_file_offset=*/0,
                                /*pre_mapping_mmap_size=*/kMetadataFileSize));
+  if (metadata_mmapped_file.available_size() != kMetadataFileSize) {
+    return absl_ports::FailedPreconditionError("Incorrect metadata file size");
+  }
 
   auto posting_list_serializer =
       std::make_unique<PostingListIntegerIndexSerializer>();

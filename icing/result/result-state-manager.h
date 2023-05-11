@@ -24,10 +24,9 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -61,6 +60,10 @@ class ResultStateManager {
   // result states if exceeding the cache size limit. next_page_token will be
   // set to a default value kInvalidNextPageToken if there're no more pages.
   //
+  // NOTE: parent_adjustment_info and child_adjustment_info can be nullptr if
+  //       there is no requirement to apply adjustment (snippet, projection) to
+  //       them.
+  //
   // NOTE: it is possible to have empty result for the first page even if the
   //       ranker was not empty before the retrieval, since GroupResultLimiter
   //       may filter out all docs. In this case, the first page is also the
@@ -70,14 +73,12 @@ class ResultStateManager {
   //   A token and PageResult wrapped by std::pair on success
   //   INVALID_ARGUMENT if the input ranker is null or contains no results
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
-  CacheAndRetrieveFirstPage(std::unique_ptr<ScoredDocumentHitsRanker> ranker,
-                            SectionRestrictQueryTermsMap query_terms,
-                            const SearchSpecProto& search_spec,
-                            const ScoringSpecProto& scoring_spec,
-                            const ResultSpecProto& result_spec,
-                            const DocumentStore& document_store,
-                            const ResultRetrieverV2& result_retriever)
-      ICING_LOCKS_EXCLUDED(mutex_);
+  CacheAndRetrieveFirstPage(
+      std::unique_ptr<ScoredDocumentHitsRanker> ranker,
+      std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
+      std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
+      const ResultSpecProto& result_spec, const DocumentStore& document_store,
+      const ResultRetrieverV2& result_retriever) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves and returns PageResult for the next page.
   // The returned results won't exist in ResultStateManager anymore. If the

@@ -27,9 +27,7 @@
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/schema-builder.h"
@@ -173,9 +171,6 @@ class ResultRetrieverV2Test : public ::testing::Test {
   FakeClock fake_clock_;
 };
 
-// TODO(sungyc): Refactor helper functions below (builder classes or common test
-//               utility).
-
 DocumentProto CreateDocument(int id) {
   return DocumentBuilder()
       .SetKey("icing", "Email/" + std::to_string(id))
@@ -194,25 +189,23 @@ SectionIdMask CreateSectionIdMask(const std::vector<SectionId>& section_ids) {
   return mask;
 }
 
-SearchSpecProto CreateSearchSpec(TermMatchType::Code match_type) {
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(match_type);
-  return search_spec;
-}
-
-ScoringSpecProto CreateScoringSpec(bool is_descending_order) {
-  ScoringSpecProto scoring_spec;
-  scoring_spec.set_order_by(is_descending_order ? ScoringSpecProto::Order::DESC
-                                                : ScoringSpecProto::Order::ASC);
-  return scoring_spec;
-}
-
 ResultSpecProto CreateResultSpec(
     int num_per_page, ResultSpecProto::ResultGroupingType result_group_type) {
   ResultSpecProto result_spec;
   result_spec.set_result_group_type(result_group_type);
   result_spec.set_num_per_page(num_per_page);
   return result_spec;
+}
+
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
 }
 
 TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
@@ -223,8 +216,8 @@ TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -245,8 +238,8 @@ TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
 TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -295,8 +288,7 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *doc_store);
 
@@ -339,8 +331,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -375,8 +367,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
       *doc_store);
   PageResult page_result1 =
@@ -394,8 +385,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
       *doc_store);
   PageResult page_result2 =
@@ -413,8 +403,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&mock_filesystem, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&mock_filesystem, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -445,8 +435,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *doc_store);
   PageResult page_result =
@@ -459,8 +448,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
 TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -494,8 +483,7 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *doc_store);
 
@@ -545,8 +533,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
 TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -567,9 +555,7 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1),
               /*is_descending=*/true),
-          /*query_terms=*/SectionRestrictQueryTermsMap{},
-          CreateSearchSpec(TermMatchType::EXACT_ONLY),
-          CreateScoringSpec(/*is_descending_order=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           *doc_store);
   {
@@ -595,9 +581,7 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
-          /*query_terms=*/SectionRestrictQueryTermsMap{},
-          CreateSearchSpec(TermMatchType::EXACT_ONLY),
-          CreateScoringSpec(/*is_descending_order=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
           *doc_store);
   {
@@ -648,8 +632,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
 TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -684,8 +668,8 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
 
   // First page. Only result1 should be returned, since its byte size meets
   // num_total_bytes_per_page_threshold and ResultRetriever should terminate
@@ -708,8 +692,8 @@ TEST_F(ResultRetrieverV2Test,
        ShouldReturnSingleLargeResultAboveNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -747,8 +731,8 @@ TEST_F(ResultRetrieverV2Test,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
 
   // First page. Should return single result1 even though its byte size exceeds
   // num_total_bytes_per_page_threshold.
@@ -770,8 +754,8 @@ TEST_F(ResultRetrieverV2Test,
        ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                            schema_store_.get()));
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -809,8 +793,8 @@ TEST_F(ResultRetrieverV2Test,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
-      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
 
   // After retrieving result1, total bytes are still below the threshold and #
   // of results is still below num_per_page, so ResultRetriever should continue

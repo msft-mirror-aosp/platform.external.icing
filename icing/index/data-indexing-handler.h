@@ -50,9 +50,10 @@ class DataIndexingHandler {
   //                     nullptr.
   //
   /// Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
-  //     document_id of a previously indexed document in non recovery mode
+  //   - OK on success.
+  //   - INVALID_ARGUMENT_ERROR if document_id is invalid OR document_id is less
+  //     than or equal to the document_id of a previously indexed document in
+  //     non recovery mode.
   //   - Any other errors. It depends on each implementation.
   virtual libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,

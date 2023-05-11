@@ -33,11 +33,13 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   explicit ScoringVisitor(double default_score,
                           const DocumentStore* document_store,
                           const SchemaStore* schema_store,
+                          SectionWeights* section_weights,
                           Bm25fCalculator* bm25f_calculator,
                           const JoinChildrenFetcher* join_children_fetcher)
       : default_score_(default_score),
         document_store_(*document_store),
         schema_store_(*schema_store),
+        section_weights_(*section_weights),
         bm25f_calculator_(*bm25f_calculator),
         join_children_fetcher_(join_children_fetcher) {}
 
@@ -88,6 +90,7 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   double default_score_;
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
+  SectionWeights& section_weights_;
   Bm25fCalculator& bm25f_calculator_;
   // A non-null join_children_fetcher_ indicates scoring in a join.
   const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
