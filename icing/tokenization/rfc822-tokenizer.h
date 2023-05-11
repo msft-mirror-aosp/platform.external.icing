@@ -17,7 +17,6 @@
 
 #include <vector>
 
-#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer.h"
 
 namespace icing {
@@ -26,7 +25,7 @@ namespace lib {
 class Rfc822Tokenizer : public Tokenizer {
  public:
   libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>> Tokenize(
-      std::string_view text, LanguageSegmenter::AccessType) const override;
+      std::string_view text) const override;
 
   libtextclassifier3::StatusOr<std::vector<Token>> TokenizeAll(
       std::string_view text) const override;
