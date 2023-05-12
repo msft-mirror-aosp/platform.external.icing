@@ -33,8 +33,7 @@ class PlainTokenizer : public Tokenizer {
       : language_segmenter_(*language_segmenter) {}
 
   libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>> Tokenize(
-      std::string_view text,
-      LanguageSegmenter::AccessType access_type) const override;
+      std::string_view text) const override;
 
   libtextclassifier3::StatusOr<std::vector<Token>> TokenizeAll(
       std::string_view text) const override;

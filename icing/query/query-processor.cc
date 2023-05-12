@@ -346,7 +346,6 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
         break;
       }
       case Token::Type::INVALID:
-        ICING_LOG(ERROR) << "INVALID";
         [[fallthrough]];
       default:
         // This wouldn't happen if tokenizer and query processor both work

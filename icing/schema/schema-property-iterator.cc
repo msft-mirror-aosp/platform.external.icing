@@ -58,9 +58,13 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
 
     if (parent_type_config_names_.count(
             nested_type_config_iter->second.schema_type()) > 0) {
-      // Cycle detected. Abort the iteration.
-      return absl_ports::InvalidArgumentError(
-          "Detect nested schema cycle dependency");
+      // Cycle detected. The schema definition is guaranteed to be valid here
+      // since it must have already been validated during SchemaUtil::Validate,
+      // which would have rejected any schema with bad cycles.
+      //
+      // We do not need to iterate this type further so we simply move on to
+      // other properties in the parent type.
+      continue;
     }
 
     std::string curr_property_path = levels_.back().GetCurrentPropertyPath();
