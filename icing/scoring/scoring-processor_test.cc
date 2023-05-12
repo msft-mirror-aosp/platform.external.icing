@@ -93,7 +93,9 @@ class ScoringProcessorTest
                                  .SetDataType(TYPE_STRING)
                                  .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        test_email_schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   void TearDown() override {

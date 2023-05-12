@@ -48,6 +48,16 @@ class MainIndex {
       const std::string& index_directory, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
+  // Reads magic from existing flash index storage file header. We need this
+  // during Icing initialization phase to determine the version.
+  //
+  // RETURNS:
+  //   - On success, a valid magic.
+  //   - NOT_FOUND if the flash index doesn't exist.
+  //   - INTERNAL on I/O error.
+  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
+      const Filesystem* filesystem, const std::string& index_directory);
+
   // Get a PostingListHitAccessor that holds the posting list chain for 'term'.
   //
   // RETURNS:

@@ -41,6 +41,7 @@ using ::testing::Pointee;
 
 // type and property names of EmailMessage
 static constexpr char kTypeEmail[] = "EmailMessage";
+static constexpr SchemaTypeId kTypeEmailSchemaId = 0;
 // indexable (in lexicographical order)
 static constexpr char kPropertyRecipientIds[] = "recipientIds";
 static constexpr char kPropertyRecipients[] = "recipients";
@@ -57,6 +58,7 @@ static constexpr char kPropertyText[] = "text";
 
 // type and property names of Conversation
 static constexpr char kTypeConversation[] = "Conversation";
+static constexpr SchemaTypeId kTypeConversationSchemaId = 1;
 // indexable (in lexicographical order)
 static constexpr char kPropertyEmails[] = "emails";
 static constexpr char kPropertyGroupQualifiedId[] =
@@ -208,8 +210,9 @@ TEST_F(SchemaTypeManagerTest, Create) {
       DynamicTrieKeyMapper<SchemaTypeId>::Create(
           filesystem_, test_dir_ + "/schema_type_mapper",
           /*maximum_size_bytes=*/3 * 128 * 1024));
-  ICING_ASSERT_OK(schema_type_mapper->Put(kTypeEmail, 0));
-  ICING_ASSERT_OK(schema_type_mapper->Put(kTypeConversation, 1));
+  ICING_ASSERT_OK(schema_type_mapper->Put(kTypeEmail, kTypeEmailSchemaId));
+  ICING_ASSERT_OK(
+      schema_type_mapper->Put(kTypeConversation, kTypeConversationSchemaId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
@@ -237,6 +240,7 @@ TEST_F(SchemaTypeManagerTest, Create) {
           EqualsSectionMetadata(/*expected_id=*/4,
                                 /*expected_property_path=*/"timestamp",
                                 CreateTimestampPropertyConfig())))));
+
   // In the Conversation type, "groupQualifiedId" and "name" are indexable
   // properties as are the indexable properties of the email in the "emails"
   // property. All properties of the email in the "nestedNonIndexable" property

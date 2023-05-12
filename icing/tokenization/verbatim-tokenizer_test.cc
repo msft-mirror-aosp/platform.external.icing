@@ -22,7 +22,6 @@
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/token.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/util/character-iterator.h"
@@ -95,10 +94,7 @@ TEST_F(VerbatimTokenizerTest, NoTokensBeforeAdvancing) {
                                  language_segmenter_.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  auto token_iterator =
-      verbatim_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kForwardIterator)
-          .ValueOrDie();
+  auto token_iterator = verbatim_tokenizer->Tokenize(kText).ValueOrDie();
 
   // We should get no tokens if we get the token before advancing.
   EXPECT_THAT(token_iterator->GetTokens(), IsEmpty());
@@ -111,10 +107,7 @@ TEST_F(VerbatimTokenizerTest, ResetToTokenEndingBefore) {
                                  language_segmenter_.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  auto token_iterator =
-      verbatim_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto token_iterator = verbatim_tokenizer->Tokenize(kText).ValueOrDie();
 
   // Reset to beginning of verbatim of token. We provide an offset of 13 as it
   // is larger than the final index (12) of the verbatim token.
@@ -141,10 +134,7 @@ TEST_F(VerbatimTokenizerTest, ResetToTokenStartingAfter) {
                                  language_segmenter_.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  auto token_iterator =
-      verbatim_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto token_iterator = verbatim_tokenizer->Tokenize(kText).ValueOrDie();
 
   // Get token without resetting
   EXPECT_TRUE(token_iterator->Advance());
@@ -169,10 +159,7 @@ TEST_F(VerbatimTokenizerTest, ResetToStart) {
                                  language_segmenter_.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  auto token_iterator =
-      verbatim_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto token_iterator = verbatim_tokenizer->Tokenize(kText).ValueOrDie();
 
   // Get token without resetting
   EXPECT_TRUE(token_iterator->Advance());
@@ -192,10 +179,7 @@ TEST_F(VerbatimTokenizerTest, CalculateTokenStart) {
                                  language_segmenter_.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  auto token_iterator =
-      verbatim_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kForwardIterator)
-          .ValueOrDie();
+  auto token_iterator = verbatim_tokenizer->Tokenize(kText).ValueOrDie();
 
   ICING_ASSERT_OK_AND_ASSIGN(CharacterIterator start_character_iterator,
                              token_iterator->CalculateTokenStart());
@@ -211,10 +195,7 @@ TEST_F(VerbatimTokenizerTest, CalculateTokenEnd) {
                                  language_segmenter_.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  auto token_iterator =
-      verbatim_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kForwardIterator)
-          .ValueOrDie();
+  auto token_iterator = verbatim_tokenizer->Tokenize(kText).ValueOrDie();
 
   ICING_ASSERT_OK_AND_ASSIGN(CharacterIterator end_character_iterator,
                              token_iterator->CalculateTokenEndExclusive());

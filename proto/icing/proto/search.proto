@@ -98,7 +98,7 @@ message SearchSpecProto {
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 8
+// Next tag: 9
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -199,6 +199,10 @@ message ResultSpecProto {
     NAMESPACE_AND_SCHEMA_TYPE = 3;
   }
   optional ResultGroupingType result_group_type = 7;
+
+  // The max # of child documents will be attached and returned in the result
+  // for each parent. It is only used for join API.
+  optional int32 max_joined_children_per_parent_to_return = 8;
 }
 
 // The representation of a single match within a DocumentProto property.
@@ -499,7 +503,10 @@ message JoinSpecProto {
   optional string child_property_expression = 3;
 
   // The max number of child documents to join to a parent document.
-  optional int32 max_joined_child_count = 4;
+  // DEPRECATED: use ResultSpecProto.max_joined_children_per_parent_to_return to
+  // control the number of children that are returned. There is no supported
+  // control for the number of children being scored at this time.
+  optional int32 max_joined_child_count = 4 [deprecated = true];
 
   // The strategy by which to score the aggregation of child documents. For
   // example, you might want to know which entity document has the most actions
