@@ -21,7 +21,6 @@
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "icing/tokenization/tokenizer.h"
 #include "unicode/uloc.h"
@@ -61,10 +60,8 @@ TEST_F(RawQueryTokenizerTest, NoTokensBeforeAdvancing) {
                                               language_segmenter.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto token_iterator,
-      raw_query_tokenizer->Tokenize(
-          kText, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto token_iterator,
+                             raw_query_tokenizer->Tokenize(kText));
 
   // We should get no tokens if we get the token before advancing.
   EXPECT_THAT(token_iterator->GetTokens(), IsEmpty());

@@ -16,6 +16,9 @@
 #define ICING_SCHEMA_SCHEMA_TYPE_MANAGER_H_
 
 #include <memory>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/schema/joinable-property-manager.h"
@@ -30,6 +33,10 @@ namespace lib {
 // This class is a wrapper of SectionManager and JoinablePropertyManager.
 class SchemaTypeManager {
  public:
+  // Schema type ids are continuous, and so we use a vector instead of an
+  // unordered map for the mappings.
+  using SchemaTypeIdToPropertiesVector =
+      std::vector<std::unordered_set<std::string>>;
   // Factory function to create a SchemaTypeManager which does not take
   // ownership of any input components, and all pointers must refer to valid
   // objects that outlive the created SchemaTypeManager instance.

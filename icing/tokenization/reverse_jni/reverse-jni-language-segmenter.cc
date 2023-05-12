@@ -293,28 +293,18 @@ class ReverseJniLanguageSegmenterIterator : public LanguageSegmenter::Iterator {
 };
 
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter::Iterator>>
-ReverseJniLanguageSegmenter::Segment(
-    const std::string_view text,
-    LanguageSegmenter::AccessType access_type) const {
-  // Only batch if we're only doing forward iteration. Bidirectional iteration
-  // will result in us frequently discarding unconsumed batched word breaks.
-  // Therefore, we won't bother batching them.
-  int batch_size =
-      (access_type == LanguageSegmenter::AccessType::kForwardIterator)
-          ? ReverseJniBreakIterator::kBatchSize
-          : 1;
+ReverseJniLanguageSegmenter::Segment(const std::string_view text) const {
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<ReverseJniBreakIterator> break_iterator,
-      ReverseJniBreakIterator::Create(jni_cache_, text, locale_, batch_size));
+      ReverseJniBreakIterator::Create(jni_cache_, text, locale_));
   return std::make_unique<ReverseJniLanguageSegmenterIterator>(
       text, std::move(break_iterator));
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string_view>>
 ReverseJniLanguageSegmenter::GetAllTerms(const std::string_view text) const {
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<LanguageSegmenter::Iterator> iterator,
-      Segment(text, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<LanguageSegmenter::Iterator> iterator,
+                         Segment(text));
   std::vector<std::string_view> terms;
   while (iterator->Advance()) {
     terms.push_back(iterator->GetTerm());

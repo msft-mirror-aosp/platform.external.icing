@@ -146,6 +146,14 @@ class DocumentStore {
       int32_t compression_level,
       InitializeStatsProto* initialize_stats);
 
+  // Discards all derived data in the document store.
+  //
+  // Returns:
+  //   OK on success or nothing to discard
+  //   INTERNAL_ERROR on any I/O errors
+  static libtextclassifier3::Status DiscardDerivedFiles(
+      const Filesystem* filesystem, const std::string& base_dir);
+
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
   // empty, then kInvalidDocumentId is returned. This does not filter out
