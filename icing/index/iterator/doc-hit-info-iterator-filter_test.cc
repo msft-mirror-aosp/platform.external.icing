@@ -17,6 +17,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -80,7 +81,9 @@ class DocHitInfoIteratorDeletedFilterTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -247,7 +250,9 @@ class DocHitInfoIteratorNamespaceFilterTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -379,30 +384,52 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, FilterForMultipleNamespacesOk) {
 
 class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
  protected:
+  static constexpr std::string_view kSchema1 = "email";
+  static constexpr std::string_view kSchema2 = "message";
+  static constexpr std::string_view kSchema3 = "person";
+  static constexpr std::string_view kSchema4 = "artist";
+  static constexpr std::string_view kSchema5 = "emailMessage";
+
   DocHitInfoIteratorSchemaTypeFilterTest()
       : test_dir_(GetTestTempDir() + "/icing") {}
 
   void SetUp() override {
     filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-    document1_schema1_ =
-        DocumentBuilder().SetKey("namespace", "1").SetSchema(schema1_).Build();
-    document2_schema2_ =
-        DocumentBuilder().SetKey("namespace", "2").SetSchema(schema2_).Build();
-    document3_schema3_ =
-        DocumentBuilder().SetKey("namespace", "3").SetSchema(schema3_).Build();
-    document4_schema1_ =
-        DocumentBuilder().SetKey("namespace", "4").SetSchema(schema1_).Build();
+    document1_schema1_ = DocumentBuilder()
+                             .SetKey("namespace", "1")
+                             .SetSchema(std::string(kSchema1))
+                             .Build();
+    document2_schema2_ = DocumentBuilder()
+                             .SetKey("namespace", "2")
+                             .SetSchema(std::string(kSchema2))
+                             .Build();
+    document3_schema3_ = DocumentBuilder()
+                             .SetKey("namespace", "3")
+                             .SetSchema(std::string(kSchema3))
+                             .Build();
+    document4_schema1_ = DocumentBuilder()
+                             .SetKey("namespace", "4")
+                             .SetSchema(std::string(kSchema1))
+                             .Build();
 
     SchemaProto schema =
         SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder().SetType(schema1_))
-            .AddType(SchemaTypeConfigBuilder().SetType(schema2_))
-            .AddType(SchemaTypeConfigBuilder().SetType(schema3_))
+            .AddType(SchemaTypeConfigBuilder().SetType(kSchema1))
+            .AddType(SchemaTypeConfigBuilder().SetType(kSchema2))
+            .AddType(SchemaTypeConfigBuilder().SetType(kSchema3))
+            .AddType(SchemaTypeConfigBuilder().SetType(kSchema4).AddParentType(
+                kSchema3))
+            .AddType(SchemaTypeConfigBuilder()
+                         .SetType(std::string(kSchema5))
+                         .AddParentType(kSchema1)
+                         .AddParentType(kSchema2))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -424,9 +451,6 @@ class DocHitInfoIteratorSchemaTypeFilterTest : public ::testing::Test {
   FakeClock fake_clock_;
   const Filesystem filesystem_;
   const std::string test_dir_;
-  const std::string schema1_ = "email";
-  const std::string schema2_ = "message";
-  const std::string schema3_ = "person";
   DocumentProto document1_schema1_;
   DocumentProto document2_schema2_;
   DocumentProto document3_schema3_;
@@ -495,7 +519,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.schema_types = std::vector<std::string_view>{schema1_};
+  options_.schema_types = std::vector<std::string_view>{kSchema1};
   DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
                                              document_store_.get(),
                                              schema_store_.get(), options_);
@@ -518,13 +542,117 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, FilterForMultipleSchemaTypesOk) {
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
 
-  options_.schema_types = std::vector<std::string_view>{schema2_, schema3_};
+  options_.schema_types = std::vector<std::string_view>{kSchema2, kSchema3};
   DocHitInfoIteratorFilter filtered_iterator(std::move(original_iterator),
                                              document_store_.get(),
                                              schema_store_.get(), options_);
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator),
               ElementsAre(document_id2, document_id3));
+}
+
+TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
+       FilterForSchemaTypePolymorphismOk) {
+  // Add some irrelevant documents.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(document1_schema1_));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(document2_schema2_));
+
+  // Create a person document and an artist document, where the artist should be
+  // able to be interpreted as a person by polymorphism.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId person_document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "person")
+                               .SetSchema("person")
+                               .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId artist_document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "artist")
+                               .SetSchema("artist")
+                               .Build()));
+
+  std::vector<DocHitInfo> doc_hit_infos = {
+      DocHitInfo(document_id1), DocHitInfo(document_id2),
+      DocHitInfo(person_document_id), DocHitInfo(artist_document_id)};
+
+  // Filters for the "person" type should also include the "artist" type.
+  std::unique_ptr<DocHitInfoIterator> original_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+  options_.schema_types = {"person"};
+  DocHitInfoIteratorFilter filtered_iterator_1(std::move(original_iterator),
+                                               document_store_.get(),
+                                               schema_store_.get(), options_);
+  EXPECT_THAT(GetDocumentIds(&filtered_iterator_1),
+              ElementsAre(person_document_id, artist_document_id));
+
+  // Filters for the "artist" type should not include the "person" type.
+  original_iterator = std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+  options_.schema_types = {"artist"};
+  DocHitInfoIteratorFilter filtered_iterator_2(std::move(original_iterator),
+                                               document_store_.get(),
+                                               schema_store_.get(), options_);
+  EXPECT_THAT(GetDocumentIds(&filtered_iterator_2),
+              ElementsAre(artist_document_id));
+}
+
+TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
+       FilterForSchemaTypeMultipleParentPolymorphismOk) {
+  // Create an email and a message document.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId email_document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "email")
+                               .SetSchema("email")
+                               .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId message_document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "message")
+                               .SetSchema("message")
+                               .Build()));
+
+  // Create a emailMessage document, which the should be able to be interpreted
+  // as both an email and a message by polymorphism.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId email_message_document_id,
+      document_store_->Put(DocumentBuilder()
+                               .SetKey("namespace", "emailMessage")
+                               .SetSchema("emailMessage")
+                               .Build()));
+
+  std::vector<DocHitInfo> doc_hit_infos = {
+      DocHitInfo(email_document_id), DocHitInfo(message_document_id),
+      DocHitInfo(email_message_document_id)};
+
+  // Filters for the "email" type should also include the "emailMessage" type.
+  std::unique_ptr<DocHitInfoIterator> original_iterator =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+  options_.schema_types = std::vector<std::string_view>{"email"};
+  DocHitInfoIteratorFilter filtered_iterator_1(std::move(original_iterator),
+                                               document_store_.get(),
+                                               schema_store_.get(), options_);
+  EXPECT_THAT(GetDocumentIds(&filtered_iterator_1),
+              ElementsAre(email_document_id, email_message_document_id));
+
+  // Filters for the "message" type should also include the "emailMessage" type.
+  original_iterator = std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+  options_.schema_types = std::vector<std::string_view>{"message"};
+  DocHitInfoIteratorFilter filtered_iterator_2(std::move(original_iterator),
+                                               document_store_.get(),
+                                               schema_store_.get(), options_);
+  EXPECT_THAT(GetDocumentIds(&filtered_iterator_2),
+              ElementsAre(message_document_id, email_message_document_id));
+
+  // Filters for a irrelevant type should return nothing.
+  original_iterator = std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+  options_.schema_types = std::vector<std::string_view>{"person"};
+  DocHitInfoIteratorFilter filtered_iterator_3(std::move(original_iterator),
+                                               document_store_.get(),
+                                               schema_store_.get(), options_);
+  EXPECT_THAT(GetDocumentIds(&filtered_iterator_3), IsEmpty());
 }
 
 class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
@@ -542,7 +670,9 @@ class DocHitInfoIteratorExpirationFilterTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -742,7 +872,9 @@ class DocHitInfoIteratorFilterTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,

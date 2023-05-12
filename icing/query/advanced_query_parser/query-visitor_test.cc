@@ -792,7 +792,9 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Index three documents:
   // - Doc0: ["-2", "-1", "1", "2"] and [-2, -1, 1, 2]
@@ -1543,7 +1545,9 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1595,7 +1599,9 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1643,7 +1649,9 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1699,7 +1707,9 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1991,7 +2001,9 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
                   .SetName("prop1")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -2073,7 +2085,10 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2145,7 +2160,10 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2210,7 +2228,9 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // "prop1" is a STRING token, which cannot be a property name.
   std::string query = CreateQuery(R"(("prop1":foo))");
@@ -2241,7 +2261,9 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2308,7 +2330,10 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2373,7 +2398,10 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2457,7 +2485,10 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2537,7 +2568,10 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2622,7 +2656,10 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2713,7 +2750,10 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+      
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2803,7 +2843,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
                   .AddProperty(prop)
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2916,7 +2958,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
                   .AddProperty(prop)
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -3139,7 +3183,10 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
 
@@ -3265,7 +3312,10 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop5"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -3442,7 +3492,10 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop5"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -3606,7 +3659,7 @@ TEST_F(QueryVisitorTest,
 TEST_F(
     QueryVisitorTest,
     PropertyDefinedFunctionWithMoreThanOneTextArgumentReturnsInvalidArgument) {
-  std::string query = "propertyDefined(foo, bar)";
+  std::string query = "propertyDefined(\"foo\", \"bar\")";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
@@ -3620,9 +3673,9 @@ TEST_F(
 }
 
 TEST_F(QueryVisitorTest,
-       PropertyDefinedFunctionWithStringArgumentReturnsInvalidArgument) {
-  // The argument type is STRING, not TEXT here.
-  std::string query = "propertyDefined(\"foo\")";
+       PropertyDefinedFunctionWithTextArgumentReturnsInvalidArgument) {
+  // The argument type is TEXT, not STRING here.
+  std::string query = "propertyDefined(foo)";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
@@ -3650,7 +3703,7 @@ TEST_F(QueryVisitorTest,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
+TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
   // Set up two schemas, one with a "url" field and one without.
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
@@ -3661,8 +3714,11 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
                                         .SetDataType(TYPE_STRING)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
+  // Document 0 has the term "foo" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
@@ -3670,6 +3726,7 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
   editor.BufferTerm("foo");
   editor.IndexAllBufferedTerms();
 
+  // Document 1 has the term "foo" and its schema DOESN'T have the url property.
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
                                            .SetKey("ns", "uri1")
                                            .SetSchema("typeWithoutUrl")
@@ -3679,6 +3736,7 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
   editor.BufferTerm("foo");
   editor.IndexAllBufferedTerms();
 
+  // Document 2 has the term "bar" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("typeWithUrl").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
@@ -3686,7 +3744,7 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
   editor.BufferTerm("bar");
   editor.IndexAllBufferedTerms();
 
-  std::string query = CreateQuery("foo propertyDefined(url)");
+  std::string query = CreateQuery("foo propertyDefined(\"url\")");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
                              ParseQueryHelper(query));
   QueryVisitor query_visitor(
@@ -3697,14 +3755,115 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionCurrentlyReturnsEverything) {
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(
-      query_results.features_in_use,
-      UnorderedElementsAre(kPropertyDefinedInSchemaCustomFunctionFeature,
-                           kListFilterQueryLanguageFeature));
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
 
-  // TODO(b/268680462): Update once the feature is actually implemented.
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              UnorderedElementsAre(kDocumentId0, kDocumentId1));
+              UnorderedElementsAre(kDocumentId0));
+}
+
+TEST_P(QueryVisitorTest,
+       PropertyDefinedFunctionReturnsNothingIfNoMatchingProperties) {
+  // Set up two schemas, one with a "url" field and one without.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("typeWithUrl")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Document 0 has the term "foo" and its schema has the url property.
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Document 1 has the term "foo" and its schema DOESN'T have the url property.
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("typeWithoutUrl")
+                                           .Build()));
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Attempt to query a non-existent property.
+  std::string query = CreateQuery("propertyDefined(\"nonexistentproperty\")");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+}
+
+TEST_P(QueryVisitorTest,
+       PropertyDefinedFunctionWithNegationMatchesDocsWithNoSuchProperty) {
+  // Set up two schemas, one with a "url" field and one without.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("typeWithUrl")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Document 0 has the term "foo" and its schema has the url property.
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Document 1 has the term "foo" and its schema DOESN'T have the url property.
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("typeWithoutUrl")
+                                           .Build()));
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  std::string query = CreateQuery("foo AND NOT propertyDefined(\"url\")");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true);
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId1));
 }
 
 INSTANTIATE_TEST_SUITE_P(QueryVisitorTest, QueryVisitorTest,

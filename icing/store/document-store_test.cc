@@ -189,7 +189,10 @@ class DocumentStoreTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+    ASSERT_THAT(schema_store_->SetSchema(
+                    schema, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
+                IsOk());
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -198,6 +201,8 @@ class DocumentStoreTest : public ::testing::Test {
   }
 
   void TearDown() override {
+    lang_segmenter_.reset();
+    schema_store_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
@@ -717,7 +722,9 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
@@ -844,7 +851,9 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -935,7 +944,9 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -989,7 +1000,8 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      new_schema, /*ignore_errors_and_delete_documents=*/true));
+      new_schema, /*ignore_errors_and_delete_documents=*/true,
+      /*allow_circular_schema_definitions=*/false));
 
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1264,11 +1276,16 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
                 IsOkAndHolds(EqualsProto(test_document2_)));
+
+    EXPECT_THAT(doc_store->ReportUsage(CreateUsageReport(
+                    /*name_space=*/"icing", /*uri=*/"email/2",
+                    /*timestamp_ms=*/0, UsageReport::USAGE_TYPE1)),
+                IsOk());
   }
 
-  // "Corrupt" one of the derived files by adding non-checksummed data to
-  // it. This will mess up the checksum and throw an error on the derived file's
-  // initialization.
+  // "Corrupt" one of the derived files by modifying an existing data without
+  // calling PersistToDisk() or updating its checksum. This will mess up the
+  // checksum and throw an error on the derived file's initialization.
   const std::string document_id_mapper_file =
       absl_ports::StrCat(document_store_dir_, "/document_id_mapper");
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1276,13 +1293,14 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
       FileBackedVector<int64_t>::Create(
           filesystem_, document_id_mapper_file,
           MemoryMappedFile::READ_WRITE_AUTO_SYNC));
-  int64_t corrupt_document_id = 3;
-  int64_t corrupt_offset = 3;
+  int64_t corrupt_document_id = 1;
+  int64_t corrupt_offset = 123456;
   EXPECT_THAT(document_id_mapper->Set(corrupt_document_id, corrupt_offset),
               IsOk());
 
+  // Will get error when initializing document id mapper file, so it will
+  // trigger RegenerateDerivedFiles.
   // Successfully recover from a corrupt derived file issue.
-  // NOTE: this doesn't trigger RegenerateDerivedFiles.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1304,8 +1322,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
 
-  // Checks derived score cache - note that they aren't regenerated from
-  // scratch.
+  // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
       IsOkAndHolds(DocumentAssociatedScoreData(
@@ -1313,7 +1330,108 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
           /*length_in_tokens=*/4)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
-                  /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
+
+  // Checks usage score data - note that they aren't regenerated from
+  // scratch.
+  UsageStore::UsageScores expected_scores;
+  expected_scores.usage_type1_count = 1;
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
+                                    doc_store->GetUsageScores(document_id2));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
+}
+
+TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
+  DocumentId document_id1, document_id2;
+  {
+    // Can put and delete fine.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id1,
+        doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        document_id2,
+        doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
+    EXPECT_THAT(doc_store->Get(document_id1),
+                IsOkAndHolds(EqualsProto(test_document1_)));
+    EXPECT_THAT(doc_store->Get(document_id2),
+                IsOkAndHolds(EqualsProto(test_document2_)));
+    // Checks derived score cache
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id1),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(
+        doc_store->GetDocumentAssociatedScoreData(document_id2),
+        IsOkAndHolds(DocumentAssociatedScoreData(
+            /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+            /*length_in_tokens=*/4)));
+    EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+                IsOkAndHolds(CorpusAssociatedScoreData(
+                    /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
+    // Delete document 1
+    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+    EXPECT_THAT(doc_store->Get(document_id1),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+    EXPECT_THAT(doc_store->Get(document_id2),
+                IsOkAndHolds(EqualsProto(test_document2_)));
+
+    EXPECT_THAT(doc_store->ReportUsage(CreateUsageReport(
+                    /*name_space=*/"icing", /*uri=*/"email/2",
+                    /*timestamp_ms=*/0, UsageReport::USAGE_TYPE1)),
+                IsOk());
+  }
+
+  // Discard all derived files.
+  ICING_ASSERT_OK(
+      DocumentStore::DiscardDerivedFiles(&filesystem_, document_store_dir_));
+
+  // Successfully recover after discarding all derived files.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  EXPECT_THAT(doc_store->Get(document_id1),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(doc_store->Get(document_id2),
+              IsOkAndHolds(EqualsProto(test_document2_)));
+
+  // Checks derived filter cache
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      DocumentFilterData doc_filter_data,
+      doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_THAT(doc_filter_data,
+              Eq(DocumentFilterData(
+                  /*namespace_id=*/0,
+                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
+
+  // Checks derived score cache.
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id2),
+      IsOkAndHolds(DocumentAssociatedScoreData(
+          /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
+          /*length_in_tokens=*/4)));
+  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
+              IsOkAndHolds(CorpusAssociatedScoreData(
+                  /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
+
+  // Checks usage score data - note that they aren't regenerated from
+  // scratch.
+  UsageStore::UsageScores expected_scores;
+  expected_scores.usage_type1_count = 1;
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
+                                    doc_store->GetUsageScores(document_id2));
+  EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
@@ -2177,7 +2295,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
             .AddType(SchemaTypeConfigBuilder().SetType("email"))
             .AddType(SchemaTypeConfigBuilder().SetType("message"))
             .Build();
-    ICING_EXPECT_OK(schema_store->SetSchema(schema));
+    ICING_EXPECT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                                schema_store->GetSchemaTypeId("email"));
@@ -2232,7 +2352,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2286,7 +2408,9 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2334,7 +2458,9 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
                .Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2377,7 +2503,9 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -2419,7 +2547,8 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
       PropertyConfigProto::Cardinality::REQUIRED);
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true));
+      schema, /*ignore_errors_and_delete_documents=*/true,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -2448,7 +2577,9 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -2490,7 +2621,8 @@ TEST_F(DocumentStoreTest,
 
   ICING_EXPECT_OK(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true));
+                              /*ignore_errors_and_delete_documents=*/true,
+                              /*allow_circular_schema_definitions=*/false));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -2518,7 +2650,9 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2566,8 +2700,11 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(SchemaStore::SetSchemaResult set_schema_result,
-                             schema_store->SetSchema(schema));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaStore::SetSchemaResult set_schema_result,
+      schema_store->SetSchema(schema,
+                              /*ignore_errors_and_delete_documents=*/false,
+                              /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2611,7 +2748,9 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -2655,7 +2794,8 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/true));
+                              /*ignore_errors_and_delete_documents=*/true,
+                              /*allow_circular_schema_definitions=*/false));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -2685,7 +2825,9 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(schema));
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -2728,7 +2870,8 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true));
+                              /*ignore_errors_and_delete_documents=*/true,
+                              /*allow_circular_schema_definitions=*/false));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -3475,7 +3618,10 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -3524,7 +3670,10 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_type_config)
           .Build();
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
   ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
@@ -3578,7 +3727,10 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -3627,7 +3779,10 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_type_config)
           .Build();
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
   ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
@@ -3673,7 +3828,10 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   DocumentProto docWithBody =
       DocumentBuilder()
@@ -3733,7 +3891,8 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true),
+                  schema, /*ignore_errors_and_delete_documents=*/true,
+                  /*allow_circular_schema_definitions=*/false),
               IsOk());
 
   {
@@ -3782,7 +3941,10 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   DocumentProto docWithBody =
       DocumentBuilder()
@@ -3842,7 +4004,8 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true),
+                  schema, /*ignore_errors_and_delete_documents=*/true,
+                  /*allow_circular_schema_definitions=*/false),
               IsOk());
 
   {
@@ -3889,7 +4052,10 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // Create dst directory that we'll initialize the DocumentStore over.
   std::string document_store_dir = document_store_dir_ + "_migrate";
@@ -4015,7 +4181,9 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,

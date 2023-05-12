@@ -156,7 +156,9 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str()));

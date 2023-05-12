@@ -102,7 +102,10 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
                     .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+    ASSERT_THAT(schema_store_->SetSchema(
+                    schema, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
+                IsOk());
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -236,7 +239,7 @@ TEST_F(ResultRetrieverV2SnippetTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
   PageResult page_result =
       result_retriever->RetrieveNextPage(result_state).first;
@@ -285,6 +288,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
@@ -393,6 +397,7 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
@@ -468,6 +473,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllResults) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
@@ -520,6 +526,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
   {
@@ -575,6 +582,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
   {
@@ -632,6 +640,7 @@ TEST_F(ResultRetrieverV2SnippetTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
@@ -718,6 +727,8 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
 
   // Create parent ResultSpec with custom snippet spec.
   ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/3);
+  parent_result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
   *parent_result_spec.mutable_snippet_spec() = CreateSnippetSpec();
 
   // Create child ResultSpec with custom snippet spec.
@@ -735,11 +746,13 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"person"}}})),
       /*child_adjustment_info=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       parent_result_spec, *document_store_);
 
@@ -939,6 +952,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   ResultSpecProto::SnippetSpecProto parent_snippet_spec = CreateSnippetSpec();
   parent_snippet_spec.set_num_to_snippet(1);
   ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/3);
+  parent_result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
   *parent_result_spec.mutable_snippet_spec() = std::move(parent_snippet_spec);
 
   // Create child ResultSpec with custom snippet spec.
@@ -957,11 +972,13 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"person"}}})),
       /*child_adjustment_info=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       parent_result_spec, *document_store_);
 
@@ -1051,6 +1068,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   ResultSpecProto::SnippetSpecProto parent_snippet_spec = CreateSnippetSpec();
   parent_snippet_spec.set_num_to_snippet(3);
   ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/3);
+  parent_result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
   *parent_result_spec.mutable_snippet_spec() = std::move(parent_snippet_spec);
 
   // Create child ResultSpec with custom snippet spec.
@@ -1069,11 +1088,13 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"person"}}})),
       /*child_adjustment_info=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
+          schema_store_.get(),
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
       parent_result_spec, *document_store_);
 
