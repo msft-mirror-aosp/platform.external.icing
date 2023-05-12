@@ -68,10 +68,7 @@ void BM_SegmentNoSpace(benchmark::State& state) {
 
   for (auto _ : state) {
     std::unique_ptr<LanguageSegmenter::Iterator> iterator =
-        language_segmenter
-            ->Segment(input_string,
-                      LanguageSegmenter::AccessType::kForwardIterator)
-            .ValueOrDie();
+        language_segmenter->Segment(input_string).ValueOrDie();
     while (iterator->Advance()) {
       iterator->GetTerm();
     }
@@ -111,10 +108,7 @@ void BM_SegmentWithSpaces(benchmark::State& state) {
 
   for (auto _ : state) {
     std::unique_ptr<LanguageSegmenter::Iterator> iterator =
-        language_segmenter
-            ->Segment(input_string,
-                      LanguageSegmenter::AccessType::kForwardIterator)
-            .ValueOrDie();
+        language_segmenter->Segment(input_string).ValueOrDie();
     while (iterator->Advance()) {
       iterator->GetTerm();
     }
@@ -154,10 +148,7 @@ void BM_SegmentCJK(benchmark::State& state) {
 
   for (auto _ : state) {
     std::unique_ptr<LanguageSegmenter::Iterator> iterator =
-        language_segmenter
-            ->Segment(input_string,
-                      LanguageSegmenter::AccessType::kForwardIterator)
-            .ValueOrDie();
+        language_segmenter->Segment(input_string).ValueOrDie();
     while (iterator->Advance()) {
       iterator->GetTerm();
     }

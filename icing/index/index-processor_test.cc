@@ -40,7 +40,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/index/string-section-indexing-handler.h"
 #include "icing/index/term-property-id.h"
-#include "icing/join/qualified-id-joinable-property-indexing-handler.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
@@ -267,7 +267,9 @@ class IndexProcessorTest : public Test {
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(doc_store_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -291,10 +293,10 @@ class IndexProcessorTest : public Test {
                                IntegerSectionIndexingHandler::Create(
                                    &fake_clock_, integer_index_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>
+        std::unique_ptr<QualifiedIdJoinIndexingHandler>
             qualified_id_joinable_property_indexing_handler,
-        QualifiedIdJoinablePropertyIndexingHandler::Create(
-            &fake_clock_, qualified_id_join_index_.get()));
+        QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                               qualified_id_join_index_.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(string_section_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
@@ -823,10 +825,10 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
                              IntegerSectionIndexingHandler::Create(
                                  &fake_clock_, integer_index_.get()));
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>
+      std::unique_ptr<QualifiedIdJoinIndexingHandler>
           qualified_id_joinable_property_indexing_handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
   std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
   handlers.push_back(std::move(string_section_indexing_handler));
   handlers.push_back(std::move(integer_section_indexing_handler));

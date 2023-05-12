@@ -25,7 +25,6 @@
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/tokenization/language-segmenter-factory.h"
-#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/tokenizer-factory.h"
 #include "unicode/uloc.h"
 
@@ -68,10 +67,8 @@ TEST_F(PlainTokenizerTest, NoTokensBeforeAdvancing) {
                                  language_segmenter.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto token_iterator,
-      plain_tokenizer->Tokenize(
-          kText, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto token_iterator,
+                             plain_tokenizer->Tokenize(kText));
 
   // We should get no tokens if we get the token before advancing.
   EXPECT_THAT(token_iterator->GetTokens(), IsEmpty());
@@ -89,10 +86,8 @@ TEST_F(PlainTokenizerTest, LastTokenAfterFullyAdvanced) {
                                  language_segmenter.get()));
 
   constexpr std::string_view kText = "Hello, world!";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto token_iterator,
-      plain_tokenizer->Tokenize(
-          kText, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto token_iterator,
+                             plain_tokenizer->Tokenize(kText));
 
   while (token_iterator->Advance()) {}
 
@@ -349,10 +344,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenStartingAfterSimple) {
                                  language_segmenter.get()));
 
   constexpr std::string_view kText = "f b";
-  auto iterator =
-      plain_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
 
   EXPECT_TRUE(iterator->ResetToTokenStartingAfter(0));
   EXPECT_THAT(iterator->GetTokens(),
@@ -373,10 +365,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenEndingBeforeSimple) {
                                  language_segmenter.get()));
 
   constexpr std::string_view kText = "f b";
-  auto iterator =
-      plain_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
 
   EXPECT_TRUE(iterator->ResetToTokenEndingBefore(2));
   EXPECT_THAT(iterator->GetTokens(),
@@ -423,10 +412,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenStartingAfter) {
       "bat",  // 16: " bat"
   };
 
-  auto iterator =
-      plain_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
   EXPECT_TRUE(iterator->Advance());
   EXPECT_THAT(iterator->GetTokens(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "foo")));
@@ -480,10 +466,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenEndingBefore) {
       "foo",  //  4: "foo "
   };
 
-  auto iterator =
-      plain_tokenizer
-          ->Tokenize(kText, LanguageSegmenter::AccessType::kBidirectionalIterator)
-          .ValueOrDie();
+  auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
   EXPECT_TRUE(iterator->Advance());
   EXPECT_THAT(iterator->GetTokens(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "foo")));

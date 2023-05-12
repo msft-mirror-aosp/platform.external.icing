@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -86,13 +87,18 @@ class ResultStateV2 {
     return entry_id_group_id_map_;
   }
 
-  int num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
+  int32_t num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
     return num_per_page_;
   }
 
   int32_t num_total_bytes_per_page_threshold() const
       ICING_SHARED_LOCKS_REQUIRED(mutex) {
     return num_total_bytes_per_page_threshold_;
+  }
+
+  int32_t max_joined_children_per_parent_to_return() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return max_joined_children_per_parent_to_return_;
   }
 
   ResultSpecProto::ResultGroupingType result_group_type()
@@ -139,7 +145,7 @@ class ResultStateV2 {
       ICING_GUARDED_BY(mutex);
 
   // Number of results to return in each page.
-  int num_per_page_ ICING_GUARDED_BY(mutex);
+  int32_t num_per_page_ ICING_GUARDED_BY(mutex);
 
   // The threshold of total bytes of all documents to cutoff, in order to limit
   // # of bytes in a single page.
@@ -148,6 +154,10 @@ class ResultStateV2 {
   // cutoff, and only guarantees total bytes of search results won't exceed the
   // threshold too much.
   int32_t num_total_bytes_per_page_threshold_ ICING_GUARDED_BY(mutex);
+
+  // Max # of joined child documents to be attached in the result for each
+  // parent document.
+  int32_t max_joined_children_per_parent_to_return_ ICING_GUARDED_BY(mutex);
 
   // Pointer to a global counter to sum up the size of scored_document_hits in
   // all ResultStates.

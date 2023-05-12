@@ -40,6 +40,8 @@ ResultStateV2::ResultStateV2(
       num_per_page_(result_spec.num_per_page()),
       num_total_bytes_per_page_threshold_(
           result_spec.num_total_bytes_per_page_threshold()),
+      max_joined_children_per_parent_to_return_(
+          result_spec.max_joined_children_per_parent_to_return()),
       num_total_hits_(nullptr),
       result_group_type_(result_spec.result_group_type()) {
   for (const ResultSpecProto::ResultGrouping& result_grouping :

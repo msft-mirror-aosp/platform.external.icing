@@ -33,6 +33,8 @@ inline constexpr int kSectionIdBits = 6;
 inline constexpr SectionId kTotalNumSections = (1 << kSectionIdBits);
 inline constexpr SectionId kInvalidSectionId = kTotalNumSections;
 inline constexpr SectionId kMaxSectionId = kTotalNumSections - 1;
+// Prior versions of Icing only supported 16 indexed properties.
+inline constexpr SectionId kOldTotalNumSections = 16;
 inline constexpr SectionId kMinSectionId = 0;
 constexpr bool IsSectionIdValid(SectionId section_id) {
   return section_id >= kMinSectionId && section_id <= kMaxSectionId;
