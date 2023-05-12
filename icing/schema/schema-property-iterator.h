@@ -33,6 +33,9 @@ namespace lib {
 // (non-document-type) properties will be returned, and for document type
 // properties, the iterator will traverse down to the next nested level of
 // schema.
+//
+// REQUIRED: The schema in which this SchemaTypeConfigProto is defined must have
+// already passed the validation step during SetSchema.
 class SchemaPropertyIterator {
  public:
   explicit SchemaPropertyIterator(

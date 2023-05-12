@@ -83,7 +83,9 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
     schema.add_types()->set_schema_type("Document");
     schema.add_types()->set_schema_type("Message");
     schema.add_types()->set_schema_type("Person");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,

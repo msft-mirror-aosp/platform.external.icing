@@ -375,8 +375,7 @@ void IcuLanguageSegmenter::ReturnBreakIterator(UBreakIterator* itr) const {
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter::Iterator>>
-IcuLanguageSegmenter::Segment(const std::string_view text,
-                              LanguageSegmenter::AccessType) const {
+IcuLanguageSegmenter::Segment(const std::string_view text) const {
   return IcuLanguageSegmenterIterator::Create(this, ProduceBreakIterator(),
                                               text, locale_);
 }
@@ -385,7 +384,7 @@ libtextclassifier3::StatusOr<std::vector<std::string_view>>
 IcuLanguageSegmenter::GetAllTerms(const std::string_view text) const {
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<LanguageSegmenter::Iterator> iterator,
-      Segment(text, LanguageSegmenter::AccessType::kForwardIterator));
+      Segment(text));
   std::vector<std::string_view> terms;
   while (iterator->Advance()) {
     terms.push_back(iterator->GetTerm());

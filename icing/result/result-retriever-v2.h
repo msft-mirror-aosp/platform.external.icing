@@ -15,19 +15,20 @@
 #ifndef ICING_RESULT_RETRIEVER_V2_H_
 #define ICING_RESULT_RETRIEVER_V2_H_
 
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/result/snippet-retriever.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 

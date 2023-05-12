@@ -15,6 +15,7 @@
 #include "icing/schema/schema-type-manager.h"
 
 #include <memory>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
