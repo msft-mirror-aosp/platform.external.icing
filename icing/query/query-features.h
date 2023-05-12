@@ -44,20 +44,13 @@ constexpr Feature kVerbatimSearchFeature =
 //   - expanding support for negation and property restriction expressions
 //   - prefix operator '*'
 //   - 'NOT' operator
+//   - propertyDefined("url")
 constexpr Feature kListFilterQueryLanguageFeature =
     "LIST_FILTER_QUERY_LANGUAGE";  // Features#LIST_FILTER_QUERY_LANGUAGE
 
-// This feature enables the custom function hasPropertyDefined(member). For
-// example, a query "hasPropertyDefined(url)" will only return documents whose
-// schemas have defined a "url" property.
-// TODO(b/268680462): Update Features.java to sync with this Feature.
-constexpr Feature kPropertyDefinedInSchemaCustomFunctionFeature =
-    "PROPERTY_DEFINED_IN_SCHEMA";  // Features#PROPERTY_DEFINED_IN_SCHEMA
-
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
   return {kNumericSearchFeature, kVerbatimSearchFeature,
-          kListFilterQueryLanguageFeature,
-          kPropertyDefinedInSchemaCustomFunctionFeature};
+          kListFilterQueryLanguageFeature};
 }
 
 }  // namespace lib

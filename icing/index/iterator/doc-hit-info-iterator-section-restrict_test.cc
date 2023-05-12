@@ -95,7 +95,9 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema_));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema_, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,

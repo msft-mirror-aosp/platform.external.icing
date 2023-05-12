@@ -614,6 +614,15 @@ class IcingSearchEngine {
   libtextclassifier3::Status CheckConsistency()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Discards all derived data.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION_ERROR if those instances are valid (non nullptr)
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status DiscardDerivedFiles()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Repopulates derived data off our ground truths.
   //
   // Returns:

@@ -285,6 +285,45 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
   return create_result;
 }
 
+/* static */ libtextclassifier3::Status DocumentStore::DiscardDerivedFiles(
+    const Filesystem* filesystem, const std::string& base_dir) {
+  // Header
+  const std::string header_filename = MakeHeaderFilename(base_dir);
+  if (!filesystem->DeleteFile(MakeHeaderFilename(base_dir).c_str())) {
+    return absl_ports::InternalError("Couldn't delete header file");
+  }
+
+  // Document key mapper
+  ICING_RETURN_IF_ERROR(
+      DynamicTrieKeyMapper<DocumentId>::Delete(*filesystem, base_dir));
+
+  // Document id mapper
+  ICING_RETURN_IF_ERROR(FileBackedVector<int64_t>::Delete(
+      *filesystem, MakeDocumentIdMapperFilename(base_dir)));
+
+  // Document associated score cache
+  ICING_RETURN_IF_ERROR(FileBackedVector<DocumentAssociatedScoreData>::Delete(
+      *filesystem, MakeScoreCacheFilename(base_dir)));
+
+  // Filter cache
+  ICING_RETURN_IF_ERROR(FileBackedVector<DocumentFilterData>::Delete(
+      *filesystem, MakeFilterCacheFilename(base_dir)));
+
+  // Namespace mapper
+  ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<NamespaceId>::Delete(
+      *filesystem, MakeNamespaceMapperFilename(base_dir)));
+
+  // Corpus mapper
+  ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<CorpusId>::Delete(
+      *filesystem, MakeCorpusMapperFilename(base_dir)));
+
+  // Corpus associated score cache
+  ICING_RETURN_IF_ERROR(FileBackedVector<CorpusAssociatedScoreData>::Delete(
+      *filesystem, MakeCorpusScoreCache(base_dir)));
+
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
