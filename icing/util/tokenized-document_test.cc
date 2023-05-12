@@ -44,9 +44,9 @@ namespace lib {
 
 namespace {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
 using ::testing::Eq;
-using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
@@ -168,7 +168,9 @@ class TokenizedDocumentTest : public ::testing::Test {
                                          JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   void TearDown() override {

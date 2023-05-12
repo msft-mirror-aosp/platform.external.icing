@@ -16,12 +16,19 @@
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
@@ -41,7 +48,7 @@ IntegerSectionIndexingHandler::Create(const Clock* clock,
 libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
     bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
-  // TODO(b/259744228): set integer indexing latency and other stats
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (!IsDocumentIdValid(document_id)) {
     return absl_ports::InvalidArgumentError(
@@ -91,6 +98,11 @@ libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
                          << status.error_message();
       break;
     }
+  }
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_integer_index_latency_ms(
+        index_timer->GetElapsedMilliseconds());
   }
 
   return status;

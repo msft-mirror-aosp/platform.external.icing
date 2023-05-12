@@ -85,10 +85,11 @@ class DocHitInfoIterator {
           unnormalized_term_length_(unnormalized_term_length) {}
   };
 
-  // Trim the right-most itertor of the itertor tree.
-  // This is to support search suggestion for the last terms which is the
+  // Trim the rightmost iterator of the iterator tree.
+  // This is to support search suggestions for the last term which is the
   // right-most node of the root iterator tree. Only support trim the right-most
-  // node on the AND, AND_NARY, OR, OR_NARY, OR_LEAF and Filter itertor.
+  // node on the AND, AND_NARY, OR, OR_NARY, OR_LEAF, Filter, and the
+  // property-in-schema-check iterator.
   //
   // After calling this method, this iterator is no longer usable. Please use
   // the returned iterator.

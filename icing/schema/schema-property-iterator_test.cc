@@ -15,13 +15,10 @@
 #include "icing/schema/schema-property-iterator.h"
 
 #include <string>
-#include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/portable/equals-proto.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-util.h"
@@ -239,53 +236,6 @@ TEST(SchemaPropertyIteratorTest,
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
-TEST(SchemaPropertyIteratorTest,
-     SchemaTypeConfigWithCycleDependencyShouldGetInvalidArgumentError) {
-  std::string schema_type_name1 = "SchemaOne";
-  std::string schema_type_name2 = "SchemaTwo";
-
-  SchemaTypeConfigProto schema_type_config1 =
-      SchemaTypeConfigBuilder()
-          .SetType(schema_type_name1)
-          .AddProperty(
-              PropertyConfigBuilder().SetName("Foo").SetDataTypeDocument(
-                  schema_type_name2, /*index_nested_properties=*/true))
-          .Build();
-  SchemaTypeConfigProto schema_type_config2 =
-      SchemaTypeConfigBuilder()
-          .SetType(schema_type_name2)
-          .AddProperty(
-              PropertyConfigBuilder().SetName("Bar").SetDataTypeDocument(
-                  schema_type_name1, /*index_nested_properties=*/true))
-          .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2}};
-
-  SchemaPropertyIterator iterator(schema_type_config1, type_config_map);
-  EXPECT_THAT(iterator.Advance(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST(SchemaPropertyIteratorTest,
-     SchemaTypeConfigWithSelfDependencyShouldGetInvalidArgumentError) {
-  std::string schema_type_name = "SchemaOne";
-
-  SchemaTypeConfigProto schema_type_config =
-      SchemaTypeConfigBuilder()
-          .SetType(schema_type_name)
-          .AddProperty(
-              PropertyConfigBuilder().SetName("Foo").SetDataTypeDocument(
-                  schema_type_name, /*index_nested_properties=*/true))
-          .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name, schema_type_config}};
-
-  SchemaPropertyIterator iterator(schema_type_config, type_config_map);
-  EXPECT_THAT(iterator.Advance(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
 TEST(SchemaPropertyIteratorTest, NestedIndexable) {
   std::string schema_type_name1 = "SchemaOne";
   std::string schema_type_name2 = "SchemaTwo";
@@ -461,6 +411,435 @@ TEST(SchemaPropertyIteratorTest, NestedIndexable) {
   EXPECT_THAT(iterator.GetCurrentNestedIndexable(), IsTrue());
 
   EXPECT_THAT(iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST(SchemaPropertyIteratorTest, SingleLevelCycle) {
+  std::string schema_a = "A";
+  std::string schema_b = "B";
+
+  // Create schema with A -> B -> B -> B...
+  SchemaTypeConfigProto schema_type_config_a =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_a)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaAprop1")
+                           .SetDataTypeDocument(
+                               schema_b, /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaAprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto schema_type_config_b =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_b)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaBprop1")
+                           .SetDataTypeDocument(
+                               schema_b, /*index_nested_properties=*/false))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaBprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+
+  SchemaUtil::TypeConfigMap type_config_map = {
+      {schema_a, schema_type_config_a}, {schema_b, schema_type_config_b}};
+
+  // Order of iteration for schema A:
+  // {"schemaAprop1.schemaBprop2", "schemaAprop2"}, both indexable
+  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
+              Eq("schemaAprop1.schemaBprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(), Eq("schemaAprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Order of iteration for schema B:
+  // {"schemaBprop2"}, indexable.
+  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(), Eq("schemaBprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_b_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST(SchemaPropertyIteratorTest, MultipleLevelCycle) {
+  std::string schema_a = "A";
+  std::string schema_b = "B";
+  std::string schema_c = "C";
+
+  // Create schema with A -> B -> C -> A -> B -> C...
+  SchemaTypeConfigProto schema_type_config_a =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_a)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaAprop1")
+                           .SetDataTypeDocument(
+                               schema_b, /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaAprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto schema_type_config_b =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_b)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaBprop1")
+                           .SetDataTypeDocument(
+                               schema_c, /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaBprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto schema_type_config_c =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_c)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaCprop1")
+                           .SetDataTypeDocument(
+                               schema_a, /*index_nested_properties=*/false))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaCprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+
+  SchemaUtil::TypeConfigMap type_config_map = {
+      {schema_a, schema_type_config_a},
+      {schema_b, schema_type_config_b},
+      {schema_c, schema_type_config_c}};
+
+  // Order of iteration for schema A:
+  // {"schemaAprop1.schemaBprop1.schemaCprop2", "schemaAprop1.schemaBprop2",
+  // "schemaAprop2"}, all indexable
+  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
+              Eq("schemaAprop1.schemaBprop1.schemaCprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
+              Eq("schemaAprop1.schemaBprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(), Eq("schemaAprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Order of iteration for schema B:
+  // {"schemaBprop1.schemaCprop1.schemaAprop2", "schemaBprop1.schemaCprop2",
+  // "schemaBprop2"}
+  //
+  // Indexable properties: {"schemaBprop1.schemaCprop2", "schemaBprop2"}
+  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
+              Eq("schemaBprop1.schemaCprop1.schemaAprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
+              Eq("schemaBprop1.schemaCprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(), Eq("schemaBprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_b_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Order of iteration for schema C:
+  // {"schemaCprop1.schemaAprop1.schemaBprop2", "schemaCprop1.schemaAprop2",
+  // "schemaCprop2"}
+  //
+  // Indexable properties: {"schemaCprop2"}
+  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
+              Eq("schemaCprop1.schemaAprop1.schemaBprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
+              Eq("schemaCprop1.schemaAprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(), Eq("schemaCprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_c_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+}
+
+TEST(SchemaPropertyIteratorTest, MultipleCycles) {
+  std::string schema_a = "A";
+  std::string schema_b = "B";
+  std::string schema_c = "C";
+  std::string schema_d = "D";
+
+  // Create schema with D <-> A -> B -> C -> A -> B -> C -> A...
+  // Schema type A has two cycles: A-B-C-A and A-D-A
+  SchemaTypeConfigProto schema_type_config_a =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_a)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaAprop1")
+                           .SetDataTypeDocument(
+                               schema_b, /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaAprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaAprop3")
+                           .SetDataTypeDocument(
+                               schema_d, /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto schema_type_config_b =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_b)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaBprop1")
+                           .SetDataTypeDocument(
+                               schema_c, /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaBprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto schema_type_config_c =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_c)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaCprop1")
+                           .SetDataTypeDocument(
+                               schema_a, /*index_nested_properties=*/false))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaCprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+  SchemaTypeConfigProto schema_type_config_d =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_d)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("schemaDprop1")
+                           .SetDataTypeDocument(
+                               schema_a, /*index_nested_properties=*/false))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("schemaDprop2")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .Build();
+
+  SchemaUtil::TypeConfigMap type_config_map = {
+      {schema_a, schema_type_config_a},
+      {schema_b, schema_type_config_b},
+      {schema_c, schema_type_config_c},
+      {schema_d, schema_type_config_d}};
+
+  // Order of iteration for schema A:
+  // {"schemaAprop1.schemaBprop1.schemaCprop2", "schemaAprop1.schemaBprop2",
+  // "schemaAprop2", "schemaAprop3.schemaDprop2"}, all indexable
+  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
+              Eq("schemaAprop1.schemaBprop1.schemaCprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
+              Eq("schemaAprop1.schemaBprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(), Eq("schemaAprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
+              Eq("schemaAprop3.schemaDprop2"));
+  EXPECT_THAT(schema_a_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_d.properties(1)));
+  EXPECT_THAT(schema_a_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_a_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Order of iteration for schema B:
+  // {"schemaBprop1.schemaCprop1.schemaAprop2",
+  // "schemaBprop1.schemaCprop1.schemaAprop3.schemaDprop2",
+  // "schemaBprop1.schemaCprop2", "schemaBprop2"}
+  //
+  // Indexable properties: {"schemaBprop1.schemaCprop2", "schemaBprop2"}
+  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
+              Eq("schemaBprop1.schemaCprop1.schemaAprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
+              Eq("schemaBprop1.schemaCprop1.schemaAprop3.schemaDprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_d.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
+              Eq("schemaBprop1.schemaCprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(), Eq("schemaBprop2"));
+  EXPECT_THAT(schema_b_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_b_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_b_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Order of iteration for schema C:
+  // {"schemaCprop1.schemaAprop1.schemaBprop2", "schemaCprop1.schemaAprop2",
+  // "schemaCprop1.schemaAprop3.schemaDprop2", "schemaCprop2"}
+  //
+  // Indexable properties: {"schemaCprop2"}
+  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
+              Eq("schemaCprop1.schemaAprop1.schemaBprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
+              Eq("schemaCprop1.schemaAprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
+              Eq("schemaCprop1.schemaAprop3.schemaDprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_d.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(), Eq("schemaCprop2"));
+  EXPECT_THAT(schema_c_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_c_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_c_iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  // Order of iteration for schema D:
+  // {"schemaDprop1.schemaAprop1.schemaBprop1.schemaCprop2",
+  // "schemaDprop1.schemaAprop1.schemaBprop2", "schemaDprop1.schemaAprop2",
+  // "schemaDprop2"}
+  //
+  // Indexable properties: {"schemaDprop2"}
+  SchemaPropertyIterator schema_d_iterator(schema_type_config_d,
+                                           type_config_map);
+
+  EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
+              Eq("schemaDprop1.schemaAprop1.schemaBprop1.schemaCprop2"));
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_c.properties(1)));
+  EXPECT_THAT(schema_d_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
+              Eq("schemaDprop1.schemaAprop1.schemaBprop2"));
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_b.properties(1)));
+  EXPECT_THAT(schema_d_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
+              Eq("schemaDprop1.schemaAprop2"));
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_a.properties(1)));
+  EXPECT_THAT(schema_d_iterator.GetCurrentNestedIndexable(), IsFalse());
+
+  EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(), Eq("schemaDprop2"));
+  EXPECT_THAT(schema_d_iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config_d.properties(1)));
+  EXPECT_THAT(schema_d_iterator.GetCurrentNestedIndexable(), IsTrue());
+
+  EXPECT_THAT(schema_d_iterator.Advance(),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
