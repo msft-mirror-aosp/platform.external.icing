@@ -16,19 +16,26 @@
 
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
@@ -61,7 +68,9 @@ class ResultStateV2Test : public ::testing::Test {
         SchemaStore::Create(&filesystem_, schema_store_base_dir_, &clock_));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     doc_store_base_dir_ = GetTestTempDir() + "/document_store";
     filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());
@@ -113,6 +122,7 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
   ResultSpecProto result_spec =
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.set_num_total_bytes_per_page_threshold(4096);
+  result_spec.set_max_joined_children_per_parent_to_return(2048);
 
   // Adjustment info is not important in this test.
   ResultStateV2 result_state(
@@ -128,6 +138,8 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
   EXPECT_THAT(result_state.num_per_page(), Eq(result_spec.num_per_page()));
   EXPECT_THAT(result_state.num_total_bytes_per_page_threshold(),
               Eq(result_spec.num_total_bytes_per_page_threshold()));
+  EXPECT_THAT(result_state.max_joined_children_per_parent_to_return(),
+              Eq(result_spec.max_joined_children_per_parent_to_return()));
 }
 
 TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
@@ -152,6 +164,9 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
               Eq(default_result_spec.num_per_page()));
   EXPECT_THAT(result_state.num_total_bytes_per_page_threshold(),
               Eq(default_result_spec.num_total_bytes_per_page_threshold()));
+  EXPECT_THAT(
+      result_state.max_joined_children_per_parent_to_return(),
+      Eq(default_result_spec.max_joined_children_per_parent_to_return()));
 }
 
 TEST_F(ResultStateV2Test,

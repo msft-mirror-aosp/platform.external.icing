@@ -1157,6 +1157,10 @@ TEST_F(IcingSearchEngineSchemaTest,
   EXPECT_THAT(icing.Put(person2).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
 
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
   // Verify join search: join a query for `name:person` with a child query for
   // `subject:message` based on the child's `receiverQualifiedId` field.
   // Since "receiverQualifiedId" is not JOINABLE_VALUE_TYPE_QUALIFIED_ID,
@@ -1166,7 +1170,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   search_spec_join_by_receiver.set_query("name:person");
   search_spec_join_by_receiver.set_term_match_type(TermMatchType::EXACT_ONLY);
   JoinSpecProto* join_spec = search_spec_join_by_receiver.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("receiverQualifiedId");
@@ -1189,9 +1192,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   *expected_empty_child_search_result_proto.mutable_results()
        ->Add()
        ->mutable_document() = person1;
-  SearchResultProto actual_results =
-      icing.Search(search_spec_join_by_receiver, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+  SearchResultProto actual_results = icing.Search(
+      search_spec_join_by_receiver, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_empty_child_search_result_proto));
 
@@ -1214,9 +1216,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   *expected_join_by_sender_search_result_proto.mutable_results()
        ->Add()
        ->mutable_document() = person1;
-  actual_results =
-      icing.Search(search_spec_join_by_sender, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+  actual_results = icing.Search(search_spec_join_by_sender,
+                                GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_join_by_sender_search_result_proto));
 
@@ -1259,9 +1260,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   *expected_join_by_receiver_search_result_proto.mutable_results()
        ->Add()
        ->mutable_document() = person2;
-  actual_results =
-      icing.Search(search_spec_join_by_receiver, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+  actual_results = icing.Search(search_spec_join_by_receiver,
+                                GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(
                   expected_join_by_receiver_search_result_proto));
@@ -1269,11 +1269,96 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify join search: join a query for `name:person` with a child query for
   // `subject:message` based on the child's `senderQualifiedId` field. We should
   // get the same set of result since `senderQualifiedId` is unchanged.
-  actual_results =
-      icing.Search(search_spec_join_by_sender, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+  actual_results = icing.Search(search_spec_join_by_sender,
+                                GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_join_by_sender_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       SetSchemaWithValidCycle_circularSchemaDefinitionNotAllowedFails) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_allow_circular_schema_definitions(false);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create schema with circular type definitions: A <-> B
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)))
+          .Build();
+
+  EXPECT_THAT(
+      icing.SetSchema(schema, /*ignore_errors_and_delete_documents=*/false)
+          .status(),
+      ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       SetSchemaWithValidCycle_allowCircularSchemaDefinitionsOK) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_allow_circular_schema_definitions(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create schema with valid circular type definitions: A <-> B, B->A sets
+  // index_nested_properties=false
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/false)))
+          .Build();
+
+  EXPECT_THAT(
+      icing.SetSchema(schema, /*ignore_errors_and_delete_documents=*/false)
+          .status(),
+      ProtoStatusIs(StatusProto::OK));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       SetSchemaWithInvalidCycle_allowCircularSchemaDefinitionsFails) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_allow_circular_schema_definitions(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create schema with invalid circular type definitions: A <-> B, all edges
+  // set index_nested_properties=true
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("A").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("b")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("B", /*index_nested_properties=*/true)))
+          .AddType(SchemaTypeConfigBuilder().SetType("B").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("a")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeDocument("A", /*index_nested_properties=*/true)))
+          .Build();
+
+  EXPECT_THAT(
+      icing.SetSchema(schema, /*ignore_errors_and_delete_documents=*/false)
+          .status(),
+      ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 TEST_F(
@@ -1500,7 +1585,6 @@ TEST_F(IcingSearchEngineSchemaTest,
   search_spec.set_query("name:person");
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -1514,9 +1598,12 @@ TEST_F(IcingSearchEngineSchemaTest,
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 
@@ -1568,8 +1655,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Verify join search: join a query for `name:person` with a child query for
   // `subject:tps` based on the child's `senderQualifiedId` field. We should
   // still be able to join person and email documents by this property.
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
+  actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 }
@@ -1800,7 +1887,6 @@ TEST_F(
   search_spec.set_query("name:person");
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -1814,9 +1900,12 @@ TEST_F(
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
   SearchResultProto actual_results =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 
@@ -1870,8 +1959,8 @@ TEST_F(
   // Verify join search: join a query for `name:person` with a child query for
   // `subject:tps` based on the child's `senderQualifiedId` field. We should
   // still be able to join person and email documents by this property.
-  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
-                                ResultSpecProto::default_instance());
+  actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 }

@@ -15,20 +15,27 @@
 #include "icing/join/join-processor.h"
 
 #include <algorithm>
-#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/join/aggregation-scorer.h"
+#include "icing/join/doc-join-info.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/join/qualified-id.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/util/status-macros.h"
 
@@ -76,13 +83,7 @@ JoinProcessor::GetChildrenFetcher(
       continue;
     }
 
-    // Since we've already sorted child_scored_document_hits, just simply omit
-    // if the map_joinable_qualified_id[parent_doc_id].size() has reached max
-    // joined child count.
-    if (map_joinable_qualified_id[ref_doc_id].size() <
-        join_spec.max_joined_child_count()) {
-      map_joinable_qualified_id[ref_doc_id].push_back(child);
-    }
+    map_joinable_qualified_id[ref_doc_id].push_back(child);
   }
   return JoinChildrenFetcher(join_spec, std::move(map_joinable_qualified_id));
 }

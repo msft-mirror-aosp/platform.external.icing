@@ -60,11 +60,11 @@ message SchemaTypeConfigProto {
   // it will default to value == 0.
   optional int32 version = 5;
 
-  // An experimental field to make the type as a subtype of parent_type, which
-  // enables parent_type to be interpreted as its subtypes in the context of the
-  // Search APIs, including schema type filters and projections specified in
+  // An experimental field to make the type as a subtype of parent_types, which
+  // enables parent_types to be interpreted as its subtypes in the context of
+  // the Search APIs, including schema type filters and projections specified in
   // TypePropertyMask.
-  optional string parent_type = 6;
+  repeated string parent_types = 6;
 
   reserved 2, 3;
 }

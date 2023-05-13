@@ -52,6 +52,27 @@ libtextclassifier3::StatusOr<FlashIndexStorage> FlashIndexStorage::Create(
   return storage;
 }
 
+/* static */ libtextclassifier3::StatusOr<int>
+FlashIndexStorage::ReadHeaderMagic(const Filesystem* filesystem,
+                                   const std::string& index_filename) {
+  ICING_RETURN_ERROR_IF_NULL(filesystem);
+
+  if (!filesystem->FileExists(index_filename.c_str())) {
+    return absl_ports::NotFoundError("Flash index file doesn't exist");
+  }
+
+  ScopedFd sfd(filesystem->OpenForRead(index_filename.c_str()));
+  if (!sfd.is_valid()) {
+    return absl_ports::InternalError("Fail to open flash index file");
+  }
+
+  uint32_t block_size = SelectBlockSize();
+  // Read and validate header.
+  ICING_ASSIGN_OR_RETURN(HeaderBlock header_block,
+                         HeaderBlock::Read(filesystem, sfd.get(), block_size));
+  return header_block.header()->magic;
+}
+
 FlashIndexStorage::~FlashIndexStorage() {
   if (header_block_ != nullptr) {
     FlushInMemoryFreeList();

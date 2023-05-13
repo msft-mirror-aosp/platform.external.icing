@@ -98,7 +98,9 @@ class ResultStateManagerTest : public testing::Test {
         SchemaStore::Create(&filesystem_, test_dir_, clock_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
@@ -161,6 +163,9 @@ class ResultStateManagerTest : public testing::Test {
 
   DocumentStore& document_store() { return *document_store_; }
   const DocumentStore& document_store() const { return *document_store_; }
+
+  SchemaStore& schema_store() { return *schema_store_; }
+  const SchemaStore& schema_store() const { return *schema_store_; }
 
   const ResultRetrieverV2& result_retriever() const {
     return *result_retriever_;
@@ -436,7 +441,8 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/
           std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
-                                                 result_spec, query_terms),
+                                                 result_spec, &schema_store(),
+                                                 query_terms),
           /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
@@ -451,7 +457,8 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/
           std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
-                                                 result_spec, query_terms),
+                                                 result_spec, &schema_store(),
+                                                 query_terms),
           /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever()));
 

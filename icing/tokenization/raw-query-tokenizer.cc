@@ -690,8 +690,7 @@ class RawQueryTokenIterator : public Tokenizer::Iterator {
 }  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer::Iterator>>
-RawQueryTokenizer::Tokenize(std::string_view text,
-                            LanguageSegmenter::AccessType) const {
+RawQueryTokenizer::Tokenize(std::string_view text) const {
   ICING_ASSIGN_OR_RETURN(std::vector<Token> tokens, TokenizeAll(text));
   return std::make_unique<RawQueryTokenIterator>(std::move(tokens));
 }

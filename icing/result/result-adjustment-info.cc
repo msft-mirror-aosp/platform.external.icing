@@ -22,6 +22,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
+#include "icing/schema/schema-store.h"
 
 namespace icing {
 namespace lib {
@@ -46,15 +47,16 @@ SnippetContext CreateSnippetContext(const SearchSpecProto& search_spec,
 
 ResultAdjustmentInfo::ResultAdjustmentInfo(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
-    const ResultSpecProto& result_spec,
+    const ResultSpecProto& result_spec, const SchemaStore* schema_store,
     SectionRestrictQueryTermsMap query_terms)
     : snippet_context(CreateSnippetContext(search_spec, result_spec,
                                            std::move(query_terms))),
       remaining_num_to_snippet(snippet_context.snippet_spec.num_to_snippet()) {
-  for (const TypePropertyMask& type_field_mask :
-       result_spec.type_property_masks()) {
+  for (const SchemaStore::ExpandedTypePropertyMask& type_field_mask :
+       schema_store->ExpandTypePropertyMasks(
+           result_spec.type_property_masks())) {
     projection_tree_map.insert(
-        {type_field_mask.schema_type(), ProjectionTree(type_field_mask)});
+        {type_field_mask.schema_type, ProjectionTree(type_field_mask)});
   }
 }
 
