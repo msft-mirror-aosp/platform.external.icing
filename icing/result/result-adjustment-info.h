@@ -22,6 +22,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
+#include "icing/schema/schema-store.h"
 
 namespace icing {
 namespace lib {
@@ -42,6 +43,7 @@ struct ResultAdjustmentInfo {
   explicit ResultAdjustmentInfo(const SearchSpecProto& search_spec,
                                 const ScoringSpecProto& scoring_spec,
                                 const ResultSpecProto& result_spec,
+                                const SchemaStore* schema_store,
                                 SectionRestrictQueryTermsMap query_terms);
 };
 
