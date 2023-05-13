@@ -16,14 +16,19 @@
 
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 #include "gtest/gtest.h"
-#include "icing/portable/equals-proto.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/snippet-context.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
+#include "icing/testing/common-matchers.h"
+#include "icing/testing/fake-clock.h"
+#include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
@@ -31,10 +36,43 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::AnyOf;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
+
+class ResultAdjustmentInfoTest : public testing::Test {
+ protected:
+  ResultAdjustmentInfoTest() : test_dir_(GetTestTempDir() + "/icing") {
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+  }
+
+  void SetUp() override {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_,
+        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
+
+    SchemaProto schema =
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("Email"))
+            .AddType(SchemaTypeConfigBuilder().SetType("Phone"))
+            .Build();
+    ASSERT_THAT(schema_store_->SetSchema(
+                    schema, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
+                IsOk());
+  }
+
+  void TearDown() override {
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  }
+
+  const Filesystem filesystem_;
+  const std::string test_dir_;
+  std::unique_ptr<SchemaStore> schema_store_;
+  FakeClock fake_clock_;
+};
 
 SearchSpecProto CreateSearchSpec(TermMatchType::Code match_type) {
   SearchSpecProto search_spec;
@@ -57,7 +95,8 @@ ResultSpecProto CreateResultSpec(
   return result_spec;
 }
 
-TEST(ResultAdjustmentInfoTest, ShouldConstructSnippetContextAccordingToSpecs) {
+TEST_F(ResultAdjustmentInfoTest,
+       ShouldConstructSnippetContextAccordingToSpecs) {
   ResultSpecProto result_spec =
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   result_spec.mutable_snippet_spec()->set_num_to_snippet(5);
@@ -70,7 +109,7 @@ TEST(ResultAdjustmentInfoTest, ShouldConstructSnippetContextAccordingToSpecs) {
   ResultAdjustmentInfo result_adjustment_info(
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      query_terms_map);
+      schema_store_.get(), query_terms_map);
   const SnippetContext snippet_context = result_adjustment_info.snippet_context;
 
   // Snippet context should be derived from the specs above.
@@ -84,7 +123,7 @@ TEST(ResultAdjustmentInfoTest, ShouldConstructSnippetContextAccordingToSpecs) {
   EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(5));
 }
 
-TEST(ResultAdjustmentInfoTest, NoSnippetingShouldReturnNull) {
+TEST_F(ResultAdjustmentInfoTest, NoSnippetingShouldReturnNull) {
   ResultSpecProto result_spec =
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
   // Setting num_to_snippet to 0 so that snippeting info won't be
@@ -99,7 +138,7 @@ TEST(ResultAdjustmentInfoTest, NoSnippetingShouldReturnNull) {
   ResultAdjustmentInfo result_adjustment_info(
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
-      query_terms_map);
+      schema_store_.get(), query_terms_map);
 
   EXPECT_THAT(result_adjustment_info.snippet_context.query_terms, IsEmpty());
   EXPECT_THAT(
@@ -110,8 +149,8 @@ TEST(ResultAdjustmentInfoTest, NoSnippetingShouldReturnNull) {
   EXPECT_THAT(result_adjustment_info.remaining_num_to_snippet, Eq(0));
 }
 
-TEST(ResultAdjustmentInfoTest,
-     ShouldConstructProjectionTreeMapAccordingToSpecs) {
+TEST_F(ResultAdjustmentInfoTest,
+       ShouldConstructProjectionTreeMapAccordingToSpecs) {
   // Create a ResultSpec with type property mask.
   ResultSpecProto result_spec =
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
@@ -127,20 +166,30 @@ TEST(ResultAdjustmentInfoTest,
   TypePropertyMask* wildcard_type_property_mask =
       result_spec.add_type_property_masks();
   wildcard_type_property_mask->set_schema_type(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
+      std::string(SchemaStore::kSchemaTypeWildcard));
   wildcard_type_property_mask->add_paths("wild.card");
 
   ResultAdjustmentInfo result_adjustment_info(
       CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true), result_spec,
+      schema_store_.get(),
       /*query_terms=*/{});
+
+  ProjectionTree email_projection_tree =
+      ProjectionTree({"Email", {"sender.name", "sender.emailAddress"}});
+  ProjectionTree alternative_email_projection_tree =
+      ProjectionTree({"Email", {"sender.emailAddress", "sender.name"}});
+  ProjectionTree phone_projection_tree = ProjectionTree({"Phone", {"caller"}});
+  ProjectionTree wildcard_projection_tree = ProjectionTree(
+      {std::string(SchemaStore::kSchemaTypeWildcard), {"wild.card"}});
 
   EXPECT_THAT(result_adjustment_info.projection_tree_map,
               UnorderedElementsAre(
-                  Pair("Email", ProjectionTree(*email_type_property_mask)),
-                  Pair("Phone", ProjectionTree(*phone_type_property_mask)),
-                  Pair(std::string(ProjectionTree::kSchemaTypeWildcard),
-                       ProjectionTree(*wildcard_type_property_mask))));
+                  Pair("Email", AnyOf(email_projection_tree,
+                                      alternative_email_projection_tree)),
+                  Pair("Phone", phone_projection_tree),
+                  Pair(std::string(SchemaStore::kSchemaTypeWildcard),
+                       wildcard_projection_tree)));
 }
 
 }  // namespace

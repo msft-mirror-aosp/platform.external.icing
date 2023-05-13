@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_QUALIFIED_ID_JOINABLE_PROPERTY_INDEXING_HANDLER_H_
-#define ICING_JOIN_QUALIFIED_ID_JOINABLE_PROPERTY_INDEXING_HANDLER_H_
+#ifndef ICING_JOIN_QUALIFIED_ID_JOIN_INDEXING_HANDLER_H_
+#define ICING_JOIN_QUALIFIED_ID_JOIN_INDEXING_HANDLER_H_
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/data-indexing-handler.h"
@@ -26,22 +26,21 @@
 namespace icing {
 namespace lib {
 
-class QualifiedIdJoinablePropertyIndexingHandler : public DataIndexingHandler {
+class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
  public:
-  // Creates a QualifiedIdJoinablePropertyIndexingHandler instance which does
-  // not take ownership of any input components. All pointers must refer to
-  // valid objects that outlive the created
-  // QualifiedIdJoinablePropertyIndexingHandler instance.
+  // Creates a QualifiedIdJoinIndexingHandler instance which does not take
+  // ownership of any input components. All pointers must refer to valid objects
+  // that outlive the created QualifiedIdJoinIndexingHandler instance.
   //
   // Returns:
-  //   - A QualifiedIdJoinablePropertyIndexingHandler instance on success
+  //   - A QualifiedIdJoinIndexingHandler instance on success
   //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>>
+      std::unique_ptr<QualifiedIdJoinIndexingHandler>>
   Create(const Clock* clock,
          QualifiedIdTypeJoinableIndex* qualified_id_join_index);
 
-  ~QualifiedIdJoinablePropertyIndexingHandler() override = default;
+  ~QualifiedIdJoinIndexingHandler() override = default;
 
   // Handles the joinable qualified id data indexing process: add data into the
   // qualified id type joinable cache.
@@ -58,7 +57,7 @@ class QualifiedIdJoinablePropertyIndexingHandler : public DataIndexingHandler {
       bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
 
  private:
-  explicit QualifiedIdJoinablePropertyIndexingHandler(
+  explicit QualifiedIdJoinIndexingHandler(
       const Clock* clock, QualifiedIdTypeJoinableIndex* qualified_id_join_index)
       : DataIndexingHandler(clock),
         qualified_id_join_index_(*qualified_id_join_index) {}
@@ -69,4 +68,4 @@ class QualifiedIdJoinablePropertyIndexingHandler : public DataIndexingHandler {
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_QUALIFIED_ID_JOINABLE_PROPERTY_INDEXING_HANDLER_H_
+#endif  // ICING_JOIN_QUALIFIED_ID_JOIN_INDEXING_HANDLER_H_

@@ -30,6 +30,8 @@
 #include "icing/store/document-id.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
@@ -121,7 +123,8 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
   }
 
   if (put_document_stats != nullptr) {
-    // TODO(b/259744228): set term index latency.
+    put_document_stats->set_term_index_latency_ms(
+        index_timer->GetElapsedMilliseconds());
     put_document_stats->mutable_tokenization_stats()->set_num_tokens_indexed(
         num_tokens);
   }

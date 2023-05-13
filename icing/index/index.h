@@ -86,6 +86,16 @@ class Index {
       const Options& options, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
+  // Reads magic from existing flash (main) index file header. We need this
+  // during Icing initialization phase to determine the version.
+  //
+  // Returns
+  //   Valid magic on success
+  //   NOT_FOUND if the lite index doesn't exist
+  //   INTERNAL on I/O error
+  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
+      const Filesystem* filesystem, const std::string& base_dir);
+
   // Clears all files created by the index. Returns OK if all files were
   // cleared.
   libtextclassifier3::Status Reset() {

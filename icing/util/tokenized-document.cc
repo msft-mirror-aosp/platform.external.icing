@@ -45,10 +45,8 @@ libtextclassifier3::StatusOr<std::vector<TokenizedSection>> Tokenize(
                                section.metadata.tokenizer, language_segmenter));
     std::vector<std::string_view> token_sequence;
     for (std::string_view subcontent : section.content) {
-      ICING_ASSIGN_OR_RETURN(
-          std::unique_ptr<Tokenizer::Iterator> itr,
-          tokenizer->Tokenize(subcontent,
-                              LanguageSegmenter::AccessType::kForwardIterator));
+      ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> itr,
+                             tokenizer->Tokenize(subcontent));
       while (itr->Advance()) {
         std::vector<Token> batch_tokens = itr->GetTokens();
         for (const Token& token : batch_tokens) {
