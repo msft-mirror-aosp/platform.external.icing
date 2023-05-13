@@ -15,17 +15,27 @@
 #include "icing/result/result-retriever-v2.h"
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/document-builder.h"
+#include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
@@ -35,15 +45,19 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -134,7 +148,10 @@ class ResultRetrieverV2Test : public ::testing::Test {
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+    ASSERT_THAT(schema_store_->SetSchema(
+                    schema, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
+                IsOk());
 
     num_total_hits_ = 0;
   }
@@ -392,6 +409,159 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       result_retriever->RetrieveNextPage(result_state2).first;
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
+}
+
+TEST_F(ResultRetrieverV2Test,
+       ShouldLimitNumChildDocumentsByMaxJoinedChildPerParent) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  // 1. Add 2 Person document
+  DocumentProto person_document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "Person/1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .AddStringProperty("emailAddress", "ny152@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id1,
+                             doc_store->Put(person_document1));
+
+  DocumentProto person_document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "Person/2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Meg Ryan")
+          .AddStringProperty("emailAddress", "shopgirl@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id2,
+                             doc_store->Put(person_document2));
+
+  // 2. Add 4 Email documents
+  DocumentProto email_document1 = DocumentBuilder()
+                                      .SetKey("namespace", "Email/1")
+                                      .SetCreationTimestampMs(1000)
+                                      .SetSchema("Email")
+                                      .AddStringProperty("name", "Test 1")
+                                      .AddStringProperty("body", "Test 1")
+                                      .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id1,
+                             doc_store->Put(email_document1));
+
+  DocumentProto email_document2 = DocumentBuilder()
+                                      .SetKey("namespace", "Email/2")
+                                      .SetCreationTimestampMs(1000)
+                                      .SetSchema("Email")
+                                      .AddStringProperty("name", "Test 2")
+                                      .AddStringProperty("body", "Test 2")
+                                      .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id2,
+                             doc_store->Put(email_document2));
+
+  DocumentProto email_document3 = DocumentBuilder()
+                                      .SetKey("namespace", "Email/3")
+                                      .SetCreationTimestampMs(1000)
+                                      .SetSchema("Email")
+                                      .AddStringProperty("name", "Test 3")
+                                      .AddStringProperty("body", "Test 3")
+                                      .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id3,
+                             doc_store->Put(email_document3));
+
+  DocumentProto email_document4 = DocumentBuilder()
+                                      .SetKey("namespace", "Email/4")
+                                      .SetCreationTimestampMs(1000)
+                                      .SetSchema("Email")
+                                      .AddStringProperty("name", "Test 4")
+                                      .AddStringProperty("body", "Test 4")
+                                      .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id4,
+                             doc_store->Put(email_document4));
+
+  // 3. Setup the joined scored results.
+  std::vector<SectionId> person_hit_section_ids = {
+      GetSectionId("Person", "name")};
+  std::vector<SectionId> email_hit_section_ids = {
+      GetSectionId("Email", "name"), GetSectionId("Email", "body")};
+  SectionIdMask person_hit_section_id_mask =
+      CreateSectionIdMask(person_hit_section_ids);
+  SectionIdMask email_hit_section_id_mask =
+      CreateSectionIdMask(email_hit_section_ids);
+
+  ScoredDocumentHit person1_scored_doc_hit(
+      person_document_id1, person_hit_section_id_mask, /*score=*/1);
+  ScoredDocumentHit person2_scored_doc_hit(
+      person_document_id2, person_hit_section_id_mask, /*score=*/2);
+  ScoredDocumentHit email1_scored_doc_hit(
+      email_document_id1, email_hit_section_id_mask, /*score=*/3);
+  ScoredDocumentHit email2_scored_doc_hit(
+      email_document_id2, email_hit_section_id_mask, /*score=*/4);
+  ScoredDocumentHit email3_scored_doc_hit(
+      email_document_id3, email_hit_section_id_mask, /*score=*/5);
+  ScoredDocumentHit email4_scored_doc_hit(
+      email_document_id4, email_hit_section_id_mask, /*score=*/6);
+  // Create JoinedScoredDocumentHits mapping:
+  // - Person1 to Email1
+  // - Person2 to Email2, Email3, Email4
+  std::vector<JoinedScoredDocumentHit> joined_scored_document_hits = {
+      JoinedScoredDocumentHit(
+          /*final_score=*/1,
+          /*parent_scored_document_hit=*/person1_scored_doc_hit,
+          /*child_scored_document_hits=*/{email1_scored_doc_hit}),
+      JoinedScoredDocumentHit(
+          /*final_score=*/3,
+          /*parent_scored_document_hit=*/person2_scored_doc_hit,
+          /*child_scored_document_hits=*/
+          {email4_scored_doc_hit, email3_scored_doc_hit,
+           email2_scored_doc_hit})};
+
+  // 4. Retrieve result with max_joined_children_per_parent_to_return = 2.
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.set_max_joined_children_per_parent_to_return(2);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
+          std::move(joined_scored_document_hits), /*is_descending=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
+
+  // Result1: person2 with child docs = [email4, email3]
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = person_document2;
+  result1.set_score(3);
+  SearchResultProto::ResultProto* child1 = result1.add_joined_results();
+  *child1->mutable_document() = email_document4;
+  child1->set_score(6);
+  SearchResultProto::ResultProto* child2 = result1.add_joined_results();
+  *child2->mutable_document() = email_document3;
+  child2->set_score(5);
+
+  // Result2: person1 with child docs = [email1]
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = person_document1;
+  result2.set_score(1);
+  SearchResultProto::ResultProto* child3 = result2.add_joined_results();
+  *child3->mutable_document() = email_document1;
+  child3->set_score(3);
+
+  auto [page_result, has_more_results] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result.results,
+              ElementsAre(EqualsProto(result1), EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results);
 }
 
 TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {

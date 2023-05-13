@@ -98,6 +98,17 @@ class FlashIndexStorage {
       std::string index_filename, const Filesystem* filesystem,
       PostingListSerializer* serializer, bool in_memory = true);
 
+  // Reads magic from existing file header. We need this during Icing
+  // initialization phase to determine the version.
+  //
+  // RETURNS:
+  //   - On success, a valid magic
+  //   - FAILED_PRECONDITION_ERROR if filesystem is null
+  //   - NOT_FOUND_ERROR if the flash index file doesn't exist
+  //   - INTERNAL_ERROR on I/O error
+  static libtextclassifier3::StatusOr<int> ReadHeaderMagic(
+      const Filesystem* filesystem, const std::string& index_filename);
+
   FlashIndexStorage(FlashIndexStorage&&) = default;
   FlashIndexStorage(const FlashIndexStorage&) = delete;
   FlashIndexStorage& operator=(FlashIndexStorage&&) = default;

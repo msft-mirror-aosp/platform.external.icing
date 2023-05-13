@@ -163,6 +163,12 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
                                           std::move(main_index), filesystem));
 }
 
+/* static */ libtextclassifier3::StatusOr<int> Index::ReadFlashIndexMagic(
+    const Filesystem* filesystem, const std::string& base_dir) {
+  return MainIndex::ReadFlashIndexMagic(filesystem,
+                                        MakeMainIndexFilepath(base_dir));
+}
+
 libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
   if (lite_index_->last_added_document_id() != kInvalidDocumentId &&
       lite_index_->last_added_document_id() > document_id) {

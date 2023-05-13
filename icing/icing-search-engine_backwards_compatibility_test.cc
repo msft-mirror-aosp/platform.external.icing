@@ -118,16 +118,17 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest,
   IcingSearchEngine icing(icing_options, GetTestJniCache());
   InitializeResultProto init_result = icing.Initialize();
   EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+  // Since there will be version change, the recovery cause will be
+  // VERSION_CHANGED.
   EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
               Eq(InitializeStatsProto::NO_DATA_LOSS));
   EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  // The main and lite indexes are in legacy formats and therefore will need to
-  // be rebuilt from scratch.
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::IO_ERROR));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
 
   // Set up schema, this is the one used to validate documents in the testdata
   // files. Do not change unless you're also updating the testdata files.
@@ -257,17 +258,17 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest, MigrateToLargerScale) {
   IcingSearchEngine icing(icing_options, GetTestJniCache());
   InitializeResultProto init_result = icing.Initialize();
   EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+  // Since there will be version change, the recovery cause will be
+  // VERSION_CHANGED.
   EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
               Eq(InitializeStatsProto::NO_DATA_LOSS));
-  // No recovery is required for the document store.
   EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  // The main and lite indexes are in legacy formats and therefore will need to
-  // be rebuilt from scratch.
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::IO_ERROR));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
 
   // Verify that the schema stored in the index matches the one that we expect.
   // Do not change unless you're also updating the testdata files.
@@ -404,18 +405,19 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest,
   IcingSearchEngine icing(icing_options, GetTestJniCache());
   InitializeResultProto init_result = icing.Initialize();
   EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+  // Since there will be version change, the recovery cause will be
+  // VERSION_CHANGED.
   EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
               Eq(InitializeStatsProto::NO_DATA_LOSS));
-  // No recovery is required for the document store.
   EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   // TODO: create enum code for legacy schema store recovery after schema store
   // change is made.
   EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  // No recovery is required for the index.
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::NONE));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
 
   // Verify that the schema stored in the index matches the one that we expect.
   // Do not change unless you're also updating the testdata files.

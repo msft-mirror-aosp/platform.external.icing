@@ -389,7 +389,10 @@ TYPED_TEST(NumericIndexIntegerTest, WildcardStorageQuery) {
                        .AddProperty(PropertyConfigBuilder(int_property_config)
                                         .SetName("desiredProperty")))
           .Build();
-  ICING_ASSERT_OK(this->schema_store_->SetSchema(schema));
+  ICING_ASSERT_OK(this->schema_store_->SetSchema(
+      schema,
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Put 11 docs of "TypeA" into the document store.
   DocumentProto doc =
@@ -1492,7 +1495,10 @@ TEST_F(IntegerIndexTest, WildcardStoragePersistenceQuery) {
                        .AddProperty(PropertyConfigBuilder(int_property_config)
                                         .SetName("desiredProperty")))
           .Build();
-  ICING_ASSERT_OK(this->schema_store_->SetSchema(schema));
+  ICING_ASSERT_OK(this->schema_store_->SetSchema(
+      schema,
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -1862,7 +1868,10 @@ TEST_F(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
                        .AddProperty(PropertyConfigBuilder(int_property_config)
                                         .SetName("desiredProperty")))
           .Build();
-  ICING_ASSERT_OK(this->schema_store_->SetSchema(schema));
+  ICING_ASSERT_OK(this->schema_store_->SetSchema(
+      schema,
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0
@@ -2145,7 +2154,10 @@ TEST_F(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
                        .AddProperty(PropertyConfigBuilder(int_property_config)
                                         .SetName("undesiredProperty")))
           .Build();
-  ICING_ASSERT_OK(this->schema_store_->SetSchema(schema));
+  ICING_ASSERT_OK(this->schema_store_->SetSchema(
+      schema,
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Ids are assigned alphabetically, so the property ids are:
   // TypeA.desiredProperty = 0

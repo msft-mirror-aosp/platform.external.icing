@@ -15,6 +15,8 @@
 #ifndef ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
 #define ICING_TESTING_NUMERIC_UNIFORM_DISTRIBUTION_INTEGER_GENERATOR_H_
 
+#include <random>
+
 #include "icing/testing/numeric/number-generator.h"
 
 namespace icing {
