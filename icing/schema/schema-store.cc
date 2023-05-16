@@ -15,6 +15,7 @@
 #include "icing/schema/schema-store.h"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdint>
 #include <limits>
 #include <memory>

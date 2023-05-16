@@ -19,6 +19,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
+#include "icing/portable/equals-proto.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-type-manager.h"
@@ -202,7 +203,7 @@ TEST_F(BackupSchemaProducerTest, RemoveRfc822) {
                   .SetCardinality(CARDINALITY_OPTIONAL)
                   .SetDataType(TYPE_STRING)))
           .Build();
-  EXPECT_THAT(backup, testing::EqualsProto(expected_backup));
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
 TEST_F(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
@@ -284,7 +285,7 @@ TEST_F(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
           .AddProperty(unindexed_string_property_builder.SetName("prop19"))
           .Build();
   SchemaProto expected_backup = SchemaBuilder().AddType(expected_type).Build();
-  EXPECT_THAT(backup, testing::EqualsProto(expected_backup));
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
 TEST_F(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
@@ -366,7 +367,7 @@ TEST_F(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
           .AddProperty(unindexed_int_property_builder.SetName("prop19"))
           .Build();
   SchemaProto expected_backup = SchemaBuilder().AddType(expected_type).Build();
-  EXPECT_THAT(backup, testing::EqualsProto(expected_backup));
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
 TEST_F(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
@@ -438,7 +439,7 @@ TEST_F(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
           .Build();
   SchemaProto expected_backup =
       SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();
-  EXPECT_THAT(backup, testing::EqualsProto(expected_backup));
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
 TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
@@ -518,7 +519,7 @@ TEST_F(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
           .AddProperty(indexed_string_property_builder.SetName("prop16"))
           .Build();
   SchemaProto expected_backup = SchemaBuilder().AddType(expected_typeA).Build();
-  EXPECT_THAT(backup, testing::EqualsProto(expected_backup));
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
 TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
@@ -621,7 +622,7 @@ TEST_F(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
           .Build();
   SchemaProto expected_backup =
       SchemaBuilder().AddType(expected_typeA).AddType(typeB).Build();
-  EXPECT_THAT(backup, testing::EqualsProto(expected_backup));
+  EXPECT_THAT(backup, portable_equals_proto::EqualsProto(expected_backup));
 }
 
 }  // namespace
