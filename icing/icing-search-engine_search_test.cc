@@ -409,6 +409,57 @@ TEST_P(IcingSearchEngineSearchTest, SearchReturnsOneResult) {
                                        expected_search_result_proto));
 }
 
+TEST_P(IcingSearchEngineSearchTest, SearchReturnsOneResult_readOnlyFalse) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document_one = CreateMessageDocument("namespace", "uri1");
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two = CreateMessageDocument("namespace", "uri2");
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+  search_spec.set_search_type(GetParam());
+  search_spec.set_use_read_only_search(false);
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(1);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document_two;
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  EXPECT_THAT(search_result_proto.query_stats().latency_ms(), Eq(1000));
+  EXPECT_THAT(search_result_proto.query_stats().parse_query_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(search_result_proto.query_stats().scoring_latency_ms(), Eq(1000));
+  EXPECT_THAT(search_result_proto.query_stats().ranking_latency_ms(), Eq(1000));
+  EXPECT_THAT(search_result_proto.query_stats().document_retrieval_latency_ms(),
+              Eq(1000));
+  EXPECT_THAT(search_result_proto.query_stats().lock_acquisition_latency_ms(),
+              Eq(1000));
+
+  // The token is a random number so we don't verify it.
+  expected_search_result_proto.set_next_page_token(
+      search_result_proto.next_page_token());
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
 TEST_P(IcingSearchEngineSearchTest, SearchZeroResultLimitReturnsEmptyResults) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -417,6 +468,28 @@ TEST_P(IcingSearchEngineSearchTest, SearchZeroResultLimitReturnsEmptyResults) {
   search_spec.set_term_match_type(TermMatchType::PREFIX);
   search_spec.set_query("");
   search_spec.set_search_type(GetParam());
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(0);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_P(IcingSearchEngineSearchTest,
+       SearchZeroResultLimitReturnsEmptyResults_readOnlyFalse) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("");
+  search_spec.set_search_type(GetParam());
+  search_spec.set_use_read_only_search(false);
 
   ResultSpecProto result_spec;
   result_spec.set_num_per_page(0);
@@ -452,6 +525,32 @@ TEST_P(IcingSearchEngineSearchTest,
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_search_result_proto));
 }
+
+TEST_P(IcingSearchEngineSearchTest,
+       SearchNegativeResultLimitReturnsInvalidArgument_readOnlyFalse) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("");
+  search_spec.set_search_type(GetParam());
+  search_spec.set_use_read_only_search(false);
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(-5);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_search_result_proto.mutable_status()->set_message(
+      "ResultSpecProto.num_per_page cannot be negative.");
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
 
 TEST_P(IcingSearchEngineSearchTest,
        SearchNonPositivePageTotalBytesLimitReturnsInvalidArgument) {
