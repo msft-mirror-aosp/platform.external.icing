@@ -22,6 +22,7 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/destructible-directory.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-common.h"
 #include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
@@ -90,6 +91,10 @@ FindTermResult FindShortestValidTermWithPrefixHits(
   return result;
 }
 
+std::string MakeFlashIndexFilename(const std::string& base_dir) {
+  return base_dir + "/main_index";
+}
+
 }  // namespace
 
 MainIndex::MainIndex(const std::string& index_directory,
@@ -112,12 +117,18 @@ libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> MainIndex::Create(
   return main_index;
 }
 
+/* static */ libtextclassifier3::StatusOr<int> MainIndex::ReadFlashIndexMagic(
+    const Filesystem* filesystem, const std::string& index_directory) {
+  return FlashIndexStorage::ReadHeaderMagic(
+      filesystem, MakeFlashIndexFilename(index_directory));
+}
+
 // TODO(b/139087650) : Migrate off of IcingFilesystem.
 libtextclassifier3::Status MainIndex::Init() {
   if (!filesystem_->CreateDirectoryRecursively(base_dir_.c_str())) {
     return absl_ports::InternalError("Unable to create main index directory.");
   }
-  std::string flash_index_file = base_dir_ + "/main_index";
+  std::string flash_index_file = MakeFlashIndexFilename(base_dir_);
   ICING_ASSIGN_OR_RETURN(
       FlashIndexStorage flash_index,
       FlashIndexStorage::Create(flash_index_file, filesystem_,

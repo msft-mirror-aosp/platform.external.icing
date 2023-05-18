@@ -55,11 +55,16 @@ DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
 
   // Precompute all the SchemaTypeIds
   for (std::string_view schema_type : options_.schema_types) {
-    auto schema_type_id_or = schema_store_.GetSchemaTypeId(schema_type);
+    libtextclassifier3::StatusOr<const std::unordered_set<SchemaTypeId>*>
+        schema_type_ids_or =
+            schema_store_.GetSchemaTypeIdsWithChildren(schema_type);
 
     // If we can't find the SchemaTypeId, just throw it away
-    if (schema_type_id_or.ok()) {
-      target_schema_type_ids_.emplace(schema_type_id_or.ValueOrDie());
+    if (schema_type_ids_or.ok()) {
+      const std::unordered_set<SchemaTypeId>* schema_type_ids =
+          schema_type_ids_or.ValueOrDie();
+      target_schema_type_ids_.insert(schema_type_ids->begin(),
+                                     schema_type_ids->end());
     }
   }
 }
