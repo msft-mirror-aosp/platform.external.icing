@@ -1807,19 +1807,61 @@ libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
 SearchResultProto IcingSearchEngine::Search(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec) {
+  if (search_spec.use_read_only_search()) {
+    return SearchLockedShared(search_spec, scoring_spec, result_spec);
+  } else {
+    return SearchLockedExclusive(search_spec, scoring_spec, result_spec);
+  }
+}
+
+SearchResultProto IcingSearchEngine::SearchLockedShared(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+
+  // Only acquire an overall read-lock for this implementation. Finer-grained
+  // locks are implemented around code paths that write changes to Icing's data
+  // members.
+  absl_ports::shared_lock l(&mutex_);
+  int64_t lock_acquisition_latency = overall_timer->GetElapsedMilliseconds();
+
+  SearchResultProto result_proto =
+      InternalSearch(search_spec, scoring_spec, result_spec);
+
+  result_proto.mutable_query_stats()->set_lock_acquisition_latency_ms(
+      lock_acquisition_latency);
+  result_proto.mutable_query_stats()->set_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
+SearchResultProto IcingSearchEngine::SearchLockedExclusive(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+
+  // Acquire the overall write-lock for this locked implementation.
+  absl_ports::unique_lock l(&mutex_);
+  int64_t lock_acquisition_latency = overall_timer->GetElapsedMilliseconds();
+
+  SearchResultProto result_proto =
+      InternalSearch(search_spec, scoring_spec, result_spec);
+
+  result_proto.mutable_query_stats()->set_lock_acquisition_latency_ms(
+      lock_acquisition_latency);
+  result_proto.mutable_query_stats()->set_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
+SearchResultProto IcingSearchEngine::InternalSearch(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
   QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   query_stats->set_query_length(search_spec.query().length());
-  ScopedTimer overall_timer(clock_->GetNewTimer(), [query_stats](int64_t t) {
-    query_stats->set_latency_ms(t);
-  });
-  // Only an overall read-lock is required here. A finer-grained write-lock is
-  // provided around the LiteIndex.
-  absl_ports::shared_lock l(&mutex_);
-  query_stats->set_lock_acquisition_latency_ms(
-      overall_timer.timer().GetElapsedMilliseconds());
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
