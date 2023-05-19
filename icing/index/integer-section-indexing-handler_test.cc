@@ -105,7 +105,8 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         integer_index_,
-        IntegerIndex::Create(filesystem_, integer_index_working_path_));
+        IntegerIndex::Create(filesystem_, integer_index_working_path_,
+                             /*pre_mapping_fbv=*/false));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(

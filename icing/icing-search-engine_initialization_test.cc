@@ -3196,7 +3196,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir(),
+                             /*pre_mapping_fbv=*/false));
     // Add hits for document 0.
     ASSERT_THAT(integer_index->last_added_document_id(), kInvalidDocumentId);
     integer_index->set_last_added_document_id(0);
@@ -3374,7 +3375,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir(),
+                             /*pre_mapping_fbv=*/false));
     // Add hits for document 4.
     DocumentId original_last_added_doc_id =
         integer_index->last_added_document_id();
@@ -3570,8 +3572,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem,
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false));
     // Add data for document 0.
     ASSERT_THAT(qualified_id_join_index->last_added_document_id(),
                 kInvalidDocumentId);
@@ -3639,8 +3642,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem,
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false));
     EXPECT_THAT(qualified_id_join_index->Get(
                     DocJoinInfo(/*document_id=*/0, /*joinable_property_id=*/0)),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -3739,8 +3743,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem,
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false));
     // Add data for document 4.
     DocumentId original_last_added_doc_id =
         qualified_id_join_index->last_added_document_id();
@@ -5137,12 +5142,14 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(*filesystem(), GetIntegerIndexDir()));
+        IntegerIndex::Create(*filesystem(), GetIntegerIndexDir(),
+                             /*pre_mapping_fbv=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(*filesystem(),
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            *filesystem(), GetQualifiedIdJoinIndexDir(),
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<StringSectionIndexingHandler>
