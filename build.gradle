@@ -17,6 +17,7 @@
 import androidx.build.SupportConfig
 
 plugins {
+    id('AndroidXPlugin')
     id('com.android.library')
     id('com.google.protobuf')
 }
@@ -104,4 +105,8 @@ android.libraryVariants.all { variant ->
 
     def exportConfiguration = configurations.register("export${suffix}")
     artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
+}
+
+androidx {
+    mavenVersion = LibraryVersions.APPSEARCH
 }
