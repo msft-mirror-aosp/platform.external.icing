@@ -69,8 +69,11 @@ libtextclassifier3::StatusOr<VersionInfo> ReadVersion(
 libtextclassifier3::Status WriteVersion(const Filesystem& filesystem,
                                         const std::string& version_file_path,
                                         const VersionInfo& version_info) {
-  if (!filesystem.PWrite(version_file_path.c_str(), /*offset=*/0, &version_info,
-                         sizeof(VersionInfo))) {
+  ScopedFd scoped_fd(filesystem.OpenForWrite(version_file_path.c_str()));
+  if (!scoped_fd.is_valid() ||
+      !filesystem.PWrite(scoped_fd.get(), /*offset=*/0, &version_info,
+                         sizeof(VersionInfo)) ||
+      !filesystem.DataSync(scoped_fd.get())) {
     return absl_ports::InternalError("Fail to write version");
   }
   return libtextclassifier3::Status::OK;
