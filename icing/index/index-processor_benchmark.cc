@@ -226,7 +226,8 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
       CreateIndex(icing_filesystem, filesystem, index_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
-      IntegerIndex::Create(filesystem, integer_index_dir));
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -300,7 +301,8 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
       CreateIndex(icing_filesystem, filesystem, index_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
-      IntegerIndex::Create(filesystem, integer_index_dir));
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -375,7 +377,8 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
       CreateIndex(icing_filesystem, filesystem, index_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
-      IntegerIndex::Create(filesystem, integer_index_dir));
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();
@@ -450,7 +453,8 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
       CreateIndex(icing_filesystem, filesystem, index_dir);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
-      IntegerIndex::Create(filesystem, integer_index_dir));
+      IntegerIndex::Create(filesystem, integer_index_dir,
+                           /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
       language_segmenter_factory::Create(std::move(options)).ValueOrDie();

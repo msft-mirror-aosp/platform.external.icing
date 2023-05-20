@@ -82,8 +82,8 @@ class KeyMapperBenchmark {
     std::string working_path =
         absl_ports::StrCat(base_dir, "/", "key_mapper_dir");
     return PersistentHashMapKeyMapper<int>::Create(
-        filesystem, std::move(working_path), max_num_entries,
-        /*average_kv_byte_size=*/kKeyLength + 1 + sizeof(int),
+        filesystem, std::move(working_path), /*pre_mapping_fbv=*/true,
+        max_num_entries, /*average_kv_byte_size=*/kKeyLength + 1 + sizeof(int),
         /*max_load_factor_percent=*/100);
   }
 
