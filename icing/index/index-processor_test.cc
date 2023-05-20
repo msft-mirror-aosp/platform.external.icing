@@ -172,11 +172,14 @@ class IndexProcessorTest : public Test {
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        integer_index_, IntegerIndex::Create(filesystem_, integer_index_dir_));
+        integer_index_, IntegerIndex::Create(filesystem_, integer_index_dir_,
+                                             /*pre_mapping_fbv=*/false));
 
-    ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
-                               QualifiedIdTypeJoinableIndex::Create(
-                                   filesystem_, qualified_id_join_index_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        qualified_id_join_index_,
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem_, qualified_id_join_index_dir_,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
