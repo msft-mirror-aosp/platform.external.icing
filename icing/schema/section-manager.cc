@@ -35,6 +35,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/property-util.h"
+#include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/key-mapper.h"
@@ -49,10 +50,7 @@ namespace {
 libtextclassifier3::Status AppendNewSectionMetadata(
     std::vector<SectionMetadata>* metadata_list,
     std::string&& concatenated_path,
-    PropertyConfigProto::DataType::Code data_type,
-    StringIndexingConfig::TokenizerType::Code string_tokenizer_type,
-    TermMatchType::Code term_match_type,
-    IntegerIndexingConfig::NumericMatchType::Code numeric_match_type) {
+    const PropertyConfigProto& property_config) {
   // Validates next section id, makes sure that section id is the same as the
   // list index so that we could find any section metadata by id in O(1) later.
   SectionId new_section_id = static_cast<SectionId>(metadata_list->size());
@@ -66,8 +64,11 @@ libtextclassifier3::Status AppendNewSectionMetadata(
 
   // Creates section metadata
   metadata_list->push_back(SectionMetadata(
-      new_section_id, data_type, string_tokenizer_type, term_match_type,
-      numeric_match_type, std::move(concatenated_path)));
+      new_section_id, property_config.data_type(),
+      property_config.string_indexing_config().tokenizer_type(),
+      property_config.string_indexing_config().term_match_type(),
+      property_config.integer_indexing_config().numeric_match_type(),
+      std::move(concatenated_path)));
   return libtextclassifier3::Status::OK;
 }
 
@@ -98,35 +99,12 @@ SectionManager::Builder::ProcessSchemaTypePropertyConfig(
     return absl_ports::InvalidArgumentError("Invalid schema type id");
   }
 
-  switch (property_config.data_type()) {
-    case PropertyConfigProto::DataType::STRING: {
-      if (property_config.string_indexing_config().term_match_type() !=
-          TermMatchType::UNKNOWN) {
-        ICING_RETURN_IF_ERROR(AppendNewSectionMetadata(
-            &section_metadata_cache_[schema_type_id], std::move(property_path),
-            PropertyConfigProto::DataType::STRING,
-            property_config.string_indexing_config().tokenizer_type(),
-            property_config.string_indexing_config().term_match_type(),
-            IntegerIndexingConfig::NumericMatchType::UNKNOWN));
-      }
-      break;
-    }
-    case PropertyConfigProto::DataType::INT64: {
-      if (property_config.integer_indexing_config().numeric_match_type() !=
-          IntegerIndexingConfig::NumericMatchType::UNKNOWN) {
-        ICING_RETURN_IF_ERROR(AppendNewSectionMetadata(
-            &section_metadata_cache_[schema_type_id], std::move(property_path),
-            PropertyConfigProto::DataType::INT64,
-            StringIndexingConfig::TokenizerType::NONE, TermMatchType::UNKNOWN,
-            property_config.integer_indexing_config().numeric_match_type()));
-      }
-      break;
-    }
-    default: {
-      // Skip other data types.
-      break;
-    }
+  if (SchemaUtil::IsIndexedProperty(property_config)) {
+    ICING_RETURN_IF_ERROR(
+        AppendNewSectionMetadata(&section_metadata_cache_[schema_type_id],
+                                 std::move(property_path), property_config));
   }
+
   return libtextclassifier3::Status::OK;
 }
 
