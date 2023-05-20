@@ -351,17 +351,18 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
       FileBackedVector<Bucket>::Create(
           filesystem, GetBucketStorageFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize entry_storage
   pre_mapping_mmap_size = sizeof(Entry) * options.max_num_entries;
   max_file_size =
       pre_mapping_mmap_size + FileBackedVector<Entry>::Header::kHeaderSize;
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<FileBackedVector<Entry>> entry_storage,
-                         FileBackedVector<Entry>::Create(
-                             filesystem, GetEntryStorageFilePath(working_path),
-                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
-                             max_file_size, pre_mapping_mmap_size));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<FileBackedVector<Entry>> entry_storage,
+      FileBackedVector<Entry>::Create(
+          filesystem, GetEntryStorageFilePath(working_path),
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize kv_storage
   pre_mapping_mmap_size =
@@ -373,7 +374,7 @@ PersistentHashMap::InitializeNewFiles(const Filesystem& filesystem,
       FileBackedVector<char>::Create(
           filesystem, GetKeyValueStorageFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize buckets.
   ICING_RETURN_IF_ERROR(bucket_storage->Set(
@@ -441,17 +442,18 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
       FileBackedVector<Bucket>::Create(
           filesystem, GetBucketStorageFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize entry_storage
   pre_mapping_mmap_size = sizeof(Entry) * options.max_num_entries;
   max_file_size =
       pre_mapping_mmap_size + FileBackedVector<Entry>::Header::kHeaderSize;
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<FileBackedVector<Entry>> entry_storage,
-                         FileBackedVector<Entry>::Create(
-                             filesystem, GetEntryStorageFilePath(working_path),
-                             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
-                             max_file_size, pre_mapping_mmap_size));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<FileBackedVector<Entry>> entry_storage,
+      FileBackedVector<Entry>::Create(
+          filesystem, GetEntryStorageFilePath(working_path),
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize kv_storage
   pre_mapping_mmap_size =
@@ -463,7 +465,7 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
       FileBackedVector<char>::Create(
           filesystem, GetKeyValueStorageFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, max_file_size,
-          pre_mapping_mmap_size));
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Create instance.
   auto persistent_hash_map =

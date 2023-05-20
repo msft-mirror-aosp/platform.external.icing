@@ -276,7 +276,7 @@ TEST_P(NonIndexableSectionManagerBuilderTest, Build) {
 }
 
 // The following types are considered non-indexable:
-// - String with TERM_MATCH_UNKNOWN, TOKENIZER_NONE
+// - String with TERM_MATCH_UNKNOWN or TOKENIZER_NONE
 // - Int64 with NUMERIC_MATCH_UNKNOWN
 // - Double
 // - Boolean
@@ -288,6 +288,16 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(PropertyConfigBuilder()
                         .SetName("property")
                         .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                        .SetCardinality(CARDINALITY_OPTIONAL)
+                        .Build(),
+                    PropertyConfigBuilder()
+                        .SetName("property")
+                        .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_PLAIN)
+                        .SetCardinality(CARDINALITY_OPTIONAL)
+                        .Build(),
+                    PropertyConfigBuilder()
+                        .SetName("property")
+                        .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_NONE)
                         .SetCardinality(CARDINALITY_OPTIONAL)
                         .Build(),
                     PropertyConfigBuilder()
