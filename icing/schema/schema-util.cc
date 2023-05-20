@@ -53,23 +53,6 @@ bool ArePropertiesEqual(const PropertyConfigProto& old_property,
              new_property.document_indexing_config().index_nested_properties();
 }
 
-bool IsIndexedProperty(const PropertyConfigProto& property_config) {
-  switch (property_config.data_type()) {
-    case PropertyConfigProto::DataType::STRING:
-      return property_config.string_indexing_config().term_match_type() !=
-             TermMatchType::UNKNOWN;
-    case PropertyConfigProto::DataType::INT64:
-      return property_config.integer_indexing_config().numeric_match_type() !=
-             IntegerIndexingConfig::NumericMatchType::UNKNOWN;
-    case PropertyConfigProto::DataType::UNKNOWN:
-    case PropertyConfigProto::DataType::DOUBLE:
-    case PropertyConfigProto::DataType::BOOLEAN:
-    case PropertyConfigProto::DataType::BYTES:
-    case PropertyConfigProto::DataType::DOCUMENT:
-      return false;
-  }
-}
-
 bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
                              const PropertyConfigProto& new_property) {
   if (old_property.cardinality() < new_property.cardinality()) {
@@ -766,6 +749,26 @@ libtextclassifier3::Status SchemaUtil::ValidateJoinableConfig(
   }
 
   return libtextclassifier3::Status::OK;
+}
+
+/* static */ bool SchemaUtil::IsIndexedProperty(
+    const PropertyConfigProto& property_config) {
+  switch (property_config.data_type()) {
+    case PropertyConfigProto::DataType::STRING:
+      return property_config.string_indexing_config().term_match_type() !=
+                 TermMatchType::UNKNOWN &&
+             property_config.string_indexing_config().tokenizer_type() !=
+                 StringIndexingConfig::TokenizerType::NONE;
+    case PropertyConfigProto::DataType::INT64:
+      return property_config.integer_indexing_config().numeric_match_type() !=
+             IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+    case PropertyConfigProto::DataType::UNKNOWN:
+    case PropertyConfigProto::DataType::DOUBLE:
+    case PropertyConfigProto::DataType::BOOLEAN:
+    case PropertyConfigProto::DataType::BYTES:
+    case PropertyConfigProto::DataType::DOCUMENT:
+      return false;
+  }
 }
 
 bool SchemaUtil::IsParent(const SchemaUtil::InheritanceMap& inheritance_map,

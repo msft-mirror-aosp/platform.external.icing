@@ -90,6 +90,9 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //               related files will be stored under this directory. See
   //               PersistentStorage for more details about the concept of
   //               working_path.
+  // pre_mapping_fbv: flag indicating whether memory map max possible file size
+  //                  for underlying FileBackedVector before growing the actual
+  //                  file size.
   //
   // Returns:
   //   - FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
@@ -97,7 +100,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //   - INTERNAL_ERROR on I/O errors.
   //   - Any FileBackedVector/MemoryMappedFile errors.
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>> Create(
-      const Filesystem& filesystem, std::string working_path);
+      const Filesystem& filesystem, std::string working_path,
+      bool pre_mapping_fbv);
 
   // Deletes IntegerIndex under working_path.
   //
@@ -118,7 +122,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
       std::string_view property_path, DocumentId document_id,
       SectionId section_id) override {
     return std::make_unique<Editor>(property_path, document_id, section_id,
-                                    *this);
+                                    *this, pre_mapping_fbv_);
   }
 
   // Returns a DocHitInfoIterator for iterating through all docs which have the
@@ -184,9 +188,11 @@ class IntegerIndex : public NumericIndex<int64_t> {
   class Editor : public NumericIndex<int64_t>::Editor {
    public:
     explicit Editor(std::string_view property_path, DocumentId document_id,
-                    SectionId section_id, IntegerIndex& integer_index)
+                    SectionId section_id, IntegerIndex& integer_index,
+                    bool pre_mapping_fbv)
         : NumericIndex<int64_t>::Editor(property_path, document_id, section_id),
-          integer_index_(integer_index) {}
+          integer_index_(integer_index),
+          pre_mapping_fbv_(pre_mapping_fbv) {}
 
     ~Editor() override = default;
 
@@ -204,6 +210,10 @@ class IntegerIndex : public NumericIndex<int64_t> {
     std::vector<int64_t> seen_keys_;
 
     IntegerIndex& integer_index_;  // Does not own.
+
+    // Flag indicating whether memory map max possible file size for underlying
+    // FileBackedVector before growing the actual file size.
+    bool pre_mapping_fbv_;
   };
 
   explicit IntegerIndex(
@@ -215,7 +225,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
       std::unique_ptr<FileBackedProto<WildcardPropertyStorage>>
           wildcard_property_storage,
       std::unordered_set<std::string> wildcard_properties_set,
-      std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage)
+      std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage,
+      bool pre_mapping_fbv)
       : NumericIndex<int64_t>(filesystem, std::move(working_path),
                               kWorkingPathType),
         posting_list_serializer_(std::move(posting_list_serializer)),
@@ -223,14 +234,16 @@ class IntegerIndex : public NumericIndex<int64_t> {
         property_to_storage_map_(std::move(property_to_storage_map)),
         wildcard_property_storage_(std::move(wildcard_property_storage)),
         wildcard_properties_set_(std::move(wildcard_properties_set)),
-        wildcard_index_storage_(std::move(wildcard_index_storage)) {}
+        wildcard_index_storage_(std::move(wildcard_index_storage)),
+        pre_mapping_fbv_(pre_mapping_fbv) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-  InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path);
+  InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
+                     bool pre_mapping_fbv);
 
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
   InitializeExistingFiles(const Filesystem& filesystem,
-                          std::string&& working_path);
+                          std::string&& working_path, bool pre_mapping_fbv);
 
   // Adds the property path to the list of properties using wildcard storage.
   // This will both update the in-memory list (wildcard_properties_set_) and
@@ -346,6 +359,10 @@ class IntegerIndex : public NumericIndex<int64_t> {
   // The index storage that is used once we have already created
   // kMaxPropertyStorages in property_to_storage_map.
   std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage_;
+
+  // Flag indicating whether memory map max possible file size for underlying
+  // FileBackedVector before growing the actual file size.
+  bool pre_mapping_fbv_;
 };
 
 }  // namespace lib

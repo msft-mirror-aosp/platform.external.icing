@@ -68,6 +68,8 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
+static constexpr bool kPreMappingFbv = true;
+
 static constexpr SectionId kDefaultSectionId = 12;
 static constexpr int kDefaultSeed = 12345;
 
@@ -151,7 +153,7 @@ void BM_Index(benchmark::State& state) {
     ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
                                IntegerIndexStorage::Create(
                                    benchmark.filesystem, benchmark.working_path,
-                                   IntegerIndexStorage::Options(),
+                                   IntegerIndexStorage::Options(kPreMappingFbv),
                                    &benchmark.posting_list_serializer));
     state.ResumeTiming();
 
@@ -211,7 +213,7 @@ void BM_BatchIndex(benchmark::State& state) {
     ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
                                IntegerIndexStorage::Create(
                                    benchmark.filesystem, benchmark.working_path,
-                                   IntegerIndexStorage::Options(),
+                                   IntegerIndexStorage::Options(kPreMappingFbv),
                                    &benchmark.posting_list_serializer));
     std::vector<int64_t> keys_copy(keys);
     state.ResumeTiming();
@@ -262,7 +264,7 @@ void BM_ExactQuery(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(benchmark.filesystem, benchmark.working_path,
-                                  IntegerIndexStorage::Options(),
+                                  IntegerIndexStorage::Options(kPreMappingFbv),
                                   &benchmark.posting_list_serializer));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumberGenerator<int64_t>> generator,
@@ -339,7 +341,7 @@ void BM_RangeQueryAll(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(benchmark.filesystem, benchmark.working_path,
-                                  IntegerIndexStorage::Options(),
+                                  IntegerIndexStorage::Options(kPreMappingFbv),
                                   &benchmark.posting_list_serializer));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumberGenerator<int64_t>> generator,

@@ -127,9 +127,11 @@ class JoinProcessorTest : public ::testing::Test {
                               /*initialize_stats=*/nullptr));
     doc_store_ = std::move(create_result.document_store);
 
-    ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
-                               QualifiedIdTypeJoinableIndex::Create(
-                                   filesystem_, qualified_id_join_index_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        qualified_id_join_index_,
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem_, qualified_id_join_index_dir_,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
   }
 
   void TearDown() override {
