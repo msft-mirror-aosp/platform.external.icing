@@ -146,13 +146,16 @@ class IntegerIndexStorage : public PersistentStorage {
                 "Max # of buckets cannot fit into FileBackedVector");
 
   struct Options {
-    explicit Options() {}
+    explicit Options(bool pre_mapping_fbv_in)
+        : pre_mapping_fbv(pre_mapping_fbv_in) {}
 
     explicit Options(std::vector<Bucket> custom_init_sorted_buckets_in,
-                     std::vector<Bucket> custom_init_unsorted_buckets_in)
+                     std::vector<Bucket> custom_init_unsorted_buckets_in,
+                     bool pre_mapping_fbv_in)
         : custom_init_sorted_buckets(std::move(custom_init_sorted_buckets_in)),
           custom_init_unsorted_buckets(
-              std::move(custom_init_unsorted_buckets_in)) {}
+              std::move(custom_init_unsorted_buckets_in)),
+          pre_mapping_fbv(pre_mapping_fbv_in) {}
 
     bool IsValid() const;
 
@@ -168,6 +171,10 @@ class IntegerIndexStorage : public PersistentStorage {
     // should be [INT64_MIN, INT64_MAX].
     std::vector<Bucket> custom_init_sorted_buckets;
     std::vector<Bucket> custom_init_unsorted_buckets;
+
+    // Flag indicating whether memory map max possible file size for underlying
+    // FileBackedVector before growing the actual file size.
+    bool pre_mapping_fbv;
   };
 
   // Metadata file layout: <Crcs><Info>
