@@ -114,7 +114,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
   CreateIntegerIndex<IntegerIndex>() {
-    return IntegerIndex::Create(filesystem_, working_path_);
+    return IntegerIndex::Create(filesystem_, working_path_,
+                                /*pre_mapping_fbv=*/false);
   }
 
   template <typename NotIntegerIndexType>
@@ -1125,19 +1126,22 @@ TYPED_TEST(NumericIndexIntegerTest, Clear) {
 }
 
 // Tests for persistent integer index only
-class IntegerIndexTest : public NumericIndexIntegerTest<IntegerIndex> {};
+class IntegerIndexTest : public NumericIndexIntegerTest<IntegerIndex>,
+                         public ::testing::WithParamInterface<bool> {};
 
-TEST_F(IntegerIndexTest, InvalidWorkingPath) {
-  EXPECT_THAT(IntegerIndex::Create(filesystem_, "/dev/null/integer_index_test"),
+TEST_P(IntegerIndexTest, InvalidWorkingPath) {
+  EXPECT_THAT(IntegerIndex::Create(filesystem_, "/dev/null/integer_index_test",
+                                   /*pre_mapping_fbv=*/GetParam()),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_F(IntegerIndexTest, InitializeNewFiles) {
+TEST_P(IntegerIndexTest, InitializeNewFiles) {
   {
     ASSERT_FALSE(filesystem_.DirectoryExists(working_path_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     ICING_ASSERT_OK(integer_index->PersistToDisk());
   }
@@ -1173,10 +1177,12 @@ TEST_F(IntegerIndexTest, InitializeNewFiles) {
                      .Get()));
 }
 
-TEST_F(IntegerIndexTest,
+TEST_P(IntegerIndexTest,
        InitializationShouldFailWithoutPersistToDiskOrDestruction) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndex> integer_index,
-                             IntegerIndex::Create(filesystem_, working_path_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           /*pre_mapping_fbv=*/GetParam()));
 
   // Insert some data.
   Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
@@ -1188,13 +1194,16 @@ TEST_F(IntegerIndexTest,
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
-  EXPECT_THAT(IntegerIndex::Create(filesystem_, working_path_),
+  EXPECT_THAT(IntegerIndex::Create(filesystem_, working_path_,
+                                   /*pre_mapping_fbv=*/GetParam()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndex> integer_index1,
-                             IntegerIndex::Create(filesystem_, working_path_));
+TEST_P(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index1,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           /*pre_mapping_fbv=*/GetParam()));
 
   // Insert some data.
   Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/0,
@@ -1215,8 +1224,10 @@ TEST_F(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   // should succeed, and we should be able to get the same contents.
   ICING_EXPECT_OK(integer_index1->PersistToDisk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndex> integer_index2,
-                             IntegerIndex::Create(filesystem_, working_path_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index2,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           /*pre_mapping_fbv=*/GetParam()));
   EXPECT_THAT(integer_index2->last_added_document_id(), Eq(2));
   EXPECT_THAT(Query(integer_index2.get(), kDefaultTestPropertyPath,
                     /*key_lower=*/std::numeric_limits<int64_t>::min(),
@@ -1225,12 +1236,13 @@ TEST_F(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
                                             doc_hit_info_vec.end())));
 }
 
-TEST_F(IntegerIndexTest, InitializationShouldSucceedAfterDestruction) {
+TEST_P(IntegerIndexTest, InitializationShouldSucceedAfterDestruction) {
   std::vector<DocHitInfo> doc_hit_info_vec;
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
@@ -1254,7 +1266,8 @@ TEST_F(IntegerIndexTest, InitializationShouldSucceedAfterDestruction) {
     // we should be able to get the same contents.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
     EXPECT_THAT(integer_index->last_added_document_id(), Eq(2));
     EXPECT_THAT(Query(integer_index.get(), kDefaultTestPropertyPath,
                       /*key_lower=*/std::numeric_limits<int64_t>::min(),
@@ -1264,11 +1277,12 @@ TEST_F(IntegerIndexTest, InitializationShouldSucceedAfterDestruction) {
   }
 }
 
-TEST_F(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
+TEST_P(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
           /*section_id=*/20, /*keys=*/{0, 100, -100});
@@ -1300,7 +1314,8 @@ TEST_F(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
     // Attempt to create the integer index with metadata containing corrupted
     // all_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-        integer_index_or = IntegerIndex::Create(filesystem_, working_path_);
+        integer_index_or = IntegerIndex::Create(filesystem_, working_path_,
+                                                /*pre_mapping_fbv=*/GetParam());
     EXPECT_THAT(integer_index_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(integer_index_or.status().error_message(),
@@ -1308,11 +1323,12 @@ TEST_F(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
   }
 }
 
-TEST_F(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
+TEST_P(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
           /*section_id=*/20, /*keys=*/{0, 100, -100});
@@ -1345,7 +1361,8 @@ TEST_F(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
     // Attempt to create the integer index with info that doesn't match its
     // checksum and confirm that it fails.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-        integer_index_or = IntegerIndex::Create(filesystem_, working_path_);
+        integer_index_or = IntegerIndex::Create(filesystem_, working_path_,
+                                                /*pre_mapping_fbv=*/GetParam());
     EXPECT_THAT(integer_index_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(integer_index_or.status().error_message(),
@@ -1353,12 +1370,13 @@ TEST_F(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
   }
 }
 
-TEST_F(IntegerIndexTest,
+TEST_P(IntegerIndexTest,
        InitializeExistingFilesWithCorruptedStoragesShouldFail) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
           /*section_id=*/20, /*keys=*/{0, 100, -100});
@@ -1377,11 +1395,12 @@ TEST_F(IntegerIndexTest,
         absl_ports::StrCat(working_path_, "/", kDefaultTestPropertyPath);
     ASSERT_TRUE(filesystem_.DirectoryExists(storage_working_path.c_str()));
 
-    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
-                               IntegerIndexStorage::Create(
-                                   filesystem_, std::move(storage_working_path),
-                                   IntegerIndexStorage::Options(),
-                                   &posting_list_integer_index_serializer));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndexStorage> storage,
+        IntegerIndexStorage::Create(
+            filesystem_, std::move(storage_working_path),
+            IntegerIndexStorage::Options(/*pre_mapping_fbv=*/GetParam()),
+            &posting_list_integer_index_serializer));
     ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/3, /*section_id=*/4,
                                      /*new_keys=*/{3, 4, 5}));
 
@@ -1392,7 +1411,8 @@ TEST_F(IntegerIndexTest,
     // Attempt to create the integer index with corrupted storages. This should
     // fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-        integer_index_or = IntegerIndex::Create(filesystem_, working_path_);
+        integer_index_or = IntegerIndex::Create(filesystem_, working_path_,
+                                                /*pre_mapping_fbv=*/GetParam());
     EXPECT_THAT(integer_index_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(integer_index_or.status().error_message(),
@@ -1400,7 +1420,7 @@ TEST_F(IntegerIndexTest,
   }
 }
 
-TEST_F(IntegerIndexTest, WildcardStoragePersistenceQuery) {
+TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
   // This test sets its schema assuming that max property storages == 32.
   ASSERT_THAT(IntegerIndex::kMaxPropertyStorages, Eq(32));
 
@@ -1564,7 +1584,8 @@ TEST_F(IntegerIndexTest, WildcardStoragePersistenceQuery) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     // Index numeric content for other properties to force our property into the
     // wildcard storage.
@@ -1626,8 +1647,10 @@ TEST_F(IntegerIndexTest, WildcardStoragePersistenceQuery) {
           typeb_desired_prop_id, /*keys=*/{2});
   }
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndex> integer_index,
-                             IntegerIndex::Create(filesystem_, working_path_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           /*pre_mapping_fbv=*/GetParam()));
 
   EXPECT_THAT(integer_index->num_property_indices(), Eq(33));
 
@@ -1656,7 +1679,7 @@ TEST_F(IntegerIndexTest, WildcardStoragePersistenceQuery) {
           EqualsDocHitInfo(/*document_id=*/0, expected_sections_typea))));
 }
 
-TEST_F(IntegerIndexTest,
+TEST_P(IntegerIndexTest,
        IntegerIndexShouldWorkAfterOptimizeAndReinitialization) {
   constexpr std::string_view kPropertyPath1 = "prop1";
   constexpr SectionId kSectionId1 = 0;
@@ -1666,7 +1689,8 @@ TEST_F(IntegerIndexTest,
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     // Doc id = 1: insert 2 data for "prop1", "prop2"
     Index(integer_index.get(), kPropertyPath2, /*document_id=*/1, kSectionId2,
@@ -1716,7 +1740,8 @@ TEST_F(IntegerIndexTest,
     // normally.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     // Key = 1
     EXPECT_THAT(Query(integer_index.get(), kPropertyPath1, /*key_lower=*/1,
@@ -1773,7 +1798,7 @@ TEST_F(IntegerIndexTest,
   }
 }
 
-TEST_F(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
+TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
   // This test sets its schema assuming that max property storages == 32.
   ASSERT_THAT(IntegerIndex::kMaxPropertyStorages, Eq(32));
 
@@ -1941,7 +1966,8 @@ TEST_F(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     // Index numeric content for other properties to force our property into the
     // wildcard storage.
@@ -2035,8 +2061,10 @@ TEST_F(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
             EqualsDocHitInfo(/*document_id=*/0, expected_sections_typea))));
   }
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndex> integer_index,
-                             IntegerIndex::Create(filesystem_, working_path_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           /*pre_mapping_fbv=*/GetParam()));
 
   EXPECT_THAT(integer_index->num_property_indices(), Eq(33));
 
@@ -2064,8 +2092,8 @@ TEST_F(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
 // the individual index storages (because they don't have any hits anymore).
 // In this case, any properties that added content to the wildcard storage (even
 // if all of their content was also deleted) should still be placed in the
-// wilcard storage.
-TEST_F(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
+// wildcard storage.
+TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
   // This test sets its schema assuming that max property storages == 32.
   ASSERT_THAT(IntegerIndex::kMaxPropertyStorages, Eq(32));
 
@@ -2204,7 +2232,8 @@ TEST_F(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem_, working_path_));
+        IntegerIndex::Create(filesystem_, working_path_,
+                             /*pre_mapping_fbv=*/GetParam()));
 
     // Index numeric content for other properties to force our property into the
     // wildcard storage.
@@ -2276,8 +2305,10 @@ TEST_F(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
             EqualsDocHitInfo(/*document_id=*/1 - 1, expected_sections_typea))));
   }
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndex> integer_index,
-                             IntegerIndex::Create(filesystem_, working_path_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           /*pre_mapping_fbv=*/GetParam()));
 
   EXPECT_THAT(integer_index->num_property_indices(), Eq(1));
 
@@ -2322,6 +2353,9 @@ TEST_F(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
               IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
                   /*document_id=*/7, expected_sections_typea))));
 }
+
+INSTANTIATE_TEST_SUITE_P(IntegerIndexTest, IntegerIndexTest,
+                         testing::Values(true, false));
 
 }  // namespace
 

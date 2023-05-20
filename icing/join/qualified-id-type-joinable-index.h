@@ -78,6 +78,12 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   //               directory of working_path_, and it is responsible for parent
   //               directory creation/deletion. See PersistentStorage for more
   //               details about the concept of working_path.
+  // pre_mapping_fbv: flag indicating whether memory map max possible file size
+  //                  for underlying FileBackedVector before growing the actual
+  //                  file size.
+  // use_persistent_hash_map: flag indicating whether use persistent hash map as
+  //                          the key mapper (if false, then fall back to
+  //                          dynamic trie key mapper).
   //
   // Returns:
   //   - FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
@@ -86,7 +92,8 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   //   - Any KeyMapper errors
   static libtextclassifier3::StatusOr<
       std::unique_ptr<QualifiedIdTypeJoinableIndex>>
-  Create(const Filesystem& filesystem, std::string working_path);
+  Create(const Filesystem& filesystem, std::string working_path,
+         bool pre_mapping_fbv, bool use_persistent_hash_map);
 
   // Deletes QualifiedIdTypeJoinableIndex under working_path.
   //
@@ -180,21 +187,26 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
       const Filesystem& filesystem, std::string&& working_path,
       std::unique_ptr<uint8_t[]> metadata_buffer,
       std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper,
-      std::unique_ptr<FileBackedVector<char>> qualified_id_storage)
+      std::unique_ptr<FileBackedVector<char>> qualified_id_storage,
+      bool pre_mapping_fbv, bool use_persistent_hash_map)
       : PersistentStorage(filesystem, std::move(working_path),
                           kWorkingPathType),
         metadata_buffer_(std::move(metadata_buffer)),
         doc_join_info_mapper_(std::move(doc_join_info_mapper)),
-        qualified_id_storage_(std::move(qualified_id_storage)) {}
+        qualified_id_storage_(std::move(qualified_id_storage)),
+        pre_mapping_fbv_(pre_mapping_fbv),
+        use_persistent_hash_map_(use_persistent_hash_map) {}
 
   static libtextclassifier3::StatusOr<
       std::unique_ptr<QualifiedIdTypeJoinableIndex>>
-  InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path);
+  InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
+                     bool pre_mapping_fbv, bool use_persistent_hash_map);
 
   static libtextclassifier3::StatusOr<
       std::unique_ptr<QualifiedIdTypeJoinableIndex>>
   InitializeExistingFiles(const Filesystem& filesystem,
-                          std::string&& working_path);
+                          std::string&& working_path, bool pre_mapping_fbv,
+                          bool use_persistent_hash_map);
 
   // Transfers qualified id type joinable index data from the current to
   // new_index and convert to new document id according to
@@ -266,6 +278,14 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   std::unique_ptr<FileBackedVector<char>> qualified_id_storage_;
 
   // TODO(b/268521214): add delete propagation storage
+
+  // Flag indicating whether memory map max possible file size for underlying
+  // FileBackedVector before growing the actual file size.
+  bool pre_mapping_fbv_;
+
+  // Flag indicating whether use persistent hash map as the key mapper (if
+  // false, then fall back to dynamic trie key mapper).
+  bool use_persistent_hash_map_;
 };
 
 }  // namespace lib
