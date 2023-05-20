@@ -731,7 +731,8 @@ IntegerIndexStorage::InitializeNewFiles(
       FileBackedVector<Bucket>::Create(
           filesystem, GetSortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
-          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
+          FileBackedVector<Bucket>::kMaxFileSize,
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize unsorted_buckets
   pre_mapping_mmap_size = sizeof(Bucket) * kUnsortedBucketsLengthThreshold;
@@ -740,7 +741,8 @@ IntegerIndexStorage::InitializeNewFiles(
       FileBackedVector<Bucket>::Create(
           filesystem, GetUnsortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
-          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
+          FileBackedVector<Bucket>::kMaxFileSize,
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize flash_index_storage
   ICING_ASSIGN_OR_RETURN(
@@ -834,7 +836,8 @@ IntegerIndexStorage::InitializeExistingFiles(
       FileBackedVector<Bucket>::Create(
           filesystem, GetSortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
-          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
+          FileBackedVector<Bucket>::kMaxFileSize,
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize unsorted_buckets
   pre_mapping_mmap_size = sizeof(Bucket) * kUnsortedBucketsLengthThreshold;
@@ -843,7 +846,8 @@ IntegerIndexStorage::InitializeExistingFiles(
       FileBackedVector<Bucket>::Create(
           filesystem, GetUnsortedBucketsFilePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
-          FileBackedVector<Bucket>::kMaxFileSize, pre_mapping_mmap_size));
+          FileBackedVector<Bucket>::kMaxFileSize,
+          options.pre_mapping_fbv ? pre_mapping_mmap_size : 0));
 
   // Initialize flash_index_storage
   ICING_ASSIGN_OR_RETURN(

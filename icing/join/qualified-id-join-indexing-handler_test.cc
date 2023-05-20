@@ -90,9 +90,11 @@ class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
     qualified_id_join_index_dir_ = base_dir_ + "/qualified_id_join_index";
     schema_store_dir_ = base_dir_ + "/schema_store";
 
-    ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
-                               QualifiedIdTypeJoinableIndex::Create(
-                                   filesystem_, qualified_id_join_index_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        qualified_id_join_index_,
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem_, qualified_id_join_index_dir_,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(

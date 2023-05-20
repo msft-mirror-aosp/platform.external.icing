@@ -44,6 +44,8 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
     StringIndexingConfig::TokenizerType::VERBATIM;
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
     StringIndexingConfig::TokenizerType::RFC822;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
+    StringIndexingConfig::TokenizerType::URL;
 
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
