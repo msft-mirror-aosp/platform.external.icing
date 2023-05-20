@@ -38,6 +38,13 @@ namespace lib {
 template <typename T, typename Formatter = absl_ports::DefaultFormatter>
 class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
  public:
+  static constexpr int32_t kDefaultMaxNumEntries =
+      PersistentHashMap::Entry::kMaxNumEntries;
+  static constexpr int32_t kDefaultAverageKVByteSize =
+      PersistentHashMap::Options::kDefaultAverageKVByteSize;
+  static constexpr int32_t kDefaultMaxLoadFactorPercent =
+      PersistentHashMap::Options::kDefaultMaxLoadFactorPercent;
+
   // Returns an initialized instance of PersistentHashMapKeyMapper that can
   // immediately handle read/write operations.
   // Returns any encountered IO errors.
@@ -50,6 +57,9 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
   //               PersistentHashMapKeyMapper would be created. See
   //               PersistentStorage for more details about the concept of
   //               working_path.
+  // pre_mapping_fbv: flag indicating whether memory map max possible file size
+  //                  for underlying FileBackedVector before growing the actual
+  //                  file size.
   // max_num_entries: max # of kvps. It will be used to compute 3 storages size.
   // average_kv_byte_size: average byte size of a single key + serialized value.
   //                       It will be used to compute kv_storage size.
@@ -63,11 +73,9 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
   static libtextclassifier3::StatusOr<
       std::unique_ptr<PersistentHashMapKeyMapper<T, Formatter>>>
   Create(const Filesystem& filesystem, std::string working_path,
-         int32_t max_num_entries = PersistentHashMap::Entry::kMaxNumEntries,
-         int32_t average_kv_byte_size =
-             PersistentHashMap::Options::kDefaultAverageKVByteSize,
-         int32_t max_load_factor_percent =
-             PersistentHashMap::Options::kDefaultMaxLoadFactorPercent);
+         bool pre_mapping_fbv, int32_t max_num_entries = kDefaultMaxNumEntries,
+         int32_t average_kv_byte_size = kDefaultAverageKVByteSize,
+         int32_t max_load_factor_percent = kDefaultMaxLoadFactorPercent);
 
   // Deletes working_path (and all the files under it recursively) associated
   // with the PersistentHashMapKeyMapper.
@@ -166,7 +174,7 @@ template <typename T, typename Formatter>
     std::unique_ptr<PersistentHashMapKeyMapper<T, Formatter>>>
 PersistentHashMapKeyMapper<T, Formatter>::Create(
     const Filesystem& filesystem, std::string working_path,
-    int32_t max_num_entries, int32_t average_kv_byte_size,
+    bool pre_mapping_fbv, int32_t max_num_entries, int32_t average_kv_byte_size,
     int32_t max_load_factor_percent) {
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<PersistentHashMap> persistent_hash_map,
@@ -176,7 +184,10 @@ PersistentHashMapKeyMapper<T, Formatter>::Create(
               /*value_type_size_in=*/sizeof(T),
               /*max_num_entries_in=*/max_num_entries,
               /*max_load_factor_percent_in=*/max_load_factor_percent,
-              /*average_kv_byte_size_in=*/average_kv_byte_size)));
+              /*average_kv_byte_size_in=*/average_kv_byte_size,
+              /*init_num_buckets_in=*/
+              PersistentHashMap::Options::kDefaultInitNumBuckets,
+              /*pre_mapping_fbv_in=*/pre_mapping_fbv)));
   return std::unique_ptr<PersistentHashMapKeyMapper<T, Formatter>>(
       new PersistentHashMapKeyMapper<T, Formatter>(
           std::move(persistent_hash_map)));
