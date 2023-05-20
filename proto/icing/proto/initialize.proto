@@ -23,7 +23,7 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Next tag: 9
+// Next tag: 11
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -95,6 +95,14 @@ message IcingSearchEngineOptions {
   //
   // The default value is false.
   optional bool allow_circular_schema_definitions = 8;
+
+  // Whether memory map max possible file size for FileBackedVector before
+  // growing the actual file size.
+  optional bool pre_mapping_fbv = 9;
+
+  // Whether use persistent hash map as the key mapper (if false, then fall back
+  // to dynamic trie key mapper).
+  optional bool use_persistent_hash_map = 10;
 
   reserved 2;
 }

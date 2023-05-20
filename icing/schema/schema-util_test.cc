@@ -4246,6 +4246,149 @@ INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
     testing::Values(/*allow_circular_schema_definitions=*/true, false));
 
+struct IsIndexedPropertyTestParam {
+  PropertyConfigProto property_config;
+  bool expected_result;
+
+  explicit IsIndexedPropertyTestParam(PropertyConfigProto property_config_in,
+                                      bool expected_result_in)
+      : property_config(std::move(property_config_in)),
+        expected_result(expected_result_in) {}
+};
+
+class SchemaUtilIsIndexedPropertyTest
+    : public ::testing::TestWithParam<IsIndexedPropertyTestParam> {};
+
+TEST_P(SchemaUtilIsIndexedPropertyTest, IsIndexedProperty) {
+  const IsIndexedPropertyTestParam& test_param = GetParam();
+  EXPECT_THAT(SchemaUtil::IsIndexedProperty(test_param.property_config),
+              Eq(test_param.expected_result));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SchemaUtilIsIndexedPropertyTest, SchemaUtilIsIndexedPropertyTest,
+    testing::Values(
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                          TOKENIZER_NONE)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                          TOKENIZER_PLAIN)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                          TOKENIZER_VERBATIM)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                          TOKENIZER_RFC822)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                          TOKENIZER_URL)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
+                                                          TOKENIZER_NONE)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
+                                                          TOKENIZER_PLAIN)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
+                                                          TOKENIZER_VERBATIM)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
+                                                          TOKENIZER_RFC822)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_EXACT,
+                                                          TOKENIZER_URL)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                          TOKENIZER_NONE)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                          TOKENIZER_PLAIN)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                          TOKENIZER_VERBATIM)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                          TOKENIZER_RFC822)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                          TOKENIZER_URL)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                       .Build(),
+                                   true),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataType(TYPE_DOUBLE)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataType(TYPE_BOOLEAN)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataType(TYPE_BYTES)
+                                       .Build(),
+                                   false),
+        IsIndexedPropertyTestParam(PropertyConfigBuilder()
+                                       .SetName("property")
+                                       .SetDataType(TYPE_DOCUMENT)
+                                       .Build(),
+                                   false)));
+
 }  // namespace
 
 }  // namespace lib
