@@ -275,16 +275,16 @@ class RelevanceScoreFunctionScoreExpression : public ScoreExpression {
   double default_score_;
 };
 
-class ChildrenScoresFunctionScoreExpression : public ScoreExpression {
+class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
  public:
-  static constexpr std::string_view kFunctionName = "childrenScores";
+  static constexpr std::string_view kFunctionName = "childrenRankingSignals";
 
   // RETURNS:
-  //   - A ChildrenScoresFunctionScoreExpression instance on success.
+  //   - A ChildrenRankingSignalsFunctionScoreExpression instance on success.
   //   - FAILED_PRECONDITION on any null pointer in children.
   //   - INVALID_ARGUMENT on type errors.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<ChildrenScoresFunctionScoreExpression>>
+      std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
          const JoinChildrenFetcher* join_children_fetcher);
 
@@ -297,7 +297,7 @@ class ChildrenScoresFunctionScoreExpression : public ScoreExpression {
   }
 
  private:
-  explicit ChildrenScoresFunctionScoreExpression(
+  explicit ChildrenRankingSignalsFunctionScoreExpression(
       const JoinChildrenFetcher& join_children_fetcher)
       : join_children_fetcher_(join_children_fetcher) {}
   const JoinChildrenFetcher& join_children_fetcher_;
