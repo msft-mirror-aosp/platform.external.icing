@@ -5031,7 +5031,7 @@ TEST_F(IcingSearchEngineSearchTest, JoinWithAdvancedScoring) {
   parent_scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
   parent_scoring_spec.set_advanced_scoring_expression(
-      "this.documentScore() * sum(this.childrenScores())");
+      "this.documentScore() * sum(this.childrenRankingSignals())");
   const int32_t exp_person1_score =
       person1_doc_score * (exp_email1_score + exp_email2_score);
   const int32_t exp_person2_score = person2_doc_score * exp_email3_score;
