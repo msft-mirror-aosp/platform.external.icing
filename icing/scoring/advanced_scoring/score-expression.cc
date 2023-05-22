@@ -422,31 +422,33 @@ RelevanceScoreFunctionScoreExpression::eval(
 }
 
 libtextclassifier3::StatusOr<
-    std::unique_ptr<ChildrenScoresFunctionScoreExpression>>
-ChildrenScoresFunctionScoreExpression::Create(
+    std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
+ChildrenRankingSignalsFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args,
     const JoinChildrenFetcher* join_children_fetcher) {
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
-        "childrenScores must have 1 argument.");
+        "childrenRankingSignals must have 1 argument.");
   }
   ICING_RETURN_IF_ERROR(CheckChildrenNotNull(args));
 
   if (args[0]->type() != ScoreExpressionType::kDocument) {
     return absl_ports::InvalidArgumentError(
-        "childrenScores must take \"this\" as its argument.");
+        "childrenRankingSignals must take \"this\" as its argument.");
   }
   if (join_children_fetcher == nullptr) {
     return absl_ports::InvalidArgumentError(
-        "childrenScores must only be used with join, but JoinChildrenFetcher "
+        "childrenRankingSignals must only be used with join, but "
+        "JoinChildrenFetcher "
         "is not provided.");
   }
-  return std::unique_ptr<ChildrenScoresFunctionScoreExpression>(
-      new ChildrenScoresFunctionScoreExpression(*join_children_fetcher));
+  return std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>(
+      new ChildrenRankingSignalsFunctionScoreExpression(
+          *join_children_fetcher));
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
-ChildrenScoresFunctionScoreExpression::eval_list(
+ChildrenRankingSignalsFunctionScoreExpression::eval_list(
     const DocHitInfo& hit_info, const DocHitInfoIterator* query_it) const {
   ICING_ASSIGN_OR_RETURN(
       std::vector<ScoredDocumentHit> children_hits,
