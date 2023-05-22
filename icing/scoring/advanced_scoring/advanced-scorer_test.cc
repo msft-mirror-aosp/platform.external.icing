@@ -540,7 +540,7 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(
-          CreateAdvancedScoringSpec("len(this.childrenScores())"),
+          CreateAdvancedScoringSpec("len(this.childrenRankingSignals())"),
           default_score, document_store_.get(), schema_store_.get(), &fetcher));
   // document_id_1 has two children.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(2));
@@ -552,7 +552,7 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
-          CreateAdvancedScoringSpec("sum(this.childrenScores())"),
+          CreateAdvancedScoringSpec("sum(this.childrenRankingSignals())"),
           default_score, document_store_.get(), schema_store_.get(), &fetcher));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3));
@@ -564,7 +564,7 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
-          CreateAdvancedScoringSpec("avg(this.childrenScores())"),
+          CreateAdvancedScoringSpec("avg(this.childrenRankingSignals())"),
           default_score, document_store_.get(), schema_store_.get(), &fetcher));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
@@ -579,8 +579,9 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
-              // Equivalent to "avg(this.childrenScores())"
-              "sum(this.childrenScores()) / len(this.childrenScores())"),
+              // Equivalent to "avg(this.childrenRankingSignals())"
+              "sum(this.childrenRankingSignals()) / "
+              "len(this.childrenRankingSignals())"),
           default_score, document_store_.get(), schema_store_.get(), &fetcher));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
@@ -750,23 +751,24 @@ TEST_F(AdvancedScorerTest,
 TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
   const double default_score = 123;
 
-  // Without join_children_fetcher provided, "len(this.childrenScores())" cannot
-  // be created.
-  EXPECT_THAT(AdvancedScorer::Create(
-                  CreateAdvancedScoringSpec("len(this.childrenScores())"),
-                  default_score, document_store_.get(), schema_store_.get(),
-                  /*join_children_fetcher=*/nullptr),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  // Without join_children_fetcher provided,
+  // "len(this.childrenRankingSignals())" cannot be created.
+  EXPECT_THAT(
+      AdvancedScorer::Create(
+          CreateAdvancedScoringSpec("len(this.childrenRankingSignals())"),
+          default_score, document_store_.get(), schema_store_.get(),
+          /*join_children_fetcher=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // The root expression can only be of double type, but here it is of list
   // type.
   JoinChildrenFetcher fake_fetcher(JoinSpecProto::default_instance(),
                                    /*map_joinable_qualified_id=*/{});
-  EXPECT_THAT(
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("this.childrenScores()"),
-                             default_score, document_store_.get(),
-                             schema_store_.get(), &fake_fetcher),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec("this.childrenRankingSignals()"),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  &fake_fetcher),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(AdvancedScorerTest, ComplexExpression) {
