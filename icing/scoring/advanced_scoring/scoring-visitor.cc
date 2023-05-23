@@ -105,9 +105,9 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     expression = RelevanceScoreFunctionScoreExpression::Create(
         std::move(args), &bm25f_calculator_, default_score_);
   } else if (function_name ==
-             ChildrenScoresFunctionScoreExpression::kFunctionName) {
-    // childrenScores function
-    expression = ChildrenScoresFunctionScoreExpression::Create(
+             ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
+    // childrenRankingSignals function
+    expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
         std::move(args), join_children_fetcher_);
   } else if (function_name ==
              PropertyWeightsFunctionScoreExpression::kFunctionName) {
