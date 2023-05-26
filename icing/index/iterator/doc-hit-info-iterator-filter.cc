@@ -55,11 +55,16 @@ DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
 
   // Precompute all the SchemaTypeIds
   for (std::string_view schema_type : options_.schema_types) {
-    auto schema_type_id_or = schema_store_.GetSchemaTypeId(schema_type);
+    libtextclassifier3::StatusOr<const std::unordered_set<SchemaTypeId>*>
+        schema_type_ids_or =
+            schema_store_.GetSchemaTypeIdsWithChildren(schema_type);
 
     // If we can't find the SchemaTypeId, just throw it away
-    if (schema_type_id_or.ok()) {
-      target_schema_type_ids_.emplace(schema_type_id_or.ValueOrDie());
+    if (schema_type_ids_or.ok()) {
+      const std::unordered_set<SchemaTypeId>* schema_type_ids =
+          schema_type_ids_or.ValueOrDie();
+      target_schema_type_ids_.insert(schema_type_ids->begin(),
+                                     schema_type_ids->end());
     }
   }
 }
@@ -103,6 +108,18 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
   hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
   return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
+}
+
+libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>
+DocHitInfoIteratorFilter::TrimRightMostNode() && {
+  ICING_ASSIGN_OR_RETURN(TrimmedNode trimmed_delegate,
+                         std::move(*delegate_).TrimRightMostNode());
+  if (trimmed_delegate.iterator_ != nullptr) {
+    trimmed_delegate.iterator_ = std::make_unique<DocHitInfoIteratorFilter>(
+        std::move(trimmed_delegate.iterator_), &document_store_, &schema_store_,
+        options_);
+  }
+  return trimmed_delegate;
 }
 
 int32_t DocHitInfoIteratorFilter::GetNumBlocksInspected() const {

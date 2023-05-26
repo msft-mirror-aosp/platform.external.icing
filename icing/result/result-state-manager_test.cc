@@ -20,6 +20,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/result/page-result.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
@@ -46,9 +47,6 @@ using ::testing::IsEmpty;
 using ::testing::Not;
 using ::testing::SizeIs;
 using PageResultInfo = std::pair<uint64_t, PageResult>;
-
-// TODO(sungyc): Refactor helper functions below (builder classes or common test
-//               utility).
 
 ScoringSpecProto CreateScoringSpec() {
   ScoringSpecProto scoring_spec;
@@ -100,7 +98,9 @@ class ResultStateManagerTest : public testing::Test {
         SchemaStore::Create(&filesystem_, test_dir_, clock_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
@@ -108,7 +108,12 @@ class ResultStateManagerTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -159,6 +164,9 @@ class ResultStateManagerTest : public testing::Test {
   DocumentStore& document_store() { return *document_store_; }
   const DocumentStore& document_store() const { return *document_store_; }
 
+  SchemaStore& schema_store() { return *schema_store_; }
+  const SchemaStore& schema_store() const { return *schema_store_; }
+
   const ResultRetrieverV2& result_retriever() const {
     return *result_retriever_;
   }
@@ -196,9 +204,8 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::move(ranker),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          std::move(ranker), /*parent_adjustment_info=*/nullptr,
+          /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/10, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -243,9 +250,8 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
-          std::move(ranker),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          std::move(ranker), /*parent_adjustment_info=*/nullptr,
+          /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
   EXPECT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
@@ -290,9 +296,8 @@ TEST_F(ResultStateManagerTest, NullRankerShouldReturnError) {
 
   EXPECT_THAT(
       result_state_manager.CacheAndRetrieveFirstPage(
-          /*ranker=*/nullptr,
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*ranker=*/nullptr, /*parent_adjustment_info=*/nullptr,
+          /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -308,8 +313,7 @@ TEST_F(ResultStateManagerTest, EmptyRankerShouldReturnEmptyFirstPage) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::vector<ScoredDocumentHit>(), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -347,9 +351,8 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), result_spec, document_store(),
-          result_retriever()));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          result_spec, document_store(), result_retriever()));
   // If the first page has no result, then it should be the last page.
   EXPECT_THAT(page_result_info.first, Eq(kInvalidNextPageToken));
   EXPECT_THAT(page_result_info.second.results, IsEmpty());
@@ -391,9 +394,8 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), result_spec, document_store(),
-          result_retriever()));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          result_spec, document_store(), result_retriever()));
   EXPECT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(2));
   EXPECT_THAT(page_result_info1.second.results.at(0).document(),
@@ -437,7 +439,11 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          query_terms, search_spec, scoring_spec, result_spec, document_store(),
+          /*parent_adjustment_info=*/
+          std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
+                                                 result_spec, &schema_store(),
+                                                 query_terms),
+          /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
 
@@ -449,7 +455,11 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          query_terms, search_spec, scoring_spec, result_spec, document_store(),
+          /*parent_adjustment_info=*/
+          std::make_unique<ResultAdjustmentInfo>(search_spec, scoring_spec,
+                                                 result_spec, &schema_store(),
+                                                 query_terms),
+          /*child_adjustment_info=*/nullptr, result_spec, document_store(),
           result_retriever()));
 
   // Calling CacheAndRetrieveFirstPage() on state 2 should invalidate the
@@ -484,8 +494,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
@@ -498,8 +507,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
   ASSERT_THAT(page_result_info2.first, Not(Eq(kInvalidNextPageToken)));
@@ -542,8 +550,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
   ASSERT_THAT(page_result_info.first, Not(Eq(kInvalidNextPageToken)));
@@ -589,8 +596,7 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -600,8 +606,7 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -639,8 +644,7 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -650,8 +654,7 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -685,8 +688,7 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -696,8 +698,7 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -708,8 +709,7 @@ TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -755,8 +755,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -766,8 +765,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -777,8 +775,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -797,8 +794,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -851,8 +847,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -862,8 +857,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -873,8 +867,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -897,8 +890,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -908,8 +900,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits5), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -919,8 +910,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits6), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -982,8 +972,7 @@ TEST_F(
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -993,8 +982,7 @@ TEST_F(
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1004,8 +992,7 @@ TEST_F(
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1024,8 +1011,7 @@ TEST_F(
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1040,8 +1026,7 @@ TEST_F(
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits5), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1097,8 +1082,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1108,8 +1092,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1119,8 +1102,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1144,8 +1126,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1198,8 +1179,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1209,8 +1189,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1220,8 +1199,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1245,8 +1223,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits4), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1261,8 +1238,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits5), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1316,8 +1292,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1327,8 +1302,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1345,8 +1319,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits3), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
   EXPECT_THAT(page_result_info3.first, Not(Eq(kInvalidNextPageToken)));
@@ -1420,8 +1393,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1435,8 +1407,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 
@@ -1474,8 +1445,7 @@ TEST_F(ResultStateManagerTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
           document_store(), result_retriever()));
 

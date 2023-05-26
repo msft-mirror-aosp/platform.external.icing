@@ -48,6 +48,16 @@ class MainIndex {
       const std::string& index_directory, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
+  // Reads magic from existing flash index storage file header. We need this
+  // during Icing initialization phase to determine the version.
+  //
+  // RETURNS:
+  //   - On success, a valid magic.
+  //   - NOT_FOUND if the flash index doesn't exist.
+  //   - INTERNAL on I/O error.
+  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
+      const Filesystem* filesystem, const std::string& index_directory);
+
   // Get a PostingListHitAccessor that holds the posting list chain for 'term'.
   //
   // RETURNS:
@@ -161,7 +171,7 @@ class MainIndex {
     if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
       return libtextclassifier3::Status::OK;
     }
-    return absl_ports::InternalError("Unable to sync lite index components.");
+    return absl_ports::InternalError("Unable to sync main index components.");
   }
 
   DocumentId last_added_document_id() const {

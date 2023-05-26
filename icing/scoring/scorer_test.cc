@@ -65,7 +65,12 @@ class ScorerTest : public ::testing::TestWithParam<ScorerTestingMode> {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, doc_store_dir_, &fake_clock1_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     // Creates a simple email schema
@@ -78,7 +83,9 @@ class ScorerTest : public ::testing::TestWithParam<ScorerTestingMode> {
                     .SetCardinality(CARDINALITY_REQUIRED)))
             .Build();
 
-    ICING_ASSERT_OK(schema_store_->SetSchema(test_email_schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        test_email_schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   void TearDown() override {
@@ -111,7 +118,7 @@ class ScorerTest : public ::testing::TestWithParam<ScorerTestingMode> {
 };
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64 timestamp_ms,
+                              int64_t timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);

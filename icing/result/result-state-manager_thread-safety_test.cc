@@ -26,7 +26,6 @@
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
-#include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -48,12 +47,6 @@ using ::testing::Ge;
 using ::testing::Not;
 using ::testing::SizeIs;
 using PageResultInfo = std::pair<uint64_t, PageResult>;
-
-ScoringSpecProto CreateScoringSpec() {
-  ScoringSpecProto scoring_spec;
-  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
-  return scoring_spec;
-}
 
 ResultSpecProto CreateResultSpec(int num_per_page) {
   ResultSpecProto result_spec;
@@ -98,7 +91,9 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
         SchemaStore::Create(&filesystem_, test_dir_, clock_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
-    ICING_ASSERT_OK(schema_store_->SetSchema(std::move(schema)));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        std::move(schema), /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
                                                 /*max_term_byte_size=*/10000));
@@ -106,7 +101,12 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -163,9 +163,8 @@ TEST_F(ResultStateManagerThreadSafetyTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
-          *result_retriever_));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -264,9 +263,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*query_terms=*/{}, SearchSpecProto::default_instance(),
-          CreateScoringSpec(), CreateResultSpec(kNumPerPage), *document_store_,
-          *result_retriever_));
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -394,8 +392,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
             std::make_unique<
                 PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
                 std::move(scored_document_hits_copy), /*is_descending=*/false),
-            /*query_terms=*/{}, SearchSpecProto::default_instance(),
-            CreateScoringSpec(), CreateResultSpec(kNumPerPage),
+            /*parent_adjustment_info=*/nullptr,
+            /*child_adjustment_info=*/nullptr, CreateResultSpec(kNumPerPage),
             *document_store_, *result_retriever));
     EXPECT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
     for (int i = 0; i < kNumPerPage; ++i) {
