@@ -1552,10 +1552,11 @@ TEST_F(IndexProcessorTest, IndexableIntegerProperty) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             integer_index_->GetIterator(
-                                 kIndexableIntegerProperty, /*key_lower=*/1,
-                                 /*key_upper=*/5, *doc_store_, *schema_store_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      integer_index_->GetIterator(kIndexableIntegerProperty, /*key_lower=*/1,
+                                  /*key_upper=*/5, *doc_store_, *schema_store_,
+                                  fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(
       GetHits(std::move(itr)),
@@ -1581,10 +1582,11 @@ TEST_F(IndexProcessorTest, IndexableIntegerPropertyNoMatch) {
   EXPECT_THAT(index_processor_->IndexDocument(tokenized_document, kDocumentId0),
               IsOk());
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<DocHitInfoIterator> itr,
-                             integer_index_->GetIterator(
-                                 kIndexableIntegerProperty, /*key_lower=*/-1,
-                                 /*key_upper=*/0, *doc_store_, *schema_store_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      integer_index_->GetIterator(kIndexableIntegerProperty, /*key_lower=*/-1,
+                                  /*key_upper=*/0, *doc_store_, *schema_store_,
+                                  fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }

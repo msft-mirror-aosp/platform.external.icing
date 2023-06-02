@@ -45,18 +45,21 @@ namespace lib {
 // the parser.
 class QueryVisitor : public AbstractSyntaxTreeVisitor {
  public:
-  explicit QueryVisitor(
-      Index* index, const NumericIndex<int64_t>* numeric_index,
-      const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Normalizer* normalizer, const Tokenizer* tokenizer,
-      std::string_view raw_query_text,
-      DocHitInfoIteratorFilter::Options filter_options,
-      TermMatchType::Code match_type, bool needs_term_frequency_info)
+  explicit QueryVisitor(Index* index,
+                        const NumericIndex<int64_t>* numeric_index,
+                        const DocumentStore* document_store,
+                        const SchemaStore* schema_store,
+                        const Normalizer* normalizer,
+                        const Tokenizer* tokenizer,
+                        std::string_view raw_query_text,
+                        DocHitInfoIteratorFilter::Options filter_options,
+                        TermMatchType::Code match_type,
+                        bool needs_term_frequency_info, int64_t current_time_ms)
       : QueryVisitor(index, numeric_index, document_store, schema_store,
                      normalizer, tokenizer, raw_query_text, filter_options,
                      match_type, needs_term_frequency_info,
                      PendingPropertyRestricts(),
-                     /*processing_not=*/false) {}
+                     /*processing_not=*/false, current_time_ms) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
@@ -108,7 +111,8 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
       std::string_view raw_query_text,
       DocHitInfoIteratorFilter::Options filter_options,
       TermMatchType::Code match_type, bool needs_term_frequency_info,
-      PendingPropertyRestricts pending_property_restricts, bool processing_not)
+      PendingPropertyRestricts pending_property_restricts, bool processing_not,
+      int64_t current_time_ms)
       : index_(*index),
         numeric_index_(*numeric_index),
         document_store_(*document_store),
@@ -121,7 +125,8 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
         needs_term_frequency_info_(needs_term_frequency_info),
         pending_property_restricts_(std::move(pending_property_restricts)),
         processing_not_(processing_not),
-        expecting_numeric_arg_(false) {
+        expecting_numeric_arg_(false),
+        current_time_ms_(current_time_ms) {
     RegisterFunctions();
   }
 
@@ -302,6 +307,8 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   // Whether we are in the midst of processing a subtree that is expected to
   // resolve to a numeric argument.
   bool expecting_numeric_arg_;
+
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

@@ -242,7 +242,10 @@ TEST_F(ResultRetrieverV2SnippetTest,
           schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet(),
               EqualsProto(SnippetProto::default_instance()));
@@ -293,7 +296,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
 
@@ -402,7 +408,10 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(1));
 
@@ -478,7 +487,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllResults) {
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   // num_to_snippet = 5, num_previously_returned_in = 0,
   // We can return 5 - 0 = 5 snippets at most. We're able to return all 3
   // snippets here.
@@ -537,7 +549,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
   }
 
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), Not(IsEmpty()));
   EXPECT_THAT(page_result.results.at(1).snippet().entries(), Not(IsEmpty()));
@@ -594,7 +609,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
 
   // We can't return any snippets for this page.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), IsEmpty());
   EXPECT_THAT(page_result.results.at(1).snippet().entries(), IsEmpty());
@@ -654,7 +672,10 @@ TEST_F(ResultRetrieverV2SnippetTest,
 
   // We can't return any snippets for this page even though num_to_snippet > 0.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), IsEmpty());
   EXPECT_THAT(page_result.results.at(1).snippet().entries(), IsEmpty());
@@ -757,7 +778,10 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
       parent_result_spec, *document_store_);
 
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
 
@@ -985,7 +1009,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   // Only 1 parent document should be snippeted, but all of the child documents
   // should be snippeted.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   // Result1: Person1 for parent and [Email1] for children.
@@ -1101,7 +1128,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   // All parents document should be snippeted. Only 2 child documents should be
   // snippeted.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   // Result1: Person1 for parent and [Email1] for children.
