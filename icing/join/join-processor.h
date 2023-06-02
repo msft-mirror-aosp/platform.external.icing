@@ -15,6 +15,7 @@
 #ifndef ICING_JOIN_JOIN_PROCESSOR_H_
 #define ICING_JOIN_JOIN_PROCESSOR_H_
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,10 +37,12 @@ class JoinProcessor {
 
   explicit JoinProcessor(
       const DocumentStore* doc_store, const SchemaStore* schema_store,
-      const QualifiedIdTypeJoinableIndex* qualified_id_join_index)
+      const QualifiedIdTypeJoinableIndex* qualified_id_join_index,
+      int64_t current_time_ms)
       : doc_store_(doc_store),
         schema_store_(schema_store),
-        qualified_id_join_index_(qualified_id_join_index) {}
+        qualified_id_join_index_(qualified_id_join_index),
+        current_time_ms_(current_time_ms) {}
 
   // Get a JoinChildrenFetcher used to fetch all children documents by a parent
   // document id.
@@ -77,6 +80,7 @@ class JoinProcessor {
   const SchemaStore* schema_store_;  // Does not own.
   const QualifiedIdTypeJoinableIndex*
       qualified_id_join_index_;  // Does not own.
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib
