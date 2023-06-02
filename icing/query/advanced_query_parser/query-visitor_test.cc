@@ -233,7 +233,7 @@ TEST_P(QueryVisitorTest, SimpleLessThan) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -276,7 +276,7 @@ TEST_P(QueryVisitorTest, SimpleLessThanEq) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -319,7 +319,7 @@ TEST_P(QueryVisitorTest, SimpleEqual) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -362,7 +362,7 @@ TEST_P(QueryVisitorTest, SimpleGreaterThanEq) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -405,7 +405,7 @@ TEST_P(QueryVisitorTest, SimpleGreaterThan) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -449,7 +449,7 @@ TEST_P(QueryVisitorTest, IntMinLessThanEqual) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -493,7 +493,7 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanEqual) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -538,7 +538,7 @@ TEST_P(QueryVisitorTest, NestedPropertyLessThan) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -566,7 +566,7 @@ TEST_P(QueryVisitorTest, IntParsingError) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -580,7 +580,7 @@ TEST_P(QueryVisitorTest, NotEqualsUnsupported) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
@@ -628,7 +628,7 @@ TEST_P(QueryVisitorTest, LessThanTooManyOperandsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -655,7 +655,7 @@ TEST_P(QueryVisitorTest, LessThanTooFewOperandsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -686,7 +686,7 @@ TEST_P(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -708,7 +708,7 @@ TEST_P(QueryVisitorTest, NeverVisitedReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), "",
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -737,7 +737,7 @@ TEST_P(QueryVisitorTest, IntMinLessThanInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -767,7 +767,7 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -782,7 +782,7 @@ TEST_P(QueryVisitorTest, NumericComparisonPropertyStringIsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -846,7 +846,7 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -889,7 +889,7 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -941,7 +941,7 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/false);
+      /*needs_term_frequency_info_=*/false, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -993,7 +993,7 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1009,7 +1009,7 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1029,7 +1029,7 @@ TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -1043,7 +1043,7 @@ TEST_P(QueryVisitorTest, PrefixOperatorAfterNumericValueReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -1057,7 +1057,7 @@ TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyRestrictReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -1095,7 +1095,7 @@ TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1118,7 +1118,7 @@ TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1155,7 +1155,7 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1202,7 +1202,7 @@ TEST_P(QueryVisitorTest, SingleVerbatimTermPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1255,7 +1255,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingQuote) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1307,7 +1307,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingEscape) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1361,7 +1361,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1388,7 +1388,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1443,7 +1443,7 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1469,7 +1469,7 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1518,7 +1518,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingComplex) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1577,7 +1577,7 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1631,7 +1631,7 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1686,7 +1686,7 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1755,7 +1755,7 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1794,7 +1794,7 @@ TEST_P(QueryVisitorTest, ImplicitAndTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1837,7 +1837,7 @@ TEST_P(QueryVisitorTest, ExplicitAndTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1880,7 +1880,7 @@ TEST_P(QueryVisitorTest, OrTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1925,7 +1925,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1950,7 +1950,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1974,7 +1974,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -2036,7 +2036,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2056,7 +2056,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2121,7 +2121,7 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2197,7 +2197,7 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2240,7 +2240,7 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -2296,7 +2296,7 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2367,7 +2367,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2434,7 +2434,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2455,7 +2455,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2521,7 +2521,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2542,7 +2542,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2608,7 +2608,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2629,7 +2629,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2696,7 +2696,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2720,7 +2720,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2802,7 +2802,7 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2922,7 +2922,7 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3039,7 +3039,7 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3063,7 +3063,7 @@ TEST_F(QueryVisitorTest, UnsupportedFunctionReturnsInvalidArgument) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3077,7 +3077,7 @@ TEST_F(QueryVisitorTest, SearchFunctionTooFewArgumentsReturnsInvalidArgument) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3091,7 +3091,7 @@ TEST_F(QueryVisitorTest, SearchFunctionTooManyArgumentsReturnsInvalidArgument) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3107,7 +3107,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3119,7 +3119,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   EXPECT_THAT(std::move(query_visitor_two).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3135,7 +3135,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3147,7 +3147,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   EXPECT_THAT(std::move(query_visitor_two).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3162,7 +3162,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3225,7 +3225,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_two_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3249,7 +3249,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_three_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -3273,7 +3273,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_four_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -3395,7 +3395,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_one_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3427,7 +3427,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_two_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -3453,7 +3453,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_three_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -3575,7 +3575,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_one_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3599,7 +3599,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_two_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -3624,7 +3624,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_three_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -3650,7 +3650,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3666,7 +3666,7 @@ TEST_F(
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3682,7 +3682,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3697,7 +3697,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3751,7 +3751,7 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3804,7 +3804,7 @@ TEST_P(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3855,7 +3855,7 @@ TEST_P(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());

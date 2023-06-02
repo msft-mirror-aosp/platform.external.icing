@@ -38,11 +38,12 @@ namespace lib {
 DocHitInfoIteratorSectionRestrict::DocHitInfoIteratorSectionRestrict(
     std::unique_ptr<DocHitInfoIterator> delegate,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    std::set<std::string> target_sections)
+    std::set<std::string> target_sections, int64_t current_time_ms)
     : delegate_(std::move(delegate)),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      target_sections_(std::move(target_sections)) {}
+      target_sections_(std::move(target_sections)),
+      current_time_ms_(current_time_ms) {}
 
 libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
@@ -53,8 +54,8 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
     SectionIdMask section_id_mask =
         delegate_->doc_hit_info().hit_section_ids_mask();
 
-    auto data_optional =
-        document_store_.GetAliveDocumentFilterData(document_id);
+    auto data_optional = document_store_.GetAliveDocumentFilterData(
+        document_id, current_time_ms_);
     if (!data_optional) {
       // Ran into some error retrieving information on this hit, skip
       continue;
@@ -112,7 +113,7 @@ DocHitInfoIteratorSectionRestrict::TrimRightMostNode() && {
   trimmed_delegate.iterator_ =
       std::make_unique<DocHitInfoIteratorSectionRestrict>(
           std::move(trimmed_delegate.iterator_), &document_store_,
-          &schema_store_, std::move(target_sections_));
+          &schema_store_, std::move(target_sections_), current_time_ms_);
   return std::move(trimmed_delegate);
 }
 
