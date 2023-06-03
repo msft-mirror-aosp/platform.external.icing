@@ -246,7 +246,8 @@ TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(search_spec,
-                                      ScoringSpecProto::RankingStrategy::NONE));
+                                      ScoringSpecProto::RankingStrategy::NONE,
+                                      fake_clock_.GetSystemTimeMilliseconds()));
 
     // Descending order of valid DocumentIds
     EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
@@ -257,7 +258,8 @@ TEST_P(QueryProcessorTest, EmptyGroupMatchAllDocuments) {
     // TODO(b/208654892): Resolve the difference between RAW_QUERY and ADVANCED
     // regarding empty composite expressions.
     EXPECT_THAT(query_processor_->ParseSearch(
-                    search_spec, ScoringSpecProto::RankingStrategy::NONE),
+                    search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                    fake_clock_.GetSystemTimeMilliseconds()),
                 StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   }
 }
@@ -292,7 +294,8 @@ TEST_P(QueryProcessorTest, EmptyQueryMatchAllDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocumentIds(results.root_iterator.get()),
@@ -340,7 +343,8 @@ TEST_P(QueryProcessorTest, QueryTermNormalized) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -397,7 +401,8 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -454,7 +459,8 @@ TEST_P(QueryProcessorTest, OneTermPrefixMatchWithMaxSectionID) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -509,7 +515,8 @@ TEST_P(QueryProcessorTest, OneTermExactMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -564,7 +571,8 @@ TEST_P(QueryProcessorTest, AndSameTermExactMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -624,7 +632,8 @@ TEST_P(QueryProcessorTest, AndTwoTermExactMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -681,7 +690,8 @@ TEST_P(QueryProcessorTest, AndSameTermPrefixMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
   EXPECT_EQ(results.root_iterator->doc_hit_info().document_id(), document_id);
@@ -741,7 +751,8 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -802,7 +813,8 @@ TEST_P(QueryProcessorTest, AndTwoTermPrefixAndExactMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -868,7 +880,8 @@ TEST_P(QueryProcessorTest, OrTwoTermExactMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -942,7 +955,8 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1015,7 +1029,8 @@ TEST_P(QueryProcessorTest, OrTwoTermPrefixAndExactMatch) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1104,7 +1119,8 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // Only Document 1 matches since it has puppy AND dog
     ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1139,7 +1155,8 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // Both Document 1 and 2 match since Document 1 has animal AND puppy, and
     // Document 2 has animal AND kitten
@@ -1190,7 +1207,8 @@ TEST_P(QueryProcessorTest, CombinedAndOrTerms) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // Only Document 2 matches since it has both kitten and cat
     ASSERT_THAT(results.root_iterator->Advance(), IsOk());
@@ -1267,7 +1285,8 @@ TEST_P(QueryProcessorTest, OneGroup) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo(document_id1);
@@ -1334,7 +1353,8 @@ TEST_P(QueryProcessorTest, TwoGroups) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo1(document_id1);
@@ -1402,7 +1422,8 @@ TEST_P(QueryProcessorTest, ManyLevelNestedGrouping) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo(document_id1);
@@ -1468,7 +1489,8 @@ TEST_P(QueryProcessorTest, OneLevelNestedGrouping) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo1(document_id1);
@@ -1527,7 +1549,8 @@ TEST_P(QueryProcessorTest, ExcludeTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds()));
 
   // We don't know have the section mask to indicate what section "world"
   // came. It doesn't matter which section it was in since the query doesn't
@@ -1580,7 +1603,8 @@ TEST_P(QueryProcessorTest, ExcludeNonexistentTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
@@ -1641,7 +1665,8 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // The query is interpreted as "exclude all documents that have animal,
     // and exclude all documents that have cat". Since both documents contain
@@ -1661,7 +1686,8 @@ TEST_P(QueryProcessorTest, ExcludeAnd) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // The query is interpreted as "exclude all documents that have animal,
     // and include all documents that have cat". Since both documents contain
@@ -1725,7 +1751,8 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // We don't have a section mask indicating which sections in this document
     // matched the query since it's not based on section-term matching. It's
@@ -1746,7 +1773,8 @@ TEST_P(QueryProcessorTest, ExcludeOr) {
     ICING_ASSERT_OK_AND_ASSIGN(
         QueryResults results,
         query_processor_->ParseSearch(
-            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+            search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+            fake_clock_.GetSystemTimeMilliseconds()));
 
     // Descending order of valid DocumentIds
     DocHitInfo expectedDocHitInfo1(document_id1);
@@ -1823,7 +1851,8 @@ TEST_P(QueryProcessorTest, WithoutTermFrequency) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   // The first Document to match (Document 2) matches on 'animal' AND 'kitten'
@@ -1883,7 +1912,9 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
                                                       .SetKey("namespace", "2")
                                                       .SetSchema("email")
                                                       .Build()));
-  EXPECT_THAT(document_store_->Delete("namespace", "1"), IsOk());
+  EXPECT_THAT(document_store_->Delete("namespace", "1",
+                                      fake_clock_.GetSystemTimeMilliseconds()),
+              IsOk());
 
   // Populate the index
   SectionId section_id = 0;
@@ -1911,7 +1942,8 @@ TEST_P(QueryProcessorTest, DeletedFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo(document_id2);
@@ -1975,7 +2007,8 @@ TEST_P(QueryProcessorTest, NamespaceFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo(document_id1);
@@ -2037,7 +2070,8 @@ TEST_P(QueryProcessorTest, SchemaTypeFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo(document_id1);
@@ -2093,7 +2127,8 @@ TEST_P(QueryProcessorTest, PropertyFilterForOneDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Descending order of valid DocumentIds
   DocHitInfo expectedDocHitInfo(document_id);
@@ -2175,7 +2210,8 @@ TEST_P(QueryProcessorTest, PropertyFilterAcrossSchemaTypes) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Ordered by descending DocumentId, so message comes first since it was
   // inserted last
@@ -2250,7 +2286,8 @@ TEST_P(QueryProcessorTest, PropertyFilterWithinSchemaType) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Shouldn't include the message document since we're only looking at email
   // types
@@ -2330,7 +2367,8 @@ TEST_P(QueryProcessorTest, NestedPropertyFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -2406,7 +2444,8 @@ TEST_P(QueryProcessorTest, PropertyFilterRespectsDifferentSectionIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -2457,7 +2496,8 @@ TEST_P(QueryProcessorTest, NonexistentPropertyFilterReturnsEmptyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -2514,7 +2554,8 @@ TEST_P(QueryProcessorTest, UnindexedPropertyFilterReturnsEmptyResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Even though the section id is the same, we should be able to tell that it
   // doesn't match to the name of the section filter
@@ -2586,7 +2627,8 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   // Ordered by descending DocumentId, so message comes first since it was
   // inserted last
@@ -2656,7 +2698,8 @@ TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       local_query_processor->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::NONE));
+          search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          fake_clock_.GetSystemTimeMilliseconds()));
 
   DocHitInfo expectedDocHitInfo(document_id);
   expectedDocHitInfo.UpdateSection(/*section_id=*/0);
@@ -2676,12 +2719,12 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
 
   // Arbitrary value, just has to be greater than the document's creation
   // timestamp + ttl
-  FakeClock fake_clock;
-  fake_clock.SetSystemTimeMilliseconds(200);
+  FakeClock fake_clock_local;
+  fake_clock_local.SetSystemTimeMilliseconds(200);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, store_dir_, &fake_clock,
+      CreateDocumentStore(&filesystem_, store_dir_, &fake_clock_local,
                           schema_store_.get()));
   document_store_ = std::move(create_result.document_store);
 
@@ -2717,7 +2760,8 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       local_query_processor->ParseSearch(
-          search_spec, ScoringSpecProto::RankingStrategy::NONE));
+          search_spec, ScoringSpecProto::RankingStrategy::NONE,
+          fake_clock_local.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 }
@@ -2787,7 +2831,8 @@ TEST_P(QueryProcessorTest, NumericFilter) {
   ICING_ASSERT_OK_AND_ASSIGN(
       QueryResults results,
       query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE));
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
                   document_one_id, std::vector<SectionId>{price_section_id})));
@@ -2795,7 +2840,8 @@ TEST_P(QueryProcessorTest, NumericFilter) {
   search_spec.set_query("price == 25");
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
-                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
                   document_two_id, std::vector<SectionId>{price_section_id})));
@@ -2803,13 +2849,15 @@ TEST_P(QueryProcessorTest, NumericFilter) {
   search_spec.set_query("cost > 2");
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
-                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()), IsEmpty());
 
   search_spec.set_query("cost >= 2");
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
-                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
               ElementsAre(EqualsDocHitInfo(
                   document_three_id, std::vector<SectionId>{cost_section_id})));
@@ -2817,7 +2865,8 @@ TEST_P(QueryProcessorTest, NumericFilter) {
   search_spec.set_query("price <= 25");
   ICING_ASSERT_OK_AND_ASSIGN(
       results, query_processor_->ParseSearch(
-                   search_spec, ScoringSpecProto::RankingStrategy::NONE));
+                   search_spec, ScoringSpecProto::RankingStrategy::NONE,
+                   fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(
       GetDocHitInfos(results.root_iterator.get()),
       ElementsAre(EqualsDocHitInfo(document_two_id,
@@ -2864,7 +2913,8 @@ TEST_P(QueryProcessorTest, NumericFilterWithoutEnablingFeatureFails) {
 
   libtextclassifier3::StatusOr<QueryResults> result_or =
       query_processor_->ParseSearch(search_spec,
-                                    ScoringSpecProto::RankingStrategy::NONE);
+                                    ScoringSpecProto::RankingStrategy::NONE,
+                                    fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(result_or,
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }

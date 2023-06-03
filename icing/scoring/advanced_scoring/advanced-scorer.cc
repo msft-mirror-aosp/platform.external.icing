@@ -30,7 +30,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<AdvancedScorer>>
 AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
                        double default_score,
                        const DocumentStore* document_store,
-                       const SchemaStore* schema_store,
+                       const SchemaStore* schema_store, int64_t current_time_ms,
                        const JoinChildrenFetcher* join_children_fetcher) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
@@ -46,10 +46,11 @@ AdvancedScorer::Create(const ScoringSpecProto& scoring_spec,
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<SectionWeights> section_weights,
                          SectionWeights::Create(schema_store, scoring_spec));
   std::unique_ptr<Bm25fCalculator> bm25f_calculator =
-      std::make_unique<Bm25fCalculator>(document_store, section_weights.get());
+      std::make_unique<Bm25fCalculator>(document_store, section_weights.get(),
+                                        current_time_ms);
   ScoringVisitor visitor(default_score, document_store, schema_store,
                          section_weights.get(), bm25f_calculator.get(),
-                         join_children_fetcher);
+                         join_children_fetcher, current_time_ms);
   tree_root->Accept(&visitor);
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<ScoreExpression> expression,
