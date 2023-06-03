@@ -139,8 +139,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //   - Any IntegerIndexStorage errors
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
       std::string_view property_path, int64_t key_lower, int64_t key_upper,
-      const DocumentStore& document_store,
-      const SchemaStore& schema_store) const override;
+      const DocumentStore& document_store, const SchemaStore& schema_store,
+      int64_t current_time_ms) const override;
 
   // Reduces internal file sizes by reclaiming space and ids of deleted
   // documents. Integer index will convert all data (hits) to the new document

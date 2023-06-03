@@ -133,7 +133,8 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
 
@@ -238,7 +239,8 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -344,7 +346,8 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -445,7 +448,8 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);

@@ -620,7 +620,7 @@ class IcingSearchEngine {
   QueryScoringResults ProcessQueryAndScore(
       const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
       const ResultSpecProto& result_spec,
-      const JoinChildrenFetcher* join_children_fetcher)
+      const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
