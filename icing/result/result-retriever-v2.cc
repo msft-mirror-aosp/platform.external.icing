@@ -100,10 +100,11 @@ bool GroupResultLimiterV2::ShouldBeRemoved(
     const ScoredDocumentHit& scored_document_hit,
     const std::unordered_map<int32_t, int>& entry_id_group_id_map,
     const DocumentStore& document_store, std::vector<int>& group_result_limits,
-    ResultSpecProto::ResultGroupingType result_group_type) const {
+    ResultSpecProto::ResultGroupingType result_group_type,
+    int64_t current_time_ms) const {
   auto document_filter_data_optional =
       document_store.GetAliveDocumentFilterData(
-          scored_document_hit.document_id());
+          scored_document_hit.document_id(), current_time_ms);
   if (!document_filter_data_optional) {
     // The document doesn't exist.
     return true;
@@ -153,7 +154,7 @@ ResultRetrieverV2::Create(
 }
 
 std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
-    ResultStateV2& result_state) const {
+    ResultStateV2& result_state, int64_t current_time_ms) const {
   absl_ports::unique_lock l(&result_state.mutex);
 
   // For calculating page
@@ -171,8 +172,8 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     if (group_result_limiter_->ShouldBeRemoved(
             next_best_document_hit.parent_scored_document_hit(),
             result_state.entry_id_group_id_map(), doc_store_,
-            result_state.group_result_limits,
-            result_state.result_group_type())) {
+            result_state.group_result_limits, result_state.result_group_type(),
+            current_time_ms)) {
       continue;
     }
 

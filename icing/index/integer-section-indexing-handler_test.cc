@@ -250,7 +250,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleIntegerSection) {
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   document_id, std::vector<SectionId>{kSectionIdTimestamp})));
@@ -299,7 +299,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
       integer_index_->GetIterator(
           "nested.timestamp", /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(
       GetHits(std::move(itr)),
       ElementsAre(EqualsDocHitInfo(
@@ -311,7 +311,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
       integer_index_->GetIterator(
           kPropertyPrice, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   document_id, std::vector<SectionId>{kSectionIdPrice})));
@@ -322,7 +322,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleNestedIntegerSection) {
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
@@ -362,7 +362,7 @@ TEST_F(IntegerSectionIndexingHandlerTest, HandleShouldSkipEmptyIntegerSection) {
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
@@ -405,7 +405,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 
   // Recovery mode should get the same result.
@@ -421,7 +421,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
@@ -465,7 +465,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 
   // Handling document with document_id < last_added_document_id should cause a
@@ -485,7 +485,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
@@ -541,7 +541,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   document_id1, std::vector<SectionId>{kSectionIdTimestamp})));
@@ -564,7 +564,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   document_id1, std::vector<SectionId>{kSectionIdTimestamp})));
@@ -586,7 +586,7 @@ TEST_F(IntegerSectionIndexingHandlerTest,
       integer_index_->GetIterator(
           kPropertyTimestamp, /*key_lower=*/std::numeric_limits<int64_t>::min(),
           /*key_upper=*/std::numeric_limits<int64_t>::max(), *document_store_,
-          *schema_store_));
+          *schema_store_, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(GetHits(std::move(itr)),
               ElementsAre(EqualsDocHitInfo(
                   document_id1, std::vector<SectionId>{kSectionIdTimestamp})));

@@ -74,7 +74,8 @@ class SchemaStore {
           overlay_created_(false),
           min_overlay_version_compatibility_(
               std::numeric_limits<int32_t>::max()) {
-      memset(padding, 0, kPaddingSize);
+      memset(overlay_created_padding_, 0, kOverlayCreatedPaddingSize);
+      memset(padding_, 0, kPaddingSize);
     }
 
     // RETURNS:
@@ -112,12 +113,17 @@ class SchemaStore {
     uint32_t checksum_;
 
     bool overlay_created_;
+    // Three bytes of padding due to the fact that
+    // min_overlay_version_compatibility_ has an alignof() == 4 and the offset
+    // of overlay_created_padding_ == 9.
+    static constexpr int kOverlayCreatedPaddingSize = 3;
+    uint8_t overlay_created_padding_[kOverlayCreatedPaddingSize];
 
     int32_t min_overlay_version_compatibility_;
 
     static constexpr int kPaddingSize = 1008;
     // Padding exists just to reserve space for additional values.
-    uint8_t padding[kPaddingSize];
+    uint8_t padding_[kPaddingSize];
   };
   static_assert(sizeof(Header) == 1024);
 

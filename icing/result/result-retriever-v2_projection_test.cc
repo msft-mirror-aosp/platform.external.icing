@@ -312,7 +312,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -411,7 +414,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
   // 5. Verify that the returned results only contain the 'sender.name'
   // property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -520,7 +526,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
   // 5. Verify that the returned results only contain the 'sender'
   // property and all of the subproperties of 'sender'.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -633,7 +642,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
   // 5. Verify that the returned results only contain the 'sender.name' and
   // 'sender.address' properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -728,7 +740,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one = DocumentBuilder()
@@ -807,7 +822,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one = DocumentBuilder()
@@ -887,7 +905,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -970,7 +991,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results have all of their properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1056,7 +1080,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1146,7 +1173,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned Email results only contain the 'body'
   // property and the returned Person results  only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1245,7 +1275,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1348,7 +1381,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results contain no properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1478,7 +1514,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
   //    - Person docs only contain the "name" property.
   //    - Email docs only contain the "body" property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
 
   // Check parent doc.
@@ -1576,7 +1615,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
   // 5. Verify that the returned Person and Artist results only contain the
   // 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1658,7 +1700,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
   // 5. Verify that the returned Person and Musician results only contain the
   // 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1728,7 +1773,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned person document does not contain any property,
   // since 'emailAddress' is missing.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
   DocumentProto projected_document = DocumentBuilder()
                                          .SetKey("namespace", "uri")
@@ -1803,7 +1851,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
   // property and the returned Artist results contain both the 'name' and
   // 'emailAddress' properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1881,7 +1932,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
   // 5. Verify that the returned document only contains the 'name' and the
   // 'phoneNumber' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
 
   DocumentProto projected_document =
