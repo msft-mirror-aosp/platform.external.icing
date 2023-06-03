@@ -42,7 +42,7 @@ class ScoringProcessor {
   //   FAILED_PRECONDITION on any null pointer input
   static libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>> Create(
       const ScoringSpecProto& scoring_spec, const DocumentStore* document_store,
-      const SchemaStore* schema_store,
+      const SchemaStore* schema_store, int64_t current_time_ms,
       const JoinChildrenFetcher* join_children_fetcher = nullptr);
 
   // Assigns scores to DocHitInfos from the given DocHitInfoIterator and returns
