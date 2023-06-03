@@ -170,7 +170,8 @@ class NumericIndexIntegerTest : public ::testing::Test {
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<DocHitInfoIterator> iter,
         integer_index->GetIterator(property_path, key_lower, key_upper,
-                                   *doc_store_, *schema_store_));
+                                   *doc_store_, *schema_store_,
+                                   clock_.GetSystemTimeMilliseconds()));
 
     std::vector<DocHitInfo> result;
     while (iter->Advance().ok()) {
@@ -2028,8 +2029,10 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
     Index(integer_index.get(), desired_property, /*document_id=*/20,
           typeb_desired_prop_id, /*keys=*/{2});
 
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/3));
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/5));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/3,
+                                       clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/5,
+                                       clock_.GetSystemTimeMilliseconds()));
     // Delete doc id = 3, 5, compress and keep the rest.
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocumentId> document_id_old_to_new,
                                CompactDocStore());
@@ -2272,12 +2275,18 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
 
     // Delete all the docs that had hits in otherProperty* and
     // undesiredProperty.
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/0));
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/6));
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/7));
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/8));
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/9));
-    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/10));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/0,
+                                       clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/6,
+                                       clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/7,
+                                       clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/8,
+                                       clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/9,
+                                       clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK(doc_store_->Delete(/*document_id=*/10,
+                                       clock_.GetSystemTimeMilliseconds()));
     // Delete doc id = 0, 6, 7, 8, 9, 10. Compress and keep the rest.
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocumentId> document_id_old_to_new,
                                CompactDocStore());
