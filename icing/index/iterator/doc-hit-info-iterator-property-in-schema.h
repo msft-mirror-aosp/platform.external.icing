@@ -39,7 +39,7 @@ class DocHitInfoIteratorPropertyInSchema : public DocHitInfoIterator {
   explicit DocHitInfoIteratorPropertyInSchema(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      std::set<std::string> target_sections);
+      std::set<std::string> target_sections, int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
 
@@ -68,6 +68,7 @@ class DocHitInfoIteratorPropertyInSchema : public DocHitInfoIterator {
   const SchemaStore& schema_store_;
 
   std::set<std::string> target_properties_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

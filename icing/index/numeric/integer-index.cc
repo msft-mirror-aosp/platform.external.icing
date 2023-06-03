@@ -213,7 +213,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
 IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
                           int64_t key_upper,
                           const DocumentStore& document_store,
-                          const SchemaStore& schema_store) const {
+                          const SchemaStore& schema_store,
+                          int64_t current_time_ms) const {
   std::string property_path_str(property_path);
   auto iter = property_to_storage_map_.find(property_path_str);
   if (iter != property_to_storage_map_.end()) {
@@ -228,7 +229,7 @@ IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
     std::set<std::string> property_paths = {std::move(property_path_str)};
     return std::make_unique<DocHitInfoIteratorSectionRestrict>(
         std::move(delegate), &document_store, &schema_store,
-        std::move(property_paths));
+        std::move(property_paths), current_time_ms);
   }
 
   // Return an empty iterator.
