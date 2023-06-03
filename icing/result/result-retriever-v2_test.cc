@@ -86,7 +86,7 @@ class MockGroupResultLimiter : public GroupResultLimiterV2 {
   MOCK_METHOD(bool, ShouldBeRemoved,
               (const ScoredDocumentHit&, const EntryIdMap&,
                const DocumentStore&, std::vector<int>&,
-               ResultSpecProto::ResultGroupingType),
+               ResultSpecProto::ResultGroupingType, int64_t),
               (const, override));
 };
 
@@ -310,8 +310,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
       *doc_store);
 
   // First page, 2 results
-  auto [page_result1, has_more_results1] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // num_results_with_snippets is 0 when there is no snippet.
@@ -322,8 +322,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   EXPECT_TRUE(has_more_results1);
 
   // Second page, 2 results
-  auto [page_result2, has_more_results2] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result3), EqualsProto(result4)));
   // num_results_with_snippets is 0 when there is no snippet.
@@ -334,8 +334,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   EXPECT_TRUE(has_more_results2);
 
   // Third page, 1 result
-  auto [page_result3, has_more_results3] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result3, has_more_results3] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result3.results, ElementsAre(EqualsProto(result5)));
   // num_results_with_snippets is 0 when there is no snippet.
   EXPECT_THAT(page_result3.num_results_with_snippets, Eq(0));
@@ -388,7 +388,10 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
       *doc_store);
   PageResult page_result1 =
-      result_retriever->RetrieveNextPage(result_state1).first;
+      result_retriever
+          ->RetrieveNextPage(result_state1,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   EXPECT_THAT(page_result1.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
 
@@ -406,7 +409,10 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
       *doc_store);
   PageResult page_result2 =
-      result_retriever->RetrieveNextPage(result_state2).first;
+      result_retriever
+          ->RetrieveNextPage(result_state2,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
 }
@@ -556,8 +562,8 @@ TEST_F(ResultRetrieverV2Test,
   *child3->mutable_document() = email_document1;
   child3->set_score(3);
 
-  auto [page_result, has_more_results] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // No more results.
@@ -609,7 +615,10 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *doc_store);
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   // We mocked mock_filesystem to return an internal error when retrieving doc2,
   // so doc2 should be skipped and doc1 should still be returned.
   EXPECT_THAT(page_result.results, ElementsAre(EqualsProto(result1)));
@@ -659,7 +668,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
 
   // First page, 2 results
   PageResult page_result1 =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result1.results, SizeIs(2));
   {
     absl_ports::shared_lock l(&result_state.mutex);
@@ -673,7 +685,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
 
   // Second page, 2 results
   PageResult page_result2 =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result2.results, SizeIs(2));
   {
     absl_ports::shared_lock l(&result_state.mutex);
@@ -687,7 +702,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
 
   // Third page, 1 result
   PageResult page_result3 =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result3.results, SizeIs(1));
   {
     absl_ports::shared_lock l(&result_state.mutex);
@@ -769,14 +787,20 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // Should get 1 doc in the first page of result_state1, and num_total_hits
   // should be decremented by 1.
   PageResult page_result1 =
-      result_retriever->RetrieveNextPage(*result_state1).first;
+      result_retriever
+          ->RetrieveNextPage(*result_state1,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result1.results, SizeIs(1));
   EXPECT_THAT(num_total_hits_, Eq(4));
 
   // Should get 2 docs in the first page of result_state2, and num_total_hits
   // should be decremented by 2.
   PageResult page_result2 =
-      result_retriever->RetrieveNextPage(*result_state2).first;
+      result_retriever
+          ->RetrieveNextPage(*result_state2,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result2.results, SizeIs(2));
   EXPECT_THAT(num_total_hits_, Eq(2));
 
@@ -784,7 +808,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // is 2, there is only 1 doc left), and num_total_hits should be decremented
   // by 1.
   PageResult page_result3 =
-      result_retriever->RetrieveNextPage(*result_state2).first;
+      result_retriever
+          ->RetrieveNextPage(*result_state2,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result3.results, SizeIs(1));
   EXPECT_THAT(num_total_hits_, Eq(1));
 
@@ -844,15 +871,15 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   // First page. Only result1 should be returned, since its byte size meets
   // num_total_bytes_per_page_threshold and ResultRetriever should terminate
   // early even though # of results is still below num_per_page.
-  auto [page_result1, has_more_results1] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page, result2.
-  auto [page_result2, has_more_results2] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
@@ -906,15 +933,15 @@ TEST_F(ResultRetrieverV2Test,
 
   // First page. Should return single result1 even though its byte size exceeds
   // num_total_bytes_per_page_threshold.
-  auto [page_result1, has_more_results1] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page, result2.
-  auto [page_result2, has_more_results2] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
@@ -970,8 +997,8 @@ TEST_F(ResultRetrieverV2Test,
   // of results is still below num_per_page, so ResultRetriever should continue
   // the retrieval process and thus include result2 into this page, even though
   // finally total bytes of result1 + result2 exceed the threshold.
-  auto [page_result, has_more_results] =
-      result_retriever->RetrieveNextPage(result_state);
+  auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
+      result_state, fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // No more results.

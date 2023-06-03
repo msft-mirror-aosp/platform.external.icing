@@ -111,15 +111,17 @@ class UsageScorer : public Scorer {
  public:
   UsageScorer(const DocumentStore* document_store,
               ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-              double default_score)
+              double default_score, int64_t current_time_ms)
       : document_store_(*document_store),
         ranking_strategy_(ranking_strategy),
-        default_score_(default_score) {}
+        default_score_(default_score),
+        current_time_ms_(current_time_ms) {}
 
   double GetScore(const DocHitInfo& hit_info,
                   const DocHitInfoIterator*) override {
     std::optional<UsageStore::UsageScores> usage_scores =
-        document_store_.GetUsageScores(hit_info.document_id());
+        document_store_.GetUsageScores(hit_info.document_id(),
+                                       current_time_ms_);
     if (!usage_scores) {
       // If there's no UsageScores entry present for this doc, then just
       // treat it as a default instance.
@@ -149,6 +151,7 @@ class UsageScorer : public Scorer {
   const DocumentStore& document_store_;
   ScoringSpecProto::RankingStrategy::Code ranking_strategy_;
   double default_score_;
+  int64_t current_time_ms_;
 };
 
 // A special scorer which does nothing but assigns the default score to each
@@ -171,7 +174,7 @@ namespace scorer_factory {
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    const JoinChildrenFetcher* join_children_fetcher) {
+    int64_t current_time_ms, const JoinChildrenFetcher* join_children_fetcher) {
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
@@ -196,7 +199,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
           SectionWeights::Create(schema_store, scoring_spec));
 
       auto bm25f_calculator = std::make_unique<Bm25fCalculator>(
-          document_store, section_weights.get());
+          document_store, section_weights.get(), current_time_ms);
       return std::make_unique<RelevanceScoreScorer>(std::move(section_weights),
                                                     std::move(bm25f_calculator),
                                                     default_score);
@@ -212,15 +215,17 @@ libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE2_LAST_USED_TIMESTAMP:
       [[fallthrough]];
     case ScoringSpecProto::RankingStrategy::USAGE_TYPE3_LAST_USED_TIMESTAMP:
-      return std::make_unique<UsageScorer>(
-          document_store, scoring_spec.rank_by(), default_score);
+      return std::make_unique<UsageScorer>(document_store,
+                                           scoring_spec.rank_by(),
+                                           default_score, current_time_ms);
     case ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION:
       if (scoring_spec.advanced_scoring_expression().empty()) {
         return absl_ports::InvalidArgumentError(
             "Advanced scoring is enabled, but the expression is empty!");
       }
       return AdvancedScorer::Create(scoring_spec, default_score, document_store,
-                                    schema_store, join_children_fetcher);
+                                    schema_store, current_time_ms,
+                                    join_children_fetcher);
     case ScoringSpecProto::RankingStrategy::JOIN_AGGREGATE_SCORE:
       // Use join aggregate score to rank. Since the aggregation score is
       // calculated by child documents after joining (in JoinProcessor), we can

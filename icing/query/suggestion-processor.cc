@@ -161,7 +161,8 @@ PopulatePropertyFilters(
 
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 SuggestionProcessor::QuerySuggestions(
-    const icing::lib::SuggestionSpecProto& suggestion_spec) {
+    const icing::lib::SuggestionSpecProto& suggestion_spec,
+    int64_t current_time_ms) {
   // We use query tokenizer to tokenize the give prefix, and we only use the
   // last token to be the suggestion prefix.
 
@@ -233,7 +234,8 @@ SuggestionProcessor::QuerySuggestions(
   ICING_ASSIGN_OR_RETURN(
       QueryResults query_results,
       query_processor->ParseSearch(search_spec,
-                                   ScoringSpecProto::RankingStrategy::NONE));
+                                   ScoringSpecProto::RankingStrategy::NONE,
+                                   current_time_ms));
 
   ICING_ASSIGN_OR_RETURN(
       DocHitInfoIterator::TrimmedNode trimmed_node,
@@ -273,7 +275,7 @@ SuggestionProcessor::QuerySuggestions(
       &document_store_, &schema_store_, std::move(namespace_ids),
       std::move(document_id_filter_map), std::move(schema_type_ids),
       std::move(property_filter_map), std::move(trimmed_node.target_section_),
-      std::move(search_base));
+      std::move(search_base), current_time_ms);
   // TODO(b/228240987) support generate suggestion and append suffix for advance
   // query and function call.
   std::string query_prefix =
