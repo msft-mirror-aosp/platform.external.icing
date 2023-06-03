@@ -162,7 +162,8 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
     // stuff.
     ICING_ASSERT_OK(document_store->Put(
         CreateDocument("namespace", /*uri=*/std::to_string(i))));
-    document_store->Delete("namespace", /*uri=*/std::to_string(i));
+    document_store->Delete("namespace", /*uri=*/std::to_string(i),
+                           clock.GetSystemTimeMilliseconds());
   }
 
   std::default_random_engine random;
@@ -171,8 +172,8 @@ void BM_DoesDocumentExistBenchmark(benchmark::State& state) {
     // Check random document ids to see if they exist. Hopefully to simulate
     // page faulting in different sections of our mmapped derived files.
     int document_id = dist(random);
-    benchmark::DoNotOptimize(
-        document_store->GetAliveDocumentFilterData(document_id));
+    benchmark::DoNotOptimize(document_store->GetAliveDocumentFilterData(
+        document_id, clock.GetSystemTimeMilliseconds()));
   }
 }
 BENCHMARK(BM_DoesDocumentExistBenchmark);
@@ -259,7 +260,8 @@ void BM_Delete(benchmark::State& state) {
     ICING_ASSERT_OK(document_store->Put(document));
     state.ResumeTiming();
 
-    benchmark::DoNotOptimize(document_store->Delete("namespace", "uri"));
+    benchmark::DoNotOptimize(document_store->Delete(
+        "namespace", "uri", clock.GetSystemTimeMilliseconds()));
   }
 }
 BENCHMARK(BM_Delete);
