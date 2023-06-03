@@ -71,7 +71,6 @@ using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
-using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Not;
 using ::testing::Return;
@@ -373,22 +372,27 @@ TEST_F(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
                              doc_store->Put(DocumentProto(test_document2_)));
 
-  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(document_id1));
-  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(document_id2));
+  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(
+      document_id1, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(
+      document_id2, fake_clock_.GetSystemTimeMilliseconds()));
 
   DocumentId invalid_document_id_negative = -1;
-  EXPECT_FALSE(
-      doc_store->GetAliveDocumentFilterData(invalid_document_id_negative));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      invalid_document_id_negative, fake_clock_.GetSystemTimeMilliseconds()));
 
   DocumentId invalid_document_id_greater_than_max = kMaxDocumentId + 2;
   EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      invalid_document_id_greater_than_max));
+      invalid_document_id_greater_than_max,
+      fake_clock_.GetSystemTimeMilliseconds()));
 
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(kInvalidDocumentId));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      kInvalidDocumentId, fake_clock_.GetSystemTimeMilliseconds()));
 
   DocumentId invalid_document_id_out_of_range = document_id2 + 1;
-  EXPECT_FALSE(
-      doc_store->GetAliveDocumentFilterData(invalid_document_id_out_of_range));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      invalid_document_id_out_of_range,
+      fake_clock_.GetSystemTimeMilliseconds()));
 }
 
 TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
@@ -404,8 +408,9 @@ TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
       document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
       IsOkAndHolds(EqualsProto(test_document1_)));
 
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
+  ICING_EXPECT_OK(document_store->Delete(
+      test_document1_.namespace_(), test_document1_.uri(),
+      fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(
       document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -488,9 +493,9 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
                          DocumentLogCreator::GetDocumentLogFilename())
           .c_str());
 
-  EXPECT_THAT(
-      document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(document_store->Delete("nonexistent_namespace", "nonexistent_uri",
+                                     fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/",
@@ -514,8 +519,8 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentPrintableErrorMessage) {
                          DocumentLogCreator::GetDocumentLogFilename())
           .c_str());
 
-  libtextclassifier3::Status status =
-      document_store->Delete("android$contacts/", "661");
+  libtextclassifier3::Status status = document_store->Delete(
+      "android$contacts/", "661", fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(status, StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   for (char c : status.error_message()) {
     EXPECT_THAT(std::isprint(c), IsTrue());
@@ -539,12 +544,14 @@ TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
   ICING_EXPECT_OK(document_store->Put(test_document1_));
 
   // First time is OK
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
+  ICING_EXPECT_OK(document_store->Delete(
+      test_document1_.namespace_(), test_document1_.uri(),
+      fake_clock_.GetSystemTimeMilliseconds()));
 
   // Deleting it again is NOT_FOUND
   EXPECT_THAT(document_store->Delete(test_document1_.namespace_(),
-                                     test_document1_.uri()),
+                                     test_document1_.uri(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
@@ -626,8 +633,9 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceNoExistingDocumentsNotFound) {
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
+  ICING_EXPECT_OK(document_store->Delete(
+      test_document1_.namespace_(), test_document1_.uri(),
+      fake_clock_.GetSystemTimeMilliseconds()));
 
   // At this point, there are no existing documents with the namespace, even
   // though Icing's derived files know about this namespace. We should still
@@ -829,8 +837,9 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeNoExistingDocumentsNotFound) {
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
+  ICING_EXPECT_OK(document_store->Delete(
+      test_document1_.namespace_(), test_document1_.uri(),
+      fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(
       document_store->DeleteBySchemaType(test_document1_.schema()).status,
@@ -925,8 +934,9 @@ TEST_F(DocumentStoreTest, PutDeleteThenPut) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   ICING_EXPECT_OK(doc_store->Put(test_document1_));
-  ICING_EXPECT_OK(
-      doc_store->Delete(test_document1_.namespace_(), test_document1_.uri()));
+  ICING_EXPECT_OK(doc_store->Delete(test_document1_.namespace_(),
+                                    test_document1_.uri(),
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   ICING_EXPECT_OK(doc_store->Put(test_document1_));
 }
 
@@ -1092,7 +1102,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // is deleted
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1"));
+  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   // DocumentId 0 is removed.
   EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
                                       /*namespace_id_fingerprint=*/false),
@@ -1121,7 +1132,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // Delete the last document
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri2"));
+  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri2",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   // DocumentId 0 and 1 is removed, and DocumentId 2 is expired.
   EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
                                       /*namespace_id_fingerprint=*/false),
@@ -1184,7 +1196,9 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
 
     // Delete document 1
-    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1",
+                                  fake_clock_.GetSystemTimeMilliseconds()),
+                IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1218,7 +1232,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
   // Checks derived filter cache
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id2));
+      doc_store->GetAliveDocumentFilterData(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_filter_data,
               Eq(DocumentFilterData(
                   /*namespace_id=*/0,
@@ -1271,7 +1286,9 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
     // Delete document 1
-    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1",
+                                  fake_clock_.GetSystemTimeMilliseconds()),
+                IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1316,7 +1333,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
   // Checks derived filter cache
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id2));
+      doc_store->GetAliveDocumentFilterData(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_filter_data,
               Eq(DocumentFilterData(
                   /*namespace_id=*/0,
@@ -1336,8 +1354,10 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
   // scratch.
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
-                                    doc_store->GetUsageScores(document_id2));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      doc_store->GetUsageScores(document_id2,
+                                fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -1377,7 +1397,9 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
     // Delete document 1
-    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1",
+                                  fake_clock_.GetSystemTimeMilliseconds()),
+                IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1409,7 +1431,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
   // Checks derived filter cache
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id2));
+      doc_store->GetAliveDocumentFilterData(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_filter_data,
               Eq(DocumentFilterData(
                   /*namespace_id=*/0,
@@ -1429,8 +1452,10 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
   // scratch.
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
-                                    doc_store->GetUsageScores(document_id2));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      doc_store->GetUsageScores(document_id2,
+                                fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -1469,7 +1494,9 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
-    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1",
+                                  fake_clock_.GetSystemTimeMilliseconds()),
+                IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1493,7 +1520,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
   // Checks derived filter cache
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id2));
+      doc_store->GetAliveDocumentFilterData(
+          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_filter_data,
               Eq(DocumentFilterData(
                   /*namespace_id=*/0,
@@ -1568,7 +1596,8 @@ TEST_F(DocumentStoreTest, MaxDocumentId) {
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
   // Still returns the last DocumentId even if it was deleted
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -1904,7 +1933,8 @@ TEST_F(DocumentStoreTest, NonexistentDocumentFilterDataNotFound) {
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(/*document_id=*/0));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      /*document_id=*/0, fake_clock_.GetSystemTimeMilliseconds()));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
@@ -1920,15 +1950,18 @@ TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id));
+      doc_store->GetAliveDocumentFilterData(
+          document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_filter_data,
               Eq(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document1_expiration_timestamp_)));
 
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   // Associated entry of the deleted document is removed.
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(document_id));
+  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
+      document_id, fake_clock_.GetSystemTimeMilliseconds()));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
@@ -1949,10 +1982,15 @@ TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
                   /*creation_timestamp_ms=*/document1_creation_timestamp_,
                   /*length_in_tokens=*/4)));
 
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
   // Associated entry of the deleted document is removed.
-  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(
+      doc_store->GetDocumentAssociatedScoreData(document_id),
+      IsOkAndHolds(DocumentAssociatedScoreData(kInvalidCorpusId,
+                                               /*document_score=*/-1,
+                                               /*creation_timestamp_ms=*/-1,
+                                               /*length_in_tokens=*/0)));
 }
 
 TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
@@ -1974,12 +2012,15 @@ TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
-                                    doc_store->GetUsageScores(document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      doc_store->GetUsageScores(document_id,
+                                fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Delete the document.
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
 
   // Can't report or get usage scores on the deleted document
   ASSERT_THAT(
@@ -1987,7 +2028,8 @@ TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                HasSubstr("Couldn't report usage on a nonexistent document")));
 
-  EXPECT_FALSE(doc_store->GetUsageScores(document_id));
+  EXPECT_FALSE(doc_store->GetUsageScores(
+      document_id, fake_clock_.GetSystemTimeMilliseconds()));
 }
 
 TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
@@ -2021,8 +2063,10 @@ TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(UsageStore::UsageScores actual_scores,
-                                    doc_store->GetUsageScores(document_id));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      UsageStore::UsageScores actual_scores,
+      doc_store->GetUsageScores(document_id,
+                                fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Some arbitrary time past the document's creation time (10) + ttl (100)
@@ -2034,7 +2078,8 @@ TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                HasSubstr("Couldn't report usage on a nonexistent document")));
 
-  EXPECT_FALSE(doc_store->GetUsageScores(document_id));
+  EXPECT_FALSE(doc_store->GetUsageScores(
+      document_id, fake_clock_.GetSystemTimeMilliseconds()));
 }
 
 TEST_F(DocumentStoreTest,
@@ -2056,7 +2101,8 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id));
+      doc_store->GetAliveDocumentFilterData(
+          document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(doc_filter_data, Eq(DocumentFilterData(
                                    /*namespace_id=*/0,
                                    /*schema_type_id=*/0,
@@ -2082,7 +2128,8 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id));
+      doc_store->GetAliveDocumentFilterData(
+          document_id, fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(
       doc_filter_data,
@@ -2112,7 +2159,8 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(document_id));
+      doc_store->GetAliveDocumentFilterData(
+          document_id, fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(
       doc_filter_data,
@@ -2318,7 +2366,8 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
                 IsOkAndHolds(EqualsProto(email_document)));
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData email_data,
-        document_store->GetAliveDocumentFilterData(email_document_id));
+        document_store->GetAliveDocumentFilterData(
+            email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
     email_expiration_timestamp = email_data.expiration_timestamp_ms();
@@ -2331,7 +2380,8 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
                 IsOkAndHolds(EqualsProto(message_document)));
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData message_data,
-        document_store->GetAliveDocumentFilterData(message_document_id));
+        document_store->GetAliveDocumentFilterData(
+            message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
@@ -2373,7 +2423,8 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
               IsOkAndHolds(EqualsProto(email_document)));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetAliveDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(
+          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
@@ -2385,7 +2436,8 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
               IsOkAndHolds(EqualsProto(message_document)));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetAliveDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(
+          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
@@ -2441,14 +2493,16 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
                              document_store->Put(email_document));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetAliveDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(
+          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetAliveDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(
+          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2476,12 +2530,14 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   // Check that the FilterCache holds the new SchemaTypeIds
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       email_data,
-      document_store->GetAliveDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(
+          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       message_data,
-      document_store->GetAliveDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(
+          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2683,14 +2739,16 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
                              document_store->Put(email_document));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetAliveDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(
+          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetAliveDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(
+          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2721,12 +2779,14 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   // Check that the FilterCache holds the new SchemaTypeIds
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       email_data,
-      document_store->GetAliveDocumentFilterData(email_document_id));
+      document_store->GetAliveDocumentFilterData(
+          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       message_data,
-      document_store->GetAliveDocumentFilterData(message_document_id));
+      document_store->GetAliveDocumentFilterData(
+          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2909,8 +2969,9 @@ TEST_F(DocumentStoreTest, GetOptimizeInfo) {
   EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
 
   // Delete a document. Now something is optimizable
-  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
-                                         test_document1_.uri()));
+  ICING_EXPECT_OK(document_store->Delete(
+      test_document1_.namespace_(), test_document1_.uri(),
+      fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(optimize_info, document_store->GetOptimizeInfo());
   EXPECT_THAT(optimize_info.total_docs, Eq(1));
   EXPECT_THAT(optimize_info.optimizable_docs, Eq(1));
@@ -2990,13 +3051,15 @@ TEST_F(DocumentStoreTest, GetAllNamespaces) {
 
   // After deleting namespace2_uri1, there's still namespace2_uri2, so
   // "namespace2" still shows up in results
-  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri1"));
+  ICING_EXPECT_OK(document_store->Delete(
+      "namespace2", "uri1", fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(document_store->GetAllNamespaces(),
               UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
 
   // After deleting namespace2_uri2, there's no more documents in "namespace2"
-  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri2"));
+  ICING_EXPECT_OK(document_store->Delete(
+      "namespace2", "uri2", fake_clock_.GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(document_store->GetAllNamespaces(),
               UnorderedElementsAre("namespace1", "namespace3"));
@@ -3030,7 +3093,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   ++expected_scores.usage_type1_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id));
+      document_store->GetUsageScores(document_id,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 1 and time 5, time should be updated.
@@ -3042,7 +3106,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   expected_scores.usage_type1_last_used_timestamp_s = 5;
   ++expected_scores.usage_type1_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 2 and time 1.
@@ -3054,7 +3119,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   expected_scores.usage_type2_last_used_timestamp_s = 1;
   ++expected_scores.usage_type2_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 2 and time 5.
@@ -3066,7 +3132,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   expected_scores.usage_type2_last_used_timestamp_s = 5;
   ++expected_scores.usage_type2_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 3 and time 1.
@@ -3078,7 +3145,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   expected_scores.usage_type3_last_used_timestamp_s = 1;
   ++expected_scores.usage_type3_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 3 and time 5.
@@ -3090,7 +3158,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   expected_scores.usage_type3_last_used_timestamp_s = 5;
   ++expected_scores.usage_type3_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -3115,7 +3184,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   ++expected_scores.usage_type1_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id));
+      document_store->GetUsageScores(document_id,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 2.
@@ -3126,7 +3196,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
 
   ++expected_scores.usage_type2_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Report usage with type 3.
@@ -3137,7 +3208,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
 
   ++expected_scores.usage_type3_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(document_id));
+      actual_scores, document_store->GetUsageScores(
+                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -3164,7 +3236,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
     ++expected_scores.usage_type1_count;
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         UsageStore::UsageScores actual_scores,
-        document_store->GetUsageScores(document_id));
+        document_store->GetUsageScores(
+            document_id, fake_clock_.GetSystemTimeMilliseconds()));
     EXPECT_THAT(actual_scores, Eq(expected_scores));
   }
 
@@ -3180,7 +3253,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
   // Usage scores should be the same.
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id));
+      document_store->GetUsageScores(document_id,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -3207,7 +3281,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
     ++expected_scores.usage_type1_count;
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         UsageStore::UsageScores actual_scores,
-        document_store->GetUsageScores(document_id));
+        document_store->GetUsageScores(
+            document_id, fake_clock_.GetSystemTimeMilliseconds()));
     EXPECT_THAT(actual_scores, Eq(expected_scores));
   }
 
@@ -3234,7 +3309,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
   // Usage scores should still be available.
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id));
+      document_store->GetUsageScores(document_id,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -3260,7 +3336,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   ++expected_scores.usage_type1_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id));
+      document_store->GetUsageScores(document_id,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Update the document.
@@ -3272,7 +3349,9 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
 
   // Usage scores should be the same.
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(updated_document_id));
+      actual_scores,
+      document_store->GetUsageScores(updated_document_id,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -3290,7 +3369,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id2,
       document_store->Put(DocumentProto(test_document2_)));
-  ICING_ASSERT_OK(document_store->Delete(document_id1));
+  ICING_ASSERT_OK(document_store->Delete(
+      document_id1, fake_clock_.GetSystemTimeMilliseconds()));
 
   // Report usage of document 2.
   UsageReport usage_report = CreateUsageReport(
@@ -3302,7 +3382,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   ++expected_scores.usage_type1_count;
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id2));
+      document_store->GetUsageScores(document_id2,
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 
   // Run optimize
@@ -3323,7 +3404,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   // The original document_id2 should have become document_id2 - 1.
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
       actual_scores,
-      optimized_document_store->GetUsageScores(document_id2 - 1));
+      optimized_document_store->GetUsageScores(
+          document_id2 - 1, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(actual_scores, Eq(expected_scores));
 }
 
@@ -3542,7 +3624,8 @@ TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
 
   // Delete the first doc.
-  ICING_ASSERT_OK(doc_store->Delete(document1.namespace_(), document1.uri()));
+  ICING_ASSERT_OK(doc_store->Delete(document1.namespace_(), document1.uri(),
+                                    fake_clock_.GetSystemTimeMilliseconds()));
 
   // Expire the second doc.
   fake_clock_.SetSystemTimeMilliseconds(document2.creation_timestamp_ms() +
@@ -3649,7 +3732,8 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(docid));
+        doc_store->GetAliveDocumentFilterData(
+            docid, fake_clock_.GetSystemTimeMilliseconds()));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3697,7 +3781,8 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     // Ensure that the type id of the email document has been correctly updated.
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(docid));
+        doc_store->GetAliveDocumentFilterData(
+            docid, fake_clock_.GetSystemTimeMilliseconds()));
     EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
     EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
                 Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
@@ -3758,7 +3843,8 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(docid));
+        doc_store->GetAliveDocumentFilterData(
+            docid, fake_clock_.GetSystemTimeMilliseconds()));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3800,7 +3886,8 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
     // Check that the type id of the email document has not been updated.
     ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
         DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(docid));
+        doc_store->GetAliveDocumentFilterData(
+            docid, fake_clock_.GetSystemTimeMilliseconds()));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 }
@@ -4256,7 +4343,8 @@ TEST_F(DocumentStoreTest, GetDebugInfo) {
                                    EqualsProto(info3)));
 
   // Delete document3.
-  ICING_ASSERT_OK(document_store->Delete("namespace2", "email/3"));
+  ICING_ASSERT_OK(document_store->Delete(
+      "namespace2", "email/3", fake_clock_.GetSystemTimeMilliseconds()));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentDebugInfoProto out2,
       document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));

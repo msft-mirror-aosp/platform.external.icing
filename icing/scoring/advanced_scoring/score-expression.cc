@@ -303,7 +303,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<DocumentFunctionScoreExpression>>
 DocumentFunctionScoreExpression::Create(
     FunctionType function_type,
     std::vector<std::unique_ptr<ScoreExpression>> args,
-    const DocumentStore* document_store, double default_score) {
+    const DocumentStore* document_store, double default_score,
+    int64_t current_time_ms) {
   if (args.empty()) {
     return absl_ports::InvalidArgumentError(
         "Document-based functions must have at least one argument.");
@@ -336,7 +337,8 @@ DocumentFunctionScoreExpression::Create(
   }
   return std::unique_ptr<DocumentFunctionScoreExpression>(
       new DocumentFunctionScoreExpression(function_type, std::move(args),
-                                          document_store, default_score));
+                                          document_store, default_score,
+                                          current_time_ms));
 }
 
 libtextclassifier3::StatusOr<double> DocumentFunctionScoreExpression::eval(
@@ -365,7 +367,8 @@ libtextclassifier3::StatusOr<double> DocumentFunctionScoreExpression::eval(
             "Usage type must be an integer from 1 to 3");
       }
       std::optional<UsageStore::UsageScores> usage_scores =
-          document_store_.GetUsageScores(hit_info.document_id());
+          document_store_.GetUsageScores(hit_info.document_id(),
+                                         current_time_ms_);
       if (!usage_scores) {
         // If there's no UsageScores entry present for this doc, then just
         // treat it as a default instance.
@@ -465,8 +468,8 @@ libtextclassifier3::StatusOr<
     std::unique_ptr<PropertyWeightsFunctionScoreExpression>>
 PropertyWeightsFunctionScoreExpression::Create(
     std::vector<std::unique_ptr<ScoreExpression>> args,
-    const DocumentStore* document_store,
-    const SectionWeights* section_weights) {
+    const DocumentStore* document_store, const SectionWeights* section_weights,
+    int64_t current_time_ms) {
   if (args.size() != 1) {
     return absl_ports::InvalidArgumentError(
         "propertyWeights must have 1 argument.");
@@ -478,8 +481,8 @@ PropertyWeightsFunctionScoreExpression::Create(
         "propertyWeights must take \"this\" as its argument.");
   }
   return std::unique_ptr<PropertyWeightsFunctionScoreExpression>(
-      new PropertyWeightsFunctionScoreExpression(document_store,
-                                                 section_weights));
+      new PropertyWeightsFunctionScoreExpression(
+          document_store, section_weights, current_time_ms));
 }
 
 libtextclassifier3::StatusOr<std::vector<double>>
@@ -501,12 +504,12 @@ PropertyWeightsFunctionScoreExpression::eval_list(
 SchemaTypeId PropertyWeightsFunctionScoreExpression::GetSchemaTypeId(
     DocumentId document_id) const {
   auto filter_data_optional =
-      document_store_.GetAliveDocumentFilterData(document_id);
+      document_store_.GetAliveDocumentFilterData(document_id, current_time_ms_);
   if (!filter_data_optional) {
     // This should never happen. The only failure case for
-    // GetDocumentFilterData is if the document_id is outside of the range of
-    // allocated document_ids, which shouldn't be possible since we're getting
-    // this document_id from the posting lists.
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
     ICING_LOG(WARNING) << "No document filter data for document ["
                        << document_id << "]";
     return kInvalidSchemaTypeId;

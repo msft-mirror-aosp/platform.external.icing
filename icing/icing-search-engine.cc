@@ -728,8 +728,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_,
-      clock_.get());
+      performance_configuration_.max_num_total_hits, *document_store_);
 
   return status;
 }
@@ -1156,8 +1155,9 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   if (!index_status.ok()) {
     // If we encountered a failure or cannot resolve an internal error while
     // indexing this document, then mark it as deleted.
+    int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
     libtextclassifier3::Status delete_status =
-        document_store_->Delete(document_id);
+        document_store_->Delete(document_id, current_time_ms);
     if (!delete_status.ok()) {
       // This is pretty dire (and, hopefully, unlikely). We can't roll back the
       // document that we just added. Wipeout the whole index.
@@ -1276,7 +1276,9 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
-  libtextclassifier3::Status status = document_store_->Delete(name_space, uri);
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  libtextclassifier3::Status status =
+      document_store_->Delete(name_space, uri, current_time_ms);
   if (!status.ok()) {
     LogSeverity::Code severity = ERROR;
     if (absl_ports::IsNotFound(status)) {
@@ -1410,8 +1412,9 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   auto query_results_or = query_processor->ParseSearch(
-      search_spec, ScoringSpecProto::RankingStrategy::NONE);
+      search_spec, ScoringSpecProto::RankingStrategy::NONE, current_time_ms);
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -1448,7 +1451,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       }
     }
     status = document_store_->Delete(
-        query_results.root_iterator->doc_hit_info().document_id());
+        query_results.root_iterator->doc_hit_info().document_id(),
+        current_time_ms);
     if (!status.ok()) {
       TransformStatus(status, result_status);
       delete_stats->set_document_removal_latency_ms(
@@ -1897,14 +1901,15 @@ SearchResultProto IcingSearchEngine::InternalSearch(
   const JoinSpecProto& join_spec = search_spec.join_spec();
   std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
   std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   if (!join_spec.parent_property_expression().empty() &&
       !join_spec.child_property_expression().empty()) {
     // Process child query
-    QueryScoringResults nested_query_scoring_results =
-        ProcessQueryAndScore(join_spec.nested_spec().search_spec(),
-                             join_spec.nested_spec().scoring_spec(),
-                             join_spec.nested_spec().result_spec(),
-                             /*join_children_fetcher=*/nullptr);
+    QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
+        join_spec.nested_spec().search_spec(),
+        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().result_spec(),
+        /*join_children_fetcher=*/nullptr, current_time_ms);
     // TOOD(b/256022027): set different kinds of latency for 2nd query.
     if (!nested_query_scoring_results.status.ok()) {
       TransformStatus(nested_query_scoring_results.status, result_status);
@@ -1912,7 +1917,8 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     }
 
     JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
-                                 qualified_id_join_index_.get());
+                                 qualified_id_join_index_.get(),
+                                 current_time_ms);
     // Building a JoinChildrenFetcher where child documents are grouped by
     // their joinable values.
     libtextclassifier3::StatusOr<JoinChildrenFetcher> join_children_fetcher_or =
@@ -1935,8 +1941,9 @@ SearchResultProto IcingSearchEngine::InternalSearch(
   }
 
   // Process parent query
-  QueryScoringResults query_scoring_results = ProcessQueryAndScore(
-      search_spec, scoring_spec, result_spec, join_children_fetcher.get());
+  QueryScoringResults query_scoring_results =
+      ProcessQueryAndScore(search_spec, scoring_spec, result_spec,
+                           join_children_fetcher.get(), current_time_ms);
   int term_count = 0;
   for (const auto& section_and_terms : query_scoring_results.query_terms) {
     term_count += section_and_terms.second.size();
@@ -1968,7 +1975,8 @@ SearchResultProto IcingSearchEngine::InternalSearch(
     std::unique_ptr<Timer> join_timer = clock_->GetNewTimer();
     // Join 2 scored document hits
     JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
-                                 qualified_id_join_index_.get());
+                                 qualified_id_join_index_.get(),
+                                 current_time_ms);
     libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
         joined_result_document_hits_or = join_processor.Join(
             join_spec, std::move(query_scoring_results.scored_document_hits),
@@ -2023,7 +2031,7 @@ SearchResultProto IcingSearchEngine::InternalSearch(
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
           std::move(ranker), std::move(parent_result_adjustment_info),
           std::move(child_result_adjustment_info), result_spec,
-          *document_store_, *result_retriever);
+          *document_store_, *result_retriever, current_time_ms);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -2064,7 +2072,7 @@ SearchResultProto IcingSearchEngine::InternalSearch(
 IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec,
-    const JoinChildrenFetcher* join_children_fetcher) {
+    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms) {
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
 
   // Gets unordered results from query processor
@@ -2085,7 +2093,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   libtextclassifier3::StatusOr<QueryResults> query_results_or;
   if (ranking_strategy_or.ok()) {
     query_results_or = query_processor->ParseSearch(
-        search_spec, ranking_strategy_or.ValueOrDie());
+        search_spec, ranking_strategy_or.ValueOrDie(), current_time_ms);
   } else {
     query_results_or = ranking_strategy_or.status();
   }
@@ -2102,9 +2110,9 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   component_timer = clock_->GetNewTimer();
   // Scores but does not rank the results.
   libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
-      scoring_processor_or =
-          ScoringProcessor::Create(scoring_spec, document_store_.get(),
-                                   schema_store_.get(), join_children_fetcher);
+      scoring_processor_or = ScoringProcessor::Create(
+          scoring_spec, document_store_.get(), schema_store_.get(),
+          current_time_ms, join_children_fetcher);
   if (!scoring_processor_or.ok()) {
     return QueryScoringResults(std::move(scoring_processor_or).status(),
                                std::move(query_results.query_terms),
@@ -2154,9 +2162,10 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   std::unique_ptr<ResultRetrieverV2> result_retriever =
       std::move(result_retriever_or).ValueOrDie();
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->GetNextPage(
-          next_page_token, *result_retriever);
+          next_page_token, *result_retriever, current_time_ms);
   if (!page_result_info_or.ok()) {
     if (absl_ports::IsNotFound(page_result_info_or.status())) {
       // NOT_FOUND means an empty result.
@@ -2285,8 +2294,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     }
     document_store_ = std::move(create_result_or.ValueOrDie().document_store);
     result_state_manager_ = std::make_unique<ResultStateManager>(
-        performance_configuration_.max_num_total_hits, *document_store_,
-        clock_.get());
+        performance_configuration_.max_num_total_hits, *document_store_);
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -2310,8 +2318,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   }
   document_store_ = std::move(create_result_or.ValueOrDie().document_store);
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_,
-      clock_.get());
+      performance_configuration_.max_num_total_hits, *document_store_);
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(
@@ -2689,8 +2696,9 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       std::move(suggestion_processor_or).ValueOrDie();
 
   // Run suggestion based on given SuggestionSpec.
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> terms_or =
-      suggestion_processor->QuerySuggestions(suggestion_spec);
+      suggestion_processor->QuerySuggestions(suggestion_spec, current_time_ms);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
     return response;
