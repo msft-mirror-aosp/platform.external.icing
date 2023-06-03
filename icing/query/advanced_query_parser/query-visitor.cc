@@ -183,7 +183,7 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
       query_term_iterators_[query_term.term] =
           std::make_unique<DocHitInfoIteratorFilter>(
               std::move(term_iterator), &document_store_, &schema_store_,
-              filter_options_);
+              filter_options_, current_time_ms_);
     }
   }
 
@@ -265,11 +265,11 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
     iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
         document_store_.last_added_document_id());
   } else {
-    QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
-                               &schema_store_, &normalizer_, &tokenizer_,
-                               query->raw_term, filter_options_, match_type_,
-                               needs_term_frequency_info_,
-                               pending_property_restricts_, processing_not_);
+    QueryVisitor query_visitor(
+        &index_, &numeric_index_, &document_store_, &schema_store_,
+        &normalizer_, &tokenizer_, query->raw_term, filter_options_,
+        match_type_, needs_term_frequency_info_, pending_property_restricts_,
+        processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);
     ICING_ASSIGN_OR_RETURN(query_result,
                            std::move(query_visitor).ConsumeResults());
@@ -281,7 +281,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
       pending_property_restricts_.has_active_property_restricts()) {
     iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
         std::move(iterator), &document_store_, &schema_store_,
-        pending_property_restricts_.active_property_restricts());
+        pending_property_restricts_.active_property_restricts(),
+        current_time_ms_);
     pending_property_restricts_.PopRestricts();
   }
   if (!processing_not_) {
@@ -314,7 +315,7 @@ QueryVisitor::PropertyDefinedFunction(std::vector<PendingValue>&& args) {
   std::unique_ptr<DocHitInfoIterator> property_in_schema_iterator =
       std::make_unique<DocHitInfoIteratorPropertyInSchema>(
           std::move(all_docs_iterator), &document_store_, &schema_store_,
-          std::move(target_sections));
+          std::move(target_sections), current_time_ms_);
 
   features_.insert(kListFilterQueryLanguageFeature);
 
@@ -490,10 +491,10 @@ libtextclassifier3::Status QueryVisitor::ProcessNumericComparator(
   // 5. Create the iterator and push it onto pending_values_.
   ICING_ASSIGN_OR_RETURN(Int64Range range,
                          GetInt64Range(node->operator_text(), int_value));
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      numeric_index_.GetIterator(text_value.term, range.low, range.high,
-                                 document_store_, schema_store_));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<DocHitInfoIterator> iterator,
+                         numeric_index_.GetIterator(
+                             text_value.term, range.low, range.high,
+                             document_store_, schema_store_, current_time_ms_));
 
   features_.insert(kNumericSearchFeature);
   pending_values_.push(PendingValue(std::move(iterator)));
@@ -648,7 +649,7 @@ libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
   pending_values_.push(
       PendingValue(std::make_unique<DocHitInfoIteratorSectionRestrict>(
           std::move(delegate), &document_store_, &schema_store_,
-          std::move(property_restricts))));
+          std::move(property_restricts), current_time_ms_)));
   return libtextclassifier3::Status::OK;
 }
 

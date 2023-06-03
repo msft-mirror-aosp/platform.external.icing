@@ -67,7 +67,8 @@ class QueryProcessor {
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<QueryResults> ParseSearch(
       const SearchSpecProto& search_spec,
-      ScoringSpecProto::RankingStrategy::Code ranking_strategy);
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+      int64_t current_time_ms);
 
  private:
   explicit QueryProcessor(Index* index,
@@ -86,7 +87,8 @@ class QueryProcessor {
   //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
   libtextclassifier3::StatusOr<QueryResults> ParseAdvancedQuery(
       const SearchSpecProto& search_spec,
-      ScoringSpecProto::RankingStrategy::Code ranking_strategy) const;
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+      int64_t current_time_ms) const;
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.
@@ -99,7 +101,8 @@ class QueryProcessor {
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<QueryResults> ParseRawQuery(
       const SearchSpecProto& search_spec,
-      ScoringSpecProto::RankingStrategy::Code ranking_strategy);
+      ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+      int64_t current_time_ms);
 
   // Not const because we could modify/sort the hit buffer in the lite index at
   // query time.
