@@ -30,6 +30,7 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/join/doc-join-info.h"
 #include "icing/store/document-id.h"
+#include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
@@ -41,6 +42,9 @@ namespace icing {
 namespace lib {
 
 namespace {
+
+static constexpr int32_t kDocJoinInfoMapperDynamicTrieMaxSize =
+    128 * 1024 * 1024;  // 128 MiB
 
 DocumentId GetNewDocumentId(
     const std::vector<DocumentId>& document_id_old_to_new,
@@ -68,7 +72,9 @@ std::string GetQualifiedIdStoragePath(std::string_view working_path) {
 /* static */ libtextclassifier3::StatusOr<
     std::unique_ptr<QualifiedIdTypeJoinableIndex>>
 QualifiedIdTypeJoinableIndex::Create(const Filesystem& filesystem,
-                                     std::string working_path) {
+                                     std::string working_path,
+                                     bool pre_mapping_fbv,
+                                     bool use_persistent_hash_map) {
   if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str()) ||
       !filesystem.DirectoryExists(
           GetDocJoinInfoMapperPath(working_path).c_str()) ||
@@ -77,9 +83,11 @@ QualifiedIdTypeJoinableIndex::Create(const Filesystem& filesystem,
     if (filesystem.DirectoryExists(working_path.c_str())) {
       ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
     }
-    return InitializeNewFiles(filesystem, std::move(working_path));
+    return InitializeNewFiles(filesystem, std::move(working_path),
+                              pre_mapping_fbv, use_persistent_hash_map);
   }
-  return InitializeExistingFiles(filesystem, std::move(working_path));
+  return InitializeExistingFiles(filesystem, std::move(working_path),
+                                 pre_mapping_fbv, use_persistent_hash_map);
 }
 
 QualifiedIdTypeJoinableIndex::~QualifiedIdTypeJoinableIndex() {
@@ -151,7 +159,8 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
     // we can safely swap directories later.
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> new_index,
-        Create(filesystem_, temp_working_path_ddir.dir()));
+        Create(filesystem_, temp_working_path_ddir.dir(), pre_mapping_fbv_,
+               use_persistent_hash_map_));
     ICING_RETURN_IF_ERROR(
         TransferIndex(document_id_old_to_new, new_index.get()));
     new_index->set_last_added_document_id(new_last_added_document_id);
@@ -176,10 +185,19 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
                          /*offset=*/0)) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
-  ICING_ASSIGN_OR_RETURN(
-      doc_join_info_mapper_,
-      PersistentHashMapKeyMapper<int32_t>::Create(
-          filesystem_, GetDocJoinInfoMapperPath(working_path_)));
+  if (use_persistent_hash_map_) {
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper_,
+        PersistentHashMapKeyMapper<int32_t>::Create(
+            filesystem_, GetDocJoinInfoMapperPath(working_path_),
+            pre_mapping_fbv_));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper_,
+        DynamicTrieKeyMapper<int32_t>::Create(
+            filesystem_, GetDocJoinInfoMapperPath(working_path_),
+            kDocJoinInfoMapperDynamicTrieMaxSize));
+  }
 
   ICING_ASSIGN_OR_RETURN(
       qualified_id_storage_,
@@ -187,7 +205,7 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
           filesystem_, GetQualifiedIdStoragePath(working_path_),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
           FileBackedVector<char>::kMaxFileSize,
-          /*pre_mapping_mmap_size=*/1024 * 1024));
+          /*pre_mapping_mmap_size=*/pre_mapping_fbv_ ? 1024 * 1024 : 0));
 
   return libtextclassifier3::Status::OK;
 }
@@ -197,12 +215,22 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Clear() {
   // Discard and reinitialize doc join info mapper.
   std::string doc_join_info_mapper_path =
       GetDocJoinInfoMapperPath(working_path_);
-  ICING_RETURN_IF_ERROR(PersistentHashMapKeyMapper<int32_t>::Delete(
-      filesystem_, doc_join_info_mapper_path));
-  ICING_ASSIGN_OR_RETURN(
-      doc_join_info_mapper_,
-      PersistentHashMapKeyMapper<int32_t>::Create(
-          filesystem_, std::move(doc_join_info_mapper_path)));
+  if (use_persistent_hash_map_) {
+    ICING_RETURN_IF_ERROR(PersistentHashMapKeyMapper<int32_t>::Delete(
+        filesystem_, doc_join_info_mapper_path));
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper_,
+        PersistentHashMapKeyMapper<int32_t>::Create(
+            filesystem_, std::move(doc_join_info_mapper_path),
+            pre_mapping_fbv_));
+  } else {
+    ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<int32_t>::Delete(
+        filesystem_, doc_join_info_mapper_path));
+    ICING_ASSIGN_OR_RETURN(doc_join_info_mapper_,
+                           DynamicTrieKeyMapper<int32_t>::Create(
+                               filesystem_, doc_join_info_mapper_path,
+                               kDocJoinInfoMapperDynamicTrieMaxSize));
+  }
 
   // Clear qualified_id_storage_.
   if (qualified_id_storage_->num_elements() > 0) {
@@ -218,7 +246,9 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Clear() {
 /* static */ libtextclassifier3::StatusOr<
     std::unique_ptr<QualifiedIdTypeJoinableIndex>>
 QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
-                                                 std::string&& working_path) {
+                                                 std::string&& working_path,
+                                                 bool pre_mapping_fbv,
+                                                 bool use_persistent_hash_map) {
   // Create working directory.
   if (!filesystem.CreateDirectoryRecursively(working_path.c_str())) {
     return absl_ports::InternalError(
@@ -226,11 +256,21 @@ QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
   }
 
   // Initialize doc_join_info_mapper
-  // TODO(b/263890397): decide PersistentHashMapKeyMapper size
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper,
-      PersistentHashMapKeyMapper<int32_t>::Create(
-          filesystem, GetDocJoinInfoMapperPath(working_path)));
+  std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper;
+  if (use_persistent_hash_map) {
+    // TODO(b/263890397): decide PersistentHashMapKeyMapper size
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper,
+        PersistentHashMapKeyMapper<int32_t>::Create(
+            filesystem, GetDocJoinInfoMapperPath(working_path),
+            pre_mapping_fbv));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper,
+        DynamicTrieKeyMapper<int32_t>::Create(
+            filesystem, GetDocJoinInfoMapperPath(working_path),
+            kDocJoinInfoMapperDynamicTrieMaxSize));
+  }
 
   // Initialize qualified_id_storage
   ICING_ASSIGN_OR_RETURN(
@@ -239,14 +279,15 @@ QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
           filesystem, GetQualifiedIdStoragePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
           FileBackedVector<char>::kMaxFileSize,
-          /*pre_mapping_mmap_size=*/1024 * 1024));
+          /*pre_mapping_mmap_size=*/pre_mapping_fbv ? 1024 * 1024 : 0));
 
   // Create instance.
   auto new_index = std::unique_ptr<QualifiedIdTypeJoinableIndex>(
       new QualifiedIdTypeJoinableIndex(
           filesystem, std::move(working_path),
           /*metadata_buffer=*/std::make_unique<uint8_t[]>(kMetadataFileSize),
-          std::move(doc_join_info_mapper), std::move(qualified_id_storage)));
+          std::move(doc_join_info_mapper), std::move(qualified_id_storage),
+          pre_mapping_fbv, use_persistent_hash_map));
   // Initialize info content.
   new_index->info().magic = Info::kMagic;
   new_index->info().last_added_document_id = kInvalidDocumentId;
@@ -260,7 +301,8 @@ QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
 /* static */ libtextclassifier3::StatusOr<
     std::unique_ptr<QualifiedIdTypeJoinableIndex>>
 QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
-    const Filesystem& filesystem, std::string&& working_path) {
+    const Filesystem& filesystem, std::string&& working_path,
+    bool pre_mapping_fbv, bool use_persistent_hash_map) {
   // PRead metadata file.
   auto metadata_buffer = std::make_unique<uint8_t[]>(kMetadataFileSize);
   if (!filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
@@ -270,10 +312,31 @@ QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
   }
 
   // Initialize doc_join_info_mapper
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper,
-      PersistentHashMapKeyMapper<int32_t>::Create(
-          filesystem, GetDocJoinInfoMapperPath(working_path)));
+  bool dynamic_trie_key_mapper_dir_exists = filesystem.DirectoryExists(
+      absl_ports::StrCat(GetDocJoinInfoMapperPath(working_path),
+                         "/key_mapper_dir")
+          .c_str());
+  if ((use_persistent_hash_map && dynamic_trie_key_mapper_dir_exists) ||
+      (!use_persistent_hash_map && !dynamic_trie_key_mapper_dir_exists)) {
+    // Return a failure here so that the caller can properly delete and rebuild
+    // this component.
+    return absl_ports::FailedPreconditionError("Key mapper type mismatch");
+  }
+
+  std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper;
+  if (use_persistent_hash_map) {
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper,
+        PersistentHashMapKeyMapper<int32_t>::Create(
+            filesystem, GetDocJoinInfoMapperPath(working_path),
+            pre_mapping_fbv));
+  } else {
+    ICING_ASSIGN_OR_RETURN(
+        doc_join_info_mapper,
+        DynamicTrieKeyMapper<int32_t>::Create(
+            filesystem, GetDocJoinInfoMapperPath(working_path),
+            kDocJoinInfoMapperDynamicTrieMaxSize));
+  }
 
   // Initialize qualified_id_storage
   ICING_ASSIGN_OR_RETURN(
@@ -282,13 +345,14 @@ QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
           filesystem, GetQualifiedIdStoragePath(working_path),
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC,
           FileBackedVector<char>::kMaxFileSize,
-          /*pre_mapping_mmap_size=*/1024 * 1024));
+          /*pre_mapping_mmap_size=*/pre_mapping_fbv ? 1024 * 1024 : 0));
 
   // Create instance.
   auto type_joinable_index = std::unique_ptr<QualifiedIdTypeJoinableIndex>(
       new QualifiedIdTypeJoinableIndex(
           filesystem, std::move(working_path), std::move(metadata_buffer),
-          std::move(doc_join_info_mapper), std::move(qualified_id_storage)));
+          std::move(doc_join_info_mapper), std::move(qualified_id_storage),
+          pre_mapping_fbv, use_persistent_hash_map));
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(type_joinable_index->InitializeExistingStorage());
 

@@ -660,7 +660,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         IntegerIndex::Discard(*filesystem_, integer_index_dir));
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
-        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir)));
+        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.pre_mapping_fbv()));
 
     // Discard qualified id join index directory and instantiate a new one.
     std::string qualified_id_join_index_dir =
@@ -670,7 +671,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
         QualifiedIdTypeJoinableIndex::Create(
-            *filesystem_, std::move(qualified_id_join_index_dir)));
+            *filesystem_, std::move(qualified_id_join_index_dir),
+            options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
 
     std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     IndexRestorationResult restore_result = RestoreIndexIfNeeded();
@@ -815,7 +817,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   std::string integer_index_dir =
       MakeIntegerIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause integer_index_recovery_cause;
-  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir);
+  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir,
+                                               options_.pre_mapping_fbv());
   if (!integer_index_or.ok()) {
     ICING_RETURN_IF_ERROR(
         IntegerIndex::Discard(*filesystem_, integer_index_dir));
@@ -825,7 +828,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     // Try recreating it from scratch and re-indexing everything.
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
-        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir)));
+        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.pre_mapping_fbv()));
   } else {
     // Integer index was created fine.
     integer_index_ = std::move(integer_index_or).ValueOrDie();
@@ -840,7 +844,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause qualified_id_join_index_recovery_cause;
   auto qualified_id_join_index_or = QualifiedIdTypeJoinableIndex::Create(
-      *filesystem_, qualified_id_join_index_dir);
+      *filesystem_, qualified_id_join_index_dir, options_.pre_mapping_fbv(),
+      options_.use_persistent_hash_map());
   if (!qualified_id_join_index_or.ok()) {
     ICING_RETURN_IF_ERROR(QualifiedIdTypeJoinableIndex::Discard(
         *filesystem_, qualified_id_join_index_dir));
@@ -851,7 +856,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
         QualifiedIdTypeJoinableIndex::Create(
-            *filesystem_, std::move(qualified_id_join_index_dir)));
+            *filesystem_, std::move(qualified_id_join_index_dir),
+            options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
   } else {
     // Qualified id join index was created fine.
     qualified_id_join_index_ =
@@ -1807,19 +1813,61 @@ libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
 SearchResultProto IcingSearchEngine::Search(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec) {
+  if (search_spec.use_read_only_search()) {
+    return SearchLockedShared(search_spec, scoring_spec, result_spec);
+  } else {
+    return SearchLockedExclusive(search_spec, scoring_spec, result_spec);
+  }
+}
+
+SearchResultProto IcingSearchEngine::SearchLockedShared(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+
+  // Only acquire an overall read-lock for this implementation. Finer-grained
+  // locks are implemented around code paths that write changes to Icing's data
+  // members.
+  absl_ports::shared_lock l(&mutex_);
+  int64_t lock_acquisition_latency = overall_timer->GetElapsedMilliseconds();
+
+  SearchResultProto result_proto =
+      InternalSearch(search_spec, scoring_spec, result_spec);
+
+  result_proto.mutable_query_stats()->set_lock_acquisition_latency_ms(
+      lock_acquisition_latency);
+  result_proto.mutable_query_stats()->set_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
+SearchResultProto IcingSearchEngine::SearchLockedExclusive(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+
+  // Acquire the overall write-lock for this locked implementation.
+  absl_ports::unique_lock l(&mutex_);
+  int64_t lock_acquisition_latency = overall_timer->GetElapsedMilliseconds();
+
+  SearchResultProto result_proto =
+      InternalSearch(search_spec, scoring_spec, result_spec);
+
+  result_proto.mutable_query_stats()->set_lock_acquisition_latency_ms(
+      lock_acquisition_latency);
+  result_proto.mutable_query_stats()->set_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
+SearchResultProto IcingSearchEngine::InternalSearch(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
   QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   query_stats->set_query_length(search_spec.query().length());
-  ScopedTimer overall_timer(clock_->GetNewTimer(), [query_stats](int64_t t) {
-    query_stats->set_latency_ms(t);
-  });
-  // Only an overall read-lock is required here. A finer-grained write-lock is
-  // provided around the LiteIndex.
-  absl_ports::shared_lock l(&mutex_);
-  query_stats->set_lock_acquisition_latency_ms(
-      overall_timer.timer().GetElapsedMilliseconds());
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");

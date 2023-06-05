@@ -211,12 +211,14 @@ class PersistentHashMap : public PersistentStorage {
         int32_t max_num_entries_in = Entry::kMaxNumEntries,
         int32_t max_load_factor_percent_in = kDefaultMaxLoadFactorPercent,
         int32_t average_kv_byte_size_in = kDefaultAverageKVByteSize,
-        int32_t init_num_buckets_in = kDefaultInitNumBuckets)
+        int32_t init_num_buckets_in = kDefaultInitNumBuckets,
+        bool pre_mapping_fbv_in = false)
         : value_type_size(value_type_size_in),
           max_num_entries(max_num_entries_in),
           max_load_factor_percent(max_load_factor_percent_in),
           average_kv_byte_size(average_kv_byte_size_in),
-          init_num_buckets(init_num_buckets_in) {}
+          init_num_buckets(init_num_buckets_in),
+          pre_mapping_fbv(pre_mapping_fbv_in) {}
 
     bool IsValid() const;
 
@@ -242,6 +244,10 @@ class PersistentHashMap : public PersistentStorage {
     // It is used when creating new persistent hash map and ignored when
     // creating the instance from existing files.
     int32_t init_num_buckets;
+
+    // Flag indicating whether memory map max possible file size for underlying
+    // FileBackedVector before growing the actual file size.
+    bool pre_mapping_fbv;
   };
 
   static constexpr WorkingPathType kWorkingPathType =

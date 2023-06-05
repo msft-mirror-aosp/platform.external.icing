@@ -258,6 +258,8 @@ class SchemaUtil {
   static libtextclassifier3::Status ValidatePropertyName(
       std::string_view property_name, std::string_view schema_type = "");
 
+  static bool IsIndexedProperty(const PropertyConfigProto& property_config);
+
  private:
   // Validates the 'schema_type' field
   //
