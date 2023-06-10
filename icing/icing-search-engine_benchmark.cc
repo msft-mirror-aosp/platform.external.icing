@@ -43,7 +43,6 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/document-generator.h"
 #include "icing/testing/random-string.h"
-#include "icing/testing/recorder-test-utils.h"
 #include "icing/testing/schema-generator.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -52,7 +51,7 @@
 //    //icing:icing-search-engine_benchmark
 //
 //    $ blaze-bin/icing/icing-search-engine_benchmark
-//    --benchmarks=all --benchmark_memory_usage
+//    --benchmark_filter=all --benchmark_memory_usage
 //
 // Run on an Android device:
 //    $ blaze build --copt="-DGOOGLE_COMMANDLINEFLAGS_FULL_API=1"
@@ -62,7 +61,8 @@
 //    $ adb push blaze-bin/icing/icing-search-engine_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/icing-search-engine_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/icing-search-engine_benchmark
+//    --benchmark_filter=all
 
 namespace icing {
 namespace lib {
@@ -178,12 +178,12 @@ class DestructibleDirectory {
 };
 
 std::vector<DocumentProto> GenerateRandomDocuments(
-    EvenDistributionTypeSelector* type_selector, int num_docs) {
+    EvenDistributionTypeSelector* type_selector, int num_docs,
+    const std::vector<std::string>& language) {
   std::vector<std::string> namespaces = CreateNamespaces(kAvgNumNamespaces);
   EvenDistributionNamespaceSelector namespace_selector(namespaces);
 
   std::default_random_engine random;
-  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
   UniformDistributionLanguageTokenGenerator<std::default_random_engine>
       token_generator(language, &random);
 
@@ -223,23 +223,19 @@ void BM_IndexLatency(benchmark::State& state) {
   std::unique_ptr<IcingSearchEngine> icing =
       std::make_unique<IcingSearchEngine>(options);
 
-  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
-  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
-
   int num_docs = state.range(0);
+  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
   const std::vector<DocumentProto> random_docs =
-      GenerateRandomDocuments(&type_selector, num_docs);
-  Timer timer;
-  for (const DocumentProto& doc : random_docs) {
-    ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+      GenerateRandomDocuments(&type_selector, num_docs, language);
+  for (auto _ : state) {
+    state.PauseTiming();
+    ASSERT_THAT(icing->Reset().status(), ProtoIsOk());
+    ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+    state.ResumeTiming();
+    for (const DocumentProto& doc : random_docs) {
+      ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+    }
   }
-  int64_t time_taken_ns = timer.GetElapsedNanoseconds();
-  int64_t time_per_doc_ns = time_taken_ns / num_docs;
-  std::cout << "Number of indexed documents:\t" << num_docs
-            << "\t\tNumber of indexed sections:\t" << state.range(1)
-            << "\t\tTime taken (ms):\t" << time_taken_ns / 1000000
-            << "\t\tTime taken per doc (us):\t" << time_per_doc_ns / 1000
-            << std::endl;
 }
 BENCHMARK(BM_IndexLatency)
     // Arguments: num_indexed_documents, num_sections
@@ -271,6 +267,56 @@ BENCHMARK(BM_IndexLatency)
     ->ArgPair(1 << 15, 10)
     ->ArgPair(1 << 17, 10);
 
+void BM_QueryLatency(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  std::default_random_engine random;
+  int num_types = kAvgNumNamespaces * kAvgNumTypes;
+  ExactStringPropertyGenerator property_generator;
+  SchemaGenerator<ExactStringPropertyGenerator> schema_generator(
+      /*num_properties=*/state.range(1), &property_generator);
+  SchemaProto schema = schema_generator.GenerateSchema(num_types);
+  EvenDistributionTypeSelector type_selector(schema);
+
+  // Create the index.
+  IcingSearchEngineOptions options;
+  options.set_base_dir(test_dir);
+  options.set_index_merge_size(kIcingFullIndexSize);
+  std::unique_ptr<IcingSearchEngine> icing =
+      std::make_unique<IcingSearchEngine>(options);
+
+  ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+  int num_docs = state.range(0);
+  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
+  const std::vector<DocumentProto> random_docs =
+      GenerateRandomDocuments(&type_selector, num_docs, language);
+  for (const DocumentProto& doc : random_docs) {
+    ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+  }
+
+  SearchSpecProto search_spec = CreateSearchSpec(
+      language.at(0), std::vector<std::string>(), TermMatchType::PREFIX);
+  ResultSpecProto result_spec = CreateResultSpec(1000000, 1000000, 1000000);
+  ScoringSpecProto scoring_spec =
+      CreateScoringSpec(ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP);
+  for (auto _ : state) {
+    SearchResultProto results = icing->Search(
+        search_spec, ScoringSpecProto::default_instance(), result_spec);
+  }
+}
+BENCHMARK(BM_QueryLatency)
+    // Arguments: num_indexed_documents, num_sections
+    ->ArgPair(32, 2)
+    ->ArgPair(128, 2)
+    ->ArgPair(1 << 10, 2)
+    ->ArgPair(1 << 13, 2);
+
 void BM_IndexThroughput(benchmark::State& state) {
   // Initialize the filesystem
   std::string test_dir = GetTestTempDir() + "/icing/benchmark";
@@ -297,8 +343,9 @@ void BM_IndexThroughput(benchmark::State& state) {
   ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
 
   int num_docs = state.range(0);
+  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
   const std::vector<DocumentProto> random_docs =
-      GenerateRandomDocuments(&type_selector, num_docs);
+      GenerateRandomDocuments(&type_selector, num_docs, language);
   for (auto s : state) {
     for (const DocumentProto& doc : random_docs) {
       ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
