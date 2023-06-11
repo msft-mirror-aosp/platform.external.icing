@@ -27,6 +27,7 @@
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/result/page-result.h"
@@ -56,20 +57,12 @@ using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::DoDefault;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Gt;
 using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
-using NamespaceIdMap = std::unordered_map<NamespaceId, int>;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
+using EntryIdMap = std::unordered_map<int32_t, int>;
 
 // Mock the behavior of GroupResultLimiter::ShouldBeRemoved.
 class MockGroupResultLimiter : public GroupResultLimiterV2 {
@@ -79,8 +72,9 @@ class MockGroupResultLimiter : public GroupResultLimiterV2 {
   }
 
   MOCK_METHOD(bool, ShouldBeRemoved,
-              (const ScoredDocumentHit&, const NamespaceIdMap&,
-               const DocumentStore&, std::vector<int>&),
+              (const ScoredDocumentHit&, const EntryIdMap&,
+               const DocumentStore&, std::vector<int>&,
+               ResultSpecProto::ResultGroupingType),
               (const, override));
 };
 
@@ -114,12 +108,12 @@ class ResultRetrieverV2Test : public ::testing::Test {
                          .SetType("Email")
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("name")
-                                          .SetDataTypeString(MATCH_PREFIX,
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(PropertyConfigBuilder()
                                           .SetName("body")
-                                          .SetDataTypeString(MATCH_EXACT,
+                                          .SetDataTypeString(TERM_MATCH_EXACT,
                                                              TOKENIZER_PLAIN)
                                           .SetCardinality(CARDINALITY_OPTIONAL))
                          .AddProperty(
@@ -131,16 +125,16 @@ class ResultRetrieverV2Test : public ::testing::Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("Person")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("name")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("emailAddress")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("name")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("emailAddress")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
@@ -195,7 +189,7 @@ DocumentProto CreateDocument(int id) {
 SectionIdMask CreateSectionIdMask(const std::vector<SectionId>& section_ids) {
   SectionIdMask mask = 0;
   for (SectionId section_id : section_ids) {
-    mask |= (1u << section_id);
+    mask |= (UINT64_C(1) << section_id);
   }
   return mask;
 }
@@ -213,8 +207,10 @@ ScoringSpecProto CreateScoringSpec(bool is_descending_order) {
   return scoring_spec;
 }
 
-ResultSpecProto CreateResultSpec(int num_per_page) {
+ResultSpecProto CreateResultSpec(
+    int num_per_page, ResultSpecProto::ResultGroupingType result_group_type) {
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(result_group_type);
   result_spec.set_num_per_page(num_per_page);
   return result_spec;
 }
@@ -296,11 +292,13 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   result5.set_score(1);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/2), *doc_store);
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+      *doc_store);
 
   // First page, 2 results
   auto [page_result1, has_more_results1] =
@@ -373,12 +371,14 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   result2.set_score(4);
 
   ResultStateV2 result_state1(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/3), *doc_store);
+      CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
+      *doc_store);
   PageResult page_result1 =
       result_retriever->RetrieveNextPage(result_state1).first;
   EXPECT_THAT(page_result1.results,
@@ -390,12 +390,14 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       {document_id1, hit_section_id_mask, /*score=*/12},
       {document_id2, hit_section_id_mask, /*score=*/4}};
   ResultStateV2 result_state2(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/3), *doc_store);
+      CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
+      *doc_store);
   PageResult page_result2 =
       result_retriever->RetrieveNextPage(result_state2).first;
   EXPECT_THAT(page_result2.results,
@@ -439,12 +441,14 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   result1.set_score(0);
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/2), *doc_store);
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+      *doc_store);
   PageResult page_result =
       result_retriever->RetrieveNextPage(result_state).first;
   // We mocked mock_filesystem to return an internal error when retrieving doc2,
@@ -486,12 +490,14 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
                                 language_segmenter_.get(), normalizer_.get()));
 
   ResultStateV2 result_state(
-      std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
       CreateScoringSpec(/*is_descending_order=*/true),
-      CreateResultSpec(/*num_per_page=*/2), *doc_store);
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+      *doc_store);
 
   // First page, 2 results
   PageResult page_result1 =
@@ -557,13 +563,15 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
       {document_id2, hit_section_id_mask, /*score=*/0}};
   std::shared_ptr<ResultStateV2> result_state1 =
       std::make_shared<ResultStateV2>(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1),
               /*is_descending=*/true),
           /*query_terms=*/SectionRestrictQueryTermsMap{},
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true),
-          CreateResultSpec(/*num_per_page=*/1), *doc_store);
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          *doc_store);
   {
     absl_ports::unique_lock l(&result_state1->mutex);
 
@@ -583,13 +591,15 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
       {document_id5, hit_section_id_mask, /*score=*/0}};
   std::shared_ptr<ResultStateV2> result_state2 =
       std::make_shared<ResultStateV2>(
-          std::make_unique<PriorityQueueScoredDocumentHitsRanker>(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
           /*query_terms=*/SectionRestrictQueryTermsMap{},
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true),
-          CreateResultSpec(/*num_per_page=*/2), *doc_store);
+          CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+          *doc_store);
   {
     absl_ports::unique_lock l(&result_state2->mutex);
 
@@ -633,6 +643,185 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // unchanged when destructing it.
   result_state1.reset();
   EXPECT_THAT(num_total_hits_, Eq(0));
+}
+
+TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.set_num_total_bytes_per_page_threshold(result1.ByteSizeLong());
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+
+  // First page. Only result1 should be returned, since its byte size meets
+  // num_total_bytes_per_page_threshold and ResultRetriever should terminate
+  // early even though # of results is still below num_per_page.
+  auto [page_result1, has_more_results1] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // Has more results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page, result2.
+  auto [page_result2, has_more_results2] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
+}
+
+TEST_F(ResultRetrieverV2Test,
+       ShouldReturnSingleLargeResultAboveNumTotalBytesPerPageThreshold) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  int threshold = 1;
+  ASSERT_THAT(result1.ByteSizeLong(), Gt(threshold));
+
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.set_num_total_bytes_per_page_threshold(threshold);
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+
+  // First page. Should return single result1 even though its byte size exceeds
+  // num_total_bytes_per_page_threshold.
+  auto [page_result1, has_more_results1] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // Has more results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page, result2.
+  auto [page_result2, has_more_results2] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
+}
+
+TEST_F(ResultRetrieverV2Test,
+       ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
+                            schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             doc_store->Put(CreateDocument(/*id=*/1)));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             doc_store->Put(CreateDocument(/*id=*/2)));
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  int threshold = result1.ByteSizeLong() + 1;
+  ASSERT_THAT(result1.ByteSizeLong() + result2.ByteSizeLong(), Gt(threshold));
+
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
+  result_spec.set_num_total_bytes_per_page_threshold(threshold);
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits),
+          /*is_descending=*/true),
+      /*query_terms=*/{}, CreateSearchSpec(TermMatchType::EXACT_ONLY),
+      CreateScoringSpec(/*is_descending_order=*/true), result_spec, *doc_store);
+
+  // After retrieving result1, total bytes are still below the threshold and #
+  // of results is still below num_per_page, so ResultRetriever should continue
+  // the retrieval process and thus include result2 into this page, even though
+  // finally total bytes of result1 + result2 exceed the threshold.
+  auto [page_result, has_more_results] =
+      result_retriever->RetrieveNextPage(result_state);
+  EXPECT_THAT(page_result.results,
+              ElementsAre(EqualsProto(result1), EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results);
 }
 
 }  // namespace

@@ -668,11 +668,14 @@ class RawQueryTokenIterator : public Tokenizer::Iterator {
 
   bool Advance() override { return ++current_ < tokens_.size(); }
 
-  Token GetToken() const override {
-    if (current_ < 0 || current_ >= tokens_.size()) {
-      return Token(Token::Type::INVALID);
+  std::vector<Token> GetTokens() const override {
+    std::vector<Token> result;
+
+    if (current_ >= 0 && current_ < tokens_.size()) {
+      result.push_back(tokens_.at(current_));
     }
-    return tokens_.at(current_);
+
+    return result;
   }
 
  private:

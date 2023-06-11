@@ -20,8 +20,10 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
+#include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema-builder.h"
 #include "icing/schema/schema-util.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
@@ -30,6 +32,8 @@
 
 namespace icing {
 namespace lib {
+
+namespace {
 
 using ::testing::ElementsAre;
 using ::testing::Eq;
@@ -43,10 +47,15 @@ constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
 constexpr char kPropertyAttachment[] = "attachment";
 constexpr char kPropertyRecipients[] = "recipients";
+constexpr char kPropertyRecipientIds[] = "recipientIds";
+constexpr char kPropertyTimestamp[] = "timestamp";
+constexpr char kPropertyNonIndexableInteger[] = "non_indexable_integer";
 // type and property names of Conversation
 constexpr char kTypeConversation[] = "Conversation";
 constexpr char kPropertyName[] = "name";
 constexpr char kPropertyEmails[] = "emails";
+
+constexpr int64_t kDefaultTimestamp = 1663274901;
 
 class SectionManagerTest : public ::testing::Test {
  protected:
@@ -66,6 +75,9 @@ class SectionManagerTest : public ::testing::Test {
             .AddBytesProperty(kPropertyAttachment, "attachment bytes")
             .AddStringProperty(kPropertyRecipients, "recipient1", "recipient2",
                                "recipient3")
+            .AddInt64Property(kPropertyRecipientIds, 1, 2, 3)
+            .AddInt64Property(kPropertyTimestamp, kDefaultTimestamp)
+            .AddInt64Property(kPropertyNonIndexableInteger, 100)
             .Build();
 
     conversation_document_ =
@@ -90,39 +102,41 @@ class SectionManagerTest : public ::testing::Test {
   }
 
   static SchemaTypeConfigProto CreateEmailTypeConfig() {
-    SchemaTypeConfigProto type;
-    type.set_schema_type(kTypeEmail);
-
-    auto subject = type.add_properties();
-    subject->set_property_name(kPropertySubject);
-    subject->set_data_type(PropertyConfigProto::DataType::STRING);
-    subject->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-    subject->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    subject->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
-    auto text = type.add_properties();
-    text->set_property_name(kPropertyText);
-    text->set_data_type(PropertyConfigProto::DataType::STRING);
-    text->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
-    text->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::UNKNOWN);
-
-    auto attachment = type.add_properties();
-    attachment->set_property_name(kPropertyAttachment);
-    attachment->set_data_type(PropertyConfigProto::DataType::BYTES);
-    attachment->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
-
-    auto recipients = type.add_properties();
-    recipients->set_property_name(kPropertyRecipients);
-    recipients->set_data_type(PropertyConfigProto::DataType::STRING);
-    recipients->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
-    recipients->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
-    recipients->mutable_string_indexing_config()->set_tokenizer_type(
-        StringIndexingConfig::TokenizerType::PLAIN);
-
+    SchemaTypeConfigProto type =
+        SchemaTypeConfigBuilder()
+            .SetType(kTypeEmail)
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName(kPropertySubject)
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName(kPropertyText)
+                    .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyAttachment)
+                             .SetDataType(TYPE_BYTES)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName(kPropertyRecipients)
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_REPEATED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyRecipientIds)
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_REPEATED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyTimestamp)
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyNonIndexableInteger)
+                             .SetDataType(TYPE_INT64)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .Build();
     return type;
   }
 
@@ -132,15 +146,15 @@ class SectionManagerTest : public ::testing::Test {
 
     auto name = type.add_properties();
     name->set_property_name(kPropertyName);
-    name->set_data_type(PropertyConfigProto::DataType::STRING);
-    name->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+    name->set_data_type(TYPE_STRING);
+    name->set_cardinality(CARDINALITY_OPTIONAL);
     name->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
+        TERM_MATCH_EXACT);
 
     auto emails = type.add_properties();
     emails->set_property_name(kPropertyEmails);
-    emails->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
-    emails->set_cardinality(PropertyConfigProto::Cardinality::REPEATED);
+    emails->set_data_type(TYPE_DOCUMENT);
+    emails->set_cardinality(CARDINALITY_REPEATED);
     emails->set_schema_type(kTypeEmail);
     emails->mutable_document_indexing_config()->set_index_nested_properties(
         true);
@@ -171,10 +185,10 @@ TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
   for (int i = 0; i < max_num_sections_allowed + 1; i++) {
     auto property = type_config.add_properties();
     property->set_property_name("property" + std::to_string(i));
-    property->set_data_type(PropertyConfigProto::DataType::STRING);
-    property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+    property->set_data_type(TYPE_STRING);
+    property->set_cardinality(CARDINALITY_REQUIRED);
     property->mutable_string_indexing_config()->set_term_match_type(
-        TermMatchType::EXACT_ONLY);
+        TERM_MATCH_EXACT);
   }
 
   SchemaUtil::TypeConfigMap type_config_map;
@@ -186,109 +200,186 @@ TEST_F(SectionManagerTest, CreationWithTooManyPropertiesShouldFail) {
                HasSubstr("Too many properties")));
 }
 
-TEST_F(SectionManagerTest, GetStringSectionContent) {
+TEST_F(SectionManagerTest, GetSectionContent) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto section_manager,
       SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Test simple section paths
-  EXPECT_THAT(
-      section_manager->GetStringSectionContent(email_document_,
-                                               /*section_path*/ "subject"),
-      IsOkAndHolds(ElementsAre("the subject")));
-  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
-                                                       /*section_path*/ "text"),
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"subject"),
+              IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"text"),
               IsOkAndHolds(ElementsAre("the text")));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<int64_t>(email_document_,
+                                                  /*section_path=*/"timestamp"),
+      IsOkAndHolds(ElementsAre(kDefaultTimestamp)));
+}
 
-  // Test repeated values, they are joined into one string
+TEST_F(SectionManagerTest, GetSectionContentRepeatedValues) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      auto content,
-      section_manager->GetStringSectionContent(email_document_,
-                                               /*section_path*/ "recipients"));
-  EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3"));
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Test repeated values
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          email_document_,
+          /*section_path=*/"recipients"),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  email_document_,
+                  /*section_path=*/"recipientIds"),
+              IsOkAndHolds(ElementsAre(1, 2, 3)));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentConcatenatedSectionPaths) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Test concatenated section paths: "property1.property2"
-  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetStringSectionContent(
-                                          conversation_document_,
-                                          /*section_path*/ "emails.subject"));
-  EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_,
+                  /*section_path=*/"emails.subject"),
+              IsOkAndHolds(ElementsAre("the subject", "the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_,
+                  /*section_path=*/"emails.text"),
+              IsOkAndHolds(ElementsAre("the text", "the text")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_,
+                  /*section_path=*/"emails.timestamp"),
+              IsOkAndHolds(ElementsAre(kDefaultTimestamp, kDefaultTimestamp)));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          conversation_document_,
+          /*section_path=*/"emails.recipients"),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3",
+                               "recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_,
+                  /*section_path=*/"emails.recipientIds"),
+              IsOkAndHolds(ElementsAre(1, 2, 3, 1, 2, 3)));
+}
 
-  ICING_ASSERT_OK_AND_ASSIGN(content, section_manager->GetStringSectionContent(
-                                          conversation_document_,
-                                          /*section_path*/ "emails.text"));
-  EXPECT_THAT(content, ElementsAre("the text", "the text"));
-
-  ICING_ASSERT_OK_AND_ASSIGN(content,
-                             section_manager->GetStringSectionContent(
-                                 conversation_document_,
-                                 /*section_path*/ "emails.recipients"));
-  EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3",
-                                   "recipient1", "recipient2", "recipient3"));
+TEST_F(SectionManagerTest, GetSectionContentNonExistingPaths) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Test non-existing paths
-  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
-                                                       /*section_path*/ "name"),
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"name"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(
-      section_manager->GetStringSectionContent(email_document_,
-                                               /*section_path*/ "invalid"),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(section_manager->GetStringSectionContent(
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"invalid"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
                   conversation_document_,
-                  /*section_path*/ "emails.invalid"),
+                  /*section_path=*/"emails.invalid"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(SectionManagerTest, GetSectionContentNonIndexableTypes) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Test other data types
   // BYTES type can't be indexed, so content won't be returned
-  EXPECT_THAT(
-      section_manager->GetStringSectionContent(email_document_,
-                                               /*section_path*/ "attachment"),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"attachment"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
 
-  // The following tests are similar to the ones above but use section ids
-  // instead of section paths
+TEST_F(SectionManagerTest, GetSectionContentMismatchedType) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
+
+  // Use the wrong template type to get the indexable content. GetSectionContent
+  // should get empty content from the corresponding proto (repeated) field and
+  // return NOT_FOUND error.
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_,
+                  /*section_path=*/"recipientIds"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  email_document_,
+                  /*section_path=*/"recipients"),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+// The following tests are similar to the ones above but use section ids
+// instead of section paths
+TEST_F(SectionManagerTest, GetSectionContentBySectionId) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // EmailMessage (section id -> section path):
-  SectionId recipients_section_id = 0;
-  SectionId subject_section_id = 1;
-  SectionId invalid_email_section_id = 2;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetStringSectionContent(email_document_,
-                                                        recipients_section_id));
-  EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3"));
-
-  EXPECT_THAT(section_manager->GetStringSectionContent(email_document_,
-                                                       subject_section_id),
+  SectionId recipient_ids_section_id = 0;
+  SectionId recipients_section_id = 1;
+  SectionId subject_section_id = 2;
+  SectionId timestamp_section_id = 3;
+  SectionId invalid_email_section_id = 4;
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  email_document_, recipient_ids_section_id),
+              IsOkAndHolds(ElementsAre(1, 2, 3)));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          email_document_, recipients_section_id),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  email_document_, subject_section_id),
               IsOkAndHolds(ElementsAre("the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(email_document_,
+                                                          timestamp_section_id),
+              IsOkAndHolds(ElementsAre(kDefaultTimestamp)));
 
-  EXPECT_THAT(section_manager->GetStringSectionContent(
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
                   email_document_, invalid_email_section_id),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Conversation (section id -> section path):
-  //   0 -> emails.recipients
-  //   1 -> emails.subject
-  //   2 -> name
-  SectionId emails_recipients_section_id = 0;
-  SectionId emails_subject_section_id = 1;
-  SectionId name_section_id = 2;
-  SectionId invalid_conversation_section_id = 3;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetStringSectionContent(
-                   conversation_document_, emails_recipients_section_id));
-  EXPECT_THAT(content, ElementsAre("recipient1", "recipient2", "recipient3",
-                                   "recipient1", "recipient2", "recipient3"));
+  //   0 -> emails.recipientIds
+  //   1 -> emails.recipients
+  //   2 -> emails.subject
+  //   3 -> emails.timestamp
+  //   4 -> name
+  SectionId emails_recipient_ids_section_id = 0;
+  SectionId emails_recipients_section_id = 1;
+  SectionId emails_subject_section_id = 2;
+  SectionId emails_timestamp_section_id = 3;
+  SectionId name_section_id = 4;
+  SectionId invalid_conversation_section_id = 5;
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_, emails_recipient_ids_section_id),
+              IsOkAndHolds(ElementsAre(1, 2, 3, 1, 2, 3)));
+  EXPECT_THAT(
+      section_manager->GetSectionContent<std::string_view>(
+          conversation_document_, emails_recipients_section_id),
+      IsOkAndHolds(ElementsAre("recipient1", "recipient2", "recipient3",
+                               "recipient1", "recipient2", "recipient3")));
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_, emails_subject_section_id),
+              IsOkAndHolds(ElementsAre("the subject", "the subject")));
+  EXPECT_THAT(section_manager->GetSectionContent<int64_t>(
+                  conversation_document_, emails_timestamp_section_id),
+              IsOkAndHolds(ElementsAre(kDefaultTimestamp, kDefaultTimestamp)));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      content, section_manager->GetStringSectionContent(
-                   conversation_document_, emails_subject_section_id));
-  EXPECT_THAT(content, ElementsAre("the subject", "the subject"));
-
-  EXPECT_THAT(section_manager->GetStringSectionContent(conversation_document_,
-                                                       name_section_id),
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
+                  conversation_document_, name_section_id),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  EXPECT_THAT(section_manager->GetStringSectionContent(
+  EXPECT_THAT(section_manager->GetSectionContent<std::string_view>(
                   conversation_document_, invalid_conversation_section_id),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -299,35 +390,91 @@ TEST_F(SectionManagerTest, ExtractSections) {
       SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Extracts all sections from 'EmailMessage' document
-  ICING_ASSERT_OK_AND_ASSIGN(auto sections,
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                              section_manager->ExtractSections(email_document_));
-  EXPECT_THAT(sections.size(), Eq(2));
 
-  EXPECT_THAT(sections[0].metadata.id, Eq(0));
-  EXPECT_THAT(sections[0].metadata.path, Eq("recipients"));
-  EXPECT_THAT(sections[0].content,
+  // String sections
+  EXPECT_THAT(section_group.string_sections, SizeIs(2));
+
+  EXPECT_THAT(section_group.string_sections[0].metadata,
+              Eq(SectionMetadata(
+                  /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"recipients")));
+  EXPECT_THAT(section_group.string_sections[0].content,
               ElementsAre("recipient1", "recipient2", "recipient3"));
 
-  EXPECT_THAT(sections[1].metadata.id, Eq(1));
-  EXPECT_THAT(sections[1].metadata.path, Eq("subject"));
-  EXPECT_THAT(sections[1].content, ElementsAre("the subject"));
+  EXPECT_THAT(section_group.string_sections[1].metadata,
+              Eq(SectionMetadata(
+                  /*id_in=*/2, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"subject")));
+  EXPECT_THAT(section_group.string_sections[1].content,
+              ElementsAre("the subject"));
+
+  // Integer sections
+  EXPECT_THAT(section_group.integer_sections, SizeIs(2));
+
+  EXPECT_THAT(section_group.integer_sections[0].metadata,
+              Eq(SectionMetadata(/*id_in=*/0, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"recipientIds")));
+  EXPECT_THAT(section_group.integer_sections[0].content, ElementsAre(1, 2, 3));
+
+  EXPECT_THAT(section_group.integer_sections[1].metadata,
+              Eq(SectionMetadata(/*id_in=*/3, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"timestamp")));
+  EXPECT_THAT(section_group.integer_sections[1].content,
+              ElementsAre(kDefaultTimestamp));
+}
+
+TEST_F(SectionManagerTest, ExtractSectionsNested) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map_, schema_type_mapper_.get()));
 
   // Extracts all sections from 'Conversation' document
   ICING_ASSERT_OK_AND_ASSIGN(
-      sections, section_manager->ExtractSections(conversation_document_));
-  EXPECT_THAT(sections.size(), Eq(2));
+      SectionGroup section_group,
+      section_manager->ExtractSections(conversation_document_));
 
-  // Section id 3 (name) not found in document, so the first section id found
-  // is 1 below.
-  EXPECT_THAT(sections[0].metadata.id, Eq(0));
-  EXPECT_THAT(sections[0].metadata.path, Eq("emails.recipients"));
-  EXPECT_THAT(sections[0].content,
+  // String sections
+  EXPECT_THAT(section_group.string_sections, SizeIs(2));
+
+  EXPECT_THAT(section_group.string_sections[0].metadata,
+              Eq(SectionMetadata(
+                  /*id_in=*/1, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"emails.recipients")));
+  EXPECT_THAT(section_group.string_sections[0].content,
               ElementsAre("recipient1", "recipient2", "recipient3",
                           "recipient1", "recipient2", "recipient3"));
 
-  EXPECT_THAT(sections[1].metadata.id, Eq(1));
-  EXPECT_THAT(sections[1].metadata.path, Eq("emails.subject"));
-  EXPECT_THAT(sections[1].content, ElementsAre("the subject", "the subject"));
+  EXPECT_THAT(section_group.string_sections[1].metadata,
+              Eq(SectionMetadata(
+                  /*id_in=*/2, TYPE_STRING, TOKENIZER_PLAIN, TERM_MATCH_EXACT,
+                  NUMERIC_MATCH_UNKNOWN,
+                  /*path_in=*/"emails.subject")));
+  EXPECT_THAT(section_group.string_sections[1].content,
+              ElementsAre("the subject", "the subject"));
+
+  // Integer sections
+  EXPECT_THAT(section_group.integer_sections, SizeIs(2));
+
+  EXPECT_THAT(section_group.integer_sections[0].metadata,
+              Eq(SectionMetadata(/*id_in=*/0, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"emails.recipientIds")));
+  EXPECT_THAT(section_group.integer_sections[0].content,
+              ElementsAre(1, 2, 3, 1, 2, 3));
+
+  EXPECT_THAT(section_group.integer_sections[1].metadata,
+              Eq(SectionMetadata(/*id_in=*/3, TYPE_INT64, TOKENIZER_NONE,
+                                 TERM_MATCH_UNKNOWN, NUMERIC_MATCH_RANGE,
+                                 /*path_in=*/"emails.timestamp")));
+  EXPECT_THAT(section_group.integer_sections[1].content,
+              ElementsAre(kDefaultTimestamp, kDefaultTimestamp));
 }
 
 TEST_F(SectionManagerTest,
@@ -343,54 +490,53 @@ TEST_F(SectionManagerTest,
   // Create an int property with a string_indexing_config
   auto int_property = type_with_non_string_properties.add_properties();
   int_property->set_property_name("int");
-  int_property->set_data_type(PropertyConfigProto::DataType::INT64);
-  int_property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+  int_property->set_data_type(TYPE_INT64);
+  int_property->set_cardinality(CARDINALITY_REQUIRED);
   int_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   int_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
 
   // Create a double property with a string_indexing_config
   auto double_property = type_with_non_string_properties.add_properties();
   double_property->set_property_name("double");
-  double_property->set_data_type(PropertyConfigProto::DataType::DOUBLE);
-  double_property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+  double_property->set_data_type(TYPE_DOUBLE);
+  double_property->set_cardinality(CARDINALITY_REQUIRED);
   double_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   double_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
 
   // Create a boolean property with a string_indexing_config
   auto boolean_property = type_with_non_string_properties.add_properties();
   boolean_property->set_property_name("boolean");
-  boolean_property->set_data_type(PropertyConfigProto::DataType::BOOLEAN);
-  boolean_property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+  boolean_property->set_data_type(TYPE_BOOLEAN);
+  boolean_property->set_cardinality(CARDINALITY_REQUIRED);
   boolean_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   boolean_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
 
   // Create a bytes property with a string_indexing_config
   auto bytes_property = type_with_non_string_properties.add_properties();
   bytes_property->set_property_name("bytes");
-  bytes_property->set_data_type(PropertyConfigProto::DataType::BYTES);
-  bytes_property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+  bytes_property->set_data_type(TYPE_BYTES);
+  bytes_property->set_cardinality(CARDINALITY_REQUIRED);
   bytes_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   bytes_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
 
   // Create a document property with a string_indexing_config
   auto document_property = type_with_non_string_properties.add_properties();
   document_property->set_property_name("document");
-  document_property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  document_property->set_data_type(TYPE_DOCUMENT);
   document_property->set_schema_type(empty_type.schema_type());
-  document_property->set_cardinality(
-      PropertyConfigProto::Cardinality::REQUIRED);
+  document_property->set_cardinality(CARDINALITY_REQUIRED);
   document_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   document_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
 
   // Setup classes to create the section manager
   SchemaUtil::TypeConfigMap type_config_map;
@@ -434,9 +580,109 @@ TEST_F(SectionManagerTest,
           .Build();
 
   // Extracts sections from 'Schema' document
-  ICING_ASSERT_OK_AND_ASSIGN(auto sections,
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                              section_manager->ExtractSections(document));
-  EXPECT_THAT(sections.size(), Eq(0));
+  EXPECT_THAT(section_group.string_sections, IsEmpty());
+  EXPECT_THAT(section_group.integer_sections, IsEmpty());
+}
+
+TEST_F(SectionManagerTest,
+       NonIntegerFieldsWithIntegerIndexingConfigDontCreateSections) {
+  // Create a schema for an empty document.
+  SchemaTypeConfigProto empty_type;
+  empty_type.set_schema_type("EmptySchema");
+
+  // Create a schema with all the non-integer fields
+  SchemaTypeConfigProto type_with_non_integer_properties;
+  type_with_non_integer_properties.set_schema_type("Schema");
+
+  // Create an string property with a integer_indexing_config
+  auto string_property = type_with_non_integer_properties.add_properties();
+  string_property->set_property_name("string");
+  string_property->set_data_type(TYPE_STRING);
+  string_property->set_cardinality(CARDINALITY_REQUIRED);
+  string_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
+
+  // Create a double property with a integer_indexing_config
+  auto double_property = type_with_non_integer_properties.add_properties();
+  double_property->set_property_name("double");
+  double_property->set_data_type(TYPE_DOUBLE);
+  double_property->set_cardinality(CARDINALITY_REQUIRED);
+  double_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
+
+  // Create a boolean property with a integer_indexing_config
+  auto boolean_property = type_with_non_integer_properties.add_properties();
+  boolean_property->set_property_name("boolean");
+  boolean_property->set_data_type(TYPE_BOOLEAN);
+  boolean_property->set_cardinality(CARDINALITY_REQUIRED);
+  boolean_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
+
+  // Create a bytes property with a integer_indexing_config
+  auto bytes_property = type_with_non_integer_properties.add_properties();
+  bytes_property->set_property_name("bytes");
+  bytes_property->set_data_type(TYPE_BYTES);
+  bytes_property->set_cardinality(CARDINALITY_REQUIRED);
+  bytes_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
+
+  // Create a document property with a integer_indexing_config
+  auto document_property = type_with_non_integer_properties.add_properties();
+  document_property->set_property_name("document");
+  document_property->set_data_type(TYPE_DOCUMENT);
+  document_property->set_schema_type(empty_type.schema_type());
+  document_property->set_cardinality(CARDINALITY_REQUIRED);
+  document_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
+
+  // Setup classes to create the section manager
+  SchemaUtil::TypeConfigMap type_config_map;
+  type_config_map.emplace(type_with_non_integer_properties.schema_type(),
+                          type_with_non_integer_properties);
+  type_config_map.emplace(empty_type.schema_type(), empty_type);
+
+  // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
+  // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
+  int key_mapper_size = 3 * 128 * 1024;
+  std::string dir = GetTestTempDir() + "/non_integer_fields";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper,
+      DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, dir,
+                                                 key_mapper_size));
+  ICING_ASSERT_OK(schema_type_mapper->Put(
+      type_with_non_integer_properties.schema_type(), /*schema_type_id=*/0));
+  ICING_ASSERT_OK(schema_type_mapper->Put(empty_type.schema_type(),
+                                          /*schema_type_id=*/1));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto section_manager,
+      SectionManager::Create(type_config_map, schema_type_mapper.get()));
+
+  // Create an empty document to be nested
+  DocumentProto empty_document = DocumentBuilder()
+                                     .SetKey("icing", "uri1")
+                                     .SetSchema(empty_type.schema_type())
+                                     .Build();
+
+  // Create a document that follows "Schema"
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "uri2")
+          .SetSchema(type_with_non_integer_properties.schema_type())
+          .AddStringProperty("string", "abc")
+          .AddDoubleProperty("double", 0.2)
+          .AddBooleanProperty("boolean", true)
+          .AddBytesProperty("bytes", "attachment bytes")
+          .AddDocumentProperty("document", empty_document)
+          .Build();
+
+  // Extracts sections from 'Schema' document
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                             section_manager->ExtractSections(document));
+  EXPECT_THAT(section_group.string_sections, IsEmpty());
+  EXPECT_THAT(section_group.integer_sections, IsEmpty());
 }
 
 TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
@@ -446,12 +692,19 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
 
   auto string_property = document_type.add_properties();
   string_property->set_property_name("string");
-  string_property->set_data_type(PropertyConfigProto::DataType::STRING);
-  string_property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+  string_property->set_data_type(TYPE_STRING);
+  string_property->set_cardinality(CARDINALITY_REQUIRED);
   string_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   string_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
+
+  auto integer_property = document_type.add_properties();
+  integer_property->set_property_name("integer");
+  integer_property->set_data_type(TYPE_INT64);
+  integer_property->set_cardinality(CARDINALITY_REQUIRED);
+  integer_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
 
   // Create the outer schema which has the document property.
   SchemaTypeConfigProto type;
@@ -459,10 +712,9 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
 
   auto document_property = type.add_properties();
   document_property->set_property_name("document");
-  document_property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  document_property->set_data_type(TYPE_DOCUMENT);
   document_property->set_schema_type(document_type.schema_type());
-  document_property->set_cardinality(
-      PropertyConfigProto::Cardinality::REQUIRED);
+  document_property->set_cardinality(CARDINALITY_REQUIRED);
 
   // Opt into recursing into the document fields.
   document_property->mutable_document_indexing_config()
@@ -473,6 +725,7 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
                                      .SetKey("icing", "uri1")
                                      .SetSchema(document_type.schema_type())
                                      .AddStringProperty("string", "foo")
+                                     .AddInt64Property("integer", 123)
                                      .Build();
 
   // Create the outer document that holds the inner document
@@ -508,10 +761,11 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
       SectionManager::Create(type_config_map, schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there should be the 1 string
-  // property inside the document.
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Section> sections,
+  // property and 1 integer property inside the document.
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                              section_manager->ExtractSections(outer_document));
-  EXPECT_THAT(sections, SizeIs(1));
+  EXPECT_THAT(section_group.string_sections, SizeIs(1));
+  EXPECT_THAT(section_group.integer_sections, SizeIs(1));
 }
 
 TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
@@ -521,12 +775,19 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
 
   auto string_property = document_type.add_properties();
   string_property->set_property_name("string");
-  string_property->set_data_type(PropertyConfigProto::DataType::STRING);
-  string_property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+  string_property->set_data_type(TYPE_STRING);
+  string_property->set_cardinality(CARDINALITY_REQUIRED);
   string_property->mutable_string_indexing_config()->set_term_match_type(
-      TermMatchType::EXACT_ONLY);
+      TERM_MATCH_EXACT);
   string_property->mutable_string_indexing_config()->set_tokenizer_type(
-      StringIndexingConfig::TokenizerType::PLAIN);
+      TOKENIZER_PLAIN);
+
+  auto integer_property = document_type.add_properties();
+  integer_property->set_property_name("integer");
+  integer_property->set_data_type(TYPE_INT64);
+  integer_property->set_cardinality(CARDINALITY_REQUIRED);
+  integer_property->mutable_integer_indexing_config()->set_numeric_match_type(
+      NUMERIC_MATCH_RANGE);
 
   // Create the outer schema which has the document property.
   SchemaTypeConfigProto type;
@@ -534,10 +795,9 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
 
   auto document_property = type.add_properties();
   document_property->set_property_name("document");
-  document_property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  document_property->set_data_type(TYPE_DOCUMENT);
   document_property->set_schema_type(document_type.schema_type());
-  document_property->set_cardinality(
-      PropertyConfigProto::Cardinality::REQUIRED);
+  document_property->set_cardinality(CARDINALITY_REQUIRED);
 
   // Opt into recursing into the document fields.
   document_property->mutable_document_indexing_config()
@@ -548,6 +808,7 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
                                      .SetKey("icing", "uri1")
                                      .SetSchema(document_type.schema_type())
                                      .AddStringProperty("string", "foo")
+                                     .AddInt64Property("integer", 123)
                                      .Build();
 
   // Create the outer document that holds the inner document
@@ -584,10 +845,13 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
 
   // Extracts sections from 'Schema' document; there won't be any since we
   // didn't recurse into the document to see the inner string property
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<Section> sections,
+  ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                              section_manager->ExtractSections(outer_document));
-  EXPECT_THAT(sections, IsEmpty());
+  EXPECT_THAT(section_group.string_sections, IsEmpty());
+  EXPECT_THAT(section_group.integer_sections, IsEmpty());
 }
+
+}  // namespace
 
 }  // namespace lib
 }  // namespace icing

@@ -799,8 +799,10 @@ libtextclassifier3::StatusOr<Crc32>
 PortableFileBackedProtoLog<ProtoT>::ComputeChecksum(
     const Filesystem* filesystem, const std::string& file_path,
     Crc32 initial_crc, int64_t start, int64_t end) {
-  auto mmapped_file = MemoryMappedFile(*filesystem, file_path,
-                                       MemoryMappedFile::Strategy::READ_ONLY);
+  ICING_ASSIGN_OR_RETURN(
+      MemoryMappedFile mmapped_file,
+      MemoryMappedFile::Create(*filesystem, file_path,
+                               MemoryMappedFile::Strategy::READ_ONLY));
   Crc32 new_crc(initial_crc.Get());
 
   if (start < 0) {

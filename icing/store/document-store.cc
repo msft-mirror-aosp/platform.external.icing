@@ -35,10 +35,15 @@
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/logging.pb.h"
+#include "icing/proto/optimize.pb.h"
+#include "icing/proto/persist.pb.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
+#include "icing/proto/usage.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
 #include "icing/store/corpus-id.h"
@@ -182,6 +187,19 @@ InitializeStatsProto::DocumentStoreDataStatus GetDataStatus(
   }
 }
 
+std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
+    const KeyMapper<NamespaceId>* key_mapper) {
+  std::unordered_map<NamespaceId, std::string> namespace_ids_to_namespaces;
+
+  std::unique_ptr<typename KeyMapper<NamespaceId>::Iterator> itr =
+      key_mapper->GetIterator();
+  while (itr->Advance()) {
+    namespace_ids_to_namespaces.insert(
+        {itr->GetValue(), std::string(itr->GetKey())});
+  }
+  return namespace_ids_to_namespaces;
+}
+
 }  // namespace
 
 DocumentStore::DocumentStore(const Filesystem* filesystem,
@@ -204,7 +222,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     DocumentProto&& document, int32_t num_tokens,
     PutDocumentStatsProto* put_document_stats) {
   document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
-  return InternalPut(document, put_document_stats);
+  return InternalPut(std::move(document), put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -704,7 +722,15 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
   }
   Crc32 document_log_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 document_key_mapper_checksum = document_key_mapper_->ComputeChecksum();
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = document_key_mapper_->ComputeChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of DocumentKeyMapper";
+    return checksum_or.status();
+  }
+  Crc32 document_key_mapper_checksum = std::move(checksum_or).ValueOrDie();
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -736,9 +762,25 @@ libtextclassifier3::StatusOr<Crc32> DocumentStore::ComputeChecksum() const {
   }
   Crc32 filter_cache_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 namespace_mapper_checksum = namespace_mapper_->ComputeChecksum();
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = namespace_mapper_->ComputeChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of namespace mapper";
+    return checksum_or.status();
+  }
+  Crc32 namespace_mapper_checksum = std::move(checksum_or).ValueOrDie();
 
-  Crc32 corpus_mapper_checksum = corpus_mapper_->ComputeChecksum();
+  // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
+  // that can support error logging.
+  checksum_or = corpus_mapper_->ComputeChecksum();
+  if (!checksum_or.ok()) {
+    ICING_LOG(ERROR) << checksum_or.status().error_message()
+                     << "Failed to compute checksum of corpus mapper";
+    return checksum_or.status();
+  }
+  Crc32 corpus_mapper_checksum = std::move(checksum_or).ValueOrDie();
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -798,7 +840,7 @@ libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
-    DocumentProto& document, PutDocumentStatsProto* put_document_stats) {
+    DocumentProto&& document, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
@@ -996,7 +1038,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
 
 std::vector<std::string> DocumentStore::GetAllNamespaces() const {
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
-      namespace_mapper_->GetValuesToKeys();
+      GetNamespaceIdsToNamespaces(namespace_mapper_.get());
 
   std::unordered_set<NamespaceId> existing_namespace_ids;
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
@@ -1117,6 +1159,56 @@ libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
 libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
     const std::string_view name_space, const std::string_view schema) const {
   return corpus_mapper_->Get(MakeFingerprint(name_space, schema));
+}
+
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
+    ResultSpecProto::ResultGroupingType result_group_type,
+    const std::string_view name_space, const std::string_view schema) const {
+  auto namespace_id = GetNamespaceId(name_space);
+  auto schema_type_id = schema_store_->GetSchemaTypeId(schema);
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      if (schema_type_id.ok()) {
+        return schema_type_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE:
+      if (namespace_id.ok()) {
+        return namespace_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      if (namespace_id.ok() && schema_type_id.ok()) {
+        // TODO(b/258715421): Temporary workaround to get a
+        //                    ResultGroupingEntryId given the Namespace string
+        //                    and Schema string.
+        return namespace_id.ValueOrDie() << 16 | schema_type_id.ValueOrDie();
+      }
+      break;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
+}
+
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
+    ResultSpecProto::ResultGroupingType result_group_type,
+    const NamespaceId namespace_id, const SchemaTypeId schema_type_id) const {
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      return schema_type_id;
+    case ResultSpecProto::NAMESPACE:
+      return namespace_id;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
+      //                    given the Namespace Id and SchemaType Id.
+      return namespace_id << 16 | schema_type_id;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
 }
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
@@ -1358,7 +1450,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
   int total_num_expired = 0;
   int total_num_deleted = 0;
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
-      namespace_mapper_->GetValuesToKeys();
+      GetNamespaceIdsToNamespaces(namespace_mapper_.get());
   std::unordered_map<std::string, NamespaceStorageInfoProto>
       namespace_to_storage_info;
 
@@ -1489,8 +1581,11 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
       // Update the SchemaTypeId for this entry
       ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                              schema_store_->GetSchemaTypeId(document.schema()));
-      filter_cache_->mutable_array()[document_id].set_schema_type_id(
-          schema_type_id);
+      ICING_ASSIGN_OR_RETURN(
+          typename FileBackedVector<DocumentFilterData>::MutableView
+              doc_filter_data_view,
+          filter_cache_->GetMutable(document_id));
+      doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
     } else {
       // Document is no longer valid with the new SchemaStore. Mark as
       // deleted
@@ -1550,8 +1645,11 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
         ICING_ASSIGN_OR_RETURN(
             SchemaTypeId schema_type_id,
             schema_store_->GetSchemaTypeId(document.schema()));
-        filter_cache_->mutable_array()[document_id].set_schema_type_id(
-            schema_type_id);
+        ICING_ASSIGN_OR_RETURN(
+            typename FileBackedVector<DocumentFilterData>::MutableView
+                doc_filter_data_view,
+            filter_cache_->GetMutable(document_id));
+        doc_filter_data_view.Get().set_schema_type_id(schema_type_id);
       }
       if (revalidate_document) {
         delete_document = !document_validator_.Validate(document).ok();
@@ -1576,9 +1674,10 @@ libtextclassifier3::Status DocumentStore::Optimize() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status DocumentStore::OptimizeInto(
-    const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
-    OptimizeStatsProto* stats) {
+libtextclassifier3::StatusOr<std::vector<DocumentId>>
+DocumentStore::OptimizeInto(const std::string& new_directory,
+                            const LanguageSegmenter* lang_segmenter,
+                            OptimizeStatsProto* stats) {
   // Validates directory
   if (new_directory == base_dir_) {
     return absl_ports::InvalidArgumentError(
@@ -1596,6 +1695,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
   int num_deleted = 0;
   int num_expired = 0;
   UsageStore::UsageScores default_usage;
+  std::vector<DocumentId> document_id_old_to_new(size, kInvalidDocumentId);
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
@@ -1614,7 +1714,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     }
 
     // Guaranteed to have a document now.
-    DocumentProto document_to_keep = document_or.ValueOrDie();
+    DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
 
     libtextclassifier3::StatusOr<DocumentId> new_document_id_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
@@ -1628,18 +1728,21 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      new_document_id_or =
-          new_doc_store->Put(document_to_keep, tokenized_document.num_tokens());
+      new_document_id_or = new_doc_store->Put(
+          std::move(document_to_keep), tokenized_document.num_string_tokens());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      new_document_id_or = new_doc_store->InternalPut(document_to_keep);
+      new_document_id_or =
+          new_doc_store->InternalPut(std::move(document_to_keep));
     }
     if (!new_document_id_or.ok()) {
       ICING_LOG(ERROR) << new_document_id_or.status().error_message()
                        << "Failed to write into new document store";
       return new_document_id_or.status();
     }
+
+    document_id_old_to_new[document_id] = new_document_id_or.ValueOrDie();
 
     // Copy over usage scores.
     ICING_ASSIGN_OR_RETURN(UsageStore::UsageScores usage_scores,
@@ -1659,7 +1762,7 @@ libtextclassifier3::Status DocumentStore::OptimizeInto(
     stats->set_num_expired_documents(num_expired);
   }
   ICING_RETURN_IF_ERROR(new_doc_store->PersistToDisk(PersistType::FULL));
-  return libtextclassifier3::Status::OK;
+  return document_id_old_to_new;
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeInfo>
@@ -1780,7 +1883,7 @@ DocumentStore::CollectCorpusInfo() const {
   // Maps from CorpusId to the corresponding protocol buffer in the result.
   std::unordered_map<CorpusId, DocumentDebugInfoProto::CorpusInfo*> info_map;
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
-      namespace_mapper_->GetValuesToKeys();
+      GetNamespaceIdsToNamespaces(namespace_mapper_.get());
   const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
