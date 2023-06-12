@@ -17,6 +17,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/join/join-children-fetcher.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
@@ -32,11 +33,17 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   explicit ScoringVisitor(double default_score,
                           const DocumentStore* document_store,
                           const SchemaStore* schema_store,
-                          Bm25fCalculator* bm25f_calculator)
+                          SectionWeights* section_weights,
+                          Bm25fCalculator* bm25f_calculator,
+                          const JoinChildrenFetcher* join_children_fetcher,
+                          int64_t current_time_ms)
       : default_score_(default_score),
         document_store_(*document_store),
         schema_store_(*schema_store),
-        bm25f_calculator_(*bm25f_calculator) {}
+        section_weights_(*section_weights),
+        bm25f_calculator_(*bm25f_calculator),
+        join_children_fetcher_(join_children_fetcher),
+        current_time_ms_(current_time_ms) {}
 
   void VisitFunctionName(const FunctionNameNode* node) override;
   void VisitString(const StringNode* node) override;
@@ -60,13 +67,13 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
     if (has_pending_error()) {
       return pending_error_;
     }
-    if (stack.size() != 1) {
+    if (stack_.size() != 1) {
       return absl_ports::InternalError(IcingStringUtil::StringPrintf(
           "Expect to get only one result from "
           "ScoringVisitor, but got %zu. There must be inconsistencies.",
-          stack.size()));
+          stack_.size()));
     }
-    return std::move(stack[0]);
+    return std::move(stack_[0]);
   }
 
  private:
@@ -77,18 +84,22 @@ class ScoringVisitor : public AbstractSyntaxTreeVisitor {
   bool has_pending_error() const { return !pending_error_.ok(); }
 
   std::unique_ptr<ScoreExpression> pop_stack() {
-    std::unique_ptr<ScoreExpression> result = std::move(stack.back());
-    stack.pop_back();
+    std::unique_ptr<ScoreExpression> result = std::move(stack_.back());
+    stack_.pop_back();
     return result;
   }
 
   double default_score_;
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
+  SectionWeights& section_weights_;
   Bm25fCalculator& bm25f_calculator_;
+  // A non-null join_children_fetcher_ indicates scoring in a join.
+  const JoinChildrenFetcher* join_children_fetcher_;  // Does not own.
 
   libtextclassifier3::Status pending_error_;
-  std::vector<std::unique_ptr<ScoreExpression>> stack;
+  std::vector<std::unique_ptr<ScoreExpression>> stack_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

@@ -44,6 +44,8 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
     StringIndexingConfig::TokenizerType::VERBATIM;
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
     StringIndexingConfig::TokenizerType::RFC822;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
+    StringIndexingConfig::TokenizerType::URL;
 
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
@@ -128,6 +130,13 @@ class PropertyConfigBuilder {
     return *this;
   }
 
+  PropertyConfigBuilder& SetJoinable(
+      JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
+    property_.mutable_joinable_config()->set_value_type(join_value_type);
+    property_.mutable_joinable_config()->set_propagate_delete(propagate_delete);
+    return *this;
+  }
+
   PropertyConfigBuilder& SetCardinality(
       PropertyConfigProto::Cardinality::Code cardinality) {
     property_.set_cardinality(cardinality);
@@ -148,6 +157,11 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetType(std::string_view type) {
     type_config_.set_schema_type(std::string(type));
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& AddParentType(std::string_view parent_type) {
+    type_config_.add_parent_types(std::string(parent_type));
     return *this;
   }
 
