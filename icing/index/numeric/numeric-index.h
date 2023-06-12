@@ -130,7 +130,8 @@ class NumericIndex : public PersistentStorage {
   virtual libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
   GetIterator(std::string_view property_path, T key_lower, T key_upper,
               const DocumentStore& document_store,
-              const SchemaStore& schema_store) const = 0;
+              const SchemaStore& schema_store,
+              int64_t current_time_ms) const = 0;
 
   // Reduces internal file sizes by reclaiming space and ids of deleted
   // documents. Numeric index will convert all data (hits) to the new document

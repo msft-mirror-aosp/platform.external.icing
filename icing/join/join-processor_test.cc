@@ -164,8 +164,9 @@ class JoinProcessorTest : public ::testing::Test {
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& parent_scored_document_hits,
       std::vector<ScoredDocumentHit>&& child_scored_document_hits) {
-    JoinProcessor join_processor(doc_store_.get(), schema_store_.get(),
-                                 qualified_id_join_index_.get());
+    JoinProcessor join_processor(
+        doc_store_.get(), schema_store_.get(), qualified_id_join_index_.get(),
+        /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds());
     ICING_ASSIGN_OR_RETURN(
         JoinChildrenFetcher join_children_fetcher,
         join_processor.GetChildrenFetcher(

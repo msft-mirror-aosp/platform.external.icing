@@ -1010,7 +1010,8 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
 
     // Delete the old document. It's fine if it's not found since it might have
     // been deleted previously.
-    auto delete_status = Delete(old_document_id);
+    auto delete_status =
+        Delete(old_document_id, clock_.GetSystemTimeMilliseconds());
     if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
       // Real error, pass it up.
       return delete_status;
@@ -1055,7 +1056,9 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     DocumentId document_id, bool clear_internal_fields) const {
-  auto document_filter_data_optional_ = GetAliveDocumentFilterData(document_id);
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
+  auto document_filter_data_optional_ =
+      GetAliveDocumentFilterData(document_id, current_time_ms);
   if (!document_filter_data_optional_) {
     // The document doesn't exist. Let's check if the document id is invalid, we
     // will return InvalidArgumentError. Otherwise we should return NOT_FOUND
@@ -1118,6 +1121,7 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
       GetNamespaceIdsToNamespaces(namespace_mapper_.get());
 
   std::unordered_set<NamespaceId> existing_namespace_ids;
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
@@ -1130,7 +1134,7 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
     }
     const DocumentFilterData* data = status_or_data.ValueOrDie();
 
-    if (GetAliveDocumentFilterData(document_id)) {
+    if (GetAliveDocumentFilterData(document_id, current_time_ms)) {
       existing_namespace_ids.insert(data->namespace_id());
     }
   }
@@ -1144,14 +1148,11 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
 }
 
 std::optional<DocumentFilterData> DocumentStore::GetAliveDocumentFilterData(
-    DocumentId document_id) const {
-  if (!IsDocumentIdValid(document_id)) {
-    return std::nullopt;
-  }
+    DocumentId document_id, int64_t current_time_ms) const {
   if (IsDeleted(document_id)) {
     return std::nullopt;
   }
-  return GetNonExpiredDocumentFilterData(document_id);
+  return GetNonExpiredDocumentFilterData(document_id, current_time_ms);
 }
 
 bool DocumentStore::IsDeleted(DocumentId document_id) const {
@@ -1171,7 +1172,8 @@ bool DocumentStore::IsDeleted(DocumentId document_id) const {
 // Returns DocumentFilterData if the document is not expired. Otherwise,
 // std::nullopt.
 std::optional<DocumentFilterData>
-DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id) const {
+DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id,
+                                               int64_t current_time_ms) const {
   auto filter_data_or = filter_cache_->GetCopy(document_id);
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
@@ -1184,15 +1186,15 @@ DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id) const {
   DocumentFilterData document_filter_data = filter_data_or.ValueOrDie();
 
   // Check if it's past the expiration time
-  if (clock_.GetSystemTimeMilliseconds() >=
-      document_filter_data.expiration_timestamp_ms()) {
+  if (current_time_ms >= document_filter_data.expiration_timestamp_ms()) {
     return std::nullopt;
   }
   return document_filter_data;
 }
 
 libtextclassifier3::Status DocumentStore::Delete(
-    const std::string_view name_space, const std::string_view uri) {
+    const std::string_view name_space, const std::string_view uri,
+    int64_t current_time_ms) {
   // Try to get the DocumentId first
   auto document_id_or = GetDocumentId(name_space, uri);
   if (!document_id_or.ok()) {
@@ -1201,11 +1203,13 @@ libtextclassifier3::Status DocumentStore::Delete(
         absl_ports::StrCat("Failed to delete Document. namespace: ", name_space,
                            ", uri: ", uri));
   }
-  return Delete(document_id_or.ValueOrDie());
+  return Delete(document_id_or.ValueOrDie(), current_time_ms);
 }
 
-libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id) {
-  auto document_filter_data_optional_ = GetAliveDocumentFilterData(document_id);
+libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
+                                                 int64_t current_time_ms) {
+  auto document_filter_data_optional_ =
+      GetAliveDocumentFilterData(document_id, current_time_ms);
   if (!document_filter_data_optional_) {
     // The document doesn't exist. We should return InvalidArgumentError if the
     // document id is invalid. Otherwise we should return NOT_FOUND error.
@@ -1292,24 +1296,16 @@ libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
-  if (!GetAliveDocumentFilterData(document_id)) {
-    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-        "Can't get usage scores, document id '%d' doesn't exist", document_id));
-  }
-
   auto score_data_or = score_cache_->GetCopy(document_id);
   if (!score_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
                      << " from score_cache_";
-    return score_data_or.status();
+    return absl_ports::NotFoundError(
+        std::move(score_data_or).status().error_message());
   }
 
   DocumentAssociatedScoreData document_associated_score_data =
       std::move(score_data_or).ValueOrDie();
-  if (document_associated_score_data.document_score() < 0) {
-    // An negative / invalid score means that the score data has been deleted.
-    return absl_ports::NotFoundError("Document score data not found.");
-  }
   return document_associated_score_data;
 }
 
@@ -1344,9 +1340,9 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
 // TODO(b/273826815): Decide on and adopt a consistent pattern for handling
 // NOT_FOUND 'errors' returned by our internal classes.
 std::optional<UsageStore::UsageScores> DocumentStore::GetUsageScores(
-    DocumentId document_id) const {
+    DocumentId document_id, int64_t current_time_ms) const {
   std::optional<DocumentFilterData> opt =
-      GetAliveDocumentFilterData(document_id);
+      GetAliveDocumentFilterData(document_id, current_time_ms);
   if (!opt) {
     return std::nullopt;
   }
@@ -1370,7 +1366,8 @@ libtextclassifier3::Status DocumentStore::ReportUsage(
   // We can use the internal version here because we got our document_id from
   // our internal data structures. We would have thrown some error if the
   // namespace and/or uri were incorrect.
-  if (!GetAliveDocumentFilterData(document_id)) {
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
+  if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
     // Document was probably deleted or expired.
     return absl_ports::NotFoundError(absl_ports::StrCat(
         "Couldn't report usage on a nonexistent document: (namespace: '",
@@ -1446,6 +1443,7 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 
   // Traverse FilterCache and delete all docs that match namespace_id and
   // schema_type_id.
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
@@ -1473,7 +1471,8 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 
     // The document has the desired namespace and schema type, it either
     // exists or has expired.
-    libtextclassifier3::Status delete_status = Delete(document_id);
+    libtextclassifier3::Status delete_status =
+        Delete(document_id, current_time_ms);
     if (absl_ports::IsNotFound(delete_status)) {
       continue;
     } else if (!delete_status.ok()) {
@@ -1545,6 +1544,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
   std::unordered_map<std::string, NamespaceStorageInfoProto>
       namespace_to_storage_info;
 
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0;
        document_id < document_id_mapper_->num_elements(); ++document_id) {
     // Check if it's deleted first.
@@ -1588,7 +1588,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
     UsageStore::UsageScores usage_scores = usage_scores_or.ValueOrDie();
 
     // Update our stats
-    if (!GetNonExpiredDocumentFilterData(document_id)) {
+    if (!GetNonExpiredDocumentFilterData(document_id, current_time_ms)) {
       ++total_num_expired;
       namespace_storage_info.set_num_expired_documents(
           namespace_storage_info.num_expired_documents() + 1);
@@ -1651,6 +1651,7 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id);
     if (absl_ports::IsNotFound(document_or.status())) {
@@ -1680,7 +1681,8 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
     } else {
       // Document is no longer valid with the new SchemaStore. Mark as
       // deleted
-      auto delete_status = Delete(document.namespace_(), document.uri());
+      auto delete_status =
+          Delete(document.namespace_(), document.uri(), current_time_ms);
       if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
@@ -1704,8 +1706,9 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
-    if (!GetAliveDocumentFilterData(document_id)) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
       // Skip nonexistent documents
       continue;
     }
@@ -1749,7 +1752,7 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
 
     if (delete_document) {
       // Document is no longer valid with the new SchemaStore. Mark as deleted
-      auto delete_status = Delete(document_id);
+      auto delete_status = Delete(document_id, current_time_ms);
       if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
@@ -1791,12 +1794,14 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
   int num_expired = 0;
   UsageStore::UsageScores default_usage;
   std::vector<DocumentId> document_id_old_to_new(size, kInvalidDocumentId);
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
       if (IsDeleted(document_id)) {
         ++num_deleted;
-      } else if (!GetNonExpiredDocumentFilterData(document_id)) {
+      } else if (!GetNonExpiredDocumentFilterData(document_id,
+                                                  current_time_ms)) {
         ++num_expired;
       }
       continue;
@@ -1866,9 +1871,10 @@ DocumentStore::GetOptimizeInfo() const {
 
   // Figure out our ratio of optimizable/total docs.
   int32_t num_documents = document_id_mapper_->num_elements();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = kMinDocumentId; document_id < num_documents;
        ++document_id) {
-    if (!GetAliveDocumentFilterData(document_id)) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
       ++optimize_info.optimizable_docs;
     }
 
@@ -1979,9 +1985,10 @@ DocumentStore::CollectCorpusInfo() const {
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
       GetNamespaceIdsToNamespaces(namespace_mapper_.get());
   const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
-    if (!GetAliveDocumentFilterData(document_id)) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
       continue;
     }
     ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
