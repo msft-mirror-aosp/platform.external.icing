@@ -28,10 +28,9 @@ class ProjectionTree {
   static constexpr std::string_view kSchemaTypeWildcard = "*";
 
   struct Node {
-    explicit Node(std::string_view name = "") : name(name) {}
+    explicit Node(std::string name = "") : name(std::move(name)) {}
 
-    // TODO: change string_view to string
-    std::string_view name;
+    std::string name;
     std::vector<Node> children;
 
     bool operator==(const Node& other) const {

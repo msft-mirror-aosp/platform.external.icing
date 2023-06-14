@@ -36,6 +36,50 @@ namespace lib {
 // should not contain termination character '\0'.
 class PersistentHashMap {
  public:
+  // For iterating through persistent hash map. The order is not guaranteed.
+  //
+  // Not thread-safe.
+  //
+  // Change in underlying persistent hash map invalidates iterator.
+  class Iterator {
+   public:
+    // Advance to the next entry.
+    //
+    // Returns:
+    //   True on success, otherwise false.
+    bool Advance();
+
+    int32_t GetIndex() const { return curr_kv_idx_; }
+
+    // Get the key.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    std::string_view GetKey() const {
+      return std::string_view(map_->kv_storage_->array() + curr_kv_idx_,
+                              curr_key_len_);
+    }
+
+    // Get the memory mapped address of the value.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    const void* GetValue() const {
+      return static_cast<const void*>(map_->kv_storage_->array() +
+                                      curr_kv_idx_ + curr_key_len_ + 1);
+    }
+
+   private:
+    explicit Iterator(const PersistentHashMap* map)
+        : map_(map), curr_kv_idx_(0), curr_key_len_(0) {}
+
+    // Does not own
+    const PersistentHashMap* map_;
+
+    int32_t curr_kv_idx_;
+    int32_t curr_key_len_;
+
+    friend class PersistentHashMap;
+  };
+
   // Crcs and Info will be written into the metadata file.
   // File layout: <Crcs><Info>
   // Crcs
@@ -90,12 +134,10 @@ class PersistentHashMap {
   // Bucket
   class Bucket {
    public:
-    // Absolute max # of buckets allowed. Since max file size on Android is
-    // 2^31-1, we can at most have ~2^29 buckets. To make it power of 2, round
-    // it down to 2^28. Also since we're using FileBackedVector to store
-    // buckets, add some static_asserts to ensure numbers here are compatible
-    // with FileBackedVector.
-    static constexpr int32_t kMaxNumBuckets = 1 << 28;
+    // Absolute max # of buckets allowed. Since we're using FileBackedVector to
+    // store buckets, add some static_asserts to ensure numbers here are
+    // compatible with FileBackedVector.
+    static constexpr int32_t kMaxNumBuckets = 1 << 24;
 
     explicit Bucket(int32_t head_entry_index = Entry::kInvalidIndex)
         : head_entry_index_(head_entry_index) {}
@@ -126,16 +168,14 @@ class PersistentHashMap {
   // Entry
   class Entry {
    public:
-    // Absolute max # of entries allowed. Since max file size on Android is
-    // 2^31-1, we can at most have ~2^28 entries. To make it power of 2, round
-    // it down to 2^27. Also since we're using FileBackedVector to store
-    // entries, add some static_asserts to ensure numbers here are compatible
-    // with FileBackedVector.
+    // Absolute max # of entries allowed. Since we're using FileBackedVector to
+    // store entries, add some static_asserts to ensure numbers here are
+    // compatible with FileBackedVector.
     //
     // Still the actual max # of entries are determined by key-value storage,
     // since length of the key varies and affects # of actual key-value pairs
     // that can be stored.
-    static constexpr int32_t kMaxNumEntries = 1 << 27;
+    static constexpr int32_t kMaxNumEntries = 1 << 23;
     static constexpr int32_t kMaxIndex = kMaxNumEntries - 1;
     static constexpr int32_t kInvalidIndex = -1;
 
@@ -173,18 +213,64 @@ class PersistentHashMap {
                 "Max # of entries cannot fit into FileBackedVector");
 
   // Key-value serialized type
-  static constexpr int32_t kMaxKVTotalByteSize =
-      (FileBackedVector<char>::kMaxFileSize -
-       FileBackedVector<char>::Header::kHeaderSize) /
-      FileBackedVector<char>::kElementTypeSize;
+  static constexpr int32_t kMaxKVTotalByteSize = 1 << 28;
   static constexpr int32_t kMaxKVIndex = kMaxKVTotalByteSize - 1;
   static constexpr int32_t kInvalidKVIndex = -1;
   static_assert(sizeof(char) == FileBackedVector<char>::kElementTypeSize,
                 "Char type size is inconsistent with FileBackedVector element "
                 "type size");
+  static_assert(kMaxKVTotalByteSize <=
+                    FileBackedVector<char>::kMaxFileSize -
+                        FileBackedVector<char>::Header::kHeaderSize,
+                "Max total byte size of key value pairs cannot fit into "
+                "FileBackedVector");
+
+  static constexpr int32_t kMaxValueTypeSize = 1 << 10;
+
+  struct Options {
+    static constexpr int32_t kDefaultMaxLoadFactorPercent = 100;
+    static constexpr int32_t kDefaultAverageKVByteSize = 32;
+    static constexpr int32_t kDefaultInitNumBuckets = 1 << 13;
+
+    explicit Options(
+        int32_t value_type_size_in,
+        int32_t max_num_entries_in = Entry::kMaxNumEntries,
+        int32_t max_load_factor_percent_in = kDefaultMaxLoadFactorPercent,
+        int32_t average_kv_byte_size_in = kDefaultAverageKVByteSize,
+        int32_t init_num_buckets_in = kDefaultInitNumBuckets)
+        : value_type_size(value_type_size_in),
+          max_num_entries(max_num_entries_in),
+          max_load_factor_percent(max_load_factor_percent_in),
+          average_kv_byte_size(average_kv_byte_size_in),
+          init_num_buckets(init_num_buckets_in) {}
+
+    bool IsValid() const;
+
+    // (fixed) size of the serialized value type for hash map.
+    int32_t value_type_size;
+
+    // Max # of entries, default Entry::kMaxNumEntries.
+    int32_t max_num_entries;
+
+    // Percentage of the max loading for the hash map. If load_factor_percent
+    // exceeds max_load_factor_percent, then rehash will be invoked (and # of
+    // buckets will be doubled).
+    //   load_factor_percent = 100 * num_keys / num_buckets
+    //
+    // Note that load_factor_percent exceeding 100 is considered valid.
+    int32_t max_load_factor_percent;
+
+    // Average byte size of a key value pair. It is used to estimate kv_storage_
+    // pre_mapping_mmap_size.
+    int32_t average_kv_byte_size;
+
+    // Initial # of buckets for the persistent hash map. It should be 2's power.
+    // It is used when creating new persistent hash map and ignored when
+    // creating the instance from existing files.
+    int32_t init_num_buckets;
+  };
 
   static constexpr int32_t kVersion = 1;
-  static constexpr int32_t kDefaultMaxLoadFactorPercent = 75;
 
   static constexpr std::string_view kFilePrefix = "persistent_hash_map";
   // Only metadata, bucket, entry files are stored under this sub-directory, for
@@ -198,24 +284,17 @@ class PersistentHashMap {
   //           sub-directory and files to be stored. If base_dir doesn't exist,
   //           then PersistentHashMap will automatically create it. If files
   //           exist, then it will initialize the hash map from existing files.
-  // value_type_size: (fixed) size of the serialized value type for hash map.
-  // max_load_factor_percent: percentage of the max loading for the hash map.
-  //                          load_factor_percent = 100 * num_keys / num_buckets
-  //                          If load_factor_percent exceeds
-  //                          max_load_factor_percent, then rehash will be
-  //                          invoked (and # of buckets will be doubled).
-  //                          Note that load_factor_percent exceeding 100 is
-  //                          considered valid.
+  // options: Options instance.
   //
   // Returns:
+  //   INVALID_ARGUMENT_ERROR if any value in options is invalid.
   //   FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
   //                             checksum.
   //   INTERNAL_ERROR on I/O errors.
   //   Any FileBackedVector errors.
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   Create(const Filesystem& filesystem, std::string_view base_dir,
-         int32_t value_type_size,
-         int32_t max_load_factor_percent = kDefaultMaxLoadFactorPercent);
+         const Options& options);
 
   ~PersistentHashMap();
 
@@ -226,7 +305,7 @@ class PersistentHashMap {
   //
   // Returns:
   //   OK on success
-  //   RESOURCE_EXHAUSTED_ERROR if # of entries reach kMaxNumEntries
+  //   RESOURCE_EXHAUSTED_ERROR if # of entries reach options_.max_num_entries
   //   INVALID_ARGUMENT_ERROR if the key is invalid (i.e. contains '\0')
   //   INTERNAL_ERROR on I/O error or any data inconsistency
   //   Any FileBackedVector errors
@@ -256,6 +335,19 @@ class PersistentHashMap {
   //   INTERNAL_ERROR on I/O error or any data inconsistency
   //   Any FileBackedVector errors
   libtextclassifier3::Status Get(std::string_view key, void* value) const;
+
+  // Delete the key value pair from the storage. If key doesn't exist, then do
+  // nothing and return NOT_FOUND_ERROR.
+  //
+  // Returns:
+  //   OK on success
+  //   NOT_FOUND_ERROR if the key doesn't exist
+  //   INVALID_ARGUMENT_ERROR if the key is invalid (i.e. contains '\0')
+  //   INTERNAL_ERROR on I/O error or any data inconsistency
+  //   Any FileBackedVector errors
+  libtextclassifier3::Status Delete(std::string_view key);
+
+  Iterator GetIterator() const { return Iterator(this); }
 
   // Flushes content to underlying files.
   //
@@ -296,38 +388,54 @@ class PersistentHashMap {
 
   bool empty() const { return size() == 0; }
 
+  int32_t num_buckets() const { return bucket_storage_->num_elements(); }
+
  private:
+  struct EntryIndexPair {
+    int32_t target_entry_index;
+    int32_t prev_entry_index;
+
+    explicit EntryIndexPair(int32_t target_entry_index_in,
+                            int32_t prev_entry_index_in)
+        : target_entry_index(target_entry_index_in),
+          prev_entry_index(prev_entry_index_in) {}
+  };
+
   explicit PersistentHashMap(
       const Filesystem& filesystem, std::string_view base_dir,
-      std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
+      const Options& options, MemoryMappedFile&& metadata_mmapped_file,
       std::unique_ptr<FileBackedVector<Bucket>> bucket_storage,
       std::unique_ptr<FileBackedVector<Entry>> entry_storage,
       std::unique_ptr<FileBackedVector<char>> kv_storage)
       : filesystem_(&filesystem),
         base_dir_(base_dir),
-        metadata_mmapped_file_(std::move(metadata_mmapped_file)),
+        options_(options),
+        metadata_mmapped_file_(std::make_unique<MemoryMappedFile>(
+            std::move(metadata_mmapped_file))),
         bucket_storage_(std::move(bucket_storage)),
         entry_storage_(std::move(entry_storage)),
         kv_storage_(std::move(kv_storage)) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   InitializeNewFiles(const Filesystem& filesystem, std::string_view base_dir,
-                     int32_t value_type_size, int32_t max_load_factor_percent);
+                     const Options& options);
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   InitializeExistingFiles(const Filesystem& filesystem,
-                          std::string_view base_dir, int32_t value_type_size,
-                          int32_t max_load_factor_percent);
+                          std::string_view base_dir, const Options& options);
 
-  // Find the index of the key entry from a bucket (specified by bucket index).
-  // The caller should specify the desired bucket index.
+  // Find the index of the target entry (that contains the key) from a bucket
+  // (specified by bucket index). Also return the previous entry index, since
+  // Delete() needs it to update the linked list and head entry index. The
+  // caller should specify the desired bucket index.
   //
   // Returns:
-  //   int32_t: on success, the index of the entry, or Entry::kInvalidIndex if
-  //            not found
+  //   std::pair<int32_t, int32_t>: target entry index and previous entry index
+  //                                on success. If not found, then target entry
+  //                                index will be Entry::kInvalidIndex
   //   INTERNAL_ERROR if any content inconsistency
   //   Any FileBackedVector errors
-  libtextclassifier3::StatusOr<int32_t> FindEntryIndexByKey(
+  libtextclassifier3::StatusOr<EntryIndexPair> FindEntryIndexByKey(
       int32_t bucket_idx, std::string_view key) const;
 
   // Copy the hash map value of the entry into value buffer.
@@ -351,6 +459,15 @@ class PersistentHashMap {
   libtextclassifier3::Status Insert(int32_t bucket_idx, std::string_view key,
                                     const void* value);
 
+  // Rehash function. If force_rehash is true or the hash map loading is greater
+  // than max_load_factor, then it will rehash all keys.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on I/O error or any data inconsistency
+  //   Any FileBackedVector errors
+  libtextclassifier3::Status RehashIfNecessary(bool force_rehash);
+
   Crcs* crcs() {
     return reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
                                    Crcs::kFileOffset);
@@ -368,6 +485,8 @@ class PersistentHashMap {
 
   const Filesystem* filesystem_;
   std::string base_dir_;
+
+  Options options_;
 
   std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_;
 
