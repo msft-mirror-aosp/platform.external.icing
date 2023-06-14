@@ -20,13 +20,13 @@
 #include <string>
 #include <string_view>
 
-#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/index.h"
+#include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/proto/document.pb.h"
@@ -280,8 +280,9 @@ class IcingSearchEngine {
   //   NOT_FOUND if the query doesn't match any documents
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   //   INTERNAL_ERROR on IO error
-  DeleteByQueryResultProto DeleteByQuery(const SearchSpecProto& search_spec)
-      ICING_LOCKS_EXCLUDED(mutex_);
+  DeleteByQueryResultProto DeleteByQuery(
+      const SearchSpecProto& search_spec,
+      bool return_deleted_document_info = false) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves, scores, ranks, and returns the results according to the specs.
   // Results can be empty. If there're multiple pages of results,
@@ -301,6 +302,17 @@ class IcingSearchEngine {
                            const ScoringSpecProto& scoring_spec,
                            const ResultSpecProto& result_spec)
       ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Retrieves, scores, ranks and returns the suggested query string according
+  // to the specs. Results can be empty.
+  //
+  // Returns a SuggestionResponse with status:
+  //   OK with results on success
+  //   INVALID_ARGUMENT if any of specs is invalid
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on any other errors
+  SuggestionResponse SearchSuggestions(
+      const SuggestionSpecProto& suggestion_spec) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Fetches the next page of results of a previously executed query. Results
   // can be empty if next-page token is invalid. Invalid next page tokens are
@@ -390,6 +402,10 @@ class IcingSearchEngine {
   // If an IO error occurs while trying to calculate the value for a field, then
   // that field will be set to -1.
   StorageInfoResultProto GetStorageInfo() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Get debug information for Icing.
+  DebugInfoResultProto GetDebugInfo(DebugInfoVerbosity::Code verbosity)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Clears all data from Icing and re-initializes. Clients DO NOT need to call
   // Initialize again.
@@ -566,14 +582,16 @@ class IcingSearchEngine {
   // would need call Initialize() to reinitialize everything into a valid state.
   //
   // Returns:
-  //   OK on success
+  //   On success, a vector that maps from old document id to new document id. A
+  //   value of kInvalidDocumentId indicates that the old document id has been
+  //   deleted.
   //   ABORTED_ERROR if any error happens before the actual optimization, the
   //                 original document store should be still available
   //   DATA_LOSS_ERROR on errors that could potentially cause data loss,
   //                   document store is still available
   //   INTERNAL_ERROR on any IO errors or other errors that we can't recover
   //                  from
-  libtextclassifier3::Status OptimizeDocumentStore(
+  libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeDocumentStore(
       OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 

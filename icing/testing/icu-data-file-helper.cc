@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/helpers/icu/icu-data-file-helper.h"
+#include "icing/testing/icu-data-file-helper.h"
 
 #include <sys/mman.h>
 

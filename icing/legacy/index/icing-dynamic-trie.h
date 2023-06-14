@@ -35,8 +35,7 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -153,8 +152,13 @@ class IcingDynamicTrie : public IIcingStorage {
     uint32_t max_nodes;
     // Count of intermediate nodes.
     uint32_t num_intermediates;
+    // Total and maximum number of children of intermediate nodes.
+    uint32_t sum_children, max_children;
+
     // Count of leaf nodes.
     uint32_t num_leaves;
+    // Total and maximum depth of leaf nodes.
+    uint32_t sum_depth, max_depth;
 
     // Next stats
 
@@ -187,6 +191,7 @@ class IcingDynamicTrie : public IIcingStorage {
     uint32_t dirty_pages_nexts;
     uint32_t dirty_pages_suffixes;
 
+    // TODO(b/222349894) Convert the string output to a protocol buffer instead.
     std::string DumpStats(int verbosity) const;
   };
 
@@ -395,6 +400,13 @@ class IcingDynamicTrie : public IIcingStorage {
   // itself. If utf8 is true, does not cut key mid-utf8.
   std::vector<int> FindBranchingPrefixLengths(const char *key, bool utf8) const;
 
+  // Check if key is a branching term.
+  //
+  // key is a branching term, if and only if there exists terms s1 and s2 in the
+  // trie such that key is the maximum common prefix of s1 and s2, but s1 and s2
+  // are not prefixes of each other.
+  bool IsBranchingTerm(const char *key) const;
+
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
   double min_free_fraction() const;
@@ -505,7 +517,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // Change in underlying trie invalidates iterator.
   class Iterator {
    public:
-    Iterator(const IcingDynamicTrie &trie, const char *prefix);
+    Iterator(const IcingDynamicTrie &trie, const char *prefix,
+             bool reverse = false);
     void Reset();
     bool Advance();
 
@@ -522,9 +535,10 @@ class IcingDynamicTrie : public IIcingStorage {
     Iterator();
     // Copy is ok.
 
-    // Helper function that takes the left-most branch down
-    // intermediate nodes to a leaf.
-    void LeftBranchToLeaf(uint32_t node_index);
+    enum class BranchType { kLeftMost = 0, kRightMost = 1 };
+    // Helper function that takes the left-most or the right-most branch down
+    // intermediate nodes to a leaf, based on branch_type.
+    void BranchToLeaf(uint32_t node_index, BranchType branch_type);
 
     std::string cur_key_;
     const char *cur_suffix_;
@@ -533,10 +547,12 @@ class IcingDynamicTrie : public IIcingStorage {
       uint32_t node_idx;
       int child_idx;
 
-      explicit Branch(uint32_t ni) : node_idx(ni), child_idx(0) {}
+      explicit Branch(uint32_t node_index, int child_index)
+          : node_idx(node_index), child_idx(child_index) {}
     };
     std::vector<Branch> branch_stack_;
     bool single_leaf_match_;
+    bool reverse_;
 
     const IcingDynamicTrie &trie_;
   };
@@ -602,12 +618,16 @@ class IcingDynamicTrie : public IIcingStorage {
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
-  void CollectStatsRecursive(const Node &node, Stats *stats) const;
+  void CollectStatsRecursive(const Node &node, Stats *stats,
+                             uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.
   const Next *GetNextByChar(const Node *node, uint8_t key_char) const;
-  const Next *LowerBound(const Next *start, const Next *end,
-                         uint8_t key_char) const;
+  const Next *LowerBound(const Next *start, const Next *end, uint8_t key_char,
+                         uint32_t node_index = 0) const;
+  // Returns the number of valid nexts in the array.
+  int GetValidNextsSize(const IcingDynamicTrie::Next *next_array_start,
+                        int next_array_length) const;
   void FindBestNode(const char *key, uint32_t *best_node_index, int *key_offset,
                     bool prefix, bool utf8 = false) const;
 
