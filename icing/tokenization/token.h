@@ -21,10 +21,22 @@ namespace icing {
 namespace lib {
 
 struct Token {
-  enum Type {
+  enum class Type {
     // Common types
     REGULAR,  // A token without special meanings, the value of it will be
               // indexed or searched directly
+
+    VERBATIM,  // A token that should be indexed and searched without any
+               // modifications to the raw text
+
+    // An RFC822 section with the content in RFC822_TOKEN tokenizes as follows:
+    RFC822_NAME,                     // "User", "Johnsson"
+    RFC822_COMMENT,                  // "A", "comment", "here"
+    RFC822_LOCAL_ADDRESS,            // "user.name"
+    RFC822_ADDRESS,                  // "user.name@domain.name.com"
+    RFC822_ADDRESS_COMPONENT_LOCAL,  // "user", "name",
+    RFC822_ADDRESS_COMPONENT_HOST,   // "domain", "name", "com"
+    RFC822_TOKEN,  // "User Johnsson (A comment) <user.name@domain.name.com>"
 
     // Types only used in raw query
     QUERY_OR,         // Indicates OR logic between its left and right tokens
@@ -42,10 +54,10 @@ struct Token {
       : type(type_in), text(text_in) {}
 
   // The type of token
-  const Type type;
+  Type type;
 
   // The content of token
-  const std::string_view text;
+  std::string_view text;
 };
 
 }  // namespace lib

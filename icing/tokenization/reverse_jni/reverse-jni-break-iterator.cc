@@ -15,17 +15,17 @@
 #include "icing/tokenization/reverse_jni/reverse-jni-break-iterator.h"
 
 #include <jni.h>
-#include <math.h>
 
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <map>
 
-#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/text_classifier/lib3/utils/java/jni-base.h"
 #include "icing/text_classifier/lib3/utils/java/jni-helper.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/jni/jni-cache.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {

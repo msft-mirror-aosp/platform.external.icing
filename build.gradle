@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-
-import androidx.build.dependencies.DependenciesKt
 import static androidx.build.SupportConfig.*
 
 buildscript {
@@ -44,13 +42,13 @@ android {
     sourceSets {
         main {
             java.srcDir 'java/src/'
-            manifest.srcFile 'AndroidManifest.xml'
             proto.srcDir 'proto/'
         }
         // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
         //  inside appsearch:appsearch.
         //androidTest.java.srcDir 'java/tests/instrumentation/'
     }
+    namespace "com.google.android.icing"
 }
 
 dependencies {
@@ -65,7 +63,7 @@ dependencies {
 
 protobuf {
     protoc {
-        artifact = DependenciesKt.getDependencyAsString(libs.protobufCompiler)
+        artifact = libs.protobufCompiler.get()
     }
 
     generateProtoTasks {
