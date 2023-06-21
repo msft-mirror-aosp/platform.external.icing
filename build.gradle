@@ -16,13 +16,8 @@
 
 import androidx.build.SupportConfig
 
-buildscript {
-    dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.13')
-    }
-}
-
 plugins {
+    id('AndroidXPlugin')
     id('com.android.library')
     id('com.google.protobuf')
 }
@@ -110,4 +105,8 @@ android.libraryVariants.all { variant ->
 
     def exportConfiguration = configurations.register("export${suffix}")
     artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
+}
+
+androidx {
+    mavenVersion = LibraryVersions.APPSEARCH
 }
