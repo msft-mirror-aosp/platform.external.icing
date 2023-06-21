@@ -33,7 +33,7 @@
 //   icing/file:portable-file-backed-proto-log_benchmark
 //
 //   $ blaze-bin/icing/file/portable-file-backed-proto-log_benchmark
-//   --benchmark_filter=all
+//   --benchmarks=all
 //
 //
 // To build and run on an Android device (must be connected and rooted):
@@ -48,14 +48,14 @@
 //   /data/local/tmp/
 //
 //   $ adb shell /data/local/tmp/portable-file-backed-proto-log-benchmark
-//   --benchmark_filter=all
+//   --benchmarks=all
 
 namespace icing {
 namespace lib {
 
 namespace {
 
-void BM_Write(benchmark::State& state) {
+static void BM_Write(benchmark::State& state) {
   const Filesystem filesystem;
   int string_length = state.range(0);
   const std::string file_path = IcingStringUtil::StringPrintf(
@@ -108,7 +108,7 @@ BENCHMARK(BM_Write)
                               // 16MiB, and we need some extra space for the
                               // rest of the document properties
 
-void BM_Read(benchmark::State& state) {
+static void BM_Read(benchmark::State& state) {
   const Filesystem filesystem;
   int string_length = state.range(0);
   const std::string file_path = IcingStringUtil::StringPrintf(
@@ -164,7 +164,7 @@ BENCHMARK(BM_Read)
                               // 16MiB, and we need some extra space for the
                               // rest of the document properties
                               //
-void BM_Erase(benchmark::State& state) {
+static void BM_Erase(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = IcingStringUtil::StringPrintf(
       "%s%s", GetTestTempDir().c_str(), "/proto.log");
@@ -204,7 +204,7 @@ void BM_Erase(benchmark::State& state) {
 }
 BENCHMARK(BM_Erase);
 
-void BM_ComputeChecksum(benchmark::State& state) {
+static void BM_ComputeChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -246,7 +246,7 @@ void BM_ComputeChecksum(benchmark::State& state) {
 }
 BENCHMARK(BM_ComputeChecksum)->Range(1024, 1 << 20);
 
-void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
+static void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB
@@ -290,7 +290,7 @@ void BM_ComputeChecksumWithCachedChecksum(benchmark::State& state) {
 }
 BENCHMARK(BM_ComputeChecksumWithCachedChecksum);
 
-void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
+static void BM_ComputeChecksumOnlyForTail(benchmark::State& state) {
   const Filesystem filesystem;
   const std::string file_path = GetTestTempDir() + "/proto.log";
   int max_proto_size = (1 << 24) - 1;  // 16 MiB

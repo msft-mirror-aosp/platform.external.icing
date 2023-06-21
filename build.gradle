@@ -14,21 +14,28 @@
  * limitations under the License.
  */
 
-import androidx.build.SupportConfig
+
+import androidx.build.dependencies.DependenciesKt
+import static androidx.build.SupportConfig.*
+
+buildscript {
+    dependencies {
+        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.13')
+    }
+}
 
 plugins {
-    id('AndroidXPlugin')
     id('com.android.library')
     id('com.google.protobuf')
 }
 
 android {
-    buildToolsVersion SupportConfig.buildToolsVersion(project)
-    compileSdkVersion SupportConfig.COMPILE_SDK_VERSION
+    buildToolsVersion BUILD_TOOLS_VERSION
+    compileSdkVersion COMPILE_SDK_VERSION
     defaultConfig {
-        minSdkVersion SupportConfig.DEFAULT_MIN_SDK_VERSION
-        targetSdkVersion SupportConfig.TARGET_SDK_VERSION
-        testInstrumentationRunner SupportConfig.INSTRUMENTATION_RUNNER
+        minSdkVersion DEFAULT_MIN_SDK_VERSION
+        targetSdkVersion TARGET_SDK_VERSION
+        testInstrumentationRunner INSTRUMENTATION_RUNNER
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
@@ -37,20 +44,13 @@ android {
     sourceSets {
         main {
             java.srcDir 'java/src/'
+            manifest.srcFile 'AndroidManifest.xml'
             proto.srcDir 'proto/'
         }
         // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
         //  inside appsearch:appsearch.
         //androidTest.java.srcDir 'java/tests/instrumentation/'
     }
-    namespace "com.google.android.icing"
-}
-
-// This project has no device tests, skip building it
-androidComponents {
-    beforeVariants(selector().withName("debug"), { variantBuilder ->
-        variantBuilder.enableAndroidTest = false
-    })
 }
 
 dependencies {
@@ -61,12 +61,11 @@ dependencies {
     androidTestImplementation(libs.testCore)
     androidTestImplementation(libs.testRules)
     androidTestImplementation(libs.truth)
-    androidTestImplementation(libs.kotlinBom)
 }
 
 protobuf {
     protoc {
-        artifact = libs.protobufCompiler.get()
+        artifact = DependenciesKt.getDependencyAsString(libs.protobufCompiler)
     }
 
     generateProtoTasks {
@@ -105,8 +104,4 @@ android.libraryVariants.all { variant ->
 
     def exportConfiguration = configurations.register("export${suffix}")
     artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
-}
-
-androidx {
-    mavenVersion = LibraryVersions.APPSEARCH
 }

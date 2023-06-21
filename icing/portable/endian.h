@@ -77,7 +77,7 @@
 
 // The following guarantees declaration of the byte swap functions
 #ifdef COMPILER_MSVC
-#include <cstdlib>  // NOLINT(build/include)
+#include <stdlib.h>  // NOLINT(build/include)
 
 #define bswap_16(x) _byteswap_ushort(x)
 #define bswap_32(x) _byteswap_ulong(x)

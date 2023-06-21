@@ -40,6 +40,7 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
@@ -52,7 +53,6 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
-#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
@@ -186,9 +186,8 @@ class FileBackedProtoLog {
   // }
   class Iterator {
    public:
-    explicit Iterator(const Filesystem& filesystem,
-                      const std::string& file_path, int64_t initial_offset,
-                      MemoryMappedFile&& mmapped_file);
+    Iterator(const Filesystem& filesystem, const std::string& file_path,
+             int64_t initial_offset);
 
     // Advances to the position of next proto whether it has been erased or not.
     //
@@ -214,7 +213,7 @@ class FileBackedProtoLog {
   // Returns an iterator of current proto log. The caller needs to keep the
   // proto log unchanged while using the iterator, otherwise unexpected
   // behaviors could happen.
-  libtextclassifier3::StatusOr<Iterator> GetIterator();
+  Iterator GetIterator();
 
  private:
   // Object can only be instantiated via the ::Create factory.
@@ -456,8 +455,8 @@ FileBackedProtoLog<ProtoT>::InitializeExistingFile(const Filesystem* filesystem,
           absl_ports::StrCat("Error truncating file: ", file_path));
     }
 
-    ICING_LOG(WARNING) << "Truncated '" << file_path << "' to size "
-                       << last_known_good;
+    ICING_LOG(INFO) << "Truncated '" << file_path << "' to size "
+                    << last_known_good;
   }
 
   CreateResult create_result = {
@@ -473,10 +472,8 @@ template <typename ProtoT>
 libtextclassifier3::StatusOr<Crc32> FileBackedProtoLog<ProtoT>::ComputeChecksum(
     const Filesystem* filesystem, const std::string& file_path,
     Crc32 initial_crc, int64_t start, int64_t end) {
-  ICING_ASSIGN_OR_RETURN(
-      MemoryMappedFile mmapped_file,
-      MemoryMappedFile::Create(*filesystem, file_path,
-                               MemoryMappedFile::Strategy::READ_ONLY));
+  auto mmapped_file = MemoryMappedFile(*filesystem, file_path,
+                                       MemoryMappedFile::Strategy::READ_ONLY);
   Crc32 new_crc(initial_crc.Get());
 
   if (start < 0) {
@@ -547,10 +544,8 @@ template <typename ProtoT>
 libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
     int64_t file_offset) const {
   int64_t file_size = filesystem_->GetFileSize(fd_.get());
-  ICING_ASSIGN_OR_RETURN(
-      MemoryMappedFile mmapped_file,
-      MemoryMappedFile::Create(*filesystem_, file_path_,
-                               MemoryMappedFile::Strategy::READ_ONLY));
+  MemoryMappedFile mmapped_file(*filesystem_, file_path_,
+                                MemoryMappedFile::Strategy::READ_ONLY);
   if (file_offset >= file_size) {
     // file_size points to the next byte to write at, so subtract one to get
     // the inclusive, actual size of file.
@@ -575,8 +570,8 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
     return absl_ports::NotFoundError("The proto data has been erased.");
   }
 
-  google::protobuf::io::ArrayInputStream proto_stream(mmapped_file.mutable_region(),
-                                            stored_size);
+  google::protobuf::io::ArrayInputStream proto_stream(
+      mmapped_file.mutable_region(), stored_size);
 
   // Deserialize proto
   ProtoT proto;
@@ -593,9 +588,9 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
 template <typename ProtoT>
 FileBackedProtoLog<ProtoT>::Iterator::Iterator(const Filesystem& filesystem,
                                                const std::string& file_path,
-                                               int64_t initial_offset,
-                                               MemoryMappedFile&& mmapped_file)
-    : mmapped_file_(std::move(mmapped_file)),
+                                               int64_t initial_offset)
+    : mmapped_file_(filesystem, file_path,
+                    MemoryMappedFile::Strategy::READ_ONLY),
       initial_offset_(initial_offset),
       current_offset_(kInvalidOffset),
       file_size_(filesystem.GetFileSize(file_path.c_str())) {
@@ -634,14 +629,10 @@ int64_t FileBackedProtoLog<ProtoT>::Iterator::GetOffset() {
 }
 
 template <typename ProtoT>
-libtextclassifier3::StatusOr<typename FileBackedProtoLog<ProtoT>::Iterator>
+typename FileBackedProtoLog<ProtoT>::Iterator
 FileBackedProtoLog<ProtoT>::GetIterator() {
-  ICING_ASSIGN_OR_RETURN(
-      MemoryMappedFile mmapped_file,
-      MemoryMappedFile::Create(*filesystem_, file_path_,
-                               MemoryMappedFile::Strategy::READ_ONLY));
   return Iterator(*filesystem_, file_path_,
-                  /*initial_offset=*/sizeof(Header), std::move(mmapped_file));
+                  /*initial_offset=*/sizeof(Header));
 }
 
 template <typename ProtoT>

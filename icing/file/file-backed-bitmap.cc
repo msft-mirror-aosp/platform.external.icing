@@ -47,14 +47,10 @@ FileBackedBitmap::Create(const Filesystem* filesystem,
         "mmap strategy.");
   }
 
-  ICING_ASSIGN_OR_RETURN(
-      MemoryMappedFile mmapper,
-      MemoryMappedFile::Create(*filesystem, file_path, mmap_strategy));
-
   auto bitmap = std::unique_ptr<FileBackedBitmap>(
-      new FileBackedBitmap(filesystem, file_path, std::move(mmapper)));
+      new FileBackedBitmap(filesystem, file_path, mmap_strategy));
 
-  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = bitmap->Initialize();
   if (!status.ok()) {
@@ -66,10 +62,10 @@ FileBackedBitmap::Create(const Filesystem* filesystem,
 
 FileBackedBitmap::FileBackedBitmap(const Filesystem* filesystem,
                                    std::string_view file_path,
-                                   MemoryMappedFile&& mmapper)
+                                   MemoryMappedFile::Strategy mmap_strategy)
     : filesystem_(filesystem),
       file_path_(file_path),
-      mmapper_(std::make_unique<MemoryMappedFile>(std::move(mmapper))) {}
+      mmapper_(new MemoryMappedFile(*filesystem, file_path, mmap_strategy)) {}
 
 FileBackedBitmap::~FileBackedBitmap() {
   // Only update if we have auto_sync setup, otherwise the checksum will be
@@ -126,7 +122,7 @@ libtextclassifier3::Status FileBackedBitmap::FileBackedBitmap::Initialize() {
                   << " of size: " << file_size;
   }
 
-  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = mmapper_->Remap(0, file_size);
   if (!status.ok()) {
@@ -202,7 +198,7 @@ int FileBackedBitmap::NumBits() const {
 libtextclassifier3::Status FileBackedBitmap::Set(int bit_index,
                                                  bool bit_value) {
   if (bit_index >= NumBits()) {
-    // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
+    // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
     // that can support error logging.
     libtextclassifier3::Status status = GrowTo(bit_index);
     if (!status.ok()) {
@@ -265,7 +261,7 @@ libtextclassifier3::Status FileBackedBitmap::GrowTo(int new_num_bits) {
                                       file_path_.c_str(), new_file_size));
   }
 
-  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = mmapper_->Remap(0, new_file_size);
   if (!status.ok()) {
@@ -273,8 +269,8 @@ libtextclassifier3::Status FileBackedBitmap::GrowTo(int new_num_bits) {
     return status;
   }
 
-  ICING_VLOG(1) << "Grew file " << file_path_ << " to new size "
-                << new_file_size;
+  ICING_VLOG(1) << IcingStringUtil::StringPrintf(
+      "Grew file %s to new size %zd", file_path_.c_str(), new_file_size);
   mutable_header()->state = Header::ChecksumState::kStale;
   return libtextclassifier3::Status::OK;
 }
@@ -285,7 +281,7 @@ libtextclassifier3::Status FileBackedBitmap::TruncateTo(int new_num_bits) {
   }
 
   const size_t new_file_size = FileSizeForBits(new_num_bits);
-  // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
+  // TODO(b/144458732): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
   libtextclassifier3::Status status = mmapper_->Remap(0, new_file_size);
   if (!status.ok()) {

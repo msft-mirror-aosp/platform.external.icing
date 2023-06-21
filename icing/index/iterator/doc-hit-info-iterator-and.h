@@ -40,8 +40,6 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
                                  std::unique_ptr<DocHitInfoIterator> long_it);
   libtextclassifier3::Status Advance() override;
 
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
-
   int32_t GetNumBlocksInspected() const override;
 
   int32_t GetNumLeafAdvanceCalls() const override;
@@ -75,8 +73,6 @@ class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
   libtextclassifier3::Status Advance() override;
-
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
   int32_t GetNumBlocksInspected() const override;
 

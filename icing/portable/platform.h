@@ -15,8 +15,6 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
-#include "unicode/uversion.h"
-
 namespace icing {
 namespace lib {
 
@@ -34,19 +32,6 @@ inline bool IsReverseJniTokenization() {
   return true;
 #endif  // ICING_REVERSE_JNI_SEGMENTATION
   return false;
-}
-
-inline bool IsIcuTokenization() {
-  return !IsReverseJniTokenization() && !IsCfStringTokenization();
-}
-
-inline bool IsIcu72PlusTokenization() {
-  if (!IsIcuTokenization()) {
-    return false;
-  }
-  UVersionInfo version_array;
-  u_getVersion(version_array);
-  return version_array[0] >= 72;
 }
 
 // Whether we're running on android_x86
@@ -73,15 +58,6 @@ inline bool IsIosPlatform() {
   return false;
 }
 
-// TODO(b/259129263): verify the flag works for different platforms.
-#if defined(__arm__) || defined(__i386__)
-#define ICING_ARCH_BIT_32
-#elif defined(__aarch64__) || defined(__x86_64__)
-#define ICING_ARCH_BIT_64
-#else
-#define ICING_ARCH_BIT_UNKNOWN
-#endif
-
 enum Architecture {
   UNKNOWN,
   BIT_32,
@@ -93,9 +69,9 @@ enum Architecture {
 // Architecture macros pulled from
 // https://developer.android.com/ndk/guides/cpu-features
 inline Architecture GetArchitecture() {
-#if defined(ICING_ARCH_BIT_32)
+#if defined(__arm__) || defined(__i386__)
   return BIT_32;
-#elif defined(ICING_ARCH_BIT_64)
+#elif defined(__aarch64__) || defined(__x86_64__)
   return BIT_64;
 #else
   return UNKNOWN;

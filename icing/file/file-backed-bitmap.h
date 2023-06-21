@@ -175,9 +175,8 @@ class FileBackedBitmap {
   Header* mutable_header();
 
   // Use FileBackedBitmap::Create() to instantiate.
-  explicit FileBackedBitmap(const Filesystem* filesystem,
-                            std::string_view file_path,
-                            MemoryMappedFile&& mmapper);
+  FileBackedBitmap(const Filesystem* filesystem, std::string_view file_path,
+                   MemoryMappedFile::Strategy mmap_strategy);
 
   // Verify the contents of the bitmap and get ready for read/write operations.
   //

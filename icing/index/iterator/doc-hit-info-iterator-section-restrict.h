@@ -42,11 +42,9 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   explicit DocHitInfoIteratorSectionRestrict(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      std::set<std::string> target_sections, int64_t current_time_ms);
+      std::string_view target_section);
 
   libtextclassifier3::Status Advance() override;
-
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
   int32_t GetNumBlocksInspected() const override;
 
@@ -76,8 +74,8 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
 
-  std::set<std::string> target_sections_;
-  int64_t current_time_ms_;
+  // Ensure that this does not outlive the underlying string value.
+  std::string_view target_section_;
 };
 
 }  // namespace lib

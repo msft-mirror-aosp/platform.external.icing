@@ -35,8 +35,6 @@ class Crc32 {
 
   explicit Crc32(uint32_t init_crc) : crc_(init_crc) {}
 
-  explicit Crc32(std::string_view str) : crc_(0) { Append(str); }
-
   inline bool operator==(const Crc32& other) const {
     return crc_ == other.Get();
   }

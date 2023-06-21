@@ -35,8 +35,6 @@ class DocHitInfoIteratorAllDocumentId : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
-  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
-
   int32_t GetNumBlocksInspected() const override { return 0; }
 
   int32_t GetNumLeafAdvanceCalls() const override {

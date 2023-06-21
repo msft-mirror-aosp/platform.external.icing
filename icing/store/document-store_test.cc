@@ -18,7 +18,6 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
-#include <optional>
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -30,16 +29,12 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
-#include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
-#include "icing/proto/document_wrapper.pb.h"
-#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
-#include "icing/proto/term.pb.h"
-#include "icing/proto/usage.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/corpus-associated-scoring-data.h"
@@ -50,7 +45,6 @@
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -65,12 +59,12 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
-using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
+using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Not;
 using ::testing::Return;
@@ -88,13 +82,22 @@ const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
   // Didn't find our namespace, fail the test.
   EXPECT_TRUE(false) << "Failed to find namespace '" << name_space
                      << "' in DocumentStorageInfoProto.";
-  static const auto& default_namespace_storage_info =
-      *new NamespaceStorageInfoProto();
-  return default_namespace_storage_info;
+  return std::move(NamespaceStorageInfoProto());
 }
 
+constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_OPTIONAL =
+    PropertyConfigProto_Cardinality_Code_OPTIONAL;
+
+constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
+    StringIndexingConfig_TokenizerType_Code_PLAIN;
+
+constexpr TermMatchType_Code MATCH_EXACT = TermMatchType_Code_EXACT_ONLY;
+
+constexpr PropertyConfigProto_DataType_Code TYPE_INT =
+    PropertyConfigProto_DataType_Code_INT64;
+
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64_t timestamp_ms,
+                              int64 timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);
@@ -174,24 +177,21 @@ class DocumentStoreTest : public ::testing::Test {
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("email")
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName("subject")
-                                     .SetDataTypeString(TERM_MATCH_EXACT,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName("body")
-                                     .SetDataTypeString(TERM_MATCH_EXACT,
-                                                        TOKENIZER_PLAIN)
-                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("subject")
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("body")
+                            .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-    ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
-                IsOk());
+    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -200,8 +200,6 @@ class DocumentStoreTest : public ::testing::Test {
   }
 
   void TearDown() override {
-    lang_segmenter_.reset();
-    schema_store_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
@@ -212,22 +210,10 @@ class DocumentStoreTest : public ::testing::Test {
     const std::string header_file =
         absl_ports::StrCat(document_store_dir_, "/document_store_header");
     DocumentStore::Header header;
-    header.magic = DocumentStore::Header::GetCurrentMagic(
-        /*namespace_id_fingerprint=*/false);
+    header.magic = DocumentStore::Header::kMagic;
     header.checksum = 10;  // Arbitrary garbage checksum
     filesystem_.DeleteFile(header_file.c_str());
     filesystem_.Write(header_file.c_str(), &header, sizeof(header));
-  }
-
-  libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
-      const Filesystem* filesystem, const std::string& base_dir,
-      const Clock* clock, const SchemaStore* schema_store) {
-    return DocumentStore::Create(
-        filesystem, base_dir, clock, schema_store,
-        /*force_recovery_and_revalidate_documents=*/false,
-        /*namespace_id_fingerprint=*/false,
-        PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
-        /*initialize_stats=*/nullptr);
   }
 
   const Filesystem filesystem_;
@@ -255,16 +241,16 @@ class DocumentStoreTest : public ::testing::Test {
 };
 
 TEST_F(DocumentStoreTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(CreateDocumentStore(/*filesystem=*/nullptr, document_store_dir_,
-                                  &fake_clock_, schema_store_.get()),
+  EXPECT_THAT(DocumentStore::Create(/*filesystem=*/nullptr, document_store_dir_,
+                                    &fake_clock_, schema_store_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(CreateDocumentStore(&filesystem_, document_store_dir_,
-                                  /*clock=*/nullptr, schema_store_.get()),
+  EXPECT_THAT(DocumentStore::Create(&filesystem_, document_store_dir_,
+                                    /*clock=*/nullptr, schema_store_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(CreateDocumentStore(&filesystem_, document_store_dir_,
-                                  &fake_clock_, /*schema_store=*/nullptr),
+  EXPECT_THAT(DocumentStore::Create(&filesystem_, document_store_dir_,
+                                    &fake_clock_, /*schema_store=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -272,16 +258,16 @@ TEST_F(DocumentStoreTest, CreationWithBadFilesystemShouldFail) {
   MockFilesystem mock_filesystem;
   ON_CALL(mock_filesystem, OpenForWrite(_)).WillByDefault(Return(false));
 
-  EXPECT_THAT(CreateDocumentStore(&mock_filesystem, document_store_dir_,
-                                  &fake_clock_, schema_store_.get()),
+  EXPECT_THAT(DocumentStore::Create(&mock_filesystem, document_store_dir_,
+                                    &fake_clock_, schema_store_.get()),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 TEST_F(DocumentStoreTest, PutAndGetInSameNamespaceOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -300,8 +286,8 @@ TEST_F(DocumentStoreTest, PutAndGetInSameNamespaceOk) {
 TEST_F(DocumentStoreTest, PutAndGetAcrossNamespacesOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -333,8 +319,8 @@ TEST_F(DocumentStoreTest, PutAndGetAcrossNamespacesOk) {
 TEST_F(DocumentStoreTest, PutSameKey) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -362,8 +348,8 @@ TEST_F(DocumentStoreTest, PutSameKey) {
 TEST_F(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -372,34 +358,30 @@ TEST_F(DocumentStoreTest, IsDocumentExistingWithoutStatus) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
                              doc_store->Put(DocumentProto(test_document2_)));
 
-  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(
-      document_id1, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_TRUE(doc_store->GetAliveDocumentFilterData(
-      document_id2, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->DoesDocumentExist(document_id1), IsTrue());
+  EXPECT_THAT(doc_store->DoesDocumentExist(document_id2), IsTrue());
 
   DocumentId invalid_document_id_negative = -1;
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      invalid_document_id_negative, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->DoesDocumentExist(invalid_document_id_negative),
+              IsFalse());
 
   DocumentId invalid_document_id_greater_than_max = kMaxDocumentId + 2;
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      invalid_document_id_greater_than_max,
-      fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(
+      doc_store->DoesDocumentExist(invalid_document_id_greater_than_max),
+      IsFalse());
 
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      kInvalidDocumentId, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->DoesDocumentExist(kInvalidDocumentId), IsFalse());
 
   DocumentId invalid_document_id_out_of_range = document_id2 + 1;
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      invalid_document_id_out_of_range,
-      fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->DoesDocumentExist(invalid_document_id_out_of_range),
+              IsFalse());
 }
 
 TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -408,9 +390,8 @@ TEST_F(DocumentStoreTest, GetDeletedDocumentNotFound) {
       document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
       IsOkAndHolds(EqualsProto(test_document1_)));
 
-  ICING_EXPECT_OK(document_store->Delete(
-      test_document1_.namespace_(), test_document1_.uri(),
-      fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
   EXPECT_THAT(
       document_store->Get(test_document1_.namespace_(), test_document1_.uri()),
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -426,8 +407,8 @@ TEST_F(DocumentStoreTest, GetExpiredDocumentNotFound) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -454,8 +435,8 @@ TEST_F(DocumentStoreTest, GetExpiredDocumentNotFound) {
 TEST_F(DocumentStoreTest, GetInvalidDocumentId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -481,8 +462,8 @@ TEST_F(DocumentStoreTest, GetInvalidDocumentId) {
 TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -493,38 +474,9 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentNotFound) {
                          DocumentLogCreator::GetDocumentLogFilename())
           .c_str());
 
-  EXPECT_THAT(document_store->Delete("nonexistent_namespace", "nonexistent_uri",
-                                     fake_clock_.GetSystemTimeMilliseconds()),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  int64_t document_log_size_after = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/",
-                         DocumentLogCreator::GetDocumentLogFilename())
-          .c_str());
-  EXPECT_THAT(document_log_size_before, Eq(document_log_size_after));
-}
-
-TEST_F(DocumentStoreTest, DeleteNonexistentDocumentPrintableErrorMessage) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  // Validates that deleting something non-existing won't append anything to
-  // ground truth
-  int64_t document_log_size_before = filesystem_.GetFileSize(
-      absl_ports::StrCat(document_store_dir_, "/",
-                         DocumentLogCreator::GetDocumentLogFilename())
-          .c_str());
-
-  libtextclassifier3::Status status = document_store->Delete(
-      "android$contacts/", "661", fake_clock_.GetSystemTimeMilliseconds());
-  EXPECT_THAT(status, StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  for (char c : status.error_message()) {
-    EXPECT_THAT(std::isprint(c), IsTrue());
-  }
+  EXPECT_THAT(
+      document_store->Delete("nonexistent_namespace", "nonexistent_uri"),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   int64_t document_log_size_after = filesystem_.GetFileSize(
       absl_ports::StrCat(document_store_dir_, "/",
@@ -536,30 +488,28 @@ TEST_F(DocumentStoreTest, DeleteNonexistentDocumentPrintableErrorMessage) {
 TEST_F(DocumentStoreTest, DeleteAlreadyDeletedDocumentNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
 
   // First time is OK
-  ICING_EXPECT_OK(document_store->Delete(
-      test_document1_.namespace_(), test_document1_.uri(),
-      fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
 
   // Deleting it again is NOT_FOUND
   EXPECT_THAT(document_store->Delete(test_document1_.namespace_(),
-                                     test_document1_.uri(),
-                                     fake_clock_.GetSystemTimeMilliseconds()),
+                                     test_document1_.uri()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -602,8 +552,8 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceOk) {
 TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -627,15 +577,14 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceNonexistentNamespaceNotFound) {
 TEST_F(DocumentStoreTest, DeleteByNamespaceNoExistingDocumentsNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_EXPECT_OK(document_store->Delete(
-      test_document1_.namespace_(), test_document1_.uri(),
-      fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
 
   // At this point, there are no existing documents with the namespace, even
   // though Icing's derived files know about this namespace. We should still
@@ -666,8 +615,8 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -693,8 +642,8 @@ TEST_F(DocumentStoreTest, DeleteByNamespaceRecoversOk) {
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -730,14 +679,12 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -805,8 +752,8 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeOk) {
 TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -831,15 +778,14 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeNonexistentSchemaTypeNotFound) {
 TEST_F(DocumentStoreTest, DeleteBySchemaTypeNoExistingDocumentsNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   ICING_EXPECT_OK(document_store->Put(test_document1_));
-  ICING_EXPECT_OK(document_store->Delete(
-      test_document1_.namespace_(), test_document1_.uri(),
-      fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
 
   EXPECT_THAT(
       document_store->DeleteBySchemaType(test_document1_.schema()).status,
@@ -860,9 +806,7 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(schema_store->SetSchema(schema));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -882,8 +826,8 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -908,8 +852,8 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -929,14 +873,13 @@ TEST_F(DocumentStoreTest, DeleteBySchemaTypeRecoversOk) {
 TEST_F(DocumentStoreTest, PutDeleteThenPut) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   ICING_EXPECT_OK(doc_store->Put(test_document1_));
-  ICING_EXPECT_OK(doc_store->Delete(test_document1_.namespace_(),
-                                    test_document1_.uri(),
-                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(
+      doc_store->Delete(test_document1_.namespace_(), test_document1_.uri()));
   ICING_EXPECT_OK(doc_store->Put(test_document1_));
 }
 
@@ -954,9 +897,7 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK(schema_store->SetSchema(schema));
 
   DocumentId email_document_id;
   DocumentId message_document_id;
@@ -976,8 +917,8 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -1010,14 +951,13 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
           .AddType(SchemaTypeConfigBuilder().SetType("message"))
           .Build();
   ICING_EXPECT_OK(schema_store->SetSchema(
-      new_schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      new_schema, /*ignore_errors_and_delete_documents=*/true));
 
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -1037,8 +977,8 @@ TEST_F(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
 TEST_F(DocumentStoreTest, OptimizeInto) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1078,8 +1018,7 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
 
   // Optimizing into the same directory is not allowed
   EXPECT_THAT(
-      doc_store->OptimizeInto(document_store_dir_, lang_segmenter_.get(),
-                              /*namespace_id_fingerprint=*/false),
+      doc_store->OptimizeInto(document_store_dir_, lang_segmenter_.get()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
                HasSubstr("directory is the same")));
 
@@ -1091,9 +1030,8 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // deleted
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                                      /*namespace_id_fingerprint=*/false),
-              IsOkAndHolds(ElementsAre(0, 1, 2)));
+  ICING_ASSERT_OK(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   int64_t optimized_size1 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_EQ(original_size, optimized_size1);
@@ -1102,12 +1040,9 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // is deleted
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1",
-                                    fake_clock_.GetSystemTimeMilliseconds()));
-  // DocumentId 0 is removed.
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                                      /*namespace_id_fingerprint=*/false),
-              IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, 1)));
+  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1"));
+  ICING_ASSERT_OK(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   int64_t optimized_size2 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(original_size, Gt(optimized_size2));
@@ -1120,43 +1055,11 @@ TEST_F(DocumentStoreTest, OptimizeInto) {
   // expired
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  // DocumentId 0 is removed, and DocumentId 2 is expired.
-  EXPECT_THAT(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                              /*namespace_id_fingerprint=*/false),
-      IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId)));
+  ICING_ASSERT_OK(
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   int64_t optimized_size3 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(optimized_size2, Gt(optimized_size3));
-
-  // Delete the last document
-  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
-  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  ICING_ASSERT_OK(doc_store->Delete("namespace", "uri2",
-                                    fake_clock_.GetSystemTimeMilliseconds()));
-  // DocumentId 0 and 1 is removed, and DocumentId 2 is expired.
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                                      /*namespace_id_fingerprint=*/false),
-              IsOkAndHolds(ElementsAre(kInvalidDocumentId, kInvalidDocumentId,
-                                       kInvalidDocumentId)));
-  int64_t optimized_size4 =
-      filesystem_.GetFileSize(optimized_document_log.c_str());
-  EXPECT_THAT(optimized_size3, Gt(optimized_size4));
-}
-
-TEST_F(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-  std::string optimized_dir = document_store_dir_ + "_optimize";
-  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
-  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                                      /*namespace_id_fingerprint=*/false),
-              IsOkAndHolds(IsEmpty()));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
@@ -1165,8 +1068,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
     // Can put and delete fine.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -1196,9 +1099,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
 
     // Delete document 1
-    EXPECT_THAT(doc_store->Delete("icing", "email/1",
-                                  fake_clock_.GetSystemTimeMilliseconds()),
-                IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1220,8 +1121,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
   // Successfully recover from a data loss issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1229,16 +1130,12 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDataLoss) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(doc_store->Get(document_id2),
               IsOkAndHolds(EqualsProto(test_document2_)));
+
   // Checks derived filter cache
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
+  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
+              IsOkAndHolds(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
-
   // Checks derived score cache
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
@@ -1256,8 +1153,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
     // Can put and delete fine.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -1286,23 +1183,16 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
     // Delete document 1
-    EXPECT_THAT(doc_store->Delete("icing", "email/1",
-                                  fake_clock_.GetSystemTimeMilliseconds()),
-                IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
                 IsOkAndHolds(EqualsProto(test_document2_)));
-
-    EXPECT_THAT(doc_store->ReportUsage(CreateUsageReport(
-                    /*name_space=*/"icing", /*uri=*/"email/2",
-                    /*timestamp_ms=*/0, UsageReport::USAGE_TYPE1)),
-                IsOk());
   }
 
-  // "Corrupt" one of the derived files by modifying an existing data without
-  // calling PersistToDisk() or updating its checksum. This will mess up the
-  // checksum and throw an error on the derived file's initialization.
+  // "Corrupt" one of the derived files by adding non-checksummed data to
+  // it. This will mess up the checksum and throw an error on the derived file's
+  // initialization.
   const std::string document_id_mapper_file =
       absl_ports::StrCat(document_store_dir_, "/document_id_mapper");
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1310,116 +1200,17 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromCorruptDerivedFile) {
       FileBackedVector<int64_t>::Create(
           filesystem_, document_id_mapper_file,
           MemoryMappedFile::READ_WRITE_AUTO_SYNC));
-  int64_t corrupt_document_id = 1;
-  int64_t corrupt_offset = 123456;
+  int64_t corrupt_document_id = 3;
+  int64_t corrupt_offset = 3;
   EXPECT_THAT(document_id_mapper->Set(corrupt_document_id, corrupt_offset),
               IsOk());
 
-  // Will get error when initializing document id mapper file, so it will
-  // trigger RegenerateDerivedFiles.
   // Successfully recover from a corrupt derived file issue.
+  // NOTE: this doesn't trigger RegenerateDerivedFiles.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  EXPECT_THAT(doc_store->Get(document_id1),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(doc_store->Get(document_id2),
-              IsOkAndHolds(EqualsProto(test_document2_)));
-
-  // Checks derived filter cache
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document2_expiration_timestamp_)));
-
-  // Checks derived score cache
-  EXPECT_THAT(
-      doc_store->GetDocumentAssociatedScoreData(document_id2),
-      IsOkAndHolds(DocumentAssociatedScoreData(
-          /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-          /*length_in_tokens=*/4)));
-  EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
-              IsOkAndHolds(CorpusAssociatedScoreData(
-                  /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
-
-  // Checks usage score data - note that they aren't regenerated from
-  // scratch.
-  UsageStore::UsageScores expected_scores;
-  expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      doc_store->GetUsageScores(document_id2,
-                                fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
-}
-
-TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
-  DocumentId document_id1, document_id2;
-  {
-    // Can put and delete fine.
-    ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
                             schema_store_.get()));
-    std::unique_ptr<DocumentStore> doc_store =
-        std::move(create_result.document_store);
-
-    ICING_ASSERT_OK_AND_ASSIGN(
-        document_id1,
-        doc_store->Put(DocumentProto(test_document1_), /*num_tokens=*/4));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        document_id2,
-        doc_store->Put(DocumentProto(test_document2_), /*num_tokens=*/4));
-    EXPECT_THAT(doc_store->Get(document_id1),
-                IsOkAndHolds(EqualsProto(test_document1_)));
-    EXPECT_THAT(doc_store->Get(document_id2),
-                IsOkAndHolds(EqualsProto(test_document2_)));
-    // Checks derived score cache
-    EXPECT_THAT(
-        doc_store->GetDocumentAssociatedScoreData(document_id1),
-        IsOkAndHolds(DocumentAssociatedScoreData(
-            /*corpus_id=*/0, document1_score_, document1_creation_timestamp_,
-            /*length_in_tokens=*/4)));
-    EXPECT_THAT(
-        doc_store->GetDocumentAssociatedScoreData(document_id2),
-        IsOkAndHolds(DocumentAssociatedScoreData(
-            /*corpus_id=*/0, document2_score_, document2_creation_timestamp_,
-            /*length_in_tokens=*/4)));
-    EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
-                IsOkAndHolds(CorpusAssociatedScoreData(
-                    /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
-    // Delete document 1
-    EXPECT_THAT(doc_store->Delete("icing", "email/1",
-                                  fake_clock_.GetSystemTimeMilliseconds()),
-                IsOk());
-    EXPECT_THAT(doc_store->Get(document_id1),
-                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-    EXPECT_THAT(doc_store->Get(document_id2),
-                IsOkAndHolds(EqualsProto(test_document2_)));
-
-    EXPECT_THAT(doc_store->ReportUsage(CreateUsageReport(
-                    /*name_space=*/"icing", /*uri=*/"email/2",
-                    /*timestamp_ms=*/0, UsageReport::USAGE_TYPE1)),
-                IsOk());
-  }
-
-  // Discard all derived files.
-  ICING_ASSERT_OK(
-      DocumentStore::DiscardDerivedFiles(&filesystem_, document_store_dir_));
-
-  // Successfully recover after discarding all derived files.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1429,16 +1220,12 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
               IsOkAndHolds(EqualsProto(test_document2_)));
 
   // Checks derived filter cache
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
+  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
+              IsOkAndHolds(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
-
-  // Checks derived score cache.
+  // Checks derived score cache - note that they aren't regenerated from
+  // scratch.
   EXPECT_THAT(
       doc_store->GetDocumentAssociatedScoreData(document_id2),
       IsOkAndHolds(DocumentAssociatedScoreData(
@@ -1446,17 +1233,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromDiscardDerivedFiles) {
           /*length_in_tokens=*/4)));
   EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
               IsOkAndHolds(CorpusAssociatedScoreData(
-                  /*num_docs=*/1, /*sum_length_in_tokens=*/4)));
-
-  // Checks usage score data - note that they aren't regenerated from
-  // scratch.
-  UsageStore::UsageScores expected_scores;
-  expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      doc_store->GetUsageScores(document_id2,
-                                fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+                  /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
 }
 
 TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
@@ -1465,8 +1242,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     // Can put and delete fine.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -1494,9 +1271,7 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
     EXPECT_THAT(doc_store->GetCorpusAssociatedScoreData(/*corpus_id=*/0),
                 IsOkAndHolds(CorpusAssociatedScoreData(
                     /*num_docs=*/2, /*sum_length_in_tokens=*/8)));
-    EXPECT_THAT(doc_store->Delete("icing", "email/1",
-                                  fake_clock_.GetSystemTimeMilliseconds()),
-                IsOk());
+    EXPECT_THAT(doc_store->Delete("icing", "email/1"), IsOk());
     EXPECT_THAT(doc_store->Get(document_id1),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     EXPECT_THAT(doc_store->Get(document_id2),
@@ -1507,8 +1282,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1518,12 +1293,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
               IsOkAndHolds(EqualsProto(test_document2_)));
 
   // Checks derived filter cache
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id2, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
+  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id2),
+              IsOkAndHolds(DocumentFilterData(
                   /*namespace_id=*/0,
                   /*schema_type_id=*/0, document2_expiration_timestamp_)));
   // Checks derived score cache
@@ -1540,8 +1311,8 @@ TEST_F(DocumentStoreTest, ShouldRecoverFromBadChecksum) {
 TEST_F(DocumentStoreTest, GetStorageInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1571,8 +1342,9 @@ TEST_F(DocumentStoreTest, GetStorageInfo) {
   ON_CALL(mock_filesystem, GetDiskUsage(A<const char*>()))
       .WillByDefault(Return(Filesystem::kBadFileSize));
   ICING_ASSERT_OK_AND_ASSIGN(
-      create_result, CreateDocumentStore(&mock_filesystem, document_store_dir_,
-                                         &fake_clock_, schema_store_.get()));
+      create_result,
+      DocumentStore::Create(&mock_filesystem, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store_with_mock_filesystem =
       std::move(create_result.document_store);
 
@@ -1583,8 +1355,8 @@ TEST_F(DocumentStoreTest, GetStorageInfo) {
 TEST_F(DocumentStoreTest, MaxDocumentId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1596,8 +1368,7 @@ TEST_F(DocumentStoreTest, MaxDocumentId) {
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
   // Still returns the last DocumentId even if it was deleted
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
-                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   EXPECT_THAT(doc_store->last_added_document_id(), Eq(document_id1));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
@@ -1608,8 +1379,8 @@ TEST_F(DocumentStoreTest, MaxDocumentId) {
 TEST_F(DocumentStoreTest, GetNamespaceId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1641,8 +1412,8 @@ TEST_F(DocumentStoreTest, GetNamespaceId) {
 TEST_F(DocumentStoreTest, GetDuplicateNamespaceId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1661,8 +1432,8 @@ TEST_F(DocumentStoreTest, GetDuplicateNamespaceId) {
 TEST_F(DocumentStoreTest, NonexistentNamespaceNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1673,8 +1444,8 @@ TEST_F(DocumentStoreTest, NonexistentNamespaceNotFound) {
 TEST_F(DocumentStoreTest, GetCorpusDuplicateCorpusId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1694,8 +1465,8 @@ TEST_F(DocumentStoreTest, GetCorpusDuplicateCorpusId) {
 TEST_F(DocumentStoreTest, GetCorpusId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1729,8 +1500,8 @@ TEST_F(DocumentStoreTest, GetCorpusId) {
 TEST_F(DocumentStoreTest, NonexistentCorpusNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1753,8 +1524,8 @@ TEST_F(DocumentStoreTest, NonexistentCorpusNotFound) {
 TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreDataSameCorpus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1778,8 +1549,8 @@ TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreDataSameCorpus) {
 TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreData) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1816,8 +1587,8 @@ TEST_F(DocumentStoreTest, GetCorpusAssociatedScoreData) {
 TEST_F(DocumentStoreTest, NonexistentCorpusAssociatedScoreDataOutOfRange) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1828,8 +1599,8 @@ TEST_F(DocumentStoreTest, NonexistentCorpusAssociatedScoreDataOutOfRange) {
 TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1872,8 +1643,8 @@ TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataSameCorpus) {
 TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1916,8 +1687,8 @@ TEST_F(DocumentStoreTest, GetDocumentAssociatedScoreDataDifferentCorpus) {
 TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1928,47 +1699,44 @@ TEST_F(DocumentStoreTest, NonexistentDocumentAssociatedScoreDataNotFound) {
 TEST_F(DocumentStoreTest, NonexistentDocumentFilterDataNotFound) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      /*document_id=*/0, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->GetDocumentFilterData(/*document_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsFilterCache) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                              doc_store->Put(test_document1_));
 
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data,
-              Eq(DocumentFilterData(
-                  /*namespace_id=*/0,
-                  /*schema_type_id=*/0, document1_expiration_timestamp_)));
+  EXPECT_THAT(
+      doc_store->GetDocumentFilterData(document_id),
+      IsOkAndHolds(DocumentFilterData(
+          /*namespace_id=*/0,
+          /*schema_type_id=*/0,
+          /*expiration_timestamp_ms=*/document1_expiration_timestamp_)));
 
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
-                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   // Associated entry of the deleted document is removed.
-  EXPECT_FALSE(doc_store->GetAliveDocumentFilterData(
-      document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(doc_store->GetDocumentFilterData(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -1982,22 +1750,17 @@ TEST_F(DocumentStoreTest, DeleteClearsScoreCache) {
                   /*creation_timestamp_ms=*/document1_creation_timestamp_,
                   /*length_in_tokens=*/4)));
 
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
-                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
   // Associated entry of the deleted document is removed.
-  EXPECT_THAT(
-      doc_store->GetDocumentAssociatedScoreData(document_id),
-      IsOkAndHolds(DocumentAssociatedScoreData(kInvalidCorpusId,
-                                               /*document_score=*/-1,
-                                               /*creation_timestamp_ms=*/-1,
-                                               /*length_in_tokens=*/0)));
+  EXPECT_THAT(doc_store->GetDocumentAssociatedScoreData(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -2012,15 +1775,11 @@ TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      doc_store->GetUsageScores(document_id,
-                                fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Delete the document.
-  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1",
-                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK(doc_store->Delete("icing", "email/1"));
 
   // Can't report or get usage scores on the deleted document
   ASSERT_THAT(
@@ -2028,15 +1787,16 @@ TEST_F(DocumentStoreTest, DeleteShouldPreventUsageScores) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                HasSubstr("Couldn't report usage on a nonexistent document")));
 
-  EXPECT_FALSE(doc_store->GetUsageScores(
-      document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
+                       HasSubstr("Can't get usage scores")));
 }
 
 TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -2063,11 +1823,8 @@ TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_count = 1;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      doc_store->GetUsageScores(document_id,
-                                fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Some arbitrary time past the document's creation time (10) + ttl (100)
   fake_clock_.SetSystemTimeMilliseconds(200);
@@ -2078,8 +1835,9 @@ TEST_F(DocumentStoreTest, ExpirationShouldPreventUsageScores) {
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
                HasSubstr("Couldn't report usage on a nonexistent document")));
 
-  EXPECT_FALSE(doc_store->GetUsageScores(
-      document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  ASSERT_THAT(doc_store->GetUsageScores(document_id),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND,
+                       HasSubstr("Can't get usage scores")));
 }
 
 TEST_F(DocumentStoreTest,
@@ -2093,20 +1851,18 @@ TEST_F(DocumentStoreTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(doc_filter_data, Eq(DocumentFilterData(
-                                   /*namespace_id=*/0,
-                                   /*schema_type_id=*/0,
-                                   /*expiration_timestamp_ms=*/1100)));
+
+  EXPECT_THAT(
+      doc_store->GetDocumentFilterData(document_id),
+      IsOkAndHolds(DocumentFilterData(/*namespace_id=*/0,
+                                      /*schema_type_id=*/0,
+                                      /*expiration_timestamp_ms=*/1100)));
 }
 
 TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
@@ -2119,21 +1875,16 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxIfTtlIsZero) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
 
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id, fake_clock_.GetSystemTimeMilliseconds()));
-
   EXPECT_THAT(
-      doc_filter_data,
-      Eq(DocumentFilterData(
+      doc_store->GetDocumentFilterData(document_id),
+      IsOkAndHolds(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
@@ -2150,21 +1901,16 @@ TEST_F(DocumentStoreTest, ExpirationTimestampIsInt64MaxOnOverflow) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id, doc_store->Put(document));
 
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      DocumentFilterData doc_filter_data,
-      doc_store->GetAliveDocumentFilterData(
-          document_id, fake_clock_.GetSystemTimeMilliseconds()));
-
   EXPECT_THAT(
-      doc_filter_data,
-      Eq(DocumentFilterData(
+      doc_store->GetDocumentFilterData(document_id),
+      IsOkAndHolds(DocumentFilterData(
           /*namespace_id=*/0,
           /*schema_type_id=*/0,
           /*expiration_timestamp_ms=*/std::numeric_limits<int64_t>::max())));
@@ -2184,8 +1930,8 @@ TEST_F(DocumentStoreTest, CreationTimestampShouldBePopulated) {
   fake_clock_.SetSystemTimeMilliseconds(fake_real_time);
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -2217,8 +1963,8 @@ TEST_F(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -2243,8 +1989,8 @@ TEST_F(DocumentStoreTest, ShouldWriteAndReadScoresCorrectly) {
 TEST_F(DocumentStoreTest, ComputeChecksumSameBetweenCalls) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2258,8 +2004,8 @@ TEST_F(DocumentStoreTest, ComputeChecksumSameBetweenCalls) {
 TEST_F(DocumentStoreTest, ComputeChecksumSameAcrossInstances) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2269,8 +2015,8 @@ TEST_F(DocumentStoreTest, ComputeChecksumSameAcrossInstances) {
   // Destroy the previous instance and recreate DocumentStore
   document_store.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
-      create_result, CreateDocumentStore(&filesystem_, document_store_dir_,
-                                         &fake_clock_, schema_store_.get()));
+      create_result, DocumentStore::Create(&filesystem_, document_store_dir_,
+                                           &fake_clock_, schema_store_.get()));
   document_store = std::move(create_result.document_store);
 
   EXPECT_THAT(document_store->ComputeChecksum(), IsOkAndHolds(checksum));
@@ -2279,8 +2025,8 @@ TEST_F(DocumentStoreTest, ComputeChecksumSameAcrossInstances) {
 TEST_F(DocumentStoreTest, ComputeChecksumChangesOnNewDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2295,8 +2041,8 @@ TEST_F(DocumentStoreTest, ComputeChecksumChangesOnNewDocument) {
 TEST_F(DocumentStoreTest, ComputeChecksumDoesntChangeOnNewUsage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2343,9 +2089,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
             .AddType(SchemaTypeConfigBuilder().SetType("email"))
             .AddType(SchemaTypeConfigBuilder().SetType("message"))
             .Build();
-    ICING_EXPECT_OK(schema_store->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/false));
+    ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
     ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                                schema_store->GetSchemaTypeId("email"));
@@ -2354,8 +2098,8 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -2364,10 +2108,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         email_document_id, document_store->Put(DocumentProto(email_document)));
     EXPECT_THAT(document_store->Get(email_document_id),
                 IsOkAndHolds(EqualsProto(email_document)));
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+    ICING_ASSERT_OK_AND_ASSIGN(
         DocumentFilterData email_data,
-        document_store->GetAliveDocumentFilterData(
-            email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+        document_store->GetDocumentFilterData(email_document_id));
     EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
     email_namespace_id = email_data.namespace_id();
     email_expiration_timestamp = email_data.expiration_timestamp_ms();
@@ -2378,10 +2121,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
         document_store->Put(DocumentProto(message_document)));
     EXPECT_THAT(document_store->Get(message_document_id),
                 IsOkAndHolds(EqualsProto(message_document)));
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+    ICING_ASSERT_OK_AND_ASSIGN(
         DocumentFilterData message_data,
-        document_store->GetAliveDocumentFilterData(
-            message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+        document_store->GetDocumentFilterData(message_document_id));
     EXPECT_THAT(message_data.schema_type_id(), Eq(message_schema_type_id));
     message_namespace_id = message_data.namespace_id();
     message_expiration_timestamp = message_data.expiration_timestamp_ms();
@@ -2402,9 +2144,7 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2413,18 +2153,17 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   // because the "message" schema type is missing
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   // "email" document is fine
   EXPECT_THAT(document_store->Get(email_document_id),
               IsOkAndHolds(EqualsProto(email_document)));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetAliveDocumentFilterData(
-          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+      document_store->GetDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(email_schema_type_id));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(email_data.namespace_id(), Eq(email_namespace_id));
@@ -2434,10 +2173,9 @@ TEST_F(DocumentStoreTest, RegenerateDerivedFilesSkipsUnknownSchemaTypeIds) {
   // "message" document has an invalid SchemaTypeId
   EXPECT_THAT(document_store->Get(message_document_id),
               IsOkAndHolds(EqualsProto(message_document)));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetAliveDocumentFilterData(
-          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+      document_store->GetDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(-1));
   // Make sure that all the other fields are stll valid/the same
   EXPECT_THAT(message_data.namespace_id(), Eq(message_namespace_id));
@@ -2460,9 +2198,7 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2484,25 +2220,23 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   // Add the documents and check SchemaTypeIds match
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
                              document_store->Put(email_document));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetAliveDocumentFilterData(
-          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+      document_store->GetDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetAliveDocumentFilterData(
-          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+      document_store->GetDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2512,9 +2246,7 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
                .Build();
 
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2528,16 +2260,12 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
   // Check that the FilterCache holds the new SchemaTypeIds
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      email_data,
-      document_store->GetAliveDocumentFilterData(
-          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      email_data, document_store->GetDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      message_data,
-      document_store->GetAliveDocumentFilterData(
-          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      message_data, document_store->GetDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2552,16 +2280,14 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -2582,8 +2308,8 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   // Insert documents and check they're ok
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2603,8 +2329,7 @@ TEST_F(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
       PropertyConfigProto::Cardinality::REQUIRED);
 
   ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/true,
-      /*allow_circular_schema_definitions=*/false));
+      schema, /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -2633,9 +2358,7 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -2655,8 +2378,8 @@ TEST_F(DocumentStoreTest,
   // Insert documents and check they're ok
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2677,8 +2400,7 @@ TEST_F(DocumentStoreTest,
 
   ICING_EXPECT_OK(
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->UpdateSchemaStore(schema_store.get()));
 
@@ -2706,9 +2428,7 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2730,25 +2450,23 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   // Add the documents and check SchemaTypeIds match
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
                              document_store->Put(email_document));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentFilterData email_data,
-      document_store->GetAliveDocumentFilterData(
-          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+      document_store->GetDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(old_email_schema_type_id));
 
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
                              document_store->Put(message_document));
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentFilterData message_data,
-      document_store->GetAliveDocumentFilterData(
-          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+      document_store->GetDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(old_message_schema_type_id));
 
   // Rearrange the schema types. Since SchemaTypeId is assigned based on order,
@@ -2758,11 +2476,8 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
                .AddType(SchemaTypeConfigBuilder().SetType("email"))
                .Build();
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      SchemaStore::SetSchemaResult set_schema_result,
-      schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/false,
-                              /*allow_circular_schema_definitions=*/false));
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaStore::SetSchemaResult set_schema_result,
+                             schema_store->SetSchema(schema));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId new_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2777,16 +2492,12 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
       schema_store.get(), set_schema_result));
 
   // Check that the FilterCache holds the new SchemaTypeIds
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      email_data,
-      document_store->GetAliveDocumentFilterData(
-          email_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      email_data, document_store->GetDocumentFilterData(email_document_id));
   EXPECT_THAT(email_data.schema_type_id(), Eq(new_email_schema_type_id));
 
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      message_data,
-      document_store->GetAliveDocumentFilterData(
-          message_document_id, fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      message_data, document_store->GetDocumentFilterData(message_document_id));
   EXPECT_THAT(message_data.schema_type_id(), Eq(new_message_schema_type_id));
 }
 
@@ -2801,16 +2512,14 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
           .AddType(SchemaTypeConfigBuilder().SetType("email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   // Add two documents, with and without a subject
   DocumentProto email_without_subject = DocumentBuilder()
@@ -2831,8 +2540,8 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   // Insert documents and check they're ok
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2854,8 +2563,7 @@ TEST_F(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -2885,9 +2593,7 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-  ICING_EXPECT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
+  ICING_EXPECT_OK(schema_store->SetSchema(schema));
 
   // Add a "email" and "message" document
   DocumentProto email_document = DocumentBuilder()
@@ -2907,8 +2613,8 @@ TEST_F(DocumentStoreTest,
   // Insert documents and check they're ok
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2930,8 +2636,7 @@ TEST_F(DocumentStoreTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       SchemaStore::SetSchemaResult set_schema_result,
       schema_store->SetSchema(new_schema,
-                              /*ignore_errors_and_delete_documents=*/true,
-                              /*allow_circular_schema_definitions=*/false));
+                              /*ignore_errors_and_delete_documents=*/true));
 
   ICING_EXPECT_OK(document_store->OptimizedUpdateSchemaStore(
       schema_store.get(), set_schema_result));
@@ -2948,8 +2653,8 @@ TEST_F(DocumentStoreTest,
 TEST_F(DocumentStoreTest, GetOptimizeInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -2969,9 +2674,8 @@ TEST_F(DocumentStoreTest, GetOptimizeInfo) {
   EXPECT_THAT(optimize_info.estimated_optimizable_bytes, Eq(0));
 
   // Delete a document. Now something is optimizable
-  ICING_EXPECT_OK(document_store->Delete(
-      test_document1_.namespace_(), test_document1_.uri(),
-      fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete(test_document1_.namespace_(),
+                                         test_document1_.uri()));
   ICING_ASSERT_OK_AND_ASSIGN(optimize_info, document_store->GetOptimizeInfo());
   EXPECT_THAT(optimize_info.total_docs, Eq(1));
   EXPECT_THAT(optimize_info.optimizable_docs, Eq(1));
@@ -2983,12 +2687,11 @@ TEST_F(DocumentStoreTest, GetOptimizeInfo) {
   EXPECT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   EXPECT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK(
-      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                                   /*namespace_id_fingerprint=*/false));
+      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
   document_store.reset();
   ICING_ASSERT_OK_AND_ASSIGN(
-      create_result, CreateDocumentStore(&filesystem_, optimized_dir,
-                                         &fake_clock_, schema_store_.get()));
+      create_result, DocumentStore::Create(&filesystem_, optimized_dir,
+                                           &fake_clock_, schema_store_.get()));
   std::unique_ptr<DocumentStore> optimized_document_store =
       std::move(create_result.document_store);
 
@@ -3002,8 +2705,8 @@ TEST_F(DocumentStoreTest, GetOptimizeInfo) {
 TEST_F(DocumentStoreTest, GetAllNamespaces) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -3051,15 +2754,13 @@ TEST_F(DocumentStoreTest, GetAllNamespaces) {
 
   // After deleting namespace2_uri1, there's still namespace2_uri2, so
   // "namespace2" still shows up in results
-  ICING_EXPECT_OK(document_store->Delete(
-      "namespace2", "uri1", fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri1"));
 
   EXPECT_THAT(document_store->GetAllNamespaces(),
               UnorderedElementsAre("namespace1", "namespace2", "namespace3"));
 
   // After deleting namespace2_uri2, there's no more documents in "namespace2"
-  ICING_EXPECT_OK(document_store->Delete(
-      "namespace2", "uri2", fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_EXPECT_OK(document_store->Delete("namespace2", "uri2"));
 
   EXPECT_THAT(document_store->GetAllNamespaces(),
               UnorderedElementsAre("namespace1", "namespace3"));
@@ -3074,8 +2775,8 @@ TEST_F(DocumentStoreTest, GetAllNamespaces) {
 TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -3091,11 +2792,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
   UsageStore::UsageScores expected_scores;
   expected_scores.usage_type1_last_used_timestamp_s = 1;
   ++expected_scores.usage_type1_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 1 and time 5, time should be updated.
   UsageReport usage_report_type1_time5 = CreateUsageReport(
@@ -3105,10 +2803,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type1_last_used_timestamp_s = 5;
   ++expected_scores.usage_type1_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 2 and time 1.
   UsageReport usage_report_type2_time1 = CreateUsageReport(
@@ -3118,10 +2814,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type2_last_used_timestamp_s = 1;
   ++expected_scores.usage_type2_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 2 and time 5.
   UsageReport usage_report_type2_time5 = CreateUsageReport(
@@ -3131,10 +2825,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type2_last_used_timestamp_s = 5;
   ++expected_scores.usage_type2_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 3 and time 1.
   UsageReport usage_report_type3_time1 = CreateUsageReport(
@@ -3144,10 +2836,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type3_last_used_timestamp_s = 1;
   ++expected_scores.usage_type3_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 3 and time 5.
   UsageReport usage_report_type3_time5 = CreateUsageReport(
@@ -3157,17 +2847,15 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTimestampsAndGetUsageScores) {
 
   expected_scores.usage_type3_last_used_timestamp_s = 5;
   ++expected_scores.usage_type3_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -3182,11 +2870,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
 
   UsageStore::UsageScores expected_scores;
   ++expected_scores.usage_type1_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 2.
   UsageReport usage_report_type2 = CreateUsageReport(
@@ -3195,10 +2880,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type2));
 
   ++expected_scores.usage_type2_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Report usage with type 3.
   UsageReport usage_report_type3 = CreateUsageReport(
@@ -3207,10 +2890,8 @@ TEST_F(DocumentStoreTest, ReportUsageWithDifferentTypesAndGetUsageScores) {
   ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type3));
 
   ++expected_scores.usage_type3_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores, document_store->GetUsageScores(
-                         document_id, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
@@ -3219,8 +2900,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -3234,28 +2915,22 @@ TEST_F(DocumentStoreTest, UsageScoresShouldNotBeClearedOnChecksumMismatch) {
     ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
 
     ++expected_scores.usage_type1_count;
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-        UsageStore::UsageScores actual_scores,
-        document_store->GetUsageScores(
-            document_id, fake_clock_.GetSystemTimeMilliseconds()));
-    EXPECT_THAT(actual_scores, Eq(expected_scores));
+    ASSERT_THAT(document_store->GetUsageScores(document_id),
+                IsOkAndHolds(expected_scores));
   }
 
   CorruptDocStoreHeaderChecksumFile();
   // Successfully recover from a corrupt derived file issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   // Usage scores should be the same.
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
@@ -3264,8 +2939,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -3279,11 +2954,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
     ICING_ASSERT_OK(document_store->ReportUsage(usage_report_type1));
 
     ++expected_scores.usage_type1_count;
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-        UsageStore::UsageScores actual_scores,
-        document_store->GetUsageScores(
-            document_id, fake_clock_.GetSystemTimeMilliseconds()));
-    EXPECT_THAT(actual_scores, Eq(expected_scores));
+    ASSERT_THAT(document_store->GetUsageScores(document_id),
+                IsOkAndHolds(expected_scores));
   }
 
   // "Corrupt" the content written in the log by adding non-checksummed data to
@@ -3301,24 +2973,21 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeAvailableAfterDataLoss) {
   // Successfully recover from a data loss issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
   // Usage scores should still be available.
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -3334,11 +3003,8 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
 
   UsageStore::UsageScores expected_scores;
   ++expected_scores.usage_type1_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id),
+              IsOkAndHolds(expected_scores));
 
   // Update the document.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -3348,18 +3014,15 @@ TEST_F(DocumentStoreTest, UsageScoresShouldBeCopiedOverToUpdatedDocument) {
   ASSERT_THAT(updated_document_id, Not(Eq(document_id)));
 
   // Usage scores should be the same.
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores,
-      document_store->GetUsageScores(updated_document_id,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  EXPECT_THAT(document_store->GetUsageScores(updated_document_id),
+              IsOkAndHolds(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -3369,8 +3032,7 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId document_id2,
       document_store->Put(DocumentProto(test_document2_)));
-  ICING_ASSERT_OK(document_store->Delete(
-      document_id1, fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK(document_store->Delete(document_id1));
 
   // Report usage of document 2.
   UsageReport usage_report = CreateUsageReport(
@@ -3380,33 +3042,26 @@ TEST_F(DocumentStoreTest, UsageScoresShouldPersistOnOptimize) {
 
   UsageStore::UsageScores expected_scores;
   ++expected_scores.usage_type1_count;
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      UsageStore::UsageScores actual_scores,
-      document_store->GetUsageScores(document_id2,
-                                     fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(document_store->GetUsageScores(document_id2),
+              IsOkAndHolds(expected_scores));
 
   // Run optimize
   std::string optimized_dir = document_store_dir_ + "/optimize_test";
   filesystem_.CreateDirectoryRecursively(optimized_dir.c_str());
   ICING_ASSERT_OK(
-      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get(),
-                                   /*namespace_id_fingerprint=*/false));
+      document_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
 
   // Get optimized document store
   ICING_ASSERT_OK_AND_ASSIGN(
-      create_result, CreateDocumentStore(&filesystem_, optimized_dir,
-                                         &fake_clock_, schema_store_.get()));
+      create_result, DocumentStore::Create(&filesystem_, optimized_dir,
+                                           &fake_clock_, schema_store_.get()));
   std::unique_ptr<DocumentStore> optimized_document_store =
       std::move(create_result.document_store);
 
   // Usage scores should be the same.
   // The original document_id2 should have become document_id2 - 1.
-  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      actual_scores,
-      optimized_document_store->GetUsageScores(
-          document_id2 - 1, fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(actual_scores, Eq(expected_scores));
+  ASSERT_THAT(optimized_document_store->GetUsageScores(document_id2 - 1),
+              IsOkAndHolds(expected_scores));
 }
 
 TEST_F(DocumentStoreTest, DetectPartialDataLoss) {
@@ -3414,8 +3069,8 @@ TEST_F(DocumentStoreTest, DetectPartialDataLoss) {
     // Can put and delete fine.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
@@ -3443,8 +3098,8 @@ TEST_F(DocumentStoreTest, DetectPartialDataLoss) {
   // Successfully recover from a data loss issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   ASSERT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
@@ -3458,8 +3113,8 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
     // Can put and delete fine.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store_.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store_.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
@@ -3508,13 +3163,22 @@ TEST_F(DocumentStoreTest, DetectCompleteDataLoss) {
   // Successfully recover from a data loss issue.
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
   ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
 }
 
+// TODO(b/185845269) Re-enable this test by copying over a full valid set of
+// document store files. Right now this test only includes the score_cache and
+// the document store header.
+//
+// This causes a problem now because this cl changes behavior to not consider an
+// InitializeExistingDerivedFiles failure to be a recovery if there is nothing
+// to recover because the doocument store is empty.
+#define DISABLE_BACKWARDS_COMPAT_TEST
+#ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
   // The directory testdata/score_cache_without_length_in_tokens/document_store
   // contains only the scoring_cache and the document_store_header (holding the
@@ -3530,49 +3194,51 @@ TEST_F(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
 
   // Get src files
   std::string document_store_without_length_in_tokens;
-  if (IsAndroidArm() || IsIosPlatform()) {
+  if (IsAndroidPlatform() || IsIosPlatform()) {
     document_store_without_length_in_tokens = GetTestFilePath(
         "icing/testdata/score_cache_without_length_in_tokens/"
         "document_store_android_ios_compatible");
-  } else if (IsAndroidX86()) {
-    document_store_without_length_in_tokens = GetTestFilePath(
-        "icing/testdata/score_cache_without_length_in_tokens/"
-        "document_store_android_x86");
   } else {
     document_store_without_length_in_tokens = GetTestFilePath(
         "icing/testdata/score_cache_without_length_in_tokens/"
         "document_store");
   }
+  std::vector<std::string> document_store_files;
   Filesystem filesystem;
-  ICING_LOG(INFO) << "Copying files "
-                  << document_store_without_length_in_tokens;
-  ASSERT_THAT(
-      filesystem.CopyDirectory(document_store_without_length_in_tokens.c_str(),
-                               document_store_dir_.c_str(), /*recursive=*/true),
-      true);
+  filesystem.ListDirectory(document_store_without_length_in_tokens.c_str(),
+                           &document_store_files);
+
+  ICING_LOG(INFO) << "Copying files " << document_store_without_length_in_tokens
+                  << ' ' << document_store_files.size();
+  for (size_t i = 0; i != document_store_files.size(); i++) {
+    std::string src = absl_ports::StrCat(
+        document_store_without_length_in_tokens, "/", document_store_files[i]);
+    std::string dst =
+        absl_ports::StrCat(document_store_dir_, "/", document_store_files[i]);
+    ASSERT_THAT(filesystem_.CopyFile(src.c_str(), dst.c_str()), true);
+  }
 
   InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(
-          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
-          /*force_recovery_and_revalidate_documents=*/false,
-          /*namespace_id_fingerprint=*/false,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
-          &initialize_stats));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get(),
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            &initialize_stats));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
-  // The document log is using the legacy v0 format so that a migration is
-  // needed, which will also trigger regeneration.
-  EXPECT_EQ(initialize_stats.document_store_recovery_cause(),
-            InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT);
+  // The store_cache trigger regeneration because its element size is
+  // inconsistent: expected 20 (current new size), actual 12 (as per the v0
+  // score_cache).
+  EXPECT_TRUE(initialize_stats.has_document_store_recovery_cause());
 }
+#endif  // DISABLE_BACKWARDS_COMPAT_TEST
 
 TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
+      DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -3624,8 +3290,7 @@ TEST_F(DocumentStoreTest, DocumentStoreStorageInfo) {
   ICING_ASSERT_OK(doc_store->ReportUsage(usage_report_type1));
 
   // Delete the first doc.
-  ICING_ASSERT_OK(doc_store->Delete(document1.namespace_(), document1.uri(),
-                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK(doc_store->Delete(document1.namespace_(), document1.uri()));
 
   // Expire the second doc.
   fake_clock_.SetSystemTimeMilliseconds(document2.creation_timestamp_ms() +
@@ -3690,21 +3355,18 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -3713,8 +3375,8 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
     // Create the document store the first time and add an email document.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -3730,10 +3392,8 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
             .SetTtlMs(document1_ttl_)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-        DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(
-            docid, fake_clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3743,21 +3403,18 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("alarm")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("name")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("time")
-                                        .SetDataType(TYPE_INT64)
+                                        .SetDataType(TYPE_INT)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_type_config)
           .Build();
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
   ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
@@ -3765,27 +3422,18 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryUpdatesTypeIds) {
 
   {
     // Create the document store the second time and force recovery
-    InitializeStatsProto initialize_stats;
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              &initialize_stats));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/true));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
     // Ensure that the type id of the email document has been correctly updated.
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-        DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(
-            docid, fake_clock_.GetSystemTimeMilliseconds()));
-    EXPECT_THAT(filter_data.schema_type_id(), Eq(1));
-    EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
-                Eq(InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
+    ASSERT_THAT(filter_data.schema_type_id(), Eq(1));
   }
 }
 
@@ -3801,21 +3449,18 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
   // The typeid for "email" should be 0.
   ASSERT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -3824,8 +3469,8 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
     // Create the document store the first time and add an email document.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -3841,10 +3486,8 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
             .SetTtlMs(document1_ttl_)
             .Build();
     ICING_ASSERT_OK_AND_ASSIGN(docid, doc_store->Put(doc));
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-        DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(
-            docid, fake_clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
 
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
@@ -3854,21 +3497,18 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("alarm")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("name")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("time")
-                                        .SetDataType(TYPE_INT64)
+                                        .SetDataType(TYPE_INT)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_type_config)
           .Build();
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
   // Adding a new type should cause ids to be reassigned. Ids are assigned in
   // order of appearance so 'alarm' should be 0 and 'email' should be 1.
   ASSERT_THAT(schema_store->GetSchemaTypeId("alarm"), IsOkAndHolds(0));
@@ -3878,16 +3518,15 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryDoesntUpdateTypeIds) {
     // Create the document store the second time. Don't force recovery.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
     // Check that the type id of the email document has not been updated.
-    ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-        DocumentFilterData filter_data,
-        doc_store->GetAliveDocumentFilterData(
-            docid, fake_clock_.GetSystemTimeMilliseconds()));
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentFilterData filter_data,
+                               doc_store->GetDocumentFilterData(docid));
     ASSERT_THAT(filter_data.schema_type_id(), Eq(0));
   }
 }
@@ -3904,21 +3543,18 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
 
   DocumentProto docWithBody =
       DocumentBuilder()
@@ -3947,8 +3583,8 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     // that has the 'body' section and one that doesn't.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -3973,13 +3609,12 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
 
   {
@@ -3987,13 +3622,9 @@ TEST_F(DocumentStoreTest, InitializeForceRecoveryDeletesInvalidDocument) {
     CorruptDocStoreHeaderChecksumFile();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/true,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/true));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4017,21 +3648,18 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .AddProperty(PropertyConfigBuilder()
                            .SetName("body")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(email_type_config).Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
 
   DocumentProto docWithBody =
       DocumentBuilder()
@@ -4060,8 +3688,8 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
     // that has the 'body' section and one that doesn't.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
+                              schema_store.get()));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4086,13 +3714,12 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
           .SetType("email")
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   schema = SchemaBuilder().AddType(email_type_config).Build();
   ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/true,
-                  /*allow_circular_schema_definitions=*/false),
+                  schema, /*ignore_errors_and_delete_documents=*/true),
               IsOk());
 
   {
@@ -4101,8 +3728,9 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
     CorruptDocStoreHeaderChecksumFile();
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                            schema_store.get()));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false));
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
 
@@ -4114,22 +3742,23 @@ TEST_F(DocumentStoreTest, InitializeDontForceRecoveryKeepsInvalidDocument) {
   }
 }
 
+#ifndef DISABLE_BACKWARDS_COMPAT_TEST
 TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   // Set up schema.
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("subject")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("body")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("subject")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("body")
+                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                               .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   std::string schema_store_dir = schema_store_dir_ + "_migrate";
@@ -4139,10 +3768,7 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
 
-  ASSERT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false,
-                  /*allow_circular_schema_definitions=*/false),
-              IsOk());
+  ASSERT_THAT(schema_store->SetSchema(schema), IsOk());
 
   // Create dst directory that we'll initialize the DocumentStore over.
   std::string document_store_dir = document_store_dir_ + "_migrate";
@@ -4179,12 +3805,10 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   InitializeStatsProto initialize_stats;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(
-          &filesystem_, document_store_dir, &fake_clock_, schema_store.get(),
-          /*force_recovery_and_revalidate_documents=*/false,
-          /*namespace_id_fingerprint=*/false,
-          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
-          &initialize_stats));
+      DocumentStore::Create(&filesystem_, document_store_dir, &fake_clock_,
+                            schema_store.get(),
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            &initialize_stats));
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
@@ -4217,8 +3841,7 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   // Check that we didn't lose anything. A migration also doesn't technically
   // count as a recovery.
   EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
-  EXPECT_EQ(initialize_stats.document_store_recovery_cause(),
-            InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT);
+  EXPECT_FALSE(initialize_stats.has_document_store_recovery_cause());
 
   // Document 1 and 3 were put normally, and document 2 was deleted in our
   // testdata files.
@@ -4239,172 +3862,7 @@ TEST_F(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
   EXPECT_THAT(document_store->Get(/*document_id=*/2),
               IsOkAndHolds(EqualsProto(document3)));
 }
-
-TEST_F(DocumentStoreTest, GetDebugInfo) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("email")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("subject")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("body")
-                                        .SetDataTypeString(TERM_MATCH_EXACT,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(SchemaTypeConfigBuilder().SetType("person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("name")
-                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
-  std::string schema_store_dir = schema_store_dir_ + "_custom";
-  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
-  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      schema, /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  DocumentProto document1 = DocumentBuilder()
-                                .SetKey("namespace1", "email/1")
-                                .SetSchema("email")
-                                .AddStringProperty("subject", "aa bb cc")
-                                .AddStringProperty("body", "dd ee")
-                                .SetCreationTimestampMs(1)
-                                .Build();
-  ICING_ASSERT_OK(document_store->Put(document1, 5));
-
-  DocumentProto document2 = DocumentBuilder()
-                                .SetKey("namespace2", "email/2")
-                                .SetSchema("email")
-                                .AddStringProperty("subject", "aa bb")
-                                .AddStringProperty("body", "cc")
-                                .SetCreationTimestampMs(1)
-                                .Build();
-  ICING_ASSERT_OK(document_store->Put(document2, 3));
-
-  DocumentProto document3 = DocumentBuilder()
-                                .SetKey("namespace2", "email/3")
-                                .SetSchema("email")
-                                .AddStringProperty("subject", "aa")
-                                .AddStringProperty("body", "")
-                                .SetCreationTimestampMs(1)
-                                .Build();
-  ICING_ASSERT_OK(document_store->Put(document3, 1));
-
-  DocumentProto document4 = DocumentBuilder()
-                                .SetKey("namespace1", "person/1")
-                                .SetSchema("person")
-                                .AddStringProperty("name", "test test")
-                                .SetCreationTimestampMs(1)
-                                .Build();
-  ICING_ASSERT_OK(document_store->Put(document4, 2));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDebugInfoProto out1,
-      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
-  EXPECT_THAT(out1.crc(), Gt(0));
-  EXPECT_THAT(out1.document_storage_info().num_alive_documents(), Eq(4));
-  EXPECT_THAT(out1.document_storage_info().num_deleted_documents(), Eq(0));
-  EXPECT_THAT(out1.document_storage_info().num_expired_documents(), Eq(0));
-
-  DocumentDebugInfoProto::CorpusInfo info1, info2, info3;
-  info1.set_namespace_("namespace1");
-  info1.set_schema("email");
-  info1.set_total_documents(1);  // document1
-  info1.set_total_token(5);
-
-  info2.set_namespace_("namespace2");
-  info2.set_schema("email");
-  info2.set_total_documents(2);  // document2 and document3
-  info2.set_total_token(4);      // 3 + 1
-
-  info3.set_namespace_("namespace1");
-  info3.set_schema("person");
-  info3.set_total_documents(1);  // document4
-  info3.set_total_token(2);
-
-  EXPECT_THAT(out1.corpus_info(),
-              UnorderedElementsAre(EqualsProto(info1), EqualsProto(info2),
-                                   EqualsProto(info3)));
-
-  // Delete document3.
-  ICING_ASSERT_OK(document_store->Delete(
-      "namespace2", "email/3", fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDebugInfoProto out2,
-      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
-  EXPECT_THAT(out2.crc(), Gt(0));
-  EXPECT_THAT(out2.crc(), Not(Eq(out1.crc())));
-  EXPECT_THAT(out2.document_storage_info().num_alive_documents(), Eq(3));
-  EXPECT_THAT(out2.document_storage_info().num_deleted_documents(), Eq(1));
-  EXPECT_THAT(out2.document_storage_info().num_expired_documents(), Eq(0));
-  info2.set_total_documents(1);  // document2
-  info2.set_total_token(3);
-  EXPECT_THAT(out2.corpus_info(),
-              UnorderedElementsAre(EqualsProto(info1), EqualsProto(info2),
-                                   EqualsProto(info3)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDebugInfoProto out3,
-      document_store->GetDebugInfo(DebugInfoVerbosity::BASIC));
-  EXPECT_THAT(out3.corpus_info(), IsEmpty());
-}
-
-TEST_F(DocumentStoreTest, GetDebugInfoWithoutSchema) {
-  std::string schema_store_dir = schema_store_dir_ + "_custom";
-  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
-  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDebugInfoProto out,
-      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
-  EXPECT_THAT(out.crc(), Gt(0));
-  EXPECT_THAT(out.document_storage_info().num_alive_documents(), Eq(0));
-  EXPECT_THAT(out.document_storage_info().num_deleted_documents(), Eq(0));
-  EXPECT_THAT(out.document_storage_info().num_expired_documents(), Eq(0));
-  EXPECT_THAT(out.corpus_info(), IsEmpty());
-}
-
-TEST_F(DocumentStoreTest, GetDebugInfoForEmptyDocumentStore) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDebugInfoProto out,
-      document_store->GetDebugInfo(DebugInfoVerbosity::DETAILED));
-  EXPECT_THAT(out.crc(), Gt(0));
-  EXPECT_THAT(out.document_storage_info().num_alive_documents(), Eq(0));
-  EXPECT_THAT(out.document_storage_info().num_deleted_documents(), Eq(0));
-  EXPECT_THAT(out.document_storage_info().num_expired_documents(), Eq(0));
-  EXPECT_THAT(out.corpus_info(), IsEmpty());
-}
+#endif  // DISABLE_BACKWARDS_COMPAT_TEST
 
 }  // namespace
 
