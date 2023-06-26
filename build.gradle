@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-import androidx.build.SupportConfig
-
 plugins {
     id('AndroidXPlugin')
     id('com.android.library')
@@ -23,13 +21,6 @@ plugins {
 }
 
 android {
-    buildToolsVersion SupportConfig.buildToolsVersion(project)
-    compileSdkVersion SupportConfig.COMPILE_SDK_VERSION
-    defaultConfig {
-        minSdkVersion SupportConfig.DEFAULT_MIN_SDK_VERSION
-        targetSdkVersion SupportConfig.TARGET_SDK_VERSION
-        testInstrumentationRunner SupportConfig.INSTRUMENTATION_RUNNER
-    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
