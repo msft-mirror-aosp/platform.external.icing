@@ -42,8 +42,8 @@
 #include "icing/index/numeric/integer-index.h"
 #include "icing/index/string-section-indexing-handler.h"
 #include "icing/join/join-processor.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/proto/debug.pb.h"
@@ -140,6 +140,15 @@ libtextclassifier3::Status ValidateResultSpec(
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_total_bytes_per_page_threshold cannot be "
         "non-positive.");
+  }
+  if (result_spec.max_joined_children_per_parent_to_return() < 0) {
+    return absl_ports::InvalidArgumentError(
+        "ResultSpecProto.max_joined_children_per_parent_to_return cannot be "
+        "negative.");
+  }
+  if (result_spec.num_to_score() <= 0) {
+    return absl_ports::InvalidArgumentError(
+        "ResultSpecProto.num_to_score cannot be non-positive.");
   }
   // Validate ResultGroupings.
   std::unordered_set<int32_t> unique_entry_ids;
@@ -621,8 +630,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     if (!filesystem_->DeleteDirectoryRecursively(doc_store_dir.c_str()) ||
         !filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !IntegerIndex::Discard(*filesystem_, integer_index_dir).ok() ||
-        !QualifiedIdTypeJoinableIndex::Discard(*filesystem_,
-                                               qualified_id_join_index_dir)
+        !QualifiedIdJoinIndex::Discard(*filesystem_,
+                                       qualified_id_join_index_dir)
              .ok()) {
       return absl_ports::InternalError(absl_ports::StrCat(
           "Could not delete directories: ", index_dir, ", ", integer_index_dir,
@@ -666,11 +675,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // Discard qualified id join index directory and instantiate a new one.
     std::string qualified_id_join_index_dir =
         MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
-    ICING_RETURN_IF_ERROR(QualifiedIdTypeJoinableIndex::Discard(
+    ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
         *filesystem_, qualified_id_join_index_dir));
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
-        QualifiedIdTypeJoinableIndex::Create(
+        QualifiedIdJoinIndex::Create(
             *filesystem_, std::move(qualified_id_join_index_dir),
             options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
 
@@ -842,11 +851,11 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   std::string qualified_id_join_index_dir =
       MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause qualified_id_join_index_recovery_cause;
-  auto qualified_id_join_index_or = QualifiedIdTypeJoinableIndex::Create(
+  auto qualified_id_join_index_or = QualifiedIdJoinIndex::Create(
       *filesystem_, qualified_id_join_index_dir, options_.pre_mapping_fbv(),
       options_.use_persistent_hash_map());
   if (!qualified_id_join_index_or.ok()) {
-    ICING_RETURN_IF_ERROR(QualifiedIdTypeJoinableIndex::Discard(
+    ICING_RETURN_IF_ERROR(QualifiedIdJoinIndex::Discard(
         *filesystem_, qualified_id_join_index_dir));
 
     qualified_id_join_index_recovery_cause = InitializeStatsProto::IO_ERROR;
@@ -854,7 +863,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     // Try recreating it from scratch and rebuild everything.
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
-        QualifiedIdTypeJoinableIndex::Create(
+        QualifiedIdJoinIndex::Create(
             *filesystem_, std::move(qualified_id_join_index_dir),
             options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
   } else {
@@ -2124,7 +2133,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
       std::move(scoring_processor_or).ValueOrDie();
   std::vector<ScoredDocumentHit> scored_document_hits =
       scoring_processor->Score(std::move(query_results.root_iterator),
-                               performance_configuration_.num_to_score,
+                               result_spec.num_to_score(),
                                &query_results.query_term_iterators);
   int64_t scoring_latency_ms = component_timer->GetElapsedMilliseconds();
 
@@ -2471,13 +2480,12 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
                              clock_.get(), integer_index_.get()));
   handlers.push_back(std::move(integer_section_indexing_handler));
 
-  // Qualified id joinable property index handler
+  // Qualified id join index handler
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
-                             qualified_id_joinable_property_indexing_handler,
+                             qualified_id_join_indexing_handler,
                          QualifiedIdJoinIndexingHandler::Create(
                              clock_.get(), qualified_id_join_index_.get()));
-  handlers.push_back(
-      std::move(qualified_id_joinable_property_indexing_handler));
+  handlers.push_back(std::move(qualified_id_join_indexing_handler));
 
   return handlers;
 }
