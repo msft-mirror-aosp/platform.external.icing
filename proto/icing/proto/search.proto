@@ -106,7 +106,7 @@ message SearchSpecProto {
 
 // Client-supplied specifications on what to include/how to format the search
 // results.
-// Next tag: 9
+// Next tag: 10
 message ResultSpecProto {
   // The results will be returned in pages, and num_per_page specifies the
   // number of documents in one page.
@@ -211,6 +211,18 @@ message ResultSpecProto {
   // The max # of child documents will be attached and returned in the result
   // for each parent. It is only used for join API.
   optional int32 max_joined_children_per_parent_to_return = 8;
+
+  // The max # of results being scored and ranked.
+  // Running time of ScoringProcessor and Ranker is O(num_to_score) according to
+  // results of //icing/scoring:score-and-rank_benchmark. Note that
+  // the process includes scoring, building a heap, and popping results from the
+  // heap.
+  //
+  // 30000 results can be scored and ranked within 3 ms on a Pixel 3 XL
+  // according to results of
+  // //icing/scoring:score-and-rank_benchmark, so set it as the
+  // default value.
+  optional int32 num_to_score = 9 [default = 30000];
 }
 
 // The representation of a single match within a DocumentProto property.

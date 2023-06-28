@@ -23,7 +23,7 @@
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -92,9 +92,9 @@ class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         qualified_id_join_index_,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem_, qualified_id_join_index_dir_,
-            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
+        QualifiedIdJoinIndex::Create(filesystem_, qualified_id_join_index_dir_,
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -156,7 +156,7 @@ class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
   std::string qualified_id_join_index_dir_;
   std::string schema_store_dir_;
 
-  std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index_;
+  std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index_;
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
 };
