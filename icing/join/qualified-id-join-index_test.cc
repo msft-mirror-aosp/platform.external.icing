@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index.h"
 
 #include <memory>
 #include <string>
@@ -49,7 +49,7 @@ using ::testing::Pointee;
 using ::testing::SizeIs;
 
 using Crcs = PersistentStorage::Crcs;
-using Info = QualifiedIdTypeJoinableIndex::Info;
+using Info = QualifiedIdJoinIndex::Info;
 
 static constexpr int32_t kCorruptedValueOffset = 3;
 
@@ -63,7 +63,7 @@ struct QualifiedIdJoinIndexTestParam {
         use_persistent_hash_map(use_persistent_hash_map_in) {}
 };
 
-class QualifiedIdTypeJoinableIndexTest
+class QualifiedIdJoinIndexTest
     : public ::testing::TestWithParam<QualifiedIdJoinIndexTestParam> {
  protected:
   void SetUp() override {
@@ -71,7 +71,7 @@ class QualifiedIdTypeJoinableIndexTest
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
                 IsTrue());
 
-    working_path_ = base_dir_ + "/qualified_id_type_joinable_index_test";
+    working_path_ = base_dir_ + "/qualified_id_join_index_test";
   }
 
   void TearDown() override {
@@ -83,27 +83,26 @@ class QualifiedIdTypeJoinableIndexTest
   std::string working_path_;
 };
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, InvalidWorkingPath) {
+TEST_P(QualifiedIdJoinIndexTest, InvalidWorkingPath) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
-  EXPECT_THAT(
-      QualifiedIdTypeJoinableIndex::Create(
-          filesystem_, "/dev/null/qualified_id_type_joinable_index_test",
-          param.pre_mapping_fbv, param.use_persistent_hash_map),
-      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(
+                  filesystem_, "/dev/null/qualified_id_join_index_test",
+                  param.pre_mapping_fbv, param.use_persistent_hash_map),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, InitializeNewFiles) {
+TEST_P(QualifiedIdJoinIndexTest, InitializeNewFiles) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ASSERT_FALSE(filesystem_.DirectoryExists(working_path_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     EXPECT_THAT(index, Pointee(IsEmpty()));
 
     ICING_ASSERT_OK(index->PersistToDisk());
@@ -113,25 +112,23 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, InitializeNewFiles) {
   // sections.
   const std::string metadata_file_path =
       absl_ports::StrCat(working_path_, "/metadata");
-  auto metadata_buffer = std::make_unique<uint8_t[]>(
-      QualifiedIdTypeJoinableIndex::kMetadataFileSize);
+  auto metadata_buffer =
+      std::make_unique<uint8_t[]>(QualifiedIdJoinIndex::kMetadataFileSize);
   ASSERT_THAT(
       filesystem_.PRead(metadata_file_path.c_str(), metadata_buffer.get(),
-                        QualifiedIdTypeJoinableIndex::kMetadataFileSize,
+                        QualifiedIdJoinIndex::kMetadataFileSize,
                         /*offset=*/0),
       IsTrue());
 
   // Check info section
   const Info* info = reinterpret_cast<const Info*>(
-      metadata_buffer.get() +
-      QualifiedIdTypeJoinableIndex::kInfoMetadataBufferOffset);
+      metadata_buffer.get() + QualifiedIdJoinIndex::kInfoMetadataBufferOffset);
   EXPECT_THAT(info->magic, Eq(Info::kMagic));
   EXPECT_THAT(info->last_added_document_id, Eq(kInvalidDocumentId));
 
   // Check crcs section
   const Crcs* crcs = reinterpret_cast<const Crcs*>(
-      metadata_buffer.get() +
-      QualifiedIdTypeJoinableIndex::kCrcsMetadataBufferOffset);
+      metadata_buffer.get() + QualifiedIdJoinIndex::kCrcsMetadataBufferOffset);
   // There are some initial info in KeyMapper, so storages_crc should be
   // non-zero.
   EXPECT_THAT(crcs->component_crcs.storages_crc, Ne(0));
@@ -146,16 +143,16 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, InitializeNewFiles) {
                      .Get()));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
+TEST_P(QualifiedIdJoinIndexTest,
        InitializationShouldFailWithoutPersistToDiskOrDestruction) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
-  // Create new qualified id type joinable index
+  // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   // Insert some data.
   ICING_ASSERT_OK(
@@ -171,24 +168,23 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(
-                  filesystem_, working_path_, param.pre_mapping_fbv,
-                  param.use_persistent_hash_map),
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           param.use_persistent_hash_map),
               StatusIs(param.use_persistent_hash_map
                            ? libtextclassifier3::StatusCode::FAILED_PRECONDITION
                            : libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
-       InitializationShouldSucceedWithPersistToDisk) {
+TEST_P(QualifiedIdJoinIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
-  // Create new qualified id type joinable index
+  // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index1,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index1,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   // Insert some data.
   ICING_ASSERT_OK(
@@ -208,10 +204,10 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
   ICING_EXPECT_OK(index1->PersistToDisk());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index2,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index2,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
   EXPECT_THAT(index2, Pointee(SizeIs(3)));
   EXPECT_THAT(
       index2->Get(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20)),
@@ -224,17 +220,16 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
       IsOkAndHolds(/*ref_qualified_id_str=*/"namespace#uriC"));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
-       InitializationShouldSucceedAfterDestruction) {
+TEST_P(QualifiedIdJoinIndexTest, InitializationShouldSucceedAfterDestruction) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
 
     // Insert some data.
     ICING_ASSERT_OK(
@@ -255,10 +250,10 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
     // thus initializing another instance on the same files should succeed, and
     // we should be able to get the same contents.
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     EXPECT_THAT(index, Pointee(SizeIs(3)));
     EXPECT_THAT(index->Get(DocJoinInfo(/*document_id=*/1,
                                        /*joinable_property_id=*/20)),
@@ -272,17 +267,17 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
   }
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
+TEST_P(QualifiedIdJoinIndexTest,
        InitializeExistingFilesWithDifferentMagicShouldFail) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
                    /*ref_qualified_id_str=*/"namespace#uriA"));
@@ -297,50 +292,49 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
     ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
     ASSERT_THAT(metadata_sfd.is_valid(), IsTrue());
 
-    auto metadata_buffer = std::make_unique<uint8_t[]>(
-        QualifiedIdTypeJoinableIndex::kMetadataFileSize);
-    ASSERT_THAT(
-        filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
-                          QualifiedIdTypeJoinableIndex::kMetadataFileSize,
-                          /*offset=*/0),
-        IsTrue());
+    auto metadata_buffer =
+        std::make_unique<uint8_t[]>(QualifiedIdJoinIndex::kMetadataFileSize);
+    ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
+                                  QualifiedIdJoinIndex::kMetadataFileSize,
+                                  /*offset=*/0),
+                IsTrue());
 
     // Manually change magic and update checksums.
     Crcs* crcs = reinterpret_cast<Crcs*>(
         metadata_buffer.get() +
-        QualifiedIdTypeJoinableIndex::kCrcsMetadataBufferOffset);
+        QualifiedIdJoinIndex::kCrcsMetadataBufferOffset);
     Info* info = reinterpret_cast<Info*>(
         metadata_buffer.get() +
-        QualifiedIdTypeJoinableIndex::kInfoMetadataBufferOffset);
+        QualifiedIdJoinIndex::kInfoMetadataBufferOffset);
     info->magic += kCorruptedValueOffset;
     crcs->component_crcs.info_crc = info->ComputeChecksum().Get();
     crcs->all_crc = crcs->component_crcs.ComputeChecksum().Get();
-    ASSERT_THAT(filesystem_.PWrite(
-                    metadata_sfd.get(), /*offset=*/0, metadata_buffer.get(),
-                    QualifiedIdTypeJoinableIndex::kMetadataFileSize),
+    ASSERT_THAT(filesystem_.PWrite(metadata_sfd.get(), /*offset=*/0,
+                                   metadata_buffer.get(),
+                                   QualifiedIdJoinIndex::kMetadataFileSize),
                 IsTrue());
   }
 
-  // Attempt to create the qualified id type joinable index with different
-  // magic. This should fail.
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(
-                  filesystem_, working_path_, param.pre_mapping_fbv,
-                  param.use_persistent_hash_map),
+  // Attempt to create the qualified id join index with different magic. This
+  // should fail.
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           param.use_persistent_hash_map),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
                        HasSubstr("Incorrect magic value")));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
+TEST_P(QualifiedIdJoinIndexTest,
        InitializeExistingFilesWithWrongAllCrcShouldFail) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
                    /*ref_qualified_id_str=*/"namespace#uriA"));
@@ -354,46 +348,45 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
     ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
     ASSERT_THAT(metadata_sfd.is_valid(), IsTrue());
 
-    auto metadata_buffer = std::make_unique<uint8_t[]>(
-        QualifiedIdTypeJoinableIndex::kMetadataFileSize);
-    ASSERT_THAT(
-        filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
-                          QualifiedIdTypeJoinableIndex::kMetadataFileSize,
-                          /*offset=*/0),
-        IsTrue());
+    auto metadata_buffer =
+        std::make_unique<uint8_t[]>(QualifiedIdJoinIndex::kMetadataFileSize);
+    ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
+                                  QualifiedIdJoinIndex::kMetadataFileSize,
+                                  /*offset=*/0),
+                IsTrue());
 
     // Manually corrupt all_crc
     Crcs* crcs = reinterpret_cast<Crcs*>(
         metadata_buffer.get() +
-        QualifiedIdTypeJoinableIndex::kCrcsMetadataBufferOffset);
+        QualifiedIdJoinIndex::kCrcsMetadataBufferOffset);
     crcs->all_crc += kCorruptedValueOffset;
 
-    ASSERT_THAT(filesystem_.PWrite(
-                    metadata_sfd.get(), /*offset=*/0, metadata_buffer.get(),
-                    QualifiedIdTypeJoinableIndex::kMetadataFileSize),
+    ASSERT_THAT(filesystem_.PWrite(metadata_sfd.get(), /*offset=*/0,
+                                   metadata_buffer.get(),
+                                   QualifiedIdJoinIndex::kMetadataFileSize),
                 IsTrue());
   }
 
-  // Attempt to create the qualified id type joinable index with metadata
-  // containing corrupted all_crc. This should fail.
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(
-                  filesystem_, working_path_, param.pre_mapping_fbv,
-                  param.use_persistent_hash_map),
+  // Attempt to create the qualified id join index with metadata containing
+  // corrupted all_crc. This should fail.
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           param.use_persistent_hash_map),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
                        HasSubstr("Invalid all crc")));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
+TEST_P(QualifiedIdJoinIndexTest,
        InitializeExistingFilesWithCorruptedInfoShouldFail) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
                    /*ref_qualified_id_str=*/"namespace#uriA"));
@@ -407,47 +400,46 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
     ScopedFd metadata_sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
     ASSERT_THAT(metadata_sfd.is_valid(), IsTrue());
 
-    auto metadata_buffer = std::make_unique<uint8_t[]>(
-        QualifiedIdTypeJoinableIndex::kMetadataFileSize);
-    ASSERT_THAT(
-        filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
-                          QualifiedIdTypeJoinableIndex::kMetadataFileSize,
-                          /*offset=*/0),
-        IsTrue());
+    auto metadata_buffer =
+        std::make_unique<uint8_t[]>(QualifiedIdJoinIndex::kMetadataFileSize);
+    ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), metadata_buffer.get(),
+                                  QualifiedIdJoinIndex::kMetadataFileSize,
+                                  /*offset=*/0),
+                IsTrue());
 
     // Modify info, but don't update the checksum. This would be similar to
     // corruption of info.
     Info* info = reinterpret_cast<Info*>(
         metadata_buffer.get() +
-        QualifiedIdTypeJoinableIndex::kInfoMetadataBufferOffset);
+        QualifiedIdJoinIndex::kInfoMetadataBufferOffset);
     info->last_added_document_id += kCorruptedValueOffset;
 
-    ASSERT_THAT(filesystem_.PWrite(
-                    metadata_sfd.get(), /*offset=*/0, metadata_buffer.get(),
-                    QualifiedIdTypeJoinableIndex::kMetadataFileSize),
+    ASSERT_THAT(filesystem_.PWrite(metadata_sfd.get(), /*offset=*/0,
+                                   metadata_buffer.get(),
+                                   QualifiedIdJoinIndex::kMetadataFileSize),
                 IsTrue());
   }
 
-  // Attempt to create the qualified id type joinable index with info that
-  // doesn't match its checksum. This should fail.
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(
-                  filesystem_, working_path_, param.pre_mapping_fbv,
-                  param.use_persistent_hash_map),
+  // Attempt to create the qualified id join index with info that doesn't match
+  // its checksum. This should fail.
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           param.use_persistent_hash_map),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
                        HasSubstr("Invalid info crc")));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
+TEST_P(QualifiedIdJoinIndexTest,
        InitializeExistingFilesWithCorruptedDocJoinInfoMapperShouldFail) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
                    /*ref_qualified_id_str=*/"namespace#uriA"));
@@ -478,26 +470,26 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
-  // Attempt to create the qualified id type joinable index with corrupted
+  // Attempt to create the qualified id join index with corrupted
   // doc_join_info_mapper. This should fail.
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(
-                  filesystem_, working_path_, param.pre_mapping_fbv,
-                  param.use_persistent_hash_map),
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           param.use_persistent_hash_map),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
                        HasSubstr("Invalid storages crc")));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
+TEST_P(QualifiedIdJoinIndexTest,
        InitializeExistingFilesWithCorruptedQualifiedIdStorageShouldFail) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
                    /*ref_qualified_id_str=*/"namespace#uriA"));
@@ -524,24 +516,24 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
-  // Attempt to create the qualified id type joinable index with corrupted
+  // Attempt to create the qualified id join index with corrupted
   // qualified_id_storage. This should fail.
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(
-                  filesystem_, working_path_, param.pre_mapping_fbv,
-                  param.use_persistent_hash_map),
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           param.use_persistent_hash_map),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
                        HasSubstr("Invalid storages crc")));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, InvalidPut) {
+TEST_P(QualifiedIdJoinIndexTest, InvalidPut) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
-  // Create new qualified id type joinable index
+  // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   DocJoinInfo default_invalid;
   EXPECT_THAT(
@@ -549,22 +541,22 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, InvalidPut) {
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, InvalidGet) {
+TEST_P(QualifiedIdJoinIndexTest, InvalidGet) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
-  // Create new qualified id type joinable index
+  // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   DocJoinInfo default_invalid;
   EXPECT_THAT(index->Get(default_invalid),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, PutAndGet) {
+TEST_P(QualifiedIdJoinIndexTest, PutAndGet) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   DocJoinInfo target_info1(/*document_id=*/1, /*joinable_property_id=*/20);
@@ -577,12 +569,12 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, PutAndGet) {
   std::string_view ref_qualified_id_str_c = "namespace#uriC";
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
 
     EXPECT_THAT(index->Put(target_info1, ref_qualified_id_str_a), IsOk());
     EXPECT_THAT(index->Put(target_info2, ref_qualified_id_str_b), IsOk());
@@ -598,29 +590,28 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, PutAndGet) {
 
   // Verify we can get all of them after destructing and re-initializing.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
   EXPECT_THAT(index, Pointee(SizeIs(3)));
   EXPECT_THAT(index->Get(target_info1), IsOkAndHolds(ref_qualified_id_str_a));
   EXPECT_THAT(index->Get(target_info2), IsOkAndHolds(ref_qualified_id_str_b));
   EXPECT_THAT(index->Get(target_info3), IsOkAndHolds(ref_qualified_id_str_c));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest,
-       GetShouldReturnNotFoundErrorIfNotExist) {
+TEST_P(QualifiedIdJoinIndexTest, GetShouldReturnNotFoundErrorIfNotExist) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   DocJoinInfo target_info(/*document_id=*/1, /*joinable_property_id=*/20);
   std::string_view ref_qualified_id_str = "namespace#uriA";
 
-  // Create new qualified id type joinable index
+  // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   // Verify entry is not found in the beginning.
   EXPECT_THAT(index->Get(target_info),
@@ -636,14 +627,14 @@ TEST_P(QualifiedIdTypeJoinableIndexTest,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, SetLastAddedDocumentId) {
+TEST_P(QualifiedIdJoinIndexTest, SetLastAddedDocumentId) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
@@ -657,15 +648,15 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, SetLastAddedDocumentId) {
 }
 
 TEST_P(
-    QualifiedIdTypeJoinableIndexTest,
+    QualifiedIdJoinIndexTest,
     SetLastAddedDocumentIdShouldIgnoreNewDocumentIdNotGreaterThanTheCurrent) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   constexpr DocumentId kDocumentId = 123;
   index->set_last_added_document_id(kDocumentId);
@@ -678,14 +669,14 @@ TEST_P(
   EXPECT_THAT(index->last_added_document_id(), Eq(kDocumentId));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, Optimize) {
+TEST_P(QualifiedIdJoinIndexTest, Optimize) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/10),
@@ -759,14 +750,14 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, Optimize) {
               IsOkAndHolds("namespace#uriD"));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, OptimizeOutOfRangeDocumentId) {
+TEST_P(QualifiedIdJoinIndexTest, OptimizeOutOfRangeDocumentId) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/99, /*joinable_property_id=*/10),
@@ -788,14 +779,14 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, OptimizeOutOfRangeDocumentId) {
   EXPECT_THAT(index, Pointee(IsEmpty()));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, OptimizeDeleteAll) {
+TEST_P(QualifiedIdJoinIndexTest, OptimizeDeleteAll) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
 
   ICING_ASSERT_OK(
       index->Put(DocJoinInfo(/*document_id=*/3, /*joinable_property_id=*/10),
@@ -827,19 +818,19 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, OptimizeDeleteAll) {
   EXPECT_THAT(index, Pointee(IsEmpty()));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, Clear) {
+TEST_P(QualifiedIdJoinIndexTest, Clear) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   DocJoinInfo target_info1(/*document_id=*/1, /*joinable_property_id=*/20);
   DocJoinInfo target_info2(/*document_id=*/3, /*joinable_property_id=*/5);
   DocJoinInfo target_info3(/*document_id=*/6, /*joinable_property_id=*/13);
 
-  // Create new qualified id type joinable index
+  // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-      QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                           param.pre_mapping_fbv,
-                                           param.use_persistent_hash_map));
+      std::unique_ptr<QualifiedIdJoinIndex> index,
+      QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                   param.pre_mapping_fbv,
+                                   param.use_persistent_hash_map));
   ICING_ASSERT_OK(
       index->Put(target_info1, /*ref_qualified_id_str=*/"namespace#uriA"));
   ICING_ASSERT_OK(
@@ -862,7 +853,7 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, Clear) {
   EXPECT_THAT(index->Get(target_info3),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
-  // Joinable index should be able to work normally after Clear().
+  // Join index should be able to work normally after Clear().
   DocJoinInfo target_info4(/*document_id=*/2, /*joinable_property_id=*/19);
   ICING_ASSERT_OK(
       index->Put(target_info4, /*ref_qualified_id_str=*/"namespace#uriD"));
@@ -876,9 +867,9 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, Clear) {
 
   // Verify index after reconstructing.
   ICING_ASSERT_OK_AND_ASSIGN(
-      index, QualifiedIdTypeJoinableIndex::Create(
-                 filesystem_, working_path_, param.pre_mapping_fbv,
-                 param.use_persistent_hash_map));
+      index, QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                          param.pre_mapping_fbv,
+                                          param.use_persistent_hash_map));
   EXPECT_THAT(index->last_added_document_id(), Eq(2));
   EXPECT_THAT(index->Get(target_info1),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -889,16 +880,16 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, Clear) {
   EXPECT_THAT(index->Get(target_info4), IsOkAndHolds("namespace#uriD"));
 }
 
-TEST_P(QualifiedIdTypeJoinableIndexTest, SwitchKeyMapperTypeShouldReturnError) {
+TEST_P(QualifiedIdJoinIndexTest, SwitchKeyMapperTypeShouldReturnError) {
   const QualifiedIdJoinIndexTestParam& param = GetParam();
 
   {
-    // Create new qualified id type joinable index
+    // Create new qualified id join index
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                             param.pre_mapping_fbv,
-                                             param.use_persistent_hash_map));
+        std::unique_ptr<QualifiedIdJoinIndex> index,
+        QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                     param.pre_mapping_fbv,
+                                     param.use_persistent_hash_map));
     ICING_ASSERT_OK(
         index->Put(DocJoinInfo(/*document_id=*/1, /*joinable_property_id=*/20),
                    /*ref_qualified_id_str=*/"namespace#uriA"));
@@ -907,14 +898,14 @@ TEST_P(QualifiedIdTypeJoinableIndexTest, SwitchKeyMapperTypeShouldReturnError) {
   }
 
   bool switch_key_mapper_flag = !param.use_persistent_hash_map;
-  EXPECT_THAT(QualifiedIdTypeJoinableIndex::Create(filesystem_, working_path_,
-                                                   param.pre_mapping_fbv,
-                                                   switch_key_mapper_flag),
+  EXPECT_THAT(QualifiedIdJoinIndex::Create(filesystem_, working_path_,
+                                           param.pre_mapping_fbv,
+                                           switch_key_mapper_flag),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    QualifiedIdTypeJoinableIndexTest, QualifiedIdTypeJoinableIndexTest,
+    QualifiedIdJoinIndexTest, QualifiedIdJoinIndexTest,
     testing::Values(
         QualifiedIdJoinIndexTestParam(/*pre_mapping_fbv_in=*/true,
                                       /*use_persistent_hash_map_in=*/true),
