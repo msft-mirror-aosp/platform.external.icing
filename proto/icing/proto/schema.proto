@@ -138,15 +138,22 @@ message StringIndexingConfig {
 }
 
 // Describes how a document property should be indexed.
-// Next tag: 2
+// Next tag: 3
 message DocumentIndexingConfig {
   // OPTIONAL: Whether nested properties within the document property should be
-  // indexed. If true, then the nested properties will be indexed according to
+  // indexed. If true, then all nested properties will be indexed according to
   // the property's own indexing configurations. If false, nested documents'
   // properties will not be indexed even if they have an indexing configuration.
   //
   // The default value is false.
   optional bool index_nested_properties = 1;
+
+  // List of nested properties within the document to index. Only the
+  // provided list of properties will be indexed according to the property's
+  // indexing configurations.
+  //
+  // index_nested_properties must be false in order to use this feature.
+  repeated string indexable_nested_properties_list = 2;
 }
 
 // Describes how a int64 property should be indexed.
