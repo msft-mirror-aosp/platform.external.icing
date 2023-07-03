@@ -30,10 +30,19 @@ class ScoredDocumentHitsRanker {
  public:
   virtual ~ScoredDocumentHitsRanker() = default;
 
-  // Pop the next top ScoredDocumentHit and return. It is undefined to call
-  // PopNext on an empty ranker, so the caller should check if it is not empty
-  // before calling.
-  virtual ScoredDocumentHit PopNext() = 0;
+  // Pop the next top JoinedScoredDocumentHit and return. It is undefined to
+  // call PopNext on an empty ranker, so the caller should check if it is not
+  // empty before calling.
+  //
+  // Note: ranker may store ScoredDocumentHit or JoinedScoredDocumentHit. We can
+  // add template for this interface, but since JoinedScoredDocumentHit is a
+  // superset of ScoredDocumentHit, we unify the return type of PopNext to use
+  // the superset type JoinedScoredDocumentHit in order to make it simple, and
+  // rankers storing ScoredDocumentHit should convert it to
+  // JoinedScoredDocumentHit before returning. It makes the implementation
+  // simpler, especially for ResultRetriever, which now only needs to deal with
+  // one single return format.
+  virtual JoinedScoredDocumentHit PopNext() = 0;
 
   // Truncates the remaining ScoredDocumentHits to the given size. The best
   // ScoredDocumentHits (according to the ranking policy) should be kept.
