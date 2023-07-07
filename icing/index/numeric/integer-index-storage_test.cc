@@ -30,8 +30,6 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
-#include "icing/file/posting_list/flash-index-storage.h"
-#include "icing/file/posting_list/index-block.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -106,7 +104,32 @@ libtextclassifier3::StatusOr<std::vector<DocHitInfo>> Query(
 }
 
 TEST_P(IntegerIndexStorageTest, OptionsEmptyCustomInitBucketsShouldBeValid) {
-  EXPECT_THAT(Options(/*pre_mapping_fbv_in=*/GetParam()).IsValid(), IsTrue());
+  EXPECT_THAT(
+      Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsTrue());
+}
+
+TEST_P(IntegerIndexStorageTest, OptionsInvalidNumDataThresholdForBucketSplit) {
+  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/{},
+                      /*custom_init_unsorted_buckets_in=*/{},
+                      /*num_data_threshold_for_bucket_split=*/-1,
+                      /*pre_mapping_fbv_in=*/GetParam())
+                  .IsValid(),
+              IsFalse());
+  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/{},
+                      /*custom_init_unsorted_buckets_in=*/{},
+                      /*num_data_threshold_for_bucket_split=*/0,
+                      /*pre_mapping_fbv_in=*/GetParam())
+                  .IsValid(),
+              IsFalse());
+  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/{},
+                      /*custom_init_unsorted_buckets_in=*/{},
+                      /*num_data_threshold_for_bucket_split=*/63,
+                      /*pre_mapping_fbv_in=*/GetParam())
+                  .IsValid(),
+              IsFalse());
 }
 
 TEST_P(IntegerIndexStorageTest, OptionsInvalidCustomInitBucketsRange) {
@@ -116,6 +139,7 @@ TEST_P(IntegerIndexStorageTest, OptionsInvalidCustomInitBucketsRange) {
               {Bucket(std::numeric_limits<int64_t>::min(), 5), Bucket(9, 6)},
               /*custom_init_unsorted_buckets_in=*/
               {Bucket(10, std::numeric_limits<int64_t>::max())},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
               /*pre_mapping_fbv_in=*/GetParam())
           .IsValid(),
       IsFalse());
@@ -126,6 +150,7 @@ TEST_P(IntegerIndexStorageTest, OptionsInvalidCustomInitBucketsRange) {
               {Bucket(10, std::numeric_limits<int64_t>::max())},
               /*custom_init_unsorted_buckets_in=*/
               {Bucket(std::numeric_limits<int64_t>::min(), 5), Bucket(9, 6)},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
               /*pre_mapping_fbv_in=*/GetParam())
           .IsValid(),
       IsFalse());
@@ -138,91 +163,109 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_THAT(valid_posting_list_identifier.is_valid(), IsTrue());
 
   // Invalid custom init sorted bucket
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/
-                      {Bucket(std::numeric_limits<int64_t>::min(),
-                              std::numeric_limits<int64_t>::max(),
-                              valid_posting_list_identifier)},
-                      /*custom_init_unsorted_buckets_in=*/{},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/
+              {Bucket(std::numeric_limits<int64_t>::min(),
+                      std::numeric_limits<int64_t>::max(),
+                      valid_posting_list_identifier)},
+              /*custom_init_unsorted_buckets_in=*/{},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 
   // Invalid custom init unsorted bucket
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/{},
-                      /*custom_init_unsorted_buckets_in=*/
-                      {Bucket(std::numeric_limits<int64_t>::min(),
-                              std::numeric_limits<int64_t>::max(),
-                              valid_posting_list_identifier)},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/{},
+              /*custom_init_unsorted_buckets_in=*/
+              {Bucket(std::numeric_limits<int64_t>::min(),
+                      std::numeric_limits<int64_t>::max(),
+                      valid_posting_list_identifier)},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 }
 
 TEST_P(IntegerIndexStorageTest, OptionsInvalidCustomInitBucketsOverlapping) {
   // sorted buckets overlap
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/
-                      {Bucket(std::numeric_limits<int64_t>::min(), -100),
-                       Bucket(-100, std::numeric_limits<int64_t>::max())},
-                      /*custom_init_unsorted_buckets_in=*/{},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/
+              {Bucket(std::numeric_limits<int64_t>::min(), -100),
+               Bucket(-100, std::numeric_limits<int64_t>::max())},
+              /*custom_init_unsorted_buckets_in=*/{},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 
   // unsorted buckets overlap
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/{},
-                      /*custom_init_unsorted_buckets_in=*/
-                      {Bucket(-100, std::numeric_limits<int64_t>::max()),
-                       Bucket(std::numeric_limits<int64_t>::min(), -100)},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/{},
+              /*custom_init_unsorted_buckets_in=*/
+              {Bucket(-100, std::numeric_limits<int64_t>::max()),
+               Bucket(std::numeric_limits<int64_t>::min(), -100)},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 
   // Cross buckets overlap
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/
-                      {Bucket(std::numeric_limits<int64_t>::min(), -100),
-                       Bucket(-99, 0)},
-                      /*custom_init_unsorted_buckets_in=*/
-                      {Bucket(200, std::numeric_limits<int64_t>::max()),
-                       Bucket(0, 50), Bucket(51, 199)},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/
+              {Bucket(std::numeric_limits<int64_t>::min(), -100),
+               Bucket(-99, 0)},
+              /*custom_init_unsorted_buckets_in=*/
+              {Bucket(200, std::numeric_limits<int64_t>::max()), Bucket(0, 50),
+               Bucket(51, 199)},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 }
 
 TEST_P(IntegerIndexStorageTest, OptionsInvalidCustomInitBucketsUnion) {
   // Missing INT64_MAX
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/
-                      {Bucket(std::numeric_limits<int64_t>::min(), -100),
-                       Bucket(-99, 0)},
-                      /*custom_init_unsorted_buckets_in=*/
-                      {Bucket(1, 1000)}, /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/
+              {Bucket(std::numeric_limits<int64_t>::min(), -100),
+               Bucket(-99, 0)},
+              /*custom_init_unsorted_buckets_in=*/{Bucket(1, 1000)},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 
   // Missing INT64_MIN
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/
-                      {Bucket(-200, -100), Bucket(-99, 0)},
-                      /*custom_init_unsorted_buckets_in=*/
-                      {Bucket(1, std::numeric_limits<int64_t>::max())},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/
+              {Bucket(-200, -100), Bucket(-99, 0)},
+              /*custom_init_unsorted_buckets_in=*/
+              {Bucket(1, std::numeric_limits<int64_t>::max())},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 
   // Missing some intermediate ranges
-  EXPECT_THAT(Options(/*custom_init_sorted_buckets_in=*/
-                      {Bucket(std::numeric_limits<int64_t>::min(), -100)},
-                      /*custom_init_unsorted_buckets_in=*/
-                      {Bucket(1, std::numeric_limits<int64_t>::max())},
-                      /*pre_mapping_fbv_in=*/GetParam())
-                  .IsValid(),
-              IsFalse());
+  EXPECT_THAT(
+      Options(/*custom_init_sorted_buckets_in=*/
+              {Bucket(std::numeric_limits<int64_t>::min(), -100)},
+              /*custom_init_unsorted_buckets_in=*/
+              {Bucket(1, std::numeric_limits<int64_t>::max())},
+              IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+              /*pre_mapping_fbv_in=*/GetParam())
+          .IsValid(),
+      IsFalse());
 }
 
 TEST_P(IntegerIndexStorageTest, InvalidWorkingPath) {
   EXPECT_THAT(
       IntegerIndexStorage::Create(
           filesystem_, "/dev/null/integer_index_storage_test",
-          Options(/*pre_mapping_fbv_in=*/GetParam()), serializer_.get()),
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()),
       StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
@@ -232,6 +275,7 @@ TEST_P(IntegerIndexStorageTest, CreateWithInvalidOptionsShouldFail) {
       /*custom_init_unsorted_buckets_in=*/
       {Bucket(-100, std::numeric_limits<int64_t>::max()),
        Bucket(std::numeric_limits<int64_t>::min(), -100)},
+      IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
       /*pre_mapping_fbv_in=*/GetParam());
   ASSERT_THAT(invalid_options.IsValid(), IsFalse());
 
@@ -246,9 +290,11 @@ TEST_P(IntegerIndexStorageTest, InitializeNewFiles) {
     ASSERT_FALSE(filesystem_.DirectoryExists(working_path_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
 
     ICING_ASSERT_OK(storage->PersistToDisk());
   }
@@ -290,9 +336,11 @@ TEST_P(IntegerIndexStorageTest,
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   // Insert some data.
   ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/0, /*section_id=*/20,
@@ -305,9 +353,11 @@ TEST_P(IntegerIndexStorageTest,
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
   EXPECT_THAT(
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()),
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -315,9 +365,11 @@ TEST_P(IntegerIndexStorageTest, InitializationShouldSucceedWithPersistToDisk) {
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage1,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   // Insert some data.
   ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/0, /*section_id=*/20,
@@ -339,9 +391,11 @@ TEST_P(IntegerIndexStorageTest, InitializationShouldSucceedWithPersistToDisk) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage2,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
   EXPECT_THAT(
       Query(storage2.get(), /*key_lower=*/std::numeric_limits<int64_t>::min(),
             /*key_upper=*/std::numeric_limits<int64_t>::max()),
@@ -355,9 +409,11 @@ TEST_P(IntegerIndexStorageTest, InitializationShouldSucceedAfterDestruction) {
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
 
     // Insert some data.
     ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/0, /*section_id=*/20,
@@ -380,9 +436,11 @@ TEST_P(IntegerIndexStorageTest, InitializationShouldSucceedAfterDestruction) {
     // we should be able to get the same contents.
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     EXPECT_THAT(
         Query(storage.get(), /*key_lower=*/std::numeric_limits<int64_t>::min(),
               /*key_upper=*/std::numeric_limits<int64_t>::max()),
@@ -397,9 +455,11 @@ TEST_P(IntegerIndexStorageTest,
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
 
@@ -428,7 +488,9 @@ TEST_P(IntegerIndexStorageTest,
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
         storage_or = IntegerIndexStorage::Create(
             filesystem_, working_path_,
-            Options(/*pre_mapping_fbv_in=*/GetParam()), serializer_.get());
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(storage_or.status().error_message(),
@@ -442,9 +504,11 @@ TEST_P(IntegerIndexStorageTest,
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
 
@@ -474,7 +538,9 @@ TEST_P(IntegerIndexStorageTest,
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
         storage_or = IntegerIndexStorage::Create(
             filesystem_, working_path_,
-            Options(/*pre_mapping_fbv_in=*/GetParam()), serializer_.get());
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(storage_or.status().error_message(),
@@ -488,9 +554,11 @@ TEST_P(IntegerIndexStorageTest,
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
 
@@ -522,7 +590,9 @@ TEST_P(IntegerIndexStorageTest,
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
         storage_or = IntegerIndexStorage::Create(
             filesystem_, working_path_,
-            Options(/*pre_mapping_fbv_in=*/GetParam()), serializer_.get());
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(storage_or.status().error_message(),
@@ -536,9 +606,11 @@ TEST_P(IntegerIndexStorageTest,
     // Create new integer index storage
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     ICING_ASSERT_OK(storage->AddKeys(kDefaultDocumentId, kDefaultSectionId,
                                      /*new_keys=*/{0, 100, -100}));
 
@@ -572,7 +644,9 @@ TEST_P(IntegerIndexStorageTest,
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndexStorage>>
         storage_or = IntegerIndexStorage::Create(
             filesystem_, working_path_,
-            Options(/*pre_mapping_fbv_in=*/GetParam()), serializer_.get());
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get());
     EXPECT_THAT(storage_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(storage_or.status().error_message(),
@@ -586,12 +660,117 @@ TEST_P(IntegerIndexStorageTest, InvalidQuery) {
   // Create new integer index storage
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
   EXPECT_THAT(
       storage->GetIterator(/*query_key_lower=*/0, /*query_key_upper=*/-1),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(IntegerIndexStorageTest, AddKeysShouldUpdateNumData) {
+  // We use predefined custom buckets to initialize new integer index storage
+  // and create some test keys accordingly.
+  std::vector<Bucket> custom_init_sorted_buckets = {
+      Bucket(-1000, -100), Bucket(0, 100), Bucket(150, 199), Bucket(200, 300),
+      Bucket(301, 999)};
+  std::vector<Bucket> custom_init_unsorted_buckets = {
+      Bucket(1000, std::numeric_limits<int64_t>::max()), Bucket(-99, -1),
+      Bucket(101, 149), Bucket(std::numeric_limits<int64_t>::min(), -1001)};
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndexStorage> storage,
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_,
+            Options(std::move(custom_init_sorted_buckets),
+                    std::move(custom_init_unsorted_buckets),
+                    IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
+
+    // Add some keys into buckets [(-1000,-100), (200,300), (-99,-1)].
+    EXPECT_THAT(storage->AddKeys(/*document_id=*/0, kDefaultSectionId,
+                                 /*new_keys=*/{-51, -500}),
+                IsOk());
+    EXPECT_THAT(storage->AddKeys(/*document_id=*/1, kDefaultSectionId,
+                                 /*new_keys=*/{201, 209, -149}),
+                IsOk());
+    EXPECT_THAT(storage->AddKeys(/*document_id=*/2, kDefaultSectionId,
+                                 /*new_keys=*/{208}),
+                IsOk());
+    EXPECT_THAT(storage->num_data(), Eq(6));
+
+    ICING_ASSERT_OK(storage->PersistToDisk());
+  }
+
+  // Check sorted_buckets manually.
+  const std::string sorted_buckets_file_path = absl_ports::StrCat(
+      working_path_, "/", IntegerIndexStorage::kFilePrefix, ".s");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<Bucket>> sorted_buckets,
+      FileBackedVector<Bucket>::Create(
+          filesystem_, sorted_buckets_file_path,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  EXPECT_THAT(sorted_buckets->num_elements(), Eq(5));
+
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* sbk1,
+                             sorted_buckets->Get(/*idx=*/0));
+  EXPECT_THAT(sbk1->key_lower(), Eq(-1000));
+  EXPECT_THAT(sbk1->key_upper(), Eq(-100));
+  EXPECT_THAT(sbk1->num_data(), Eq(2));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* sbk2,
+                             sorted_buckets->Get(/*idx=*/1));
+  EXPECT_THAT(sbk2->key_lower(), Eq(0));
+  EXPECT_THAT(sbk2->key_upper(), Eq(100));
+  EXPECT_THAT(sbk2->num_data(), Eq(0));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* sbk3,
+                             sorted_buckets->Get(/*idx=*/2));
+  EXPECT_THAT(sbk3->key_lower(), Eq(150));
+  EXPECT_THAT(sbk3->key_upper(), Eq(199));
+  EXPECT_THAT(sbk3->num_data(), Eq(0));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* sbk4,
+                             sorted_buckets->Get(/*idx=*/3));
+  EXPECT_THAT(sbk4->key_lower(), Eq(200));
+  EXPECT_THAT(sbk4->key_upper(), Eq(300));
+  EXPECT_THAT(sbk4->num_data(), Eq(3));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* sbk5,
+                             sorted_buckets->Get(/*idx=*/4));
+  EXPECT_THAT(sbk5->key_lower(), Eq(301));
+  EXPECT_THAT(sbk5->key_upper(), Eq(999));
+  EXPECT_THAT(sbk5->num_data(), Eq(0));
+
+  // Check unsorted_buckets and unsorted buckets manually.
+  const std::string unsorted_buckets_file_path = absl_ports::StrCat(
+      working_path_, "/", IntegerIndexStorage::kFilePrefix, ".u");
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<FileBackedVector<Bucket>> unsorted_buckets,
+      FileBackedVector<Bucket>::Create(
+          filesystem_, unsorted_buckets_file_path,
+          MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
+  EXPECT_THAT(unsorted_buckets->num_elements(), Eq(4));
+
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* ubk1,
+                             unsorted_buckets->Get(/*idx=*/0));
+  EXPECT_THAT(ubk1->key_lower(), Eq(1000));
+  EXPECT_THAT(ubk1->key_upper(), Eq(std::numeric_limits<int64_t>::max()));
+  EXPECT_THAT(ubk1->num_data(), Eq(0));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* ubk2,
+                             unsorted_buckets->Get(/*idx=*/1));
+  EXPECT_THAT(ubk2->key_lower(), Eq(-99));
+  EXPECT_THAT(ubk2->key_upper(), Eq(-1));
+  EXPECT_THAT(ubk2->num_data(), Eq(1));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* ubk3,
+                             unsorted_buckets->Get(/*idx=*/2));
+  EXPECT_THAT(ubk3->key_lower(), Eq(101));
+  EXPECT_THAT(ubk3->key_upper(), Eq(149));
+  EXPECT_THAT(ubk3->num_data(), Eq(0));
+  ICING_ASSERT_OK_AND_ASSIGN(const Bucket* ubk4,
+                             unsorted_buckets->Get(/*idx=*/3));
+  EXPECT_THAT(ubk4->key_lower(), Eq(std::numeric_limits<int64_t>::min()));
+  EXPECT_THAT(ubk4->key_upper(), Eq(-1001));
+  EXPECT_THAT(ubk4->num_data(), Eq(0));
 }
 
 TEST_P(IntegerIndexStorageTest, ExactQuerySortedBuckets) {
@@ -609,6 +788,7 @@ TEST_P(IntegerIndexStorageTest, ExactQuerySortedBuckets) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -664,6 +844,7 @@ TEST_P(IntegerIndexStorageTest, ExactQueryUnsortedBuckets) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -725,6 +906,7 @@ TEST_P(IntegerIndexStorageTest, ExactQueryIdenticalKeys) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -768,6 +950,7 @@ TEST_P(IntegerIndexStorageTest, RangeQueryEmptyIntegerIndexStorage) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -792,6 +975,7 @@ TEST_P(IntegerIndexStorageTest, RangeQuerySingleEntireSortedBucket) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -847,6 +1031,7 @@ TEST_P(IntegerIndexStorageTest, RangeQuerySingleEntireUnsortedBucket) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -905,6 +1090,7 @@ TEST_P(IntegerIndexStorageTest, RangeQuerySinglePartialSortedBucket) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -957,6 +1143,7 @@ TEST_P(IntegerIndexStorageTest, RangeQuerySinglePartialUnsortedBucket) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1009,6 +1196,7 @@ TEST_P(IntegerIndexStorageTest, RangeQueryMultipleBuckets) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1098,6 +1286,7 @@ TEST_P(IntegerIndexStorageTest, BatchAdd) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1126,9 +1315,11 @@ TEST_P(IntegerIndexStorageTest, BatchAdd) {
 TEST_P(IntegerIndexStorageTest, BatchAddShouldDedupeKeys) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   std::vector<int64_t> keys = {2, 3, 1, 2, 4, -1, -1, 100, 3};
   EXPECT_THAT(
@@ -1152,6 +1343,7 @@ TEST_P(IntegerIndexStorageTest, MultipleKeysShouldMergeAndDedupeDocHitInfo) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1188,6 +1380,7 @@ TEST_P(IntegerIndexStorageTest,
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1236,25 +1429,26 @@ TEST_P(IntegerIndexStorageTest,
 }
 
 TEST_P(IntegerIndexStorageTest, SplitBuckets) {
+  int32_t custom_num_data_threshold_for_bucket_split = 300;
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(/*custom_init_sorted_buckets_in=*/{},
+                  /*custom_init_unsorted_buckets_in=*/{},
+                  custom_num_data_threshold_for_bucket_split,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
-  uint32_t block_size = FlashIndexStorage::SelectBlockSize();
-  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
-      block_size, serializer_->GetDataTypeBytes());
-  uint32_t max_num_data_before_split =
-      max_posting_list_bytes / serializer_->GetDataTypeBytes();
-
-  // Add max_num_data_before_split + 1 keys to invoke bucket splitting.
-  // Keys: max_num_data_before_split to 0
-  // Document ids: 0 to max_num_data_before_split
+  // Add custom_num_data_threshold_for_bucket_split + 1 keys to invoke bucket
+  // splitting.
+  // - Keys: custom_num_data_threshold_for_bucket_split to 0 Document
+  // - ids: 0 to custom_num_data_threshold_for_bucket_split
   std::unordered_map<int64_t, DocumentId> data;
-  int64_t key = max_num_data_before_split;
+  int64_t key = custom_num_data_threshold_for_bucket_split;
   DocumentId document_id = 0;
-  for (int i = 0; i < max_num_data_before_split + 1; ++i) {
+  for (int i = 0; i < custom_num_data_threshold_for_bucket_split + 1; ++i) {
     data[key] = document_id;
     ICING_ASSERT_OK(
         storage->AddKeys(document_id, kDefaultSectionId, /*new_keys=*/{key}));
@@ -1299,7 +1493,8 @@ TEST_P(IntegerIndexStorageTest, SplitBuckets) {
 
   // Ensure that search works normally.
   std::vector<SectionId> expected_sections = {kDefaultSectionId};
-  for (int64_t key = max_num_data_before_split; key >= 0; key--) {
+  for (int64_t key = custom_num_data_threshold_for_bucket_split; key >= 0;
+       key--) {
     ASSERT_THAT(data, Contains(Key(key)));
     DocumentId expected_document_id = data[key];
     EXPECT_THAT(Query(storage.get(), /*key_lower=*/key, /*key_upper=*/key),
@@ -1309,20 +1504,21 @@ TEST_P(IntegerIndexStorageTest, SplitBuckets) {
 }
 
 TEST_P(IntegerIndexStorageTest, SplitBucketsTriggerSortBuckets) {
+  int32_t custom_num_data_threshold_for_bucket_split = 300;
+
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
-
-  uint32_t block_size = FlashIndexStorage::SelectBlockSize();
-  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
-      block_size, serializer_->GetDataTypeBytes());
-  uint32_t max_num_data_before_split =
-      max_posting_list_bytes / serializer_->GetDataTypeBytes();
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(/*custom_init_sorted_buckets_in=*/{},
+                  /*custom_init_unsorted_buckets_in=*/{},
+                  custom_num_data_threshold_for_bucket_split,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   // Add IntegerIndexStorage::kUnsortedBucketsLengthThreshold keys. For each
-  // key, add max_num_data_before_split + 1 data. Then we will get:
+  // key, add custom_num_data_threshold_for_bucket_split + 1 data. Then we will
+  // get:
   // - Bucket splitting will create kUnsortedBucketsLengthThreshold + 1 unsorted
   //   buckets [[50, 50], [49, 49], ..., [1, 1], [51, INT64_MAX]].
   // - Since there are kUnsortedBucketsLengthThreshold + 1 unsorted buckets, we
@@ -1332,7 +1528,7 @@ TEST_P(IntegerIndexStorageTest, SplitBucketsTriggerSortBuckets) {
   DocumentId document_id = 0;
   for (int i = 0; i < IntegerIndexStorage::kUnsortedBucketsLengthThreshold;
        ++i) {
-    for (int j = 0; j < max_num_data_before_split + 1; ++j) {
+    for (int j = 0; j < custom_num_data_threshold_for_bucket_split + 1; ++j) {
       data[key].push_back(document_id);
       ICING_ASSERT_OK(
           storage->AddKeys(document_id, kDefaultSectionId, /*new_keys=*/{key}));
@@ -1396,6 +1592,7 @@ TEST_P(IntegerIndexStorageTest, TransferIndex) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1433,9 +1630,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndex) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> new_storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_ + "_temp",
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_ + "_temp",
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     EXPECT_THAT(
         storage->TransferIndex(document_id_old_to_new, new_storage.get()),
         IsOk());
@@ -1445,9 +1644,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndex) {
   // Verify after transferring and reinitializing the instance.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> new_storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_ + "_temp",
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_ + "_temp",
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   std::vector<SectionId> expected_sections = {kDefaultSectionId};
   EXPECT_THAT(new_storage->num_data(), Eq(7));
@@ -1493,9 +1694,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndex) {
 TEST_P(IntegerIndexStorageTest, TransferIndexOutOfRangeDocumentId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_,
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/1, kDefaultSectionId,
                                    /*new_keys=*/{120}));
@@ -1510,9 +1713,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndexOutOfRangeDocumentId) {
   // Transfer to new storage.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> new_storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_ + "_temp",
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_ + "_temp",
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
   EXPECT_THAT(storage->TransferIndex(document_id_old_to_new, new_storage.get()),
               IsOk());
 
@@ -1542,6 +1747,7 @@ TEST_P(IntegerIndexStorageTest, TransferEmptyIndex) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
   ASSERT_THAT(storage->num_data(), Eq(0));
@@ -1552,9 +1758,11 @@ TEST_P(IntegerIndexStorageTest, TransferEmptyIndex) {
   // Transfer to new storage.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> new_storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_ + "_temp",
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_ + "_temp",
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
   EXPECT_THAT(storage->TransferIndex(document_id_old_to_new, new_storage.get()),
               IsOk());
 
@@ -1581,6 +1789,7 @@ TEST_P(IntegerIndexStorageTest, TransferIndexDeleteAll) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1605,9 +1814,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndexDeleteAll) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> new_storage,
-        IntegerIndexStorage::Create(filesystem_, working_path_ + "_temp",
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, working_path_ + "_temp",
+            Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     EXPECT_THAT(
         storage->TransferIndex(document_id_old_to_new, new_storage.get()),
         IsOk());
@@ -1617,9 +1828,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndexDeleteAll) {
   // Verify after transferring and reinitializing the instance.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> new_storage,
-      IntegerIndexStorage::Create(filesystem_, working_path_ + "_temp",
-                                  Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                  serializer_.get()));
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_ + "_temp",
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
 
   std::vector<SectionId> expected_sections = {kDefaultSectionId};
   EXPECT_THAT(new_storage->num_data(), Eq(0));
@@ -1630,6 +1843,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndexDeleteAll) {
 }
 
 TEST_P(IntegerIndexStorageTest, TransferIndexShouldInvokeMergeBuckets) {
+  int32_t custom_num_data_threshold_for_bucket_split = 300;
+  int32_t custom_num_data_threshold_for_bucket_merge =
+      IntegerIndexStorage::kNumDataThresholdRatioForBucketMerge *
+      custom_num_data_threshold_for_bucket_split;
+
   // This test verifies that if TransferIndex invokes bucket merging logic to
   // ensure sure we're able to avoid having mostly empty buckets after inserting
   // and deleting data for many rounds.
@@ -1648,6 +1866,7 @@ TEST_P(IntegerIndexStorageTest, TransferIndexShouldInvokeMergeBuckets) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  custom_num_data_threshold_for_bucket_split,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
@@ -1671,7 +1890,7 @@ TEST_P(IntegerIndexStorageTest, TransferIndexShouldInvokeMergeBuckets) {
                                    /*new_keys=*/{20}));
   ASSERT_THAT(storage->num_data(), Eq(9));
   ASSERT_THAT(storage->num_data(),
-              Le(IntegerIndexStorage::kNumDataThresholdForBucketMerge));
+              Le(custom_num_data_threshold_for_bucket_merge));
 
   // Create document_id_old_to_new that keeps all existing documents.
   std::vector<DocumentId> document_id_old_to_new(9);
@@ -1683,12 +1902,17 @@ TEST_P(IntegerIndexStorageTest, TransferIndexShouldInvokeMergeBuckets) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> new_storage,
-        IntegerIndexStorage::Create(filesystem_, new_storage_working_path,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, new_storage_working_path,
+            Options(/*custom_init_sorted_buckets_in=*/{},
+                    /*custom_init_unsorted_buckets_in=*/{},
+                    custom_num_data_threshold_for_bucket_split,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     EXPECT_THAT(
         storage->TransferIndex(document_id_old_to_new, new_storage.get()),
         IsOk());
+    EXPECT_THAT(new_storage->num_data(), Eq(9));
   }
 
   // Check new_storage->sorted_bucket_ manually.
@@ -1704,9 +1928,15 @@ TEST_P(IntegerIndexStorageTest, TransferIndexShouldInvokeMergeBuckets) {
   ICING_ASSERT_OK_AND_ASSIGN(const Bucket* bk1, sorted_buckets->Get(/*idx=*/0));
   EXPECT_THAT(bk1->key_lower(), Eq(std::numeric_limits<int64_t>::min()));
   EXPECT_THAT(bk1->key_upper(), Eq(std::numeric_limits<int64_t>::max()));
+  EXPECT_THAT(bk1->num_data(), Eq(9));
 }
 
 TEST_P(IntegerIndexStorageTest, TransferIndexExceedsMergeThreshold) {
+  int32_t custom_num_data_threshold_for_bucket_split = 300;
+  int32_t custom_num_data_threshold_for_bucket_merge =
+      IntegerIndexStorage::kNumDataThresholdRatioForBucketMerge *
+      custom_num_data_threshold_for_bucket_split;
+
   // This test verifies that if TransferIndex invokes bucket merging logic and
   // doesn't merge buckets too aggressively to ensure we won't get a bucket with
   // too many data.
@@ -1725,15 +1955,16 @@ TEST_P(IntegerIndexStorageTest, TransferIndexExceedsMergeThreshold) {
           filesystem_, working_path_,
           Options(std::move(custom_init_sorted_buckets),
                   std::move(custom_init_unsorted_buckets),
+                  custom_num_data_threshold_for_bucket_split,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
   // Insert data into 2 buckets so that total # of these 2 buckets exceed
-  // kNumDataThresholdForBucketMerge.
+  // custom_num_data_threshold_for_bucket_merge.
   // - Bucket 1: [-1000, -100]
   // - Bucket 2: [101, 149]
   DocumentId document_id = 0;
-  int num_data_for_bucket1 = 200;
+  int num_data_for_bucket1 = custom_num_data_threshold_for_bucket_merge - 50;
   for (int i = 0; i < num_data_for_bucket1; ++i) {
     ICING_ASSERT_OK(storage->AddKeys(document_id, kDefaultSectionId,
                                      /*new_keys=*/{-200}));
@@ -1747,8 +1978,10 @@ TEST_P(IntegerIndexStorageTest, TransferIndexExceedsMergeThreshold) {
     ++document_id;
   }
 
+  ASSERT_THAT(storage->num_data(),
+              Eq(num_data_for_bucket1 + num_data_for_bucket2));
   ASSERT_THAT(num_data_for_bucket1 + num_data_for_bucket2,
-              Gt(IntegerIndexStorage::kNumDataThresholdForBucketMerge));
+              Gt(custom_num_data_threshold_for_bucket_merge));
 
   // Create document_id_old_to_new that keeps all existing documents.
   std::vector<DocumentId> document_id_old_to_new(document_id);
@@ -1760,12 +1993,18 @@ TEST_P(IntegerIndexStorageTest, TransferIndexExceedsMergeThreshold) {
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndexStorage> new_storage,
-        IntegerIndexStorage::Create(filesystem_, new_storage_working_path,
-                                    Options(/*pre_mapping_fbv_in=*/GetParam()),
-                                    serializer_.get()));
+        IntegerIndexStorage::Create(
+            filesystem_, new_storage_working_path,
+            Options(/*custom_init_sorted_buckets_in=*/{},
+                    /*custom_init_unsorted_buckets_in=*/{},
+                    custom_num_data_threshold_for_bucket_split,
+                    /*pre_mapping_fbv_in=*/GetParam()),
+            serializer_.get()));
     EXPECT_THAT(
         storage->TransferIndex(document_id_old_to_new, new_storage.get()),
         IsOk());
+    EXPECT_THAT(new_storage->num_data(),
+                Eq(num_data_for_bucket1 + num_data_for_bucket2));
   }
 
   // Check new_storage->sorted_bucket_ manually.
@@ -1781,9 +2020,11 @@ TEST_P(IntegerIndexStorageTest, TransferIndexExceedsMergeThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(const Bucket* bk1, sorted_buckets->Get(/*idx=*/0));
   EXPECT_THAT(bk1->key_lower(), Eq(std::numeric_limits<int64_t>::min()));
   EXPECT_THAT(bk1->key_upper(), Eq(100));
+  EXPECT_THAT(bk1->num_data(), Eq(num_data_for_bucket1));
   ICING_ASSERT_OK_AND_ASSIGN(const Bucket* bk2, sorted_buckets->Get(/*idx=*/1));
   EXPECT_THAT(bk2->key_lower(), Eq(101));
   EXPECT_THAT(bk2->key_upper(), Eq(std::numeric_limits<int64_t>::max()));
+  EXPECT_THAT(bk2->num_data(), Eq(num_data_for_bucket2));
 }
 
 INSTANTIATE_TEST_SUITE_P(IntegerIndexStorageTest, IntegerIndexStorageTest,
