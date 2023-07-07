@@ -38,16 +38,12 @@ PostingListIntegerIndexAccessor::Create(
     FlashIndexStorage* storage, PostingListIntegerIndexSerializer* serializer) {
   uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
       storage->block_size(), serializer->GetDataTypeBytes());
-  std::unique_ptr<uint8_t[]> posting_list_buffer_array =
-      std::make_unique<uint8_t[]>(max_posting_list_bytes);
-  ICING_ASSIGN_OR_RETURN(
-      PostingListUsed posting_list_buffer,
-      PostingListUsed::CreateFromUnitializedRegion(
-          serializer, posting_list_buffer_array.get(), max_posting_list_bytes));
+  ICING_ASSIGN_OR_RETURN(PostingListUsed in_memory_posting_list,
+                         PostingListUsed::CreateFromUnitializedRegion(
+                             serializer, max_posting_list_bytes));
   return std::unique_ptr<PostingListIntegerIndexAccessor>(
       new PostingListIntegerIndexAccessor(
-          storage, std::move(posting_list_buffer_array),
-          std::move(posting_list_buffer), serializer));
+          storage, std::move(in_memory_posting_list), serializer));
 }
 
 /* static */ libtextclassifier3::StatusOr<
@@ -68,6 +64,58 @@ PostingListIntegerIndexAccessor::CreateFromExisting(
 // Returns the next batch of integer index data for the provided posting list.
 libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
 PostingListIntegerIndexAccessor::GetNextDataBatch() {
+  return GetNextDataBatchImpl(/*free_posting_list=*/false);
+}
+
+libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
+PostingListIntegerIndexAccessor::GetAllDataAndFree() {
+  if (preexisting_posting_list_ == nullptr) {
+    return absl_ports::FailedPreconditionError(
+        "Cannot retrieve data from a PostingListIntegerIndexAccessor that "
+        "was not created from a preexisting posting list.");
+  }
+
+  std::vector<IntegerIndexData> all_data;
+  while (true) {
+    ICING_ASSIGN_OR_RETURN(std::vector<IntegerIndexData> batch,
+                           GetNextDataBatchImpl(/*free_posting_list=*/true));
+    if (batch.empty()) {
+      break;
+    }
+    std::move(batch.begin(), batch.end(), std::back_inserter(all_data));
+  }
+
+  return all_data;
+}
+
+libtextclassifier3::Status PostingListIntegerIndexAccessor::PrependData(
+    const IntegerIndexData& data) {
+  PostingListUsed& active_pl = (preexisting_posting_list_ != nullptr)
+                                   ? preexisting_posting_list_->posting_list
+                                   : in_memory_posting_list_;
+  libtextclassifier3::Status status =
+      serializer_->PrependData(&active_pl, data);
+  if (!absl_ports::IsResourceExhausted(status)) {
+    return status;
+  }
+  // There is no more room to add data to this current posting list! Therefore,
+  // we need to either move those data to a larger posting list or flush this
+  // posting list and create another max-sized posting list in the chain.
+  if (preexisting_posting_list_ != nullptr) {
+    ICING_RETURN_IF_ERROR(FlushPreexistingPostingList());
+  } else {
+    ICING_RETURN_IF_ERROR(FlushInMemoryPostingList());
+  }
+
+  // Re-add data. Should always fit since we just cleared
+  // in_memory_posting_list_. It's fine to explicitly reference
+  // in_memory_posting_list_ here because there's no way of reaching this line
+  // while preexisting_posting_list_ is still in use.
+  return serializer_->PrependData(&in_memory_posting_list_, data);
+}
+
+libtextclassifier3::StatusOr<std::vector<IntegerIndexData>>
+PostingListIntegerIndexAccessor::GetNextDataBatchImpl(bool free_posting_list) {
   if (preexisting_posting_list_ == nullptr) {
     if (has_reached_posting_list_chain_end_) {
       return std::vector<IntegerIndexData>();
@@ -79,20 +127,28 @@ PostingListIntegerIndexAccessor::GetNextDataBatch() {
   ICING_ASSIGN_OR_RETURN(
       std::vector<IntegerIndexData> batch,
       serializer_->GetData(&preexisting_posting_list_->posting_list));
-  uint32_t next_block_index;
+  uint32_t next_block_index = kInvalidBlockIndex;
   // Posting lists will only be chained when they are max-sized, in which case
-  // block.next_block_index() will point to the next block for the next posting
-  // list. Otherwise, block.next_block_index() can be kInvalidBlockIndex or be
-  // used to point to the next free list block, which is not relevant here.
-  if (preexisting_posting_list_->block.max_num_posting_lists() == 1) {
-    next_block_index = preexisting_posting_list_->block.next_block_index();
-  } else {
-    next_block_index = kInvalidBlockIndex;
+  // next_block_index will point to the next block for the next posting list.
+  // Otherwise, next_block_index can be kInvalidBlockIndex or be used to point
+  // to the next free list block, which is not relevant here.
+  if (preexisting_posting_list_->posting_list.size_in_bytes() ==
+      storage_->max_posting_list_bytes()) {
+    next_block_index = preexisting_posting_list_->next_block_index;
   }
+
+  if (free_posting_list) {
+    ICING_RETURN_IF_ERROR(
+        storage_->FreePostingList(std::move(*preexisting_posting_list_)));
+  }
+
   if (next_block_index != kInvalidBlockIndex) {
+    // Since we only have to deal with next block for max-sized posting list
+    // block, max_num_posting_lists is 1 and posting_list_index_bits is
+    // BitsToStore(1).
     PostingListIdentifier next_posting_list_id(
         next_block_index, /*posting_list_index=*/0,
-        preexisting_posting_list_->block.posting_list_index_bits());
+        /*posting_list_index_bits=*/BitsToStore(1));
     ICING_ASSIGN_OR_RETURN(PostingListHolder holder,
                            storage_->GetPostingList(next_posting_list_id));
     preexisting_posting_list_ =
@@ -102,32 +158,6 @@ PostingListIntegerIndexAccessor::GetNextDataBatch() {
     preexisting_posting_list_.reset();
   }
   return batch;
-}
-
-libtextclassifier3::Status PostingListIntegerIndexAccessor::PrependData(
-    const IntegerIndexData& data) {
-  PostingListUsed& active_pl = (preexisting_posting_list_ != nullptr)
-                                   ? preexisting_posting_list_->posting_list
-                                   : posting_list_buffer_;
-  libtextclassifier3::Status status =
-      serializer_->PrependData(&active_pl, data);
-  if (!absl_ports::IsResourceExhausted(status)) {
-    return status;
-  }
-  // There is no more room to add data to this current posting list! Therefore,
-  // we need to either move those data to a larger posting list or flush this
-  // posting list and create another max-sized posting list in the chain.
-  if (preexisting_posting_list_ != nullptr) {
-    FlushPreexistingPostingList();
-  } else {
-    ICING_RETURN_IF_ERROR(FlushInMemoryPostingList());
-  }
-
-  // Re-add data. Should always fit since we just cleared posting_list_buffer_.
-  // It's fine to explicitly reference posting_list_buffer_ here because there's
-  // no way of reaching this line while preexisting_posting_list_ is still in
-  // use.
-  return serializer_->PrependData(&posting_list_buffer_, data);
 }
 
 }  // namespace lib

@@ -222,6 +222,27 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgument) {
                       MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
 
+  // len({1, 2, 3}) = 3
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kLen,
+                      MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(3)));
+
+  // sum({1, 2, 3}) = 6
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kSum,
+                      MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(6)));
+
+  // avg({1, 2, 3}) = 2
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kAvg,
+                      MakeChildren(ListScoreExpression::Create({1, 2, 3}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(2)));
+
   // max({4}) = 4
   ICING_ASSERT_OK_AND_ASSIGN(
       expression, MathFunctionScoreExpression::Create(
@@ -235,6 +256,41 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgument) {
                       MathFunctionScoreExpression::FunctionType::kMin,
                       MakeChildren(ListScoreExpression::Create({5}))));
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(5)));
+
+  // len({6}) = 1
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kLen,
+                      MakeChildren(ListScoreExpression::Create({6}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(1)));
+
+  // sum({7}) = 7
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kSum,
+                      MakeChildren(ListScoreExpression::Create({7}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(7)));
+
+  // avg({7}) = 7
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kAvg,
+                      MakeChildren(ListScoreExpression::Create({7}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(7)));
+
+  // len({}) = 0
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kLen,
+                      MakeChildren(ListScoreExpression::Create({}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(0)));
+
+  // sum({}) = 0
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kSum,
+                      MakeChildren(ListScoreExpression::Create({}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr), IsOkAndHolds(Eq(0)));
 }
 
 TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
@@ -245,6 +301,15 @@ TEST(ScoreExpressionTest, MathFunctionsWithListTypeArgumentError) {
       MathFunctionScoreExpression::Create(
           MathFunctionScoreExpression::FunctionType::kMax,
           MakeChildren(ListScoreExpression::Create({}))));
+  EXPECT_THAT(expression->eval(DocHitInfo(), nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // avg({}) = evaluation error, since avg on empty list does not produce a
+  // valid result.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      expression, MathFunctionScoreExpression::Create(
+                      MathFunctionScoreExpression::FunctionType::kAvg,
+                      MakeChildren(ListScoreExpression::Create({}))));
   EXPECT_THAT(expression->eval(DocHitInfo(), nullptr),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 

@@ -38,6 +38,7 @@ namespace scorer_factory {
 libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
     const ScoringSpecProto& scoring_spec, double default_score,
     const DocumentStore* document_store, const SchemaStore* schema_store,
+    int64_t current_time_ms,
     const JoinChildrenFetcher* join_children_fetcher = nullptr);
 
 }  // namespace scorer_factory

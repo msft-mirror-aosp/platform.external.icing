@@ -25,6 +25,7 @@
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-common.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/numeric/integer-index-data.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
@@ -42,6 +43,7 @@ using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Lt;
+using ::testing::Ne;
 using ::testing::SizeIs;
 
 class PostingListIntegerIndexAccessorTest : public ::testing::Test {
@@ -119,7 +121,7 @@ TEST_F(PostingListIntegerIndexAccessorTest, DataAddAndRetrieveProperly) {
   EXPECT_THAT(
       serializer_->GetData(&pl_holder.posting_list),
       IsOkAndHolds(ElementsAreArray(data_vec.rbegin(), data_vec.rend())));
-  EXPECT_THAT(pl_holder.block.next_block_index(), Eq(kInvalidBlockIndex));
+  EXPECT_THAT(pl_holder.next_block_index, Eq(kInvalidBlockIndex));
 }
 
 TEST_F(PostingListIntegerIndexAccessorTest, PreexistingPLKeepOnSameBlock) {
@@ -254,7 +256,7 @@ TEST_F(PostingListIntegerIndexAccessorTest, MultiBlockChainsBlocksProperly) {
               ElementsAreArray(data_vec.rbegin(), first_block_data_start));
 
   // Now retrieve all of the data that were on the first block.
-  uint32_t first_block_id = pl_holder.block.next_block_index();
+  uint32_t first_block_id = pl_holder.next_block_index;
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
@@ -328,7 +330,7 @@ TEST_F(PostingListIntegerIndexAccessorTest,
               ElementsAreArray(all_data_vec.rbegin(), first_block_data_start));
 
   // Now retrieve all of the data that were on the first block.
-  uint32_t first_block_id = pl_holder.block.next_block_index();
+  uint32_t first_block_id = pl_holder.next_block_index;
   EXPECT_THAT(first_block_id, Eq(1));
 
   PostingListIdentifier pl_id(first_block_id, /*posting_list_index=*/0,
@@ -400,6 +402,131 @@ TEST_F(PostingListIntegerIndexAccessorTest,
   PostingListAccessor::FinalizeResult result2 =
       std::move(*pl_accessor2).Finalize();
   EXPECT_THAT(result2.status, IsOk());
+}
+
+TEST_F(PostingListIntegerIndexAccessorTest, GetAllDataAndFree) {
+  IntegerIndexData data1(/*section_id=*/3, /*document_id=*/1, /*key=*/123);
+  IntegerIndexData data2(/*section_id=*/3, /*document_id=*/2, /*key=*/456);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor1,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
+  // Add 2 data.
+  ICING_ASSERT_OK(pl_accessor1->PrependData(data1));
+  ICING_ASSERT_OK(pl_accessor1->PrependData(data2));
+  PostingListAccessor::FinalizeResult result1 =
+      std::move(*pl_accessor1).Finalize();
+  ICING_ASSERT_OK(result1.status);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor2,
+      PostingListIntegerIndexAccessor::CreateFromExisting(
+          flash_index_storage_.get(), serializer_.get(), result1.id));
+  EXPECT_THAT(pl_accessor2->GetAllDataAndFree(),
+              IsOkAndHolds(ElementsAre(data2, data1)));
+
+  // Allocate a new posting list with same size again.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor3,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
+  // Add 2 data.
+  ICING_ASSERT_OK(pl_accessor3->PrependData(data1));
+  ICING_ASSERT_OK(pl_accessor3->PrependData(data2));
+  PostingListAccessor::FinalizeResult result3 =
+      std::move(*pl_accessor3).Finalize();
+  ICING_ASSERT_OK(result3.status);
+  // We should get the same id if the previous one has been freed correctly by
+  // GetAllDataAndFree.
+  EXPECT_THAT(result3.id, Eq(result1.id));
+}
+
+TEST_F(PostingListIntegerIndexAccessorTest, GetAllDataAndFreePostingListChain) {
+  uint32_t block_size = FlashIndexStorage::SelectBlockSize();
+  uint32_t max_posting_list_bytes = IndexBlock::CalculateMaxPostingListBytes(
+      block_size, serializer_->GetDataTypeBytes());
+  uint32_t max_num_data_single_posting_list =
+      max_posting_list_bytes / serializer_->GetDataTypeBytes();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor1,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
+
+  // Prepend max_num_data_single_posting_list + 1 data.
+  std::vector<IntegerIndexData> data_vec;
+  for (uint32_t i = 0; i < max_num_data_single_posting_list + 1; ++i) {
+    IntegerIndexData data(/*section_id=*/3, static_cast<DocumentId>(i),
+                          /*key=*/i);
+    ICING_ASSERT_OK(pl_accessor1->PrependData(data));
+    data_vec.push_back(data);
+  }
+
+  // This will cause:
+  // - Allocate the first max-sized posting list at block index = 1, storing
+  //   max_num_data_single_posting_list data.
+  // - Allocate the second max-sized posting list at block index = 2, storing 1
+  //   data. Also its next_block_index is 1.
+  // - IOW, we will get 2 -> 1 and result1.id points to 2.
+  PostingListAccessor::FinalizeResult result1 =
+      std::move(*pl_accessor1).Finalize();
+  ICING_ASSERT_OK(result1.status);
+
+  uint32_t first_pl_block_index = kInvalidBlockIndex;
+  {
+    // result1.id points at the second (max-sized) PL, and next_block_index of
+    // the second PL points to the first PL's block. Fetch the first PL's block
+    // index manually.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PostingListHolder pl_holder,
+        flash_index_storage_->GetPostingList(result1.id));
+    first_pl_block_index = pl_holder.next_block_index;
+  }
+  ASSERT_THAT(first_pl_block_index, Ne(kInvalidBlockIndex));
+
+  // Call GetAllDataAndFree. This will free block 2 and block 1.
+  // Free block list: 1 -> 2 (since free block list is LIFO).
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor2,
+      PostingListIntegerIndexAccessor::CreateFromExisting(
+          flash_index_storage_.get(), serializer_.get(), result1.id));
+  EXPECT_THAT(
+      pl_accessor2->GetAllDataAndFree(),
+      IsOkAndHolds(ElementsAreArray(data_vec.rbegin(), data_vec.rend())));
+  pl_accessor2.reset();
+
+  // Allocate a new posting list with same size again.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PostingListIntegerIndexAccessor> pl_accessor3,
+      PostingListIntegerIndexAccessor::Create(flash_index_storage_.get(),
+                                              serializer_.get()));
+  // Add same set of data.
+  for (uint32_t i = 0; i < max_num_data_single_posting_list + 1; ++i) {
+    ICING_ASSERT_OK(pl_accessor3->PrependData(data_vec[i]));
+  }
+
+  // This will cause:
+  // - Allocate the first max-sized posting list from the free block list, which
+  //   is block index = 1, storing max_num_data_single_posting_list data.
+  // - Allocate the second max-sized posting list from the next block in free
+  //   block list, which is block index = 2, storing 1 data. Also its
+  //   next_block_index should be 1.
+  PostingListAccessor::FinalizeResult result3 =
+      std::move(*pl_accessor3).Finalize();
+  ICING_ASSERT_OK(result3.status);
+  // We should get the same id if the previous one has been freed correctly by
+  // GetAllDataAndFree.
+  EXPECT_THAT(result3.id, Eq(result1.id));
+  // Also the first PL should be the same if it has been freed correctly by
+  // GetAllDataAndFree. Since it is a max-sized posting list, we just need to
+  // verify the block index.
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        PostingListHolder pl_holder,
+        flash_index_storage_->GetPostingList(result3.id));
+    EXPECT_THAT(pl_holder.next_block_index, Eq(first_pl_block_index));
+  }
 }
 
 }  // namespace
