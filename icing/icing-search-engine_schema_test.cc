@@ -18,7 +18,6 @@
 #include <string>
 #include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -27,14 +26,12 @@
 #include "icing/icing-search-engine.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/join/join-processor.h"
-#include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/initialize.pb.h"
-#include "icing/proto/logging.pb.h"
 #include "icing/proto/optimize.pb.h"
 #include "icing/proto/persist.pb.h"
 #include "icing/proto/reset.pb.h"
@@ -1076,6 +1073,281 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   search_spec2.set_query("timestamp == 20");
   actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    SetSchemaChangeNestedPropertiesListTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto person_proto =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("lastName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("address")
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("birthday")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  // Create a schema with nested properties:
+  // - "sender.address": string type, (nested) non-indexable. Section id = 0.
+  // - "sender.age": int64 type, (nested) indexed. Section id = 1.
+  // - "sender.birthday": int64 type, (nested) non-indexable. Section id = 2.
+  // - "sender.lastName": int64 type, (nested) indexed. Section id = 3.
+  // - "sender.name": string type, (nested) indexed. Section id = 4.
+  // - "subject": string type, indexed. Section id = 5.
+  // - "timestamp": int64 type, indexed. Section id = 6.
+  // - "sender.foo": unknown type, (nested) non-indexable. Section id = 7.
+  //
+  // "sender.address" and "sender.birthday" are assigned a section id because
+  // they are listed in the indexable_nested_properties_list for 'Email.sender'.
+  // They are assigned a sectionId but are not indexed since their indexing
+  // configs are non-indexable.
+  //
+  // "sender.foo" is also assigned a section id, but is also not undefined by
+  // the schema definition. Trying to index a document with this nested property
+  // should fail.
+  SchemaProto nested_schema =
+      SchemaBuilder()
+          .AddType(person_proto)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Email")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("sender")
+                          .SetDataTypeDocument(
+                              "Person", /*indexable_nested_properties_list=*/
+                              {"age", "lastName", "address", "name", "birthday",
+                               "foo"})
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("subject")
+                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("timestamp")
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace1", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Bill")
+                  .AddStringProperty("lastName", "Lundbergh")
+                  .AddStringProperty("address", "1600 Amphitheatre Pkwy")
+                  .AddInt64Property("age", 20)
+                  .AddInt64Property("birthday", 20)
+                  .Build())
+          .AddInt64Property("timestamp", 1234)
+          .Build();
+
+  // Indexing this doc should fail, since the 'sender.foo' property is not found
+  DocumentProto invalid_document =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("subject",
+                             "Did you get the memo about TPS reports?")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace1", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Bill")
+                  .AddStringProperty("lastName", "Lundbergh")
+                  .AddStringProperty("address", "1600 Amphitheatre Pkwy")
+                  .AddInt64Property("age", 20)
+                  .AddInt64Property("birthday", 20)
+                  .AddBytesProperty("foo", "bar bytes")
+                  .Build())
+          .AddInt64Property("timestamp", 1234)
+          .Build();
+
+  EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(invalid_document).status(),
+              ProtoStatusIs(StatusProto::NOT_FOUND));
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document;
+
+  SearchResultProto empty_result;
+  empty_result.mutable_status()->set_code(StatusProto::OK);
+
+  // Verify term search
+  // document should match a query for 'Bill' in 'sender.name', but not in
+  // 'sender.lastName'
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("sender.name:Bill");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec1.set_query("sender.lastName:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // document should match a query for 'Lundber' in 'sender.lastName', but not
+  // in 'sender.name'.
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("sender.lastName:Lundber");
+  search_spec2.set_term_match_type(TermMatchType::PREFIX);
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec2.set_query("sender.name:Lundber");
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // document should not match a query for 'Amphitheatre' because the
+  // 'sender.address' field is not indexed.
+  search_spec2.set_query("Amphitheatre");
+  search_spec2.set_term_match_type(TermMatchType::PREFIX);
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Verify numeric (integer) search
+  // document should match a query for 20 in 'sender.age', but not in
+  // 'timestamp' or 'sender.birthday'
+  SearchSpecProto search_spec3;
+  search_spec3.set_query("sender.age == 20");
+  search_spec3.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec3.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  search_spec3.set_query("timestamp == 20");
+  actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  search_spec3.set_query("birthday == 20");
+  actual_results = icing.Search(search_spec3, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Now update the schema and don't index "sender.name", "sender.birthday" and
+  // "sender.foo".
+  // This should reassign section ids, lead to an index rebuild and ensure that
+  // nothing match a query for "Bill".
+  //
+  // Section id assignment:
+  // - "sender.address": string type, (nested) non-indexable. Section id = 0.
+  // - "sender.age": int64 type, (nested) indexed. Section id = 1.
+  // - "sender.birthday": int64 type, (nested) unindexed. No section id.
+  // - "sender.lastName": int64 type, (nested) indexed. Section id = 2.
+  // - "sender.name": string type, (nested) unindexed. No section id.
+  // - "subject": string type, indexed. Section id = 3.
+  // - "timestamp": int64 type, indexed. Section id = 4.
+  // - "sender.foo": unknown type, invalid. No section id.
+  SchemaProto nested_schema_with_less_props =
+      SchemaBuilder()
+          .AddType(person_proto)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("sender")
+                               .SetDataTypeDocument(
+                                   "Person", /*indexable_nested_properties=*/
+                                   {"age", "lastName", "address"})
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("timestamp")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result = icing.SetSchema(nested_schema_with_less_props);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
+      ->Add("Email");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify term search
+  // document shouldn't match a query for 'Bill' in either 'sender.name' or
+  // 'subject'
+  search_spec1.set_query("sender.name:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  search_spec1.set_query("subject:Bill");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(empty_result));
