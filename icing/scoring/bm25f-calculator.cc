@@ -42,11 +42,12 @@ constexpr float k1_ = 1.2f;
 constexpr float b_ = 0.7f;
 
 // TODO(b/158603900): add tests for Bm25fCalculator
-Bm25fCalculator::Bm25fCalculator(
-    const DocumentStore* document_store,
-    std::unique_ptr<SectionWeights> section_weights)
+Bm25fCalculator::Bm25fCalculator(const DocumentStore* document_store,
+                                 SectionWeights* section_weights,
+                                 int64_t current_time_ms)
     : document_store_(document_store),
-      section_weights_(std::move(section_weights)) {}
+      section_weights_(*section_weights),
+      current_time_ms_(current_time_ms) {}
 
 // During initialization, Bm25fCalculator iterates through
 // hit-iterators for each query term to pre-compute n(q_i) for each corpus under
@@ -115,8 +116,8 @@ float Bm25fCalculator::ComputeScore(const DocHitInfoIterator* query_it,
     score += idf_weight * normalized_tf;
   }
 
-  ICING_VLOG(1) << "BM25F: corpus_id:" << data.corpus_id() << " docid:"
-      << hit_info.document_id() << " score:" << score;
+  ICING_VLOG(1) << "BM25F: corpus_id:" << data.corpus_id()
+                << " docid:" << hit_info.document_id() << " score:" << score;
   return score;
 }
 
@@ -152,8 +153,8 @@ float Bm25fCalculator::GetCorpusIdfWeightForTerm(std::string_view term,
   float idf =
       nqi != 0 ? log(1.0f + (num_docs - nqi + 0.5f) / (nqi + 0.5f)) : 0.0f;
   corpus_idf_map_.insert({corpus_term_info.value, idf});
-  ICING_VLOG(1) << "corpus_id:" << corpus_id << " term:"
-      << term << " N:" << num_docs << "nqi:" << nqi << " idf:" << idf;
+  ICING_VLOG(1) << "corpus_id:" << corpus_id << " term:" << term
+                << " N:" << num_docs << "nqi:" << nqi << " idf:" << idf;
   return idf;
 }
 
@@ -200,9 +201,10 @@ float Bm25fCalculator::ComputedNormalizedTermFrequency(
   float normalized_tf =
       f_q * (k1_ + 1) / (f_q + k1_ * (1 - b_ + b_ * dl / avgdl));
 
-  ICING_VLOG(1) << "corpus_id:" << data.corpus_id() << " docid:"
-      << hit_info.document_id() << " dl:" << dl << " avgdl:" << avgdl << " f_q:"
-      << f_q << " norm_tf:" << normalized_tf;
+  ICING_VLOG(1) << "corpus_id:" << data.corpus_id()
+                << " docid:" << hit_info.document_id() << " dl:" << dl
+                << " avgdl:" << avgdl << " f_q:" << f_q
+                << " norm_tf:" << normalized_tf;
   return normalized_tf;
 }
 
@@ -214,11 +216,11 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
   SchemaTypeId schema_type_id = GetSchemaTypeId(document_id);
 
   while (sections != 0) {
-    SectionId section_id = __builtin_ctz(sections);
-    sections &= ~(1u << section_id);
+    SectionId section_id = __builtin_ctzll(sections);
+    sections &= ~(UINT64_C(1) << section_id);
 
     Hit::TermFrequency tf = term_match_info.term_frequencies[section_id];
-    double weighted_tf = tf * section_weights_->GetNormalizedSectionWeight(
+    double weighted_tf = tf * section_weights_.GetNormalizedSectionWeight(
                                   schema_type_id, section_id);
     if (tf != Hit::kNoTermFrequency) {
       sum += weighted_tf;
@@ -228,15 +230,15 @@ float Bm25fCalculator::ComputeTermFrequencyForMatchedSections(
 }
 
 SchemaTypeId Bm25fCalculator::GetSchemaTypeId(DocumentId document_id) const {
-  auto filter_data_optional =
-      document_store_->GetAliveDocumentFilterData(document_id);
+  auto filter_data_optional = document_store_->GetAliveDocumentFilterData(
+      document_id, current_time_ms_);
   if (!filter_data_optional) {
     // This should never happen. The only failure case for
-    // GetDocumentFilterData is if the document_id is outside of the range of
-    // allocated document_ids, which shouldn't be possible since we're getting
-    // this document_id from the posting lists.
+    // GetAliveDocumentFilterData is if the document_id is outside of the range
+    // of allocated document_ids, which shouldn't be possible since we're
+    // getting this document_id from the posting lists.
     ICING_LOG(WARNING) << "No document filter data for document ["
-        << document_id << "]";
+                       << document_id << "]";
     return kInvalidSchemaTypeId;
   }
   return filter_data_optional.value().schema_type_id();

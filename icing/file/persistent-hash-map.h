@@ -24,6 +24,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -34,47 +35,61 @@ namespace lib {
 // Key and value can be any type, but callers should serialize key/value by
 // themselves and pass raw bytes into the hash map, and the serialized key
 // should not contain termination character '\0'.
-class PersistentHashMap {
+class PersistentHashMap : public PersistentStorage {
  public:
-  // Crcs and Info will be written into the metadata file.
-  // File layout: <Crcs><Info>
-  // Crcs
-  struct Crcs {
-    static constexpr int32_t kFileOffset = 0;
+  // For iterating through persistent hash map. The order is not guaranteed.
+  //
+  // Not thread-safe.
+  //
+  // Change in underlying persistent hash map invalidates iterator.
+  class Iterator {
+   public:
+    // Advance to the next entry.
+    //
+    // Returns:
+    //   True on success, otherwise false.
+    bool Advance();
 
-    struct ComponentCrcs {
-      uint32_t info_crc;
-      uint32_t bucket_storage_crc;
-      uint32_t entry_storage_crc;
-      uint32_t kv_storage_crc;
+    int32_t GetIndex() const { return curr_kv_idx_; }
 
-      bool operator==(const ComponentCrcs& other) const {
-        return info_crc == other.info_crc &&
-               bucket_storage_crc == other.bucket_storage_crc &&
-               entry_storage_crc == other.entry_storage_crc &&
-               kv_storage_crc == other.kv_storage_crc;
-      }
-
-      Crc32 ComputeChecksum() const {
-        return Crc32(std::string_view(reinterpret_cast<const char*>(this),
-                                      sizeof(ComponentCrcs)));
-      }
-    } __attribute__((packed));
-
-    bool operator==(const Crcs& other) const {
-      return all_crc == other.all_crc && component_crcs == other.component_crcs;
+    // Get the key.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    std::string_view GetKey() const {
+      return std::string_view(map_->kv_storage_->array() + curr_kv_idx_,
+                              curr_key_len_);
     }
 
-    uint32_t all_crc;
-    ComponentCrcs component_crcs;
-  } __attribute__((packed));
-  static_assert(sizeof(Crcs) == 20, "");
+    // Get the memory mapped address of the value.
+    //
+    // REQUIRES: The preceding call for Advance() is true.
+    const void* GetValue() const {
+      return static_cast<const void*>(map_->kv_storage_->array() +
+                                      curr_kv_idx_ + curr_key_len_ + 1);
+    }
 
-  // Info
+   private:
+    explicit Iterator(const PersistentHashMap* map)
+        : map_(map), curr_kv_idx_(0), curr_key_len_(0) {}
+
+    // Does not own
+    const PersistentHashMap* map_;
+
+    int32_t curr_kv_idx_;
+    int32_t curr_key_len_;
+
+    friend class PersistentHashMap;
+  };
+
+  // Metadata file layout: <Crcs><Info>
+  static constexpr int32_t kCrcsMetadataFileOffset = 0;
+  static constexpr int32_t kInfoMetadataFileOffset =
+      static_cast<int32_t>(sizeof(Crcs));
+
   struct Info {
-    static constexpr int32_t kFileOffset = static_cast<int32_t>(sizeof(Crcs));
+    static constexpr int32_t kMagic = 0x653afd7b;
 
-    int32_t version;
+    int32_t magic;
     int32_t value_type_size;
     int32_t max_load_factor_percent;
     int32_t num_deleted_entries;
@@ -87,15 +102,16 @@ class PersistentHashMap {
   } __attribute__((packed));
   static_assert(sizeof(Info) == 20, "");
 
+  static constexpr int32_t kMetadataFileSize = sizeof(Crcs) + sizeof(Info);
+  static_assert(kMetadataFileSize == 32, "");
+
   // Bucket
   class Bucket {
    public:
-    // Absolute max # of buckets allowed. Since max file size on Android is
-    // 2^31-1, we can at most have ~2^29 buckets. To make it power of 2, round
-    // it down to 2^28. Also since we're using FileBackedVector to store
-    // buckets, add some static_asserts to ensure numbers here are compatible
-    // with FileBackedVector.
-    static constexpr int32_t kMaxNumBuckets = 1 << 28;
+    // Absolute max # of buckets allowed. Since we're using FileBackedVector to
+    // store buckets, add some static_asserts to ensure numbers here are
+    // compatible with FileBackedVector.
+    static constexpr int32_t kMaxNumBuckets = 1 << 24;
 
     explicit Bucket(int32_t head_entry_index = Entry::kInvalidIndex)
         : head_entry_index_(head_entry_index) {}
@@ -126,16 +142,14 @@ class PersistentHashMap {
   // Entry
   class Entry {
    public:
-    // Absolute max # of entries allowed. Since max file size on Android is
-    // 2^31-1, we can at most have ~2^28 entries. To make it power of 2, round
-    // it down to 2^27. Also since we're using FileBackedVector to store
-    // entries, add some static_asserts to ensure numbers here are compatible
-    // with FileBackedVector.
+    // Absolute max # of entries allowed. Since we're using FileBackedVector to
+    // store entries, add some static_asserts to ensure numbers here are
+    // compatible with FileBackedVector.
     //
     // Still the actual max # of entries are determined by key-value storage,
     // since length of the key varies and affects # of actual key-value pairs
     // that can be stored.
-    static constexpr int32_t kMaxNumEntries = 1 << 27;
+    static constexpr int32_t kMaxNumEntries = 1 << 23;
     static constexpr int32_t kMaxIndex = kMaxNumEntries - 1;
     static constexpr int32_t kInvalidIndex = -1;
 
@@ -173,51 +187,111 @@ class PersistentHashMap {
                 "Max # of entries cannot fit into FileBackedVector");
 
   // Key-value serialized type
-  static constexpr int32_t kMaxKVTotalByteSize =
-      (FileBackedVector<char>::kMaxFileSize -
-       FileBackedVector<char>::Header::kHeaderSize) /
-      FileBackedVector<char>::kElementTypeSize;
+  static constexpr int32_t kMaxKVTotalByteSize = 1 << 28;
   static constexpr int32_t kMaxKVIndex = kMaxKVTotalByteSize - 1;
   static constexpr int32_t kInvalidKVIndex = -1;
   static_assert(sizeof(char) == FileBackedVector<char>::kElementTypeSize,
                 "Char type size is inconsistent with FileBackedVector element "
                 "type size");
+  static_assert(kMaxKVTotalByteSize <=
+                    FileBackedVector<char>::kMaxFileSize -
+                        FileBackedVector<char>::Header::kHeaderSize,
+                "Max total byte size of key value pairs cannot fit into "
+                "FileBackedVector");
 
-  static constexpr int32_t kVersion = 1;
-  static constexpr int32_t kDefaultMaxLoadFactorPercent = 75;
+  static constexpr int32_t kMaxValueTypeSize = 1 << 10;
 
+  struct Options {
+    static constexpr int32_t kDefaultMaxLoadFactorPercent = 100;
+    static constexpr int32_t kDefaultAverageKVByteSize = 32;
+    static constexpr int32_t kDefaultInitNumBuckets = 1 << 13;
+
+    explicit Options(
+        int32_t value_type_size_in,
+        int32_t max_num_entries_in = Entry::kMaxNumEntries,
+        int32_t max_load_factor_percent_in = kDefaultMaxLoadFactorPercent,
+        int32_t average_kv_byte_size_in = kDefaultAverageKVByteSize,
+        int32_t init_num_buckets_in = kDefaultInitNumBuckets,
+        bool pre_mapping_fbv_in = false)
+        : value_type_size(value_type_size_in),
+          max_num_entries(max_num_entries_in),
+          max_load_factor_percent(max_load_factor_percent_in),
+          average_kv_byte_size(average_kv_byte_size_in),
+          init_num_buckets(init_num_buckets_in),
+          pre_mapping_fbv(pre_mapping_fbv_in) {}
+
+    bool IsValid() const;
+
+    // (fixed) size of the serialized value type for hash map.
+    int32_t value_type_size;
+
+    // Max # of entries, default Entry::kMaxNumEntries.
+    int32_t max_num_entries;
+
+    // Percentage of the max loading for the hash map. If load_factor_percent
+    // exceeds max_load_factor_percent, then rehash will be invoked (and # of
+    // buckets will be doubled).
+    //   load_factor_percent = 100 * num_keys / num_buckets
+    //
+    // Note that load_factor_percent exceeding 100 is considered valid.
+    int32_t max_load_factor_percent;
+
+    // Average byte size of a key value pair. It is used to estimate kv_storage_
+    // pre_mapping_mmap_size.
+    int32_t average_kv_byte_size;
+
+    // Initial # of buckets for the persistent hash map. It should be 2's power.
+    // It is used when creating new persistent hash map and ignored when
+    // creating the instance from existing files.
+    int32_t init_num_buckets;
+
+    // Flag indicating whether memory map max possible file size for underlying
+    // FileBackedVector before growing the actual file size.
+    bool pre_mapping_fbv;
+  };
+
+  static constexpr WorkingPathType kWorkingPathType =
+      WorkingPathType::kDirectory;
   static constexpr std::string_view kFilePrefix = "persistent_hash_map";
-  // Only metadata, bucket, entry files are stored under this sub-directory, for
-  // rehashing branching use.
-  static constexpr std::string_view kSubDirectory = "dynamic";
 
   // Creates a new PersistentHashMap to read/write/delete key value pairs.
   //
   // filesystem: Object to make system level calls
-  // base_dir: Specifies the directory for all persistent hash map related
-  //           sub-directory and files to be stored. If base_dir doesn't exist,
-  //           then PersistentHashMap will automatically create it. If files
-  //           exist, then it will initialize the hash map from existing files.
-  // value_type_size: (fixed) size of the serialized value type for hash map.
-  // max_load_factor_percent: percentage of the max loading for the hash map.
-  //                          load_factor_percent = 100 * num_keys / num_buckets
-  //                          If load_factor_percent exceeds
-  //                          max_load_factor_percent, then rehash will be
-  //                          invoked (and # of buckets will be doubled).
-  //                          Note that load_factor_percent exceeding 100 is
-  //                          considered valid.
+  // working_path: Specifies the working path for PersistentStorage.
+  //               PersistentHashMap uses working path as working directory and
+  //               all related files will be stored under this directory. It
+  //               takes full ownership and of working_path_, including
+  //               creation/deletion. It is the caller's responsibility to
+  //               specify correct working path and avoid mixing different
+  //               persistent storages together under the same path. Also the
+  //               caller has the ownership for the parent directory of
+  //               working_path_, and it is responsible for parent directory
+  //               creation/deletion. See PersistentStorage for more details
+  //               about the concept of working_path.
+  // options: Options instance.
   //
   // Returns:
+  //   INVALID_ARGUMENT_ERROR if any value in options is invalid.
   //   FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
-  //                             checksum.
+  //                             checksum or any other inconsistency.
   //   INTERNAL_ERROR on I/O errors.
   //   Any FileBackedVector errors.
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
-  Create(const Filesystem& filesystem, std::string_view base_dir,
-         int32_t value_type_size,
-         int32_t max_load_factor_percent = kDefaultMaxLoadFactorPercent);
+  Create(const Filesystem& filesystem, std::string working_path,
+         Options options);
 
-  ~PersistentHashMap();
+  // Deletes PersistentHashMap under working_path.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  static libtextclassifier3::Status Discard(const Filesystem& filesystem,
+                                            std::string working_path) {
+    return PersistentStorage::Discard(filesystem, working_path,
+                                      kWorkingPathType);
+  }
+
+  ~PersistentHashMap() override;
 
   // Update a key value pair. If key does not exist, then insert (key, value)
   // into the storage. Otherwise overwrite the value into the storage.
@@ -226,7 +300,7 @@ class PersistentHashMap {
   //
   // Returns:
   //   OK on success
-  //   RESOURCE_EXHAUSTED_ERROR if # of entries reach kMaxNumEntries
+  //   RESOURCE_EXHAUSTED_ERROR if # of entries reach options_.max_num_entries
   //   INVALID_ARGUMENT_ERROR if the key is invalid (i.e. contains '\0')
   //   INTERNAL_ERROR on I/O error or any data inconsistency
   //   Any FileBackedVector errors
@@ -257,12 +331,18 @@ class PersistentHashMap {
   //   Any FileBackedVector errors
   libtextclassifier3::Status Get(std::string_view key, void* value) const;
 
-  // Flushes content to underlying files.
+  // Delete the key value pair from the storage. If key doesn't exist, then do
+  // nothing and return NOT_FOUND_ERROR.
   //
   // Returns:
   //   OK on success
-  //   INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistToDisk();
+  //   NOT_FOUND_ERROR if the key doesn't exist
+  //   INVALID_ARGUMENT_ERROR if the key is invalid (i.e. contains '\0')
+  //   INTERNAL_ERROR on I/O error or any data inconsistency
+  //   Any FileBackedVector errors
+  libtextclassifier3::Status Delete(std::string_view key);
+
+  Iterator GetIterator() const { return Iterator(this); }
 
   // Calculates and returns the disk usage (metadata + 3 storages total file
   // size) in bytes.
@@ -282,52 +362,88 @@ class PersistentHashMap {
   //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const;
 
-  // Updates all checksums of the persistent hash map components and returns
-  // all_crc.
-  //
-  // Returns:
-  //   Crc of all components (all_crc) on success
-  //   INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum();
-
   int32_t size() const {
-    return entry_storage_->num_elements() - info()->num_deleted_entries;
+    return entry_storage_->num_elements() - info().num_deleted_entries;
   }
 
   bool empty() const { return size() == 0; }
 
+  int32_t num_buckets() const { return bucket_storage_->num_elements(); }
+
  private:
+  struct EntryIndexPair {
+    int32_t target_entry_index;
+    int32_t prev_entry_index;
+
+    explicit EntryIndexPair(int32_t target_entry_index_in,
+                            int32_t prev_entry_index_in)
+        : target_entry_index(target_entry_index_in),
+          prev_entry_index(prev_entry_index_in) {}
+  };
+
   explicit PersistentHashMap(
-      const Filesystem& filesystem, std::string_view base_dir,
-      std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
+      const Filesystem& filesystem, std::string&& working_path,
+      Options&& options, MemoryMappedFile&& metadata_mmapped_file,
       std::unique_ptr<FileBackedVector<Bucket>> bucket_storage,
       std::unique_ptr<FileBackedVector<Entry>> entry_storage,
       std::unique_ptr<FileBackedVector<char>> kv_storage)
-      : filesystem_(&filesystem),
-        base_dir_(base_dir),
-        metadata_mmapped_file_(std::move(metadata_mmapped_file)),
+      : PersistentStorage(filesystem, std::move(working_path),
+                          kWorkingPathType),
+        options_(std::move(options)),
+        metadata_mmapped_file_(std::make_unique<MemoryMappedFile>(
+            std::move(metadata_mmapped_file))),
         bucket_storage_(std::move(bucket_storage)),
         entry_storage_(std::move(entry_storage)),
         kv_storage_(std::move(kv_storage)) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
-  InitializeNewFiles(const Filesystem& filesystem, std::string_view base_dir,
-                     int32_t value_type_size, int32_t max_load_factor_percent);
+  InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
+                     Options&& options);
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   InitializeExistingFiles(const Filesystem& filesystem,
-                          std::string_view base_dir, int32_t value_type_size,
-                          int32_t max_load_factor_percent);
+                          std::string&& working_path, Options&& options);
 
-  // Find the index of the key entry from a bucket (specified by bucket index).
-  // The caller should specify the desired bucket index.
+  // Flushes contents of all storages to underlying files.
   //
   // Returns:
-  //   int32_t: on success, the index of the entry, or Entry::kInvalidIndex if
-  //            not found
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status PersistStoragesToDisk() override;
+
+  // Flushes contents of metadata file.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status PersistMetadataToDisk() override;
+
+  // Computes and returns Info checksum.
+  //
+  // Returns:
+  //   - Crc of the Info on success
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+
+  // Computes and returns all storages checksum. Checksums of bucket_storage_,
+  // entry_storage_ and kv_storage_ will be combined together by XOR.
+  //
+  // Returns:
+  //   - Crc of all storages on success
+  //   - INTERNAL_ERROR if any data inconsistency
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
+
+  // Find the index of the target entry (that contains the key) from a bucket
+  // (specified by bucket index). Also return the previous entry index, since
+  // Delete() needs it to update the linked list and head entry index. The
+  // caller should specify the desired bucket index.
+  //
+  // Returns:
+  //   std::pair<int32_t, int32_t>: target entry index and previous entry index
+  //                                on success. If not found, then target entry
+  //                                index will be Entry::kInvalidIndex
   //   INTERNAL_ERROR if any content inconsistency
   //   Any FileBackedVector errors
-  libtextclassifier3::StatusOr<int32_t> FindEntryIndexByKey(
+  libtextclassifier3::StatusOr<EntryIndexPair> FindEntryIndexByKey(
       int32_t bucket_idx, std::string_view key) const;
 
   // Copy the hash map value of the entry into value buffer.
@@ -351,23 +467,36 @@ class PersistentHashMap {
   libtextclassifier3::Status Insert(int32_t bucket_idx, std::string_view key,
                                     const void* value);
 
-  Crcs* crcs() {
-    return reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
-                                   Crcs::kFileOffset);
+  // Rehash function. If force_rehash is true or the hash map loading is greater
+  // than max_load_factor, then it will rehash all keys.
+  //
+  // Returns:
+  //   OK on success
+  //   INTERNAL_ERROR on I/O error or any data inconsistency
+  //   Any FileBackedVector errors
+  libtextclassifier3::Status RehashIfNecessary(bool force_rehash);
+
+  Crcs& crcs() override {
+    return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
+                                    kCrcsMetadataFileOffset);
   }
 
-  Info* info() {
-    return reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
-                                   Info::kFileOffset);
+  const Crcs& crcs() const override {
+    return *reinterpret_cast<const Crcs*>(metadata_mmapped_file_->region() +
+                                          kCrcsMetadataFileOffset);
   }
 
-  const Info* info() const {
-    return reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
-                                         Info::kFileOffset);
+  Info& info() {
+    return *reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
+                                    kInfoMetadataFileOffset);
   }
 
-  const Filesystem* filesystem_;
-  std::string base_dir_;
+  const Info& info() const {
+    return *reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
+                                          kInfoMetadataFileOffset);
+  }
+
+  Options options_;
 
   std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_;
 
