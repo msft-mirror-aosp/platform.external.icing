@@ -42,12 +42,12 @@ class Timer {
   virtual ~Timer() = default;
 
   // Returns the elapsed time from when timer started.
-  virtual int64_t GetElapsedMilliseconds() {
+  virtual int64_t GetElapsedMilliseconds() const {
     return GetElapsedNanoseconds() / 1000000;
   }
 
   // Returns the elapsed time from when timer started.
-  virtual int64_t GetElapsedNanoseconds() {
+  virtual int64_t GetElapsedNanoseconds() const {
     return GetSteadyTimeNanoseconds() - start_timestamp_nanoseconds_;
   }
 
@@ -89,6 +89,8 @@ class ScopedTimer {
       callback_(timer_->GetElapsedNanoseconds());
     }
   }
+
+  const Timer& timer() const { return *timer_; }
 
  private:
   std::unique_ptr<Timer> timer_;
