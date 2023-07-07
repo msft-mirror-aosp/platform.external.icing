@@ -177,15 +177,17 @@ class NumericIndex : public PersistentStorage {
       : PersistentStorage(filesystem, std::move(working_path),
                           working_path_type) {}
 
-  virtual libtextclassifier3::Status PersistStoragesToDisk() override = 0;
+  virtual libtextclassifier3::Status PersistStoragesToDisk(
+      bool force) override = 0;
 
-  virtual libtextclassifier3::Status PersistMetadataToDisk() override = 0;
+  virtual libtextclassifier3::Status PersistMetadataToDisk(
+      bool force) override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum()
-      override = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(
+      bool force) override = 0;
 
-  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum()
-      override = 0;
+  virtual libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override = 0;
 
   virtual Crcs& crcs() override = 0;
   virtual const Crcs& crcs() const override = 0;

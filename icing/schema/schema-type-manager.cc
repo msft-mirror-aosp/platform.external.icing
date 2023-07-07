@@ -20,6 +20,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/schema/joinable-property-manager.h"
+#include "icing/schema/property-util.h"
 #include "icing/schema/schema-property-iterator.h"
 #include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
@@ -67,6 +68,34 @@ SchemaTypeManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
           joinable_property_manager_builder.ProcessSchemaTypePropertyConfig(
               schema_type_id, iterator.GetCurrentPropertyConfig(),
               iterator.GetCurrentPropertyPath()));
+    }
+
+    // Process unknown property paths in the indexable_nested_properties_list.
+    // These property paths should consume sectionIds but are currently
+    // not indexed.
+    //
+    // SectionId assignment order:
+    // - We assign section ids to known (existing) properties first in alphabet
+    //   order.
+    // - After handling all known properties, we assign section ids to all
+    //   unknown (non-existent) properties that are specified in the
+    //  indexable_nested_properties_list.
+    // - As a result, assignment of the entire section set is not done
+    //   alphabetically, but assignment is still deterministic and alphabetical
+    //   order is preserved inside the known properties and unknown properties
+    //   sets individually.
+    for (const auto& property_path :
+         iterator.unknown_indexable_nested_property_paths()) {
+      PropertyConfigProto unknown_property_config;
+      unknown_property_config.set_property_name(std::string(
+          property_util::SplitPropertyPathExpr(property_path).back()));
+      unknown_property_config.set_data_type(
+          PropertyConfigProto::DataType::UNKNOWN);
+
+      ICING_RETURN_IF_ERROR(
+          section_manager_builder.ProcessSchemaTypePropertyConfig(
+              schema_type_id, unknown_property_config,
+              std::string(property_path)));
     }
   }
 

@@ -55,8 +55,12 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
       // If an element in sorted_top_level_indexable_nested_properties_ < the
       // current property path, it means that we've already iterated past the
       // possible position for it without seeing it.
-      // It's not a valid property path in our schema definition. Ignore it and
-      // advance current_top_level_indexable_nested_properties_idx_.
+      // It's not a valid property path in our schema definition. Add it to
+      // unknown_indexable_nested_properties_ and advance
+      // current_top_level_indexable_nested_properties_idx_.
+      unknown_indexable_nested_property_paths_.push_back(
+          sorted_top_level_indexable_nested_properties_.at(
+              current_top_level_indexable_nested_properties_idx_));
       ++current_top_level_indexable_nested_properties_idx_;
     }
 
@@ -75,13 +79,16 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
               : nullptr;
       if (current_indexable_nested_prop == nullptr ||
           *current_indexable_nested_prop > curr_property_path) {
-        // Current property is not in the indexable list. Set its indexable
-        // config according to the current level's indexable config.
-        levels_.back().SetCurrentPropertyIndexable(
-            levels_.back().GetLevelNestedIndexable());
+        // Current property is not in the indexable list. Set it as indexable if
+        // its schema level is indexable AND it is an indexable property.
+        bool is_property_indexable =
+            levels_.back().GetLevelNestedIndexable() &&
+            SchemaUtil::IsIndexedProperty(curr_property_config);
+        levels_.back().SetCurrentPropertyIndexable(is_property_indexable);
       } else if (*current_indexable_nested_prop == curr_property_path) {
         // Current property is in the indexable list. Set its indexable config
-        // to true.
+        // to true. This property will consume a sectionId regardless of whether
+        // or not it is actually indexable.
         levels_.back().SetCurrentPropertyIndexable(true);
         ++current_top_level_indexable_nested_properties_idx_;
       }
@@ -134,8 +141,14 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
                                                        property));
       }
       current_top_level_indexable_nested_properties_idx_ = 0;
+      // Sort elements and dedupe
       std::sort(sorted_top_level_indexable_nested_properties_.begin(),
                 sorted_top_level_indexable_nested_properties_.end());
+      auto last =
+          std::unique(sorted_top_level_indexable_nested_properties_.begin(),
+                      sorted_top_level_indexable_nested_properties_.end());
+      sorted_top_level_indexable_nested_properties_.erase(
+          last, sorted_top_level_indexable_nested_properties_.end());
     }
 
     bool is_cycle =
@@ -169,6 +182,15 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
                                 all_nested_properties_indexable));
     parent_type_config_names_.insert(nested_type_config.schema_type());
   }
+
+  // Before returning, move all remaining uniterated properties from
+  // sorted_top_level_indexable_nested_properties_ into
+  // unknown_indexable_nested_properties_.
+  std::move(sorted_top_level_indexable_nested_properties_.begin() +
+                current_top_level_indexable_nested_properties_idx_,
+            sorted_top_level_indexable_nested_properties_.end(),
+            std::back_inserter(unknown_indexable_nested_property_paths_));
+
   return absl_ports::OutOfRangeError("End of iterator");
 }
 

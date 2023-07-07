@@ -100,16 +100,6 @@ class PostingListIntegerIndexAccessor : public PostingListAccessor {
   //     posting list.
   libtextclassifier3::Status PrependData(const IntegerIndexData& data);
 
-  bool WantsSplit() const {
-    const PostingListUsed* current_pl =
-        preexisting_posting_list_ != nullptr
-            ? &preexisting_posting_list_->posting_list
-            : &in_memory_posting_list_;
-    // Only max-sized PLs get split. Smaller PLs just get copied to larger PLs.
-    return current_pl->size_in_bytes() == storage_->max_posting_list_bytes() &&
-           serializer_->IsFull(current_pl);
-  }
-
  private:
   explicit PostingListIntegerIndexAccessor(
       FlashIndexStorage* storage, PostingListUsed in_memory_posting_list,

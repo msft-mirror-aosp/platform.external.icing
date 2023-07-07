@@ -485,9 +485,13 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
           std::make_unique<SchemaProto>(std::move(base_schema));
       ICING_RETURN_IF_ERROR(schema_file_->Write(std::move(base_schema_ptr)));
 
+      // LINT.IfChange(min_overlay_version_compatibility)
+      // Although the current version is 2, the schema is compatible with
+      // version 1, so min_overlay_version_compatibility should be 1.
+      int32_t min_overlay_version_compatibility = version_util::kVersionOne;
+      // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
       header_->SetOverlayInfo(
-          /*overlay_created=*/true,
-          /*min_overlay_version_compatibility=*/version_util::kVersionOne);
+          /*overlay_created=*/true, min_overlay_version_compatibility);
       // Rebuild in memory data - references to the old schema will be invalid
       // now.
       BuildInMemoryCache();

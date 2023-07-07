@@ -172,6 +172,8 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   }
 
   void set_last_added_document_id(DocumentId document_id) {
+    SetInfoDirty();
+
     Info& info_ref = info();
     if (info_ref.last_added_document_id == kInvalidDocumentId ||
         document_id > info_ref.last_added_document_id) {
@@ -192,7 +194,9 @@ class QualifiedIdJoinIndex : public PersistentStorage {
         doc_join_info_mapper_(std::move(doc_join_info_mapper)),
         qualified_id_storage_(std::move(qualified_id_storage)),
         pre_mapping_fbv_(pre_mapping_fbv),
-        use_persistent_hash_map_(use_persistent_hash_map) {}
+        use_persistent_hash_map_(use_persistent_hash_map),
+        is_info_dirty_(false),
+        is_storage_dirty_(false) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
@@ -219,27 +223,28 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk() override;
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
 
   // Flushes contents of all storages to underlying files.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk() override;
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
 
   // Computes and returns Info checksum.
   //
   // Returns:
   //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
 
   // Computes and returns all storages checksum.
   //
   // Returns:
   //   - Crc of all storages on success
   //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_buffer_.get() +
@@ -261,6 +266,17 @@ class QualifiedIdJoinIndex : public PersistentStorage {
                                           kInfoMetadataBufferOffset);
   }
 
+  void SetInfoDirty() { is_info_dirty_ = true; }
+  // When storage is dirty, we have to set info dirty as well. So just expose
+  // SetDirty to set both.
+  void SetDirty() {
+    is_info_dirty_ = true;
+    is_storage_dirty_ = true;
+  }
+
+  bool is_info_dirty() const { return is_info_dirty_; }
+  bool is_storage_dirty() const { return is_storage_dirty_; }
+
   // Metadata buffer
   std::unique_ptr<uint8_t[]> metadata_buffer_;
 
@@ -281,6 +297,9 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   // Flag indicating whether use persistent hash map as the key mapper (if
   // false, then fall back to dynamic trie key mapper).
   bool use_persistent_hash_map_;
+
+  bool is_info_dirty_;
+  bool is_storage_dirty_;
 };
 
 }  // namespace lib

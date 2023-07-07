@@ -2722,7 +2722,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionZeroUpgradeNoChange) {
   }
 }
 
-TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
+TEST_F(SchemaStoreTest,
+       MigrateSchemaRollbackDiscardsIncompatibleOverlaySchema) {
   // Because we are upgrading from version zero, the schema must be compatible
   // with version zero.
   SchemaTypeConfigProto type_a =
@@ -2749,12 +2750,12 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
-  // Rollback to a version before kVersion. The schema header will declare that
-  // the overlay is compatible with any version starting with kVersion. So
-  // kVersion - 1 is incompatible and will throw out the schema.
+  // Rollback to a version before kVersionOne. The schema header will declare
+  // that the overlay is compatible with any version starting with kVersionOne.
+  // So kVersionOne - 1 is incompatible and will throw out the schema.
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
-      version_util::kVersion - 1));
+      version_util::kVersionOne - 1));
 
   {
     // Create a new of the schema store and check that we fell back to the
@@ -2777,7 +2778,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackDiscardsOverlaySchema) {
   }
 }
 
-TEST_F(SchemaStoreTest, MigrateSchemaCompatibleRollbackKeepsOverlaySchema) {
+TEST_F(SchemaStoreTest, MigrateSchemaRollbackKeepsCompatibleOverlaySchema) {
   // Because we are upgrading from version zero, the schema must be compatible
   // with version zero.
   SchemaTypeConfigProto type_a =
@@ -2846,12 +2847,12 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
-  // Rollback to a version before kVersion. The schema header will declare that
-  // the overlay is compatible with any version starting with kVersion. So
-  // kVersion - 1 is incompatible and will throw out the schema.
+  // Rollback to a version before kVersionOne. The schema header will declare
+  // that the overlay is compatible with any version starting with kVersionOne.
+  // So kVersionOne - 1 is incompatible and will throw out the schema.
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
-      version_util::kVersion - 1));
+      version_util::kVersionOne - 1));
 
   SchemaTypeConfigProto other_type_a =
       SchemaTypeConfigBuilder()
