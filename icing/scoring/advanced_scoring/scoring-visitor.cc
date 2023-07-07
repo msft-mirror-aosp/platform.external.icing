@@ -72,7 +72,7 @@ void ScoringVisitor::VisitMember(const MemberNode* node) {
         absl_ports::StrCat("Expect a numeric literal, but got ", value));
     return;
   }
-  stack.push_back(ConstantScoreExpression::Create(number));
+  stack_.push_back(ConstantScoreExpression::Create(number));
 }
 
 void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
@@ -98,17 +98,22 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     // Document-based function
     expression = DocumentFunctionScoreExpression::Create(
         DocumentFunctionScoreExpression::kFunctionNames.at(function_name),
-        std::move(args), &document_store_, default_score_);
+        std::move(args), &document_store_, default_score_, current_time_ms_);
   } else if (function_name ==
              RelevanceScoreFunctionScoreExpression::kFunctionName) {
     // relevanceScore function
     expression = RelevanceScoreFunctionScoreExpression::Create(
         std::move(args), &bm25f_calculator_, default_score_);
   } else if (function_name ==
-             ChildrenScoresFunctionScoreExpression::kFunctionName) {
-    // childrenScores function
-    expression = ChildrenScoresFunctionScoreExpression::Create(
+             ChildrenRankingSignalsFunctionScoreExpression::kFunctionName) {
+    // childrenRankingSignals function
+    expression = ChildrenRankingSignalsFunctionScoreExpression::Create(
         std::move(args), join_children_fetcher_);
+  } else if (function_name ==
+             PropertyWeightsFunctionScoreExpression::kFunctionName) {
+    // propertyWeights function
+    expression = PropertyWeightsFunctionScoreExpression::Create(
+        std::move(args), &document_store_, &section_weights_, current_time_ms_);
   } else if (MathFunctionScoreExpression::kFunctionNames.find(function_name) !=
              MathFunctionScoreExpression::kFunctionNames.end()) {
     // Math functions
@@ -121,7 +126,7 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     pending_error_ = expression.status();
     return;
   }
-  stack.push_back(std::move(expression).ValueOrDie());
+  stack_.push_back(std::move(expression).ValueOrDie());
 }
 
 void ScoringVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
@@ -145,7 +150,7 @@ void ScoringVisitor::VisitUnaryOperator(const UnaryOperatorNode* node) {
     pending_error_ = expression.status();
     return;
   }
-  stack.push_back(std::move(expression).ValueOrDie());
+  stack_.push_back(std::move(expression).ValueOrDie());
 }
 
 void ScoringVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
@@ -179,7 +184,7 @@ void ScoringVisitor::VisitNaryOperator(const NaryOperatorNode* node) {
     pending_error_ = expression.status();
     return;
   }
-  stack.push_back(std::move(expression).ValueOrDie());
+  stack_.push_back(std::move(expression).ValueOrDie());
 }
 
 }  // namespace lib

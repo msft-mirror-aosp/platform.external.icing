@@ -38,11 +38,12 @@ namespace lib {
 DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
     std::unique_ptr<DocHitInfoIterator> delegate,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    const Options& options)
+    const Options& options, int64_t current_time_ms)
     : delegate_(std::move(delegate)),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      options_(options) {
+      options_(options),
+      current_time_ms_(current_time_ms) {
   // Precompute all the NamespaceIds
   for (std::string_view name_space : options_.namespaces) {
     auto namespace_id_or = document_store_.GetNamespaceId(name_space);
@@ -55,11 +56,16 @@ DocHitInfoIteratorFilter::DocHitInfoIteratorFilter(
 
   // Precompute all the SchemaTypeIds
   for (std::string_view schema_type : options_.schema_types) {
-    auto schema_type_id_or = schema_store_.GetSchemaTypeId(schema_type);
+    libtextclassifier3::StatusOr<const std::unordered_set<SchemaTypeId>*>
+        schema_type_ids_or =
+            schema_store_.GetSchemaTypeIdsWithChildren(schema_type);
 
     // If we can't find the SchemaTypeId, just throw it away
-    if (schema_type_id_or.ok()) {
-      target_schema_type_ids_.emplace(schema_type_id_or.ValueOrDie());
+    if (schema_type_ids_or.ok()) {
+      const std::unordered_set<SchemaTypeId>* schema_type_ids =
+          schema_type_ids_or.ValueOrDie();
+      target_schema_type_ids_.insert(schema_type_ids->begin(),
+                                     schema_type_ids->end());
     }
   }
 }
@@ -69,7 +75,7 @@ libtextclassifier3::Status DocHitInfoIteratorFilter::Advance() {
     // Try to get the DocumentFilterData
     auto document_filter_data_optional =
         document_store_.GetAliveDocumentFilterData(
-            delegate_->doc_hit_info().document_id());
+            delegate_->doc_hit_info().document_id(), current_time_ms_);
     if (!document_filter_data_optional) {
       // Didn't find the DocumentFilterData in the filter cache. This could be
       // because the Document doesn't exist or the DocumentId isn't valid or the
@@ -112,7 +118,7 @@ DocHitInfoIteratorFilter::TrimRightMostNode() && {
   if (trimmed_delegate.iterator_ != nullptr) {
     trimmed_delegate.iterator_ = std::make_unique<DocHitInfoIteratorFilter>(
         std::move(trimmed_delegate.iterator_), &document_store_, &schema_store_,
-        options_);
+        options_, current_time_ms_);
   }
   return trimmed_delegate;
 }

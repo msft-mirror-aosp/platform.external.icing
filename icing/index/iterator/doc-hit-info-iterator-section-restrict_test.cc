@@ -95,12 +95,19 @@ class DocHitInfoIteratorSectionRestrictTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         schema_store_,
         SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema_));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema_, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, test_dir_, &fake_clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
   }
 
@@ -149,7 +156,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // get a result.
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_0});
+      /*target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   std::vector<TermMatchInfo> matched_terms_stats;
   section_restrict_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
@@ -177,7 +185,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, EmptyOriginalIterator) {
 
   DocHitInfoIteratorSectionRestrict filtered_iterator(
       std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), /*target_sections=*/{});
+      schema_store_.get(), /*target_sections=*/{},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -202,7 +211,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, IncludesHitWithMatchingSection) {
   // Filtering for the indexed section name should get a result
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_0});
+      /*target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator),
               ElementsAre(document_id));
@@ -227,7 +237,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // Filter for both target_sections
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_0, indexed_section_1});
+      /*target_sections=*/{indexed_section_0, indexed_section_1},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   ICING_ASSERT_OK(section_restrict_iterator.Advance());
   std::vector<SectionId> expected_section_ids = {kIndexedSectionId0,
@@ -257,7 +268,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // Filter for both target_sections
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_1});
+      /*target_sections=*/{indexed_section_1},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   ICING_ASSERT_OK(section_restrict_iterator.Advance());
   std::vector<SectionId> expected_section_ids = {kIndexedSectionId1};
@@ -285,7 +297,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // Filter for both target_sections
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_0, indexed_section_1});
+      /*target_sections=*/{indexed_section_0, indexed_section_1},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   ICING_ASSERT_OK(section_restrict_iterator.Advance());
   std::vector<SectionId> expected_section_ids = {kIndexedSectionId1};
@@ -305,7 +318,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, NoMatchingDocumentFilterData) {
   // Filtering for the indexed section name should get a result
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{""});
+      /*target_sections=*/{""}, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -331,7 +344,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // Filtering for the indexed section name should get a result
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{"some_section_name"});
+      /*target_sections=*/{"some_section_name"},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -355,7 +369,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_0});
+      /*target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -382,7 +397,8 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{indexed_section_0});
+      /*target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&section_restrict_iterator), IsEmpty());
   std::vector<TermMatchInfo> matched_terms_stats;
@@ -396,7 +412,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, GetNumBlocksInspected) {
 
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{""});
+      /*target_sections=*/{""}, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(section_restrict_iterator.GetNumBlocksInspected(), Eq(5));
 }
@@ -407,7 +423,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, GetNumLeafAdvanceCalls) {
 
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_sections=*/{""});
+      /*target_sections=*/{""}, fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(section_restrict_iterator.GetNumLeafAdvanceCalls(), Eq(6));
 }
@@ -450,7 +466,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
 
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      {indexed_section_0});
+      {indexed_section_0}, fake_clock_.GetSystemTimeMilliseconds());
 
   // The trimmed tree.
   //          Restrict
@@ -490,7 +506,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, TrimSectionRestrictIterator) {
 
   DocHitInfoIteratorSectionRestrict section_restrict_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      {indexed_section_0});
+      {indexed_section_0}, fake_clock_.GetSystemTimeMilliseconds());
 
   // The trimmed tree has null iterator but has target section.
   ICING_ASSERT_OK_AND_ASSIGN(

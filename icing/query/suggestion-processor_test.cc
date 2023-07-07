@@ -86,7 +86,12 @@ class SuggestionProcessorTest : public Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
@@ -158,7 +163,10 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_And) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -192,7 +200,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_And) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("bar foo"));
 }
 
@@ -201,7 +210,10 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -238,7 +250,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_AndNary) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms),
               UnorderedElementsAre("bar cat foo"));
 }
@@ -248,7 +261,10 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -287,7 +303,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_Or) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms),
               UnorderedElementsAre("bar OR cat fo", "bar OR cat foo"));
 }
@@ -297,7 +314,10 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_OrNary) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -346,7 +366,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_OrNary) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   // "fo" in document1, "foo" in document2 and "fool" in document3 could match.
   EXPECT_THAT(
       RetrieveSuggestionsText(terms),
@@ -359,7 +380,10 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -397,7 +421,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   // The term is normalized.
   EXPECT_THAT(RetrieveSuggestionsText(terms),
               UnorderedElementsAre("bar foo", "bar fool"));
@@ -405,7 +430,8 @@ TEST_F(SuggestionProcessorTest, MultipleTermsTest_NormalizedTerm) {
   // Search for "bar AND ḞÖ"
   suggestion_spec.set_prefix("bar ḞÖ");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+      terms, suggestion_processor_->QuerySuggestions(
+                 suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   // The term is normalized.
   EXPECT_THAT(RetrieveSuggestionsText(terms),
               UnorderedElementsAre("bar foo", "bar fool"));
@@ -416,7 +442,10 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -439,7 +468,8 @@ TEST_F(SuggestionProcessorTest, NonExistentPrefixTest) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -448,7 +478,10 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -471,7 +504,8 @@ TEST_F(SuggestionProcessorTest, PrefixTrailingSpaceTest) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -480,7 +514,10 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -502,22 +539,26 @@ TEST_F(SuggestionProcessorTest, NormalizePrefixTest) {
       TermMatchType::PREFIX);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 
   suggestion_spec.set_prefix("fO");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+      terms, suggestion_processor_->QuerySuggestions(
+                 suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 
   suggestion_spec.set_prefix("Fo");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+      terms, suggestion_processor_->QuerySuggestions(
+                 suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 
   suggestion_spec.set_prefix("FO");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+      terms, suggestion_processor_->QuerySuggestions(
+                 suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(RetrieveSuggestionsText(terms), UnorderedElementsAre("foo"));
 }
 
@@ -526,7 +567,10 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -549,17 +593,20 @@ TEST_F(SuggestionProcessorTest, ParenthesesOperatorPrefixTest) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<TermMetadata> terms,
-      suggestion_processor_->QuerySuggestions(suggestion_spec));
+      suggestion_processor_->QuerySuggestions(
+          suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("[f]");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+      terms, suggestion_processor_->QuerySuggestions(
+                 suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("(f)");
   ICING_ASSERT_OK_AND_ASSIGN(
-      terms, suggestion_processor_->QuerySuggestions(suggestion_spec));
+      terms, suggestion_processor_->QuerySuggestions(
+                 suggestion_spec, fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(terms, IsEmpty());
 }
 
@@ -568,7 +615,10 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -589,7 +639,8 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  auto terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  auto terms_or = suggestion_processor_->QuerySuggestions(
+      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
   if (SearchSpecProto::default_instance().search_type() ==
       SearchSpecProto::SearchType::ICING_RAW_QUERY) {
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
@@ -603,12 +654,14 @@ TEST_F(SuggestionProcessorTest, OtherSpecialPrefixTest) {
   // within a TEXT token (rather than a MINUS token) when surrounded on both
   // sides by TEXT rather than just preceded by TEXT.
   suggestion_spec.set_prefix("f-");
-  terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  terms_or = suggestion_processor_->QuerySuggestions(
+      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
   EXPECT_THAT(terms, IsEmpty());
 
   suggestion_spec.set_prefix("f OR");
-  terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  terms_or = suggestion_processor_->QuerySuggestions(
+      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
   if (SearchSpecProto::default_instance().search_type() ==
       SearchSpecProto::SearchType::ICING_RAW_QUERY) {
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);
@@ -624,7 +677,10 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("email"))
                            .Build();
-  ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
 
   // These documents don't actually match to the tokens in the index. We're
   // inserting the documents to get the appropriate number of documents and
@@ -645,7 +701,8 @@ TEST_F(SuggestionProcessorTest, InvalidPrefixTest) {
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
 
-  auto terms_or = suggestion_processor_->QuerySuggestions(suggestion_spec);
+  auto terms_or = suggestion_processor_->QuerySuggestions(
+      suggestion_spec, fake_clock_.GetSystemTimeMilliseconds());
   if (SearchSpecProto::default_instance().search_type() ==
       SearchSpecProto::SearchType::ICING_RAW_QUERY) {
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<TermMetadata> terms, terms_or);

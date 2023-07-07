@@ -92,6 +92,17 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
       .ValueOrDie();
 }
 
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
+}
+
 void BM_QueryOneTerm(benchmark::State& state) {
   bool run_via_adb = absl::GetFlag(FLAGS_adb);
   if (!run_via_adb) {
@@ -133,11 +144,13 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -167,7 +180,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -259,11 +273,13 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -311,7 +327,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -403,11 +420,13 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -440,7 +459,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -532,11 +552,13 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -569,7 +591,8 @@ void BM_QueryHiragana(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();

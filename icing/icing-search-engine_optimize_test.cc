@@ -897,7 +897,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec.set_query("name:person");
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -910,6 +909,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
   nested_search_spec->set_query("body:message");
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
 
   // Person1 is going to be deleted below. Only person2 which is joined with
   // message3 should match the query.
@@ -935,8 +938,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
     // Validates that join search query works right after Optimize()
     SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
+        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
     EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                          expected_search_result_proto));
   }  // Destroys IcingSearchEngine to make sure nothing is cached.
@@ -945,8 +947,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 }
@@ -1020,7 +1021,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec.set_query("name:person");
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -1033,6 +1033,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
   nested_search_spec->set_query("body:message");
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
 
   // Message1 and message3 are going to be deleted below. Both person1 and
   // person2 should be included even though person2 has no child (since we're
@@ -1064,8 +1068,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
 
     // Validates that join search query works right after Optimize()
     SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
+        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
     EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                          expected_search_result_proto));
   }  // Destroys IcingSearchEngine to make sure nothing is cached.
@@ -1074,8 +1077,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
 
   SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 }
@@ -1207,7 +1209,6 @@ TEST_F(IcingSearchEngineOptimizeTest,
   search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec3.set_query("name:person");
   JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -1221,6 +1222,10 @@ TEST_F(IcingSearchEngineOptimizeTest,
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
+  ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+  result_spec3.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
   SearchResultProto expected_join_search_result_proto;
   expected_join_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   SearchResultProto::ResultProto* result_proto =
@@ -1230,8 +1235,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
   *result_proto->mutable_joined_results()->Add()->mutable_document() = message1;
 
   SearchResultProto search_result_proto3 =
-      icing.Search(search_spec3, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec3, GetDefaultScoringSpec(), result_spec3);
   EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_join_search_result_proto));
 }
@@ -1751,6 +1755,87 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   result.mutable_optimize_stats()->clear_storage_size_before();
   result.mutable_optimize_stats()->clear_storage_size_after();
   EXPECT_THAT(result.optimize_stats(), EqualsProto(expected));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       OptimizationRewritesDocsWithNewCompressionLevel) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body one")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body two")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_compression_level(3);
+  int64_t document_log_size_compression_3;
+  int64_t document_log_size_after_opti_no_compression;
+  int64_t document_log_size_after_opti_compression_3;
+  const std::string document_log_path =
+      icing_options.base_dir() + "/document_dir/" +
+      DocumentLogCreator::GetDocumentLogFilename();
+  {
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+    ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+    document_log_size_compression_3 =
+        filesystem()->GetFileSize(document_log_path.c_str());
+  }  // Destroys IcingSearchEngine to make sure nothing is cached.
+
+  // Turn off compression
+  icing_options.set_compression_level(0);
+
+  {
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    // Document log size is the same even after reopening with a different
+    // compression level
+    ASSERT_EQ(document_log_size_compression_3,
+              filesystem()->GetFileSize(document_log_path.c_str()));
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    document_log_size_after_opti_no_compression =
+        filesystem()->GetFileSize(document_log_path.c_str());
+    // Document log size is larger after optimizing since optimizing rewrites
+    // with the new compression level which is 0 or none
+    ASSERT_GT(document_log_size_after_opti_no_compression,
+              document_log_size_compression_3);
+  }
+
+  // Restore the original compression level
+  icing_options.set_compression_level(3);
+
+  {
+    IcingSearchEngine icing(icing_options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    // Document log size is the same even after reopening with a different
+    // compression level
+    ASSERT_EQ(document_log_size_after_opti_no_compression,
+              filesystem()->GetFileSize(document_log_path.c_str()));
+    ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+    document_log_size_after_opti_compression_3 =
+        filesystem()->GetFileSize(document_log_path.c_str());
+    // Document log size should be the same as it was originally
+    ASSERT_EQ(document_log_size_after_opti_compression_3,
+              document_log_size_compression_3);
+  }
 }
 
 }  // namespace

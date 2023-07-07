@@ -141,9 +141,18 @@ class DocumentStore {
   static libtextclassifier3::StatusOr<DocumentStore::CreateResult> Create(
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
-      bool force_recovery_and_revalidate_documents = false,
-      bool namespace_id_fingerprint = false,
-      InitializeStatsProto* initialize_stats = nullptr);
+      bool force_recovery_and_revalidate_documents,
+      bool namespace_id_fingerprint,
+      int32_t compression_level,
+      InitializeStatsProto* initialize_stats);
+
+  // Discards all derived data in the document store.
+  //
+  // Returns:
+  //   OK on success or nothing to discard
+  //   INTERNAL_ERROR on any I/O errors
+  static libtextclassifier3::Status DiscardDerivedFiles(
+      const Filesystem* filesystem, const std::string& base_dir);
 
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
@@ -220,7 +229,8 @@ class DocumentStore {
   //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
-                                    std::string_view uri);
+                                    std::string_view uri,
+                                    int64_t current_time_ms);
 
   // Deletes the document identified by the given document_id. The document
   // proto will be erased immediately.
@@ -234,7 +244,8 @@ class DocumentStore {
   //   NOT_FOUND if the document doesn't exist (i.e. deleted or expired)
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT if document_id is invalid.
-  libtextclassifier3::Status Delete(DocumentId document_id);
+  libtextclassifier3::Status Delete(DocumentId document_id,
+                                    int64_t current_time_ms);
 
   // Returns the NamespaceId of the string namespace
   //
@@ -330,7 +341,7 @@ class DocumentStore {
   //   True:DocumentFilterData  if the given document exists.
   //   False                    if the given document doesn't exist.
   std::optional<DocumentFilterData> GetAliveDocumentFilterData(
-      DocumentId document_id) const;
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Gets the usage scores of a document.
   //
@@ -338,7 +349,7 @@ class DocumentStore {
   //   UsageScores on success
   //   nullopt if there are no usage scores stored for the requested docid.
   std::optional<UsageStore::UsageScores> GetUsageScores(
-      DocumentId document_id) const;
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.
@@ -445,7 +456,7 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeInto(
       const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
-      OptimizeStatsProto* stats = nullptr);
+      bool namespace_id_fingerprint, OptimizeStatsProto* stats = nullptr);
 
   // Calculates status for a potential Optimize call. Includes how many docs
   // there are vs how many would be optimized away. And also includes an
@@ -479,7 +490,7 @@ class DocumentStore {
   // Use DocumentStore::Create() to instantiate.
   DocumentStore(const Filesystem* filesystem, std::string_view base_dir,
                 const Clock* clock, const SchemaStore* schema_store,
-                bool namespace_id_fingerprint);
+                bool namespace_id_fingerprint, int32_t compression_level);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -495,6 +506,8 @@ class DocumentStore {
   // Whether to use namespace id or namespace name to build up fingerprint for
   // document_key_mapper_ and corpus_mapper_.
   bool namespace_id_fingerprint_;
+
+  const int32_t compression_level_;
 
   // A log used to store all documents, it serves as a ground truth of doc
   // store. key_mapper_ and document_id_mapper_ can be regenerated from it.
@@ -703,7 +716,7 @@ class DocumentStore {
   //   True:DocumentFilterData  if the given document isn't expired.
   //   False                    if the given doesn't document is expired.
   std::optional<DocumentFilterData> GetNonExpiredDocumentFilterData(
-      DocumentId document_id) const;
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Updates the entry in the score cache for document_id.
   libtextclassifier3::Status UpdateDocumentAssociatedScoreCache(

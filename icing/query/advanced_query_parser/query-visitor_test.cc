@@ -115,7 +115,12 @@ class QueryVisitorTest : public ::testing::TestWithParam<QueryType> {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(&filesystem_, store_dir_, &clock_,
-                              schema_store_.get()));
+                              schema_store_.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_.c_str(),
@@ -228,7 +233,7 @@ TEST_P(QueryVisitorTest, SimpleLessThan) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -271,7 +276,7 @@ TEST_P(QueryVisitorTest, SimpleLessThanEq) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -314,7 +319,7 @@ TEST_P(QueryVisitorTest, SimpleEqual) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -357,7 +362,7 @@ TEST_P(QueryVisitorTest, SimpleGreaterThanEq) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -400,7 +405,7 @@ TEST_P(QueryVisitorTest, SimpleGreaterThan) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -444,7 +449,7 @@ TEST_P(QueryVisitorTest, IntMinLessThanEqual) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -488,7 +493,7 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanEqual) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -533,7 +538,7 @@ TEST_P(QueryVisitorTest, NestedPropertyLessThan) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -561,7 +566,7 @@ TEST_P(QueryVisitorTest, IntParsingError) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -575,7 +580,7 @@ TEST_P(QueryVisitorTest, NotEqualsUnsupported) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
@@ -623,7 +628,7 @@ TEST_P(QueryVisitorTest, LessThanTooManyOperandsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -650,7 +655,7 @@ TEST_P(QueryVisitorTest, LessThanTooFewOperandsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -681,7 +686,7 @@ TEST_P(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -703,7 +708,7 @@ TEST_P(QueryVisitorTest, NeverVisitedReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), "",
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
@@ -732,7 +737,7 @@ TEST_P(QueryVisitorTest, IntMinLessThanInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -762,7 +767,7 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -777,7 +782,7 @@ TEST_P(QueryVisitorTest, NumericComparisonPropertyStringIsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -787,7 +792,9 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // Index three documents:
   // - Doc0: ["-2", "-1", "1", "2"] and [-2, -1, 1, 2]
@@ -839,7 +846,7 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -882,7 +889,7 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -934,7 +941,7 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/false);
+      /*needs_term_frequency_info_=*/false, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -986,7 +993,7 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1002,7 +1009,7 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1022,7 +1029,7 @@ TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -1036,7 +1043,7 @@ TEST_P(QueryVisitorTest, PrefixOperatorAfterNumericValueReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -1050,7 +1057,7 @@ TEST_P(QueryVisitorTest, PrefixOperatorAfterPropertyRestrictReturnsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -1088,7 +1095,7 @@ TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1111,7 +1118,7 @@ TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1148,7 +1155,7 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1195,7 +1202,7 @@ TEST_P(QueryVisitorTest, SingleVerbatimTermPrefix) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_EXACT,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1248,7 +1255,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingQuote) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1300,7 +1307,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingEscape) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1354,7 +1361,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1381,7 +1388,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1436,7 +1443,7 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1462,7 +1469,7 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1511,7 +1518,7 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingComplex) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1538,7 +1545,9 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1568,7 +1577,7 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1590,7 +1599,9 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1620,7 +1631,7 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1638,7 +1649,9 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1673,7 +1686,7 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1694,7 +1707,9 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("type"))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -1740,7 +1755,7 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1779,7 +1794,7 @@ TEST_P(QueryVisitorTest, ImplicitAndTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1822,7 +1837,7 @@ TEST_P(QueryVisitorTest, ExplicitAndTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1865,7 +1880,7 @@ TEST_P(QueryVisitorTest, OrTerms) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1910,7 +1925,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -1935,7 +1950,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -1959,7 +1974,7 @@ TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -1986,7 +2001,9 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
                   .SetName("prop1")
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
@@ -2019,7 +2036,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2039,7 +2056,7 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2068,7 +2085,10 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2101,7 +2121,7 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2140,7 +2160,10 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2174,7 +2197,7 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2205,7 +2228,9 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   // "prop1" is a STRING token, which cannot be a property name.
   std::string query = CreateQuery(R"(("prop1":foo))");
@@ -2215,7 +2240,7 @@ TEST_P(QueryVisitorTest, PropertyFilterStringIsInvalid) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -2236,7 +2261,9 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2269,7 +2296,7 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2303,7 +2330,10 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2337,7 +2367,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2368,7 +2398,10 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2401,7 +2434,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2422,7 +2455,7 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2452,7 +2485,10 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2485,7 +2521,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2506,7 +2542,7 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2532,7 +2568,10 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2569,7 +2608,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2590,7 +2629,7 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2617,7 +2656,10 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2654,7 +2696,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2678,7 +2720,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -2708,7 +2750,10 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+      
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2757,7 +2802,7 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2798,7 +2843,9 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
                   .AddProperty(prop)
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2875,7 +2922,7 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -2911,7 +2958,9 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
                   .AddProperty(prop)
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop1"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop2")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -2990,7 +3039,7 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3014,7 +3063,7 @@ TEST_F(QueryVisitorTest, UnsupportedFunctionReturnsInvalidArgument) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3028,7 +3077,7 @@ TEST_F(QueryVisitorTest, SearchFunctionTooFewArgumentsReturnsInvalidArgument) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3042,7 +3091,7 @@ TEST_F(QueryVisitorTest, SearchFunctionTooManyArgumentsReturnsInvalidArgument) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3058,7 +3107,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3070,7 +3119,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   EXPECT_THAT(std::move(query_visitor_two).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3086,7 +3135,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3098,7 +3147,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   EXPECT_THAT(std::move(query_visitor_two).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3113,7 +3162,7 @@ TEST_F(QueryVisitorTest,
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -3134,7 +3183,10 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
                                         .SetDataTypeString(TERM_MATCH_PREFIX,
                                                            TOKENIZER_PLAIN)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
 
@@ -3173,7 +3225,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_two_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3197,7 +3249,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_three_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -3221,7 +3273,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_four_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -3260,7 +3312,10 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop5"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -3340,7 +3395,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_one_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3372,7 +3427,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_two_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -3398,7 +3453,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_three_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -3437,7 +3492,10 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop5"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop6"))
                   .AddProperty(PropertyConfigBuilder(prop).SetName("prop7")))
-          .Build()));
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
   // Section ids are assigned alphabetically.
   SectionId prop0_id = 0;
   SectionId prop1_id = 1;
@@ -3517,7 +3575,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_one_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor);
   ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
                              std::move(query_visitor).ConsumeResults());
@@ -3541,7 +3599,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(), level_two_query,
       DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_two);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_two).ConsumeResults());
@@ -3566,7 +3624,7 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
       index_.get(), numeric_index_.get(), document_store_.get(),
       schema_store_.get(), normalizer_.get(), tokenizer_.get(),
       level_three_query, DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info_=*/true);
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
   root_node->Accept(&query_visitor_three);
   ICING_ASSERT_OK_AND_ASSIGN(query_results,
                              std::move(query_visitor_three).ConsumeResults());
@@ -3581,6 +3639,231 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
               UnorderedElementsAre("foo"));
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               ElementsAre(docid6, docid0));
+}
+
+TEST_F(QueryVisitorTest,
+       PropertyDefinedFunctionWithNoArgumentReturnsInvalidArgument) {
+  std::string query = "propertyDefined()";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(
+    QueryVisitorTest,
+    PropertyDefinedFunctionWithMoreThanOneTextArgumentReturnsInvalidArgument) {
+  std::string query = "propertyDefined(\"foo\", \"bar\")";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(QueryVisitorTest,
+       PropertyDefinedFunctionWithTextArgumentReturnsInvalidArgument) {
+  // The argument type is TEXT, not STRING here.
+  std::string query = "propertyDefined(foo)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_F(QueryVisitorTest,
+       PropertyDefinedFunctionWithNonTextArgumentReturnsInvalidArgument) {
+  std::string query = "propertyDefined(1 < 2)";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
+  // Set up two schemas, one with a "url" field and one without.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("typeWithUrl")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Document 0 has the term "foo" and its schema has the url property.
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Document 1 has the term "foo" and its schema DOESN'T have the url property.
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("typeWithoutUrl")
+                                           .Build()));
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Document 2 has the term "bar" and its schema has the url property.
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri2").SetSchema("typeWithUrl").Build()));
+  editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
+
+  std::string query = CreateQuery("foo propertyDefined(\"url\")");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId0));
+}
+
+TEST_P(QueryVisitorTest,
+       PropertyDefinedFunctionReturnsNothingIfNoMatchingProperties) {
+  // Set up two schemas, one with a "url" field and one without.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("typeWithUrl")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Document 0 has the term "foo" and its schema has the url property.
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Document 1 has the term "foo" and its schema DOESN'T have the url property.
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("typeWithoutUrl")
+                                           .Build()));
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Attempt to query a non-existent property.
+  std::string query = CreateQuery("propertyDefined(\"nonexistentproperty\")");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
+}
+
+TEST_P(QueryVisitorTest,
+       PropertyDefinedFunctionWithNegationMatchesDocsWithNoSuchProperty) {
+  // Set up two schemas, one with a "url" field and one without.
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("typeWithUrl")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("url")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("typeWithoutUrl"))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // Document 0 has the term "foo" and its schema has the url property.
+  ICING_ASSERT_OK(document_store_->Put(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
+  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
+                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  // Document 1 has the term "foo" and its schema DOESN'T have the url property.
+  ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
+                                           .SetKey("ns", "uri1")
+                                           .SetSchema("typeWithoutUrl")
+                                           .Build()));
+  editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
+                        /*namespace_id=*/0);
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
+
+  std::string query = CreateQuery("foo AND NOT propertyDefined(\"url\")");
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  QueryVisitor query_visitor(
+      index_.get(), numeric_index_.get(), document_store_.get(),
+      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
+      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
+      /*needs_term_frequency_info_=*/true, clock_.GetSystemTimeMilliseconds());
+  root_node->Accept(&query_visitor);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             std::move(query_visitor).ConsumeResults());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              UnorderedElementsAre(kDocumentId1));
 }
 
 INSTANTIATE_TEST_SUITE_P(QueryVisitorTest, QueryVisitorTest,

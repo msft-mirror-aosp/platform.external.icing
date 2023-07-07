@@ -24,13 +24,19 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/icing-search-engine.h"
+#include "icing/index/index-processor.h"
 #include "icing/index/index.h"
+#include "icing/index/integer-section-indexing-handler.h"
 #include "icing/index/numeric/integer-index.h"
+#include "icing/index/string-section-indexing-handler.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/join/doc-join-info.h"
 #include "icing/join/join-processor.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -61,6 +67,12 @@
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/tokenization/language-segmenter.h"
+#include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer.h"
+#include "icing/util/tokenized-document.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -144,20 +156,38 @@ class IcingSearchEngineInitializationTest : public testing::Test {
           icu_data_file_helper::SetUpICUDataFile(icu_data_file_path));
     }
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
+
+    language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        lang_segmenter_,
+        language_segmenter_factory::Create(std::move(segmenter_options)));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        normalizer_,
+        normalizer_factory::Create(
+            /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
   }
 
   void TearDown() override {
+    normalizer_.reset();
+    lang_segmenter_.reset();
     filesystem_.DeleteDirectoryRecursively(GetTestBaseDir().c_str());
   }
 
   const Filesystem* filesystem() const { return &filesystem_; }
 
- private:
+  const IcingFilesystem* icing_filesystem() const { return &icing_filesystem_; }
+
   Filesystem filesystem_;
+  IcingFilesystem icing_filesystem_;
+  std::unique_ptr<LanguageSegmenter> lang_segmenter_;
+  std::unique_ptr<Normalizer> normalizer_;
 };
 
 // Non-zero value so we don't override it to be the current time
 constexpr int64_t kDefaultCreationTimestampMs = 1575492852000;
+
+std::string GetVersionFilename() { return GetTestBaseDir() + "/version"; }
 
 std::string GetDocumentDir() { return GetTestBaseDir() + "/document_dir"; }
 
@@ -381,6 +411,56 @@ TEST_F(IcingSearchEngineInitializationTest,
   IcingSearchEngine icing(options, GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       NegativeCompressionLevelReturnsInvalidArgument) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(-1);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       GreaterThanMaxCompressionLevelReturnsInvalidArgument) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(10);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineInitializationTest, GoodCompressionLevelReturnsOk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(0);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       ReinitializingWithDifferentCompressionLevelReturnsOk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_compression_level(3);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+    DocumentProto document = CreateMessageDocument("namespace", "uri");
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+    ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  }
+  options.set_compression_level(9);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  }
+  options.set_compression_level(0);
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  }
 }
 
 TEST_F(IcingSearchEngineInitializationTest, FailToCreateDocStore) {
@@ -819,7 +899,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
-    ICING_EXPECT_OK(schema_store->SetSchema(new_schema));
+    ICING_EXPECT_OK(schema_store->SetSchema(
+        new_schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }  // Will persist new schema
 
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -974,13 +1056,17 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
-    ICING_EXPECT_OK(schema_store->SetSchema(CreateMessageSchema()));
 
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get()));
+                              schema_store.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -1082,7 +1168,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec3.set_query("name:person");
   JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -1096,6 +1181,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
+  ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+  result_spec3.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
   SearchResultProto expected_join_search_result_proto;
   expected_join_search_result_proto.mutable_status()->set_code(StatusProto::OK);
   SearchResultProto::ResultProto* result_proto =
@@ -1104,9 +1193,8 @@ TEST_F(IcingSearchEngineInitializationTest,
   *result_proto->mutable_joined_results()->Add()->mutable_document() = message2;
   *result_proto->mutable_joined_results()->Add()->mutable_document() = message1;
 
-  SearchResultProto search_result_proto3 =
-      icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                   ResultSpecProto::default_instance());
+  SearchResultProto search_result_proto3 = icing.Search(
+      search_spec3, ScoringSpecProto::default_instance(), result_spec3);
   EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
                                         expected_join_search_result_proto));
 }
@@ -1472,7 +1560,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   search_spec.set_query("name:person");
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-  join_spec->set_max_joined_child_count(100);
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("senderQualifiedId");
@@ -1485,6 +1572,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   nested_search_spec->set_query("body:message");
   *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
   *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
 
   SearchResultProto expected_search_result_proto;
   expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
@@ -1504,8 +1595,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(icing.Put(person).status(), ProtoIsOk());
     EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
     SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
+        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
     EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                          expected_search_result_proto));
   }  // This should shut down IcingSearchEngine and persist anything it needs to
@@ -1564,24 +1654,26 @@ TEST_F(IcingSearchEngineInitializationTest,
 
   // Check that our index is ok by searching over the restored index
   SearchResultProto search_result_proto =
-      icing.Search(search_spec, GetDefaultScoringSpec(),
-                   ResultSpecProto::default_instance());
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
-  // Test the following scenario: losing the entire term index directory.
+  // Test the following scenario: losing the entire term index. Since we need
+  // flash index magic to determine the version, in this test we will throw out
+  // the entire term index and re-initialize an empty one, to bypass
+  // undetermined version state change and correctly trigger "lose term index"
+  // scenario.
   // IcingSearchEngine should be able to recover term index. Several additional
   // behaviors are also tested:
   // - Index directory handling:
-  //   - Term index directory should not be discarded since we've already lost
-  //     it. Start it from scratch.
+  //   - Term index directory should not be discarded (but instead just being
+  //     rebuilt by replaying all docs).
   //   - Integer index directory should be unaffected.
   //   - Qualified id join index directory should be unaffected.
   // - Truncate indices:
-  //   - "TruncateTo()" for term index shouldn't take effect since we start it
-  //     from scratch.
+  //   - "TruncateTo()" for term index shouldn't take effect since it is empty.
   //   - "Clear()" shouldn't be called for integer index, i.e. no integer index
   //     storage sub directories (path_expr = "*/integer_index_dir/*") should be
   //     discarded.
@@ -1649,9 +1741,18 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
   }
 
-  // 2. Delete the term index directory to trigger RestoreIndexIfNeeded.
-  std::string idx_dir = GetIndexDir();
-  filesystem()->DeleteDirectoryRecursively(idx_dir.c_str());
+  // 2. Delete and re-initialize an empty term index to trigger
+  // RestoreIndexIfNeeded.
+  {
+    std::string idx_subdir = GetIndexDir() + "/idx";
+    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(Index::Options(GetIndexDir(),
+                                     /*index_merge_size=*/100),
+                      filesystem(), icing_filesystem()));
+    ICING_ASSERT_OK(index->PersistToDisk());
+  }
 
   // 3. Create the index again. This should trigger index restoration.
   {
@@ -1736,7 +1837,6 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -1750,9 +1850,12 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -1930,7 +2033,6 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIntegerIndex) {
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -1944,9 +2046,12 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseIntegerIndex) {
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -2126,7 +2231,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -2140,9 +2244,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -2248,14 +2355,12 @@ TEST_F(IcingSearchEngineInitializationTest,
   //   - Integer index: [0, 1, 2]
   //   - Qualified id join index: [0, 1, 2]
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
                            /*index_merge_size=*/message.ByteSizeLong()),
-            &filesystem, &icing_filesystem));
+            filesystem(), icing_filesystem()));
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
@@ -2350,7 +2455,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -2364,9 +2468,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(2));
@@ -2380,14 +2487,12 @@ TEST_F(IcingSearchEngineInitializationTest,
   // verify the correctness of term index restoration. Instead, we have to check
   // hits for "foo" should not be found in term index.
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
                            /*index_merge_size=*/message.ByteSizeLong()),
-            &filesystem, &icing_filesystem));
+            filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -2494,14 +2599,12 @@ TEST_F(IcingSearchEngineInitializationTest,
   //   - Integer index: [0, 1, 2, 3]
   //   - Qualified id join index: [0, 1, 2, 3]
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
                            /*index_merge_size=*/message.ByteSizeLong()),
-            &filesystem, &icing_filesystem));
+            filesystem(), icing_filesystem()));
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
     Index::Editor editor =
@@ -2599,7 +2702,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -2613,9 +2715,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -2631,14 +2736,12 @@ TEST_F(IcingSearchEngineInitializationTest,
   // verify the correctness of term index restoration. Instead, we have to check
   // hits for "foo" should not be found in term index.
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
                            /*index_merge_size=*/message.ByteSizeLong()),
-            &filesystem, &icing_filesystem));
+            filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -2692,15 +2795,13 @@ TEST_F(IcingSearchEngineInitializationTest,
   //   - Integer index: []
   //   - Qualified id join index: []
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(
             // index merge size is not important here because we will manually
             // invoke merge below.
             Index::Options(GetIndexDir(), /*index_merge_size=*/100),
-            &filesystem, &icing_filesystem));
+            filesystem(), icing_filesystem()));
     // Add hits for document 0 and merge.
     ASSERT_THAT(index->last_added_document_id(), kInvalidDocumentId);
     index->set_last_added_document_id(0);
@@ -2773,12 +2874,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   // enough to verify the correctness of term index restoration. Instead, we
   // have to check hits for "foo", "bar" should not be found in term index.
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100),
-                      &filesystem, &icing_filesystem));
+                      filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -2889,14 +2988,12 @@ TEST_F(IcingSearchEngineInitializationTest,
   //   - Integer index: [0, 1, 2, 3]
   //   - Qualified id join index: [0, 1, 2, 3]
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
                            /*index_merge_size=*/message.ByteSizeLong()),
-            &filesystem, &icing_filesystem));
+            filesystem(), icing_filesystem()));
     // Add hits for document 4 and merge.
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
@@ -3002,7 +3099,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -3016,9 +3112,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -3034,12 +3133,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   // enough to verify the correctness of term index restoration. Instead, we
   // have to check hits for "foo", "bar" should not be found in term index.
   {
-    Filesystem filesystem;
-    IcingFilesystem icing_filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100),
-                      &filesystem, &icing_filesystem));
+                      filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
         index->GetIterator("foo", /*term_start_index=*/0,
@@ -3099,7 +3196,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir(),
+                             /*pre_mapping_fbv=*/false));
     // Add hits for document 0.
     ASSERT_THAT(integer_index->last_added_document_id(), kInvalidDocumentId);
     integer_index->set_last_added_document_id(0);
@@ -3277,7 +3375,8 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
-        IntegerIndex::Create(filesystem, GetIntegerIndexDir()));
+        IntegerIndex::Create(filesystem, GetIntegerIndexDir(),
+                             /*pre_mapping_fbv=*/false));
     // Add hits for document 4.
     DocumentId original_last_added_doc_id =
         integer_index->last_added_document_id();
@@ -3371,7 +3470,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -3385,9 +3483,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -3471,8 +3572,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem,
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false));
     // Add data for document 0.
     ASSERT_THAT(qualified_id_join_index->last_added_document_id(),
                 kInvalidDocumentId);
@@ -3540,8 +3642,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem,
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false));
     EXPECT_THAT(qualified_id_join_index->Get(
                     DocJoinInfo(/*document_id=*/0, /*joinable_property_id=*/0)),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -3640,8 +3743,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(filesystem,
-                                             GetQualifiedIdJoinIndexDir()));
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false));
     // Add data for document 4.
     DocumentId original_last_added_doc_id =
         qualified_id_join_index->last_added_document_id();
@@ -3753,7 +3857,6 @@ TEST_F(IcingSearchEngineInitializationTest,
     search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
     search_spec3.set_query("name:person");
     JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
-    join_spec->set_max_joined_child_count(100);
     join_spec->set_parent_property_expression(
         std::string(JoinProcessor::kQualifiedIdExpr));
     join_spec->set_child_property_expression("senderQualifiedId");
@@ -3767,9 +3870,12 @@ TEST_F(IcingSearchEngineInitializationTest,
     *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
     *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
 
-    SearchResultProto results3 =
-        icing.Search(search_spec3, ScoringSpecProto::default_instance(),
-                     ResultSpecProto::default_instance());
+    ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+    result_spec3.set_max_joined_children_per_parent_to_return(
+        std::numeric_limits<int32_t>::max());
+
+    SearchResultProto results3 = icing.Search(
+        search_spec3, ScoringSpecProto::default_instance(), result_spec3);
     ASSERT_THAT(results3.results(), SizeIs(1));
     EXPECT_THAT(results3.results(0).document().uri(), Eq("person"));
     EXPECT_THAT(results3.results(0).joined_results(), SizeIs(3));
@@ -4194,9 +4300,16 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 
   {
-    // Delete the index file to trigger RestoreIndexIfNeeded.
+    // Delete and re-initialize an empty index file to trigger
+    // RestoreIndexIfNeeded.
     std::string idx_subdir = GetIndexDir() + "/idx";
-    filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str());
+    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(idx_subdir.c_str()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(Index::Options(GetIndexDir(),
+                                     /*index_merge_size=*/100),
+                      filesystem(), icing_filesystem()));
+    ICING_ASSERT_OK(index->PersistToDisk());
   }
 
   {
@@ -4446,7 +4559,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
-    ICING_EXPECT_OK(schema_store->SetSchema(new_schema));
+    ICING_EXPECT_OK(schema_store->SetSchema(
+        new_schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   {
@@ -4835,10 +4950,11 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 
   {
-    // Delete the schema store header file to trigger an I/O error.
+    // Delete the schema store type mapper to trigger an I/O error.
     std::string schema_store_header_file_path =
-        GetSchemaDir() + "/schema_store_header";
-    filesystem()->DeleteFile(schema_store_header_file_path.c_str());
+        GetSchemaDir() + "/schema_type_mapper";
+    ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(
+        schema_store_header_file_path.c_str()));
   }
 
   {
@@ -4918,6 +5034,305 @@ TEST_F(IcingSearchEngineInitializationTest,
                 Eq(2));
   }
 }
+
+class IcingSearchEngineInitializationVersionChangeTest
+    : public IcingSearchEngineInitializationTest,
+      public ::testing::WithParamInterface<version_util::VersionInfo> {};
+
+TEST_P(IcingSearchEngineInitializationVersionChangeTest,
+       RecoverFromVersionChange) {
+  // TODO(b/280697513): test backup schema migration
+  // Test the following scenario: version change. All derived data should be
+  // rebuilt. We test this by manually adding some invalid derived data and
+  // verifying they're removed due to rebuild.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("indexableInteger")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("senderQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("namespace", "person/1")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("namespace", "person/2")
+          .SetSchema("Person")
+          .AddStringProperty("name", "person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto message =
+      DocumentBuilder()
+          .SetKey("namespace", "message")
+          .SetSchema("Message")
+          .AddStringProperty("body", "correct message")
+          .AddInt64Property("indexableInteger", 123)
+          .AddStringProperty("senderQualifiedId", "namespace#person/1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  {
+    // Initializes folder and schema, index person1 and person2
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+    EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(person1).status(), ProtoIsOk());
+    EXPECT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  }  // This should shut down IcingSearchEngine and persist anything it needs to
+
+  {
+    // Manually:
+    // - Put message into DocumentStore
+    // - But add some incorrect data for message into 3 indices
+    // - Change version file
+    //
+    // These will make sure last_added_document_id is consistent with
+    // last_stored_document_id, so if Icing didn't handle version change
+    // correctly, then the index won't be rebuilt.
+    FakeClock fake_clock;
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(filesystem(), GetSchemaDir(), &fake_clock));
+
+    // Put message into DocumentStore
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
+                              schema_store.get(),
+                              /*force_recovery_and_revalidate_documents=*/false,
+                              /*namespace_id_fingerprint=*/false,
+                              PortableFileBackedProtoLog<
+                                  DocumentWrapper>::kDeflateCompressionLevel,
+                              /*initialize_stats=*/nullptr));
+    std::unique_ptr<DocumentStore> document_store =
+        std::move(create_result.document_store);
+    ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, document_store->Put(message));
+
+    // Index doc_id with incorrect data
+    Index::Options options(GetIndexDir(), /*index_merge_size=*/1024 * 1024);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<Index> index,
+        Index::Create(options, filesystem(), icing_filesystem()));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(*filesystem(), GetIntegerIndexDir(),
+                             /*pre_mapping_fbv=*/false));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
+        QualifiedIdTypeJoinableIndex::Create(
+            *filesystem(), GetQualifiedIdJoinIndexDir(),
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<StringSectionIndexingHandler>
+            string_section_indexing_handler,
+        StringSectionIndexingHandler::Create(&fake_clock, normalizer_.get(),
+                                             index.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerSectionIndexingHandler>
+                                   integer_section_indexing_handler,
+                               IntegerSectionIndexingHandler::Create(
+                                   &fake_clock, integer_index.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<QualifiedIdJoinIndexingHandler>
+            qualified_id_joinable_property_indexing_handler,
+        QualifiedIdJoinIndexingHandler::Create(&fake_clock,
+                                               qualified_id_join_index.get()));
+    std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+    handlers.push_back(std::move(string_section_indexing_handler));
+    handlers.push_back(std::move(integer_section_indexing_handler));
+    handlers.push_back(
+        std::move(qualified_id_joinable_property_indexing_handler));
+    IndexProcessor index_processor(std::move(handlers), &fake_clock);
+
+    DocumentProto incorrect_message =
+        DocumentBuilder()
+            .SetKey("namespace", "message")
+            .SetSchema("Message")
+            .AddStringProperty("body", "wrong message")
+            .AddInt64Property("indexableInteger", 456)
+            .AddStringProperty("senderQualifiedId", "namespace#person/2")
+            .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+            .Build();
+    ICING_ASSERT_OK_AND_ASSIGN(
+        TokenizedDocument tokenized_document,
+        TokenizedDocument::Create(schema_store.get(), lang_segmenter_.get(),
+                                  std::move(incorrect_message)));
+    ICING_ASSERT_OK(index_processor.IndexDocument(tokenized_document, doc_id));
+
+    // Change existing data's version file
+    const version_util::VersionInfo& existing_version_info = GetParam();
+    ICING_ASSERT_OK(version_util::WriteVersion(
+        *filesystem(), GetVersionFilename(), existing_version_info));
+  }
+
+  // Mock filesystem to observe and check the behavior of all indices.
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  InitializeResultProto initialize_result = icing.Initialize();
+  EXPECT_THAT(initialize_result.status(), ProtoIsOk());
+  // Index Restoration should be triggered here. Incorrect data should be
+  // deleted and correct data of message should be indexed.
+  EXPECT_THAT(
+      initialize_result.initialize_stats().document_store_recovery_cause(),
+      Eq(InitializeStatsProto::VERSION_CHANGED));
+  EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::VERSION_CHANGED));
+  EXPECT_THAT(
+      initialize_result.initialize_stats().integer_index_restoration_cause(),
+      Eq(InitializeStatsProto::VERSION_CHANGED));
+  EXPECT_THAT(initialize_result.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::VERSION_CHANGED));
+
+  // Manually check version file
+  ICING_ASSERT_OK_AND_ASSIGN(
+      version_util::VersionInfo version_info_after_init,
+      version_util::ReadVersion(*filesystem(), GetVersionFilename(),
+                                GetIndexDir()));
+  EXPECT_THAT(version_info_after_init.version, Eq(version_util::kVersion));
+  EXPECT_THAT(version_info_after_init.max_version,
+              Eq(std::max(version_util::kVersion, GetParam().max_version)));
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      message;
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("body:correct");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto search_result_proto1 =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto1, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("indexableInteger == 123");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto search_result_google::protobuf =
+      icing.Search(search_spec2, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_google::protobuf, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_search_result_proto));
+
+  // Verify join search: join a query for `name:person` with a child query for
+  // `body:message` based on the child's `senderQualifiedId` field.
+  SearchSpecProto search_spec3;
+  search_spec3.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec3.set_query("name:person");
+  JoinSpecProto* join_spec = search_spec3.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("senderQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::COUNT);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
+  nested_search_spec->set_query("body:message");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  ResultSpecProto result_spec3 = ResultSpecProto::default_instance();
+  result_spec3.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  SearchResultProto expected_join_search_result_proto;
+  expected_join_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  // Person 1 with message
+  SearchResultProto::ResultProto* result_proto =
+      expected_join_search_result_proto.mutable_results()->Add();
+  *result_proto->mutable_document() = person1;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = message;
+  // Person 2 without children
+  *expected_join_search_result_proto.mutable_results()
+       ->Add()
+       ->mutable_document() = person2;
+
+  SearchResultProto search_result_proto3 = icing.Search(
+      search_spec3, ScoringSpecProto::default_instance(), result_spec3);
+  EXPECT_THAT(search_result_proto3, EqualsSearchResultIgnoreStatsAndScores(
+                                        expected_join_search_result_proto));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    IcingSearchEngineInitializationVersionChangeTest,
+    IcingSearchEngineInitializationVersionChangeTest,
+    testing::Values(
+        // Manually change existing data set's version to kVersion + 1. When
+        // initializing, it will detect "rollback".
+        version_util::VersionInfo(
+            /*version_in=*/version_util::kVersion + 1,
+            /*max_version_in=*/version_util::kVersion + 1),
+
+        // Manually change existing data set's version to kVersion - 1 and
+        // max_version to kVersion - 1. When initializing, it will detect
+        // "upgrade".
+        version_util::VersionInfo(
+            /*version_in=*/version_util::kVersion - 1,
+            /*max_version_in=*/version_util::kVersion - 1),
+
+        // Manually change existing data set's version to kVersion - 1 and
+        // max_version to kVersion. When initializing, it will detect "roll
+        // forward".
+        version_util::VersionInfo(
+            /*version_in=*/version_util::kVersion - 1,
+            /*max_version_in=*/version_util::kVersion),
+
+        // Manually change existing data set's version to 0 and max_version to
+        // 0. When initializing, it will detect "version 0 upgrade".
+        //
+        // Note: in reality, version 0 won't be written into version file, but
+        // it is ok here since it is hack to simulate version 0 situation.
+        version_util::VersionInfo(
+            /*version_in=*/0,
+            /*max_version_in=*/0),
+
+        // Manually change existing data set's version to 0 and max_version to
+        // kVersion. When initializing, it will detect "version 0 roll forward".
+        //
+        // Note: in reality, version 0 won't be written into version file, but
+        // it is ok here since it is hack to simulate version 0 situation.
+        version_util::VersionInfo(
+            /*version_in=*/0,
+            /*max_version_in=*/version_util::kVersion)));
 
 }  // namespace
 }  // namespace lib

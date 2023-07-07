@@ -24,10 +24,9 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/mutex.h"
-#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/query/query-terms.h"
 #include "icing/result/page-result.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
@@ -48,8 +47,7 @@ inline constexpr int64_t kDefaultResultStateTtlInMs = 1LL * 60 * 60 * 1000;
 class ResultStateManager {
  public:
   explicit ResultStateManager(int max_total_hits,
-                              const DocumentStore& document_store,
-                              const Clock* clock);
+                              const DocumentStore& document_store);
 
   ResultStateManager(const ResultStateManager&) = delete;
   ResultStateManager& operator=(const ResultStateManager&) = delete;
@@ -61,6 +59,10 @@ class ResultStateManager {
   // result states if exceeding the cache size limit. next_page_token will be
   // set to a default value kInvalidNextPageToken if there're no more pages.
   //
+  // NOTE: parent_adjustment_info and child_adjustment_info can be nullptr if
+  //       there is no requirement to apply adjustment (snippet, projection) to
+  //       them.
+  //
   // NOTE: it is possible to have empty result for the first page even if the
   //       ranker was not empty before the retrieval, since GroupResultLimiter
   //       may filter out all docs. In this case, the first page is also the
@@ -70,13 +72,12 @@ class ResultStateManager {
   //   A token and PageResult wrapped by std::pair on success
   //   INVALID_ARGUMENT if the input ranker is null or contains no results
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
-  CacheAndRetrieveFirstPage(std::unique_ptr<ScoredDocumentHitsRanker> ranker,
-                            SectionRestrictQueryTermsMap query_terms,
-                            const SearchSpecProto& search_spec,
-                            const ScoringSpecProto& scoring_spec,
-                            const ResultSpecProto& result_spec,
-                            const DocumentStore& document_store,
-                            const ResultRetrieverV2& result_retriever)
+  CacheAndRetrieveFirstPage(
+      std::unique_ptr<ScoredDocumentHitsRanker> ranker,
+      std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
+      std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
+      const ResultSpecProto& result_spec, const DocumentStore& document_store,
+      const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
       ICING_LOCKS_EXCLUDED(mutex_);
 
   // Retrieves and returns PageResult for the next page.
@@ -92,8 +93,8 @@ class ResultStateManager {
   //   A token and PageResult wrapped by std::pair on success
   //   NOT_FOUND if failed to find any more results
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>> GetNextPage(
-      uint64_t next_page_token, const ResultRetrieverV2& result_retriever)
-      ICING_LOCKS_EXCLUDED(mutex_);
+      uint64_t next_page_token, const ResultRetrieverV2& result_retriever,
+      int64_t current_time_ms) ICING_LOCKS_EXCLUDED(mutex_);
 
   // Invalidates the result state associated with the given next-page token.
   void InvalidateResultState(uint64_t next_page_token)
@@ -135,15 +136,13 @@ class ResultStateManager {
   // A random 64-bit number generator
   std::mt19937_64 random_generator_ ICING_GUARDED_BY(mutex_);
 
-  const Clock& clock_;  // Does not own.
-
   // Puts a new result state into the internal storage and returns a next-page
   // token associated with it. The token is guaranteed to be unique among all
   // currently valid tokens. When the maximum number of result states is
   // reached, the oldest / firstly added result state will be removed to make
   // room for the new state.
-  uint64_t Add(std::shared_ptr<ResultStateV2> result_state)
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  uint64_t Add(std::shared_ptr<ResultStateV2> result_state,
+               int64_t current_time_ms) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to generate a next-page token that is unique among all
   // existing tokens in token_queue_.
@@ -170,7 +169,8 @@ class ResultStateManager {
   // Internal method to invalidate and remove expired result states / tokens
   // currently in ResultStateManager that were created before
   // current_time - result_state_ttl.
-  void InternalInvalidateExpiredResultStates(int64_t result_state_ttl)
+  void InternalInvalidateExpiredResultStates(int64_t result_state_ttl,
+                                             int64_t current_time_ms)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

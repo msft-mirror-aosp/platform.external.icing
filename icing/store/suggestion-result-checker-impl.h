@@ -33,7 +33,8 @@ class SuggestionResultCheckerImpl : public SuggestionResultChecker {
           document_id_filter_map,
       std::unordered_set<SchemaTypeId> target_schema_type_ids,
       std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map,
-      std::string target_section, std::unordered_set<DocumentId> search_base)
+      std::string target_section, std::unordered_set<DocumentId> search_base,
+      int64_t current_time_ms)
       : document_store_(*document_store),
         schema_store_(*schema_store),
         target_namespace_ids_(std::move(target_namespace_ids)),
@@ -41,7 +42,8 @@ class SuggestionResultCheckerImpl : public SuggestionResultChecker {
         target_schema_type_ids_(std::move(target_schema_type_ids)),
         property_filter_map_(std::move(property_filter_map)),
         target_section_(std::move(target_section)),
-        search_base_(std::move(search_base)) {}
+        search_base_(std::move(search_base)),
+        current_time_ms_(current_time_ms) {}
 
   bool MatchesTargetNamespace(NamespaceId namespace_id) const {
     return target_namespace_ids_.empty() ||
@@ -102,7 +104,8 @@ class SuggestionResultCheckerImpl : public SuggestionResultChecker {
                               SectionId section_id) const override {
     // Get the document filter data first.
     auto document_filter_data_optional_ =
-        document_store_.GetAliveDocumentFilterData(document_id);
+        document_store_.GetAliveDocumentFilterData(document_id,
+                                                   current_time_ms_);
     if (!document_filter_data_optional_) {
       // The document doesn't exist.
       return false;
@@ -142,6 +145,7 @@ class SuggestionResultCheckerImpl : public SuggestionResultChecker {
   std::unordered_map<SchemaTypeId, SectionIdMask> property_filter_map_;
   std::string target_section_;
   std::unordered_set<DocumentId> search_base_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

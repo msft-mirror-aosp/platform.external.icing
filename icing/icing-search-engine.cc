@@ -32,6 +32,7 @@
 #include "icing/file/destructible-file.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/version-util.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index-processor.h"
@@ -41,7 +42,7 @@
 #include "icing/index/numeric/integer-index.h"
 #include "icing/index/string-section-indexing-handler.h"
 #include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-joinable-property-indexing-handler.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 #include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/endian.h"
@@ -68,6 +69,7 @@
 #include "icing/result/page-result.h"
 #include "icing/result/projection-tree.h"
 #include "icing/result/projector.h"
+#include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
@@ -95,6 +97,7 @@ namespace lib {
 
 namespace {
 
+constexpr std::string_view kVersionFilename = "version";
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kIndexSubfolderName = "index_dir";
 constexpr std::string_view kIntegerIndexSubfolderName = "integer_index_dir";
@@ -213,6 +216,12 @@ libtextclassifier3::Status ValidateSuggestionSpec(
                            std::to_string(configuration.max_query_length)));
   }
   return libtextclassifier3::Status::OK;
+}
+
+// Version file is a single file under base_dir containing version info of the
+// existing data.
+std::string MakeVersionFilePath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kVersionFilename);
 }
 
 // Document store files are in a standalone subfolder for easier file
@@ -453,20 +462,34 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
   // fails, then just assume the value is zero (the most likely reason for
   // failure would be non-existence because the last init was successful
   // anyways).
-  ScopedFd marker_file_fd(filesystem_->OpenForWrite(marker_filepath.c_str()));
+  std::unique_ptr<ScopedFd> marker_file_fd = std::make_unique<ScopedFd>(
+      filesystem_->OpenForWrite(marker_filepath.c_str()));
   libtextclassifier3::Status status;
   if (file_exists &&
-      filesystem_->PRead(marker_file_fd.get(), &network_init_attempts,
+      filesystem_->PRead(marker_file_fd->get(), &network_init_attempts,
                          sizeof(network_init_attempts), /*offset=*/0)) {
     host_init_attempts = GNetworkToHostL(network_init_attempts);
     if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
       // We're tried and failed to init too many times. We need to throw
       // everything out and start from scratch.
       ResetMembers();
+      marker_file_fd.reset();
+
+      // Delete the entire base directory.
       if (!filesystem_->DeleteDirectoryRecursively(
               options_.base_dir().c_str())) {
         return absl_ports::InternalError("Failed to delete icing base dir!");
       }
+
+      // Create the base directory again and reopen marker file.
+      if (!filesystem_->CreateDirectoryRecursively(
+              options_.base_dir().c_str())) {
+        return absl_ports::InternalError("Failed to create icing base dir!");
+      }
+
+      marker_file_fd = std::make_unique<ScopedFd>(
+          filesystem_->OpenForWrite(marker_filepath.c_str()));
+
       status = absl_ports::DataLossError(
           "Encountered failed initialization limit. Cleared all data.");
       host_init_attempts = 0;
@@ -481,10 +504,10 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
   ++host_init_attempts;
   network_init_attempts = GHostToNetworkL(host_init_attempts);
   // Write the updated number of attempts before we get started.
-  if (!filesystem_->PWrite(marker_file_fd.get(), /*offset=*/0,
+  if (!filesystem_->PWrite(marker_file_fd->get(), /*offset=*/0,
                            &network_init_attempts,
                            sizeof(network_init_attempts)) ||
-      !filesystem_->DataSync(marker_file_fd.get())) {
+      !filesystem_->DataSync(marker_file_fd->get())) {
     return absl_ports::InternalError(
         "Failed to write and sync init marker file");
   }
@@ -546,6 +569,31 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     return status;
   }
 
+  // Read version file and determine the state change.
+  const std::string version_filepath = MakeVersionFilePath(options_.base_dir());
+  const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
+  ICING_ASSIGN_OR_RETURN(
+      version_util::VersionInfo version_info,
+      version_util::ReadVersion(*filesystem_, version_filepath, index_dir));
+  version_util::StateChange version_state_change =
+      version_util::GetVersionStateChange(version_info);
+  if (version_state_change != version_util::StateChange::kCompatible) {
+    // Step 1: migrate schema according to the version state change.
+    ICING_RETURN_IF_ERROR(SchemaStore::MigrateSchema(
+        filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
+        version_state_change, version_util::kVersion));
+
+    // Step 2: discard all derived data
+    ICING_RETURN_IF_ERROR(DiscardDerivedFiles());
+
+    // Step 3: update version file
+    version_util::VersionInfo new_version_info(
+        version_util::kVersion,
+        std::max(version_info.max_version, version_util::kVersion));
+    ICING_RETURN_IF_ERROR(version_util::WriteVersion(
+        *filesystem_, version_filepath, new_version_info));
+  }
+
   ICING_RETURN_IF_ERROR(InitializeSchemaStore(initialize_stats));
 
   // TODO(b/156383798) : Resolve how to specify the locale.
@@ -566,7 +614,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // and index directories and initialize them from scratch.
     const std::string doc_store_dir =
         MakeDocumentDirectoryPath(options_.base_dir());
-    const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
     const std::string integer_index_dir =
         MakeIntegerIndexWorkingPath(options_.base_dir());
     const std::string qualified_id_join_index_dir =
@@ -596,7 +643,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // We're going to need to build the index from scratch. So just delete its
     // directory now.
     // Discard index directory and instantiate a new one.
-    const std::string index_dir = MakeIndexDirectoryPath(options_.base_dir());
     Index::Options index_options(index_dir, options_.index_merge_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
@@ -614,7 +660,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         IntegerIndex::Discard(*filesystem_, integer_index_dir));
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
-        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir)));
+        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.pre_mapping_fbv()));
 
     // Discard qualified id join index directory and instantiate a new one.
     std::string qualified_id_join_index_dir =
@@ -624,7 +671,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
         QualifiedIdTypeJoinableIndex::Create(
-            *filesystem_, std::move(qualified_id_join_index_dir)));
+            *filesystem_, std::move(qualified_id_join_index_dir),
+            options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
 
     std::unique_ptr<Timer> restore_timer = clock_->GetNewTimer();
     IndexRestorationResult restore_result = RestoreIndexIfNeeded();
@@ -648,6 +696,24 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
     initialize_stats->set_qualified_id_join_index_restoration_cause(
         InitializeStatsProto::SCHEMA_CHANGES_OUT_OF_SYNC);
+  } else if (version_state_change != version_util::StateChange::kCompatible) {
+    ICING_RETURN_IF_ERROR(InitializeDocumentStore(
+        /*force_recovery_and_revalidate_documents=*/true, initialize_stats));
+    index_init_status = InitializeIndex(initialize_stats);
+    if (!index_init_status.ok() && !absl_ports::IsDataLoss(index_init_status)) {
+      return index_init_status;
+    }
+
+    initialize_stats->set_schema_store_recovery_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_document_store_recovery_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_index_restoration_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_integer_index_restoration_cause(
+        InitializeStatsProto::VERSION_CHANGED);
+    initialize_stats->set_qualified_id_join_index_restoration_cause(
+        InitializeStatsProto::VERSION_CHANGED);
   } else {
     ICING_RETURN_IF_ERROR(InitializeDocumentStore(
         /*force_recovery_and_revalidate_documents=*/false, initialize_stats));
@@ -662,8 +728,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_,
-      clock_.get());
+      performance_configuration_.max_num_total_hits, *document_store_);
 
   return status;
 }
@@ -704,7 +769,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
                             schema_store_.get(),
                             force_recovery_and_revalidate_documents,
                             options_.document_store_namespace_id_fingerprint(),
-                            initialize_stats));
+                            options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
 
   return libtextclassifier3::Status::OK;
@@ -751,7 +816,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   std::string integer_index_dir =
       MakeIntegerIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause integer_index_recovery_cause;
-  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir);
+  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir,
+                                               options_.pre_mapping_fbv());
   if (!integer_index_or.ok()) {
     ICING_RETURN_IF_ERROR(
         IntegerIndex::Discard(*filesystem_, integer_index_dir));
@@ -761,7 +827,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     // Try recreating it from scratch and re-indexing everything.
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
-        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir)));
+        IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.pre_mapping_fbv()));
   } else {
     // Integer index was created fine.
     integer_index_ = std::move(integer_index_or).ValueOrDie();
@@ -776,7 +843,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
       MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause qualified_id_join_index_recovery_cause;
   auto qualified_id_join_index_or = QualifiedIdTypeJoinableIndex::Create(
-      *filesystem_, qualified_id_join_index_dir);
+      *filesystem_, qualified_id_join_index_dir, options_.pre_mapping_fbv(),
+      options_.use_persistent_hash_map());
   if (!qualified_id_join_index_or.ok()) {
     ICING_RETURN_IF_ERROR(QualifiedIdTypeJoinableIndex::Discard(
         *filesystem_, qualified_id_join_index_dir));
@@ -787,7 +855,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     ICING_ASSIGN_OR_RETURN(
         qualified_id_join_index_,
         QualifiedIdTypeJoinableIndex::Create(
-            *filesystem_, std::move(qualified_id_join_index_dir)));
+            *filesystem_, std::move(qualified_id_join_index_dir),
+            options_.pre_mapping_fbv(), options_.use_persistent_hash_map()));
   } else {
     // Qualified id join index was created fine.
     qualified_id_join_index_ =
@@ -860,7 +929,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   DestructibleFile marker_file(marker_filepath, filesystem_.get());
 
   auto set_schema_result_or = schema_store_->SetSchema(
-      std::move(new_schema), ignore_errors_and_delete_documents);
+      std::move(new_schema), ignore_errors_and_delete_documents,
+      options_.allow_circular_schema_definitions());
   if (!set_schema_result_or.ok()) {
     TransformStatus(set_schema_result_or.status(), result_status);
     return result_proto;
@@ -1085,8 +1155,9 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   if (!index_status.ok()) {
     // If we encountered a failure or cannot resolve an internal error while
     // indexing this document, then mark it as deleted.
+    int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
     libtextclassifier3::Status delete_status =
-        document_store_->Delete(document_id);
+        document_store_->Delete(document_id, current_time_ms);
     if (!delete_status.ok()) {
       // This is pretty dire (and, hopefully, unlikely). We can't roll back the
       // document that we just added. Wipeout the whole index.
@@ -1122,12 +1193,13 @@ GetResultProto IcingSearchEngine::Get(const std::string_view name_space,
   DocumentProto document = std::move(document_or).ValueOrDie();
   std::unique_ptr<ProjectionTree> type_projection_tree;
   std::unique_ptr<ProjectionTree> wildcard_projection_tree;
-  for (const TypePropertyMask& type_field_mask :
-       result_spec.type_property_masks()) {
-    if (type_field_mask.schema_type() == document.schema()) {
+  for (const SchemaStore::ExpandedTypePropertyMask& type_field_mask :
+       schema_store_->ExpandTypePropertyMasks(
+           result_spec.type_property_masks())) {
+    if (type_field_mask.schema_type == document.schema()) {
       type_projection_tree = std::make_unique<ProjectionTree>(type_field_mask);
-    } else if (type_field_mask.schema_type() ==
-               ProjectionTree::kSchemaTypeWildcard) {
+    } else if (type_field_mask.schema_type ==
+               SchemaStore::kSchemaTypeWildcard) {
       wildcard_projection_tree =
           std::make_unique<ProjectionTree>(type_field_mask);
     }
@@ -1204,7 +1276,9 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   std::unique_ptr<Timer> delete_timer = clock_->GetNewTimer();
   // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
   // that can support error logging.
-  libtextclassifier3::Status status = document_store_->Delete(name_space, uri);
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  libtextclassifier3::Status status =
+      document_store_->Delete(name_space, uri, current_time_ms);
   if (!status.ok()) {
     LogSeverity::Code severity = ERROR;
     if (absl_ports::IsNotFound(status)) {
@@ -1338,8 +1412,9 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   std::unique_ptr<QueryProcessor> query_processor =
       std::move(query_processor_or).ValueOrDie();
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   auto query_results_or = query_processor->ParseSearch(
-      search_spec, ScoringSpecProto::RankingStrategy::NONE);
+      search_spec, ScoringSpecProto::RankingStrategy::NONE, current_time_ms);
   if (!query_results_or.ok()) {
     TransformStatus(query_results_or.status(), result_status);
     delete_stats->set_parse_query_latency_ms(
@@ -1376,7 +1451,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       }
     }
     status = document_store_->Delete(
-        query_results.root_iterator->doc_hit_info().document_id());
+        query_results.root_iterator->doc_hit_info().document_id(),
+        current_time_ms);
     if (!status.ok()) {
       TransformStatus(status, result_status);
       delete_stats->set_document_removal_latency_ms(
@@ -1741,19 +1817,61 @@ libtextclassifier3::Status IcingSearchEngine::InternalPersistToDisk(
 SearchResultProto IcingSearchEngine::Search(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec) {
+  if (search_spec.use_read_only_search()) {
+    return SearchLockedShared(search_spec, scoring_spec, result_spec);
+  } else {
+    return SearchLockedExclusive(search_spec, scoring_spec, result_spec);
+  }
+}
+
+SearchResultProto IcingSearchEngine::SearchLockedShared(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+
+  // Only acquire an overall read-lock for this implementation. Finer-grained
+  // locks are implemented around code paths that write changes to Icing's data
+  // members.
+  absl_ports::shared_lock l(&mutex_);
+  int64_t lock_acquisition_latency = overall_timer->GetElapsedMilliseconds();
+
+  SearchResultProto result_proto =
+      InternalSearch(search_spec, scoring_spec, result_spec);
+
+  result_proto.mutable_query_stats()->set_lock_acquisition_latency_ms(
+      lock_acquisition_latency);
+  result_proto.mutable_query_stats()->set_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
+SearchResultProto IcingSearchEngine::SearchLockedExclusive(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+
+  // Acquire the overall write-lock for this locked implementation.
+  absl_ports::unique_lock l(&mutex_);
+  int64_t lock_acquisition_latency = overall_timer->GetElapsedMilliseconds();
+
+  SearchResultProto result_proto =
+      InternalSearch(search_spec, scoring_spec, result_spec);
+
+  result_proto.mutable_query_stats()->set_lock_acquisition_latency_ms(
+      lock_acquisition_latency);
+  result_proto.mutable_query_stats()->set_latency_ms(
+      overall_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
+SearchResultProto IcingSearchEngine::InternalSearch(
+    const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
+    const ResultSpecProto& result_spec) {
   SearchResultProto result_proto;
   StatusProto* result_status = result_proto.mutable_status();
 
   QueryStatsProto* query_stats = result_proto.mutable_query_stats();
   query_stats->set_query_length(search_spec.query().length());
-  ScopedTimer overall_timer(clock_->GetNewTimer(), [query_stats](int64_t t) {
-    query_stats->set_latency_ms(t);
-  });
-  // Only an overall read-lock is required here. A finer-grained write-lock is
-  // provided around the LiteIndex.
-  absl_ports::shared_lock l(&mutex_);
-  query_stats->set_lock_acquisition_latency_ms(
-      overall_timer.timer().GetElapsedMilliseconds());
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
@@ -1782,14 +1900,16 @@ SearchResultProto IcingSearchEngine::Search(
 
   const JoinSpecProto& join_spec = search_spec.join_spec();
   std::unique_ptr<JoinChildrenFetcher> join_children_fetcher;
+  std::unique_ptr<ResultAdjustmentInfo> child_result_adjustment_info;
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   if (!join_spec.parent_property_expression().empty() &&
       !join_spec.child_property_expression().empty()) {
     // Process child query
-    QueryScoringResults nested_query_scoring_results =
-        ProcessQueryAndScore(join_spec.nested_spec().search_spec(),
-                             join_spec.nested_spec().scoring_spec(),
-                             join_spec.nested_spec().result_spec(),
-                             /*join_children_fetcher=*/nullptr);
+    QueryScoringResults nested_query_scoring_results = ProcessQueryAndScore(
+        join_spec.nested_spec().search_spec(),
+        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().result_spec(),
+        /*join_children_fetcher=*/nullptr, current_time_ms);
     // TOOD(b/256022027): set different kinds of latency for 2nd query.
     if (!nested_query_scoring_results.status.ok()) {
       TransformStatus(nested_query_scoring_results.status, result_status);
@@ -1797,7 +1917,8 @@ SearchResultProto IcingSearchEngine::Search(
     }
 
     JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
-                                 qualified_id_join_index_.get());
+                                 qualified_id_join_index_.get(),
+                                 current_time_ms);
     // Building a JoinChildrenFetcher where child documents are grouped by
     // their joinable values.
     libtextclassifier3::StatusOr<JoinChildrenFetcher> join_children_fetcher_or =
@@ -1810,11 +1931,19 @@ SearchResultProto IcingSearchEngine::Search(
     }
     join_children_fetcher = std::make_unique<JoinChildrenFetcher>(
         std::move(join_children_fetcher_or).ValueOrDie());
+
+    // Assign child's ResultAdjustmentInfo.
+    child_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+        join_spec.nested_spec().search_spec(),
+        join_spec.nested_spec().scoring_spec(),
+        join_spec.nested_spec().result_spec(), schema_store_.get(),
+        std::move(nested_query_scoring_results.query_terms));
   }
 
   // Process parent query
-  QueryScoringResults query_scoring_results = ProcessQueryAndScore(
-      search_spec, scoring_spec, result_spec, join_children_fetcher.get());
+  QueryScoringResults query_scoring_results =
+      ProcessQueryAndScore(search_spec, scoring_spec, result_spec,
+                           join_children_fetcher.get(), current_time_ms);
   int term_count = 0;
   for (const auto& section_and_terms : query_scoring_results.query_terms) {
     term_count += section_and_terms.second.size();
@@ -1836,11 +1965,18 @@ SearchResultProto IcingSearchEngine::Search(
     return result_proto;
   }
 
+  // Construct parent's result adjustment info.
+  auto parent_result_adjustment_info = std::make_unique<ResultAdjustmentInfo>(
+      search_spec, scoring_spec, result_spec, schema_store_.get(),
+      std::move(query_scoring_results.query_terms));
+
   std::unique_ptr<ScoredDocumentHitsRanker> ranker;
   if (join_children_fetcher != nullptr) {
+    std::unique_ptr<Timer> join_timer = clock_->GetNewTimer();
     // Join 2 scored document hits
     JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
-                                 qualified_id_join_index_.get());
+                                 qualified_id_join_index_.get(),
+                                 current_time_ms);
     libtextclassifier3::StatusOr<std::vector<JoinedScoredDocumentHit>>
         joined_result_document_hits_or = join_processor.Join(
             join_spec, std::move(query_scoring_results.scored_document_hits),
@@ -1851,7 +1987,8 @@ SearchResultProto IcingSearchEngine::Search(
     }
     std::vector<JoinedScoredDocumentHit> joined_result_document_hits =
         std::move(joined_result_document_hits_or).ValueOrDie();
-    // TODO(b/256022027): set join latency
+
+    query_stats->set_join_latency_ms(join_timer->GetElapsedMilliseconds());
 
     std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
     // Ranks results
@@ -1892,9 +2029,9 @@ SearchResultProto IcingSearchEngine::Search(
 
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
-          std::move(ranker), std::move(query_scoring_results.query_terms),
-          search_spec, scoring_spec, result_spec, *document_store_,
-          *result_retriever);
+          std::move(ranker), std::move(parent_result_adjustment_info),
+          std::move(child_result_adjustment_info), result_spec,
+          *document_store_, *result_retriever, current_time_ms);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
     query_stats->set_document_retrieval_latency_ms(
@@ -1907,8 +2044,11 @@ SearchResultProto IcingSearchEngine::Search(
   // Assembles the final search result proto
   result_proto.mutable_results()->Reserve(
       page_result_info.second.results.size());
+
+  int32_t child_count = 0;
   for (SearchResultProto::ResultProto& result :
        page_result_info.second.results) {
+    child_count += result.joined_results_size();
     result_proto.mutable_results()->Add(std::move(result));
   }
 
@@ -1921,6 +2061,9 @@ SearchResultProto IcingSearchEngine::Search(
       component_timer->GetElapsedMilliseconds());
   query_stats->set_num_results_returned_current_page(
       result_proto.results_size());
+
+  query_stats->set_num_joined_results_returned_current_page(child_count);
+
   query_stats->set_num_results_with_snippets(
       page_result_info.second.num_results_with_snippets);
   return result_proto;
@@ -1929,7 +2072,7 @@ SearchResultProto IcingSearchEngine::Search(
 IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec,
-    const JoinChildrenFetcher* join_children_fetcher) {
+    const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms) {
   std::unique_ptr<Timer> component_timer = clock_->GetNewTimer();
 
   // Gets unordered results from query processor
@@ -1950,7 +2093,7 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   libtextclassifier3::StatusOr<QueryResults> query_results_or;
   if (ranking_strategy_or.ok()) {
     query_results_or = query_processor->ParseSearch(
-        search_spec, ranking_strategy_or.ValueOrDie());
+        search_spec, ranking_strategy_or.ValueOrDie(), current_time_ms);
   } else {
     query_results_or = ranking_strategy_or.status();
   }
@@ -1967,9 +2110,9 @@ IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
   component_timer = clock_->GetNewTimer();
   // Scores but does not rank the results.
   libtextclassifier3::StatusOr<std::unique_ptr<ScoringProcessor>>
-      scoring_processor_or =
-          ScoringProcessor::Create(scoring_spec, document_store_.get(),
-                                   schema_store_.get(), join_children_fetcher);
+      scoring_processor_or = ScoringProcessor::Create(
+          scoring_spec, document_store_.get(), schema_store_.get(),
+          current_time_ms, join_children_fetcher);
   if (!scoring_processor_or.ok()) {
     return QueryScoringResults(std::move(scoring_processor_or).status(),
                                std::move(query_results.query_terms),
@@ -2019,9 +2162,10 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   std::unique_ptr<ResultRetrieverV2> result_retriever =
       std::move(result_retriever_or).ValueOrDie();
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->GetNextPage(
-          next_page_token, *result_retriever);
+          next_page_token, *result_retriever, current_time_ms);
   if (!page_result_info_or.ok()) {
     if (absl_ports::IsNotFound(page_result_info_or.status())) {
       // NOT_FOUND means an empty result.
@@ -2041,8 +2185,11 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
   // Assembles the final search result proto
   result_proto.mutable_results()->Reserve(
       page_result_info.second.results.size());
+
+  int32_t child_count = 0;
   for (SearchResultProto::ResultProto& result :
        page_result_info.second.results) {
+    child_count += result.joined_results_size();
     result_proto.mutable_results()->Add(std::move(result));
   }
 
@@ -2061,6 +2208,8 @@ SearchResultProto IcingSearchEngine::GetNextPage(uint64_t next_page_token) {
       result_proto.results_size());
   query_stats->set_num_results_with_snippets(
       page_result_info.second.num_results_with_snippets);
+  query_stats->set_num_joined_results_returned_current_page(child_count);
+
   return result_proto;
 }
 
@@ -2092,7 +2241,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   // Copies valid document data to tmp directory
   libtextclassifier3::StatusOr<std::vector<DocumentId>>
       document_id_old_to_new_or = document_store_->OptimizeInto(
-          temporary_document_dir, language_segmenter_.get(), optimize_stats);
+          temporary_document_dir, language_segmenter_.get(),
+          options_.document_store_namespace_id_fingerprint(), optimize_stats);
 
   // Handles error if any
   if (!document_id_old_to_new_or.ok()) {
@@ -2129,7 +2279,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     auto create_result_or = DocumentStore::Create(
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-        options_.document_store_namespace_id_fingerprint());
+        options_.document_store_namespace_id_fingerprint(),
+        options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
     if (!create_result_or.ok()) {
@@ -2143,8 +2294,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
     }
     document_store_ = std::move(create_result_or.ValueOrDie().document_store);
     result_state_manager_ = std::make_unique<ResultStateManager>(
-        performance_configuration_.max_num_total_hits, *document_store_,
-        clock_.get());
+        performance_configuration_.max_num_total_hits, *document_store_);
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -2156,7 +2306,8 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   auto create_result_or = DocumentStore::Create(
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
-      options_.document_store_namespace_id_fingerprint());
+      options_.document_store_namespace_id_fingerprint(),
+      options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized
     // and return INTERNAL.
@@ -2167,8 +2318,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   }
   document_store_ = std::move(create_result_or.ValueOrDie().document_store);
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_,
-      clock_.get());
+      performance_configuration_.max_num_total_hits, *document_store_);
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(
@@ -2322,11 +2472,10 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   handlers.push_back(std::move(integer_section_indexing_handler));
 
   // Qualified id joinable property index handler
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>
-          qualified_id_joinable_property_indexing_handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          clock_.get(), qualified_id_join_index_.get()));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                             qualified_id_joinable_property_indexing_handler,
+                         QualifiedIdJoinIndexingHandler::Create(
+                             clock_.get(), qualified_id_join_index_.get()));
   handlers.push_back(
       std::move(qualified_id_joinable_property_indexing_handler));
 
@@ -2424,6 +2573,44 @@ IcingSearchEngine::TruncateIndicesTo(DocumentId last_stored_document_id) {
                              qualified_id_join_index_needed_restoration);
 }
 
+libtextclassifier3::Status IcingSearchEngine::DiscardDerivedFiles() {
+  if (schema_store_ != nullptr || document_store_ != nullptr ||
+      index_ != nullptr || integer_index_ != nullptr ||
+      qualified_id_join_index_ != nullptr) {
+    return absl_ports::FailedPreconditionError(
+        "Cannot discard derived files while having valid instances");
+  }
+
+  // Schema store
+  ICING_RETURN_IF_ERROR(
+      SchemaStore::DiscardDerivedFiles(filesystem_.get(), options_.base_dir()));
+
+  // Document store
+  ICING_RETURN_IF_ERROR(DocumentStore::DiscardDerivedFiles(
+      filesystem_.get(), options_.base_dir()));
+
+  // Term index
+  if (!filesystem_->DeleteDirectoryRecursively(
+          MakeIndexDirectoryPath(options_.base_dir()).c_str())) {
+    return absl_ports::InternalError("Failed to discard index");
+  }
+
+  // Integer index
+  if (!filesystem_->DeleteDirectoryRecursively(
+          MakeIntegerIndexWorkingPath(options_.base_dir()).c_str())) {
+    return absl_ports::InternalError("Failed to discard integer index");
+  }
+
+  // Qualified id join index
+  if (!filesystem_->DeleteDirectoryRecursively(
+          MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir()).c_str())) {
+    return absl_ports::InternalError(
+        "Failed to discard qualified id join index");
+  }
+
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::Status IcingSearchEngine::ClearSearchIndices() {
   ICING_RETURN_IF_ERROR(index_->Reset());
   ICING_RETURN_IF_ERROR(integer_index_->Clear());
@@ -2509,8 +2696,9 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       std::move(suggestion_processor_or).ValueOrDie();
 
   // Run suggestion based on given SuggestionSpec.
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> terms_or =
-      suggestion_processor->QuerySuggestions(suggestion_spec);
+      suggestion_processor->QuerySuggestions(suggestion_spec, current_time_ms);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
     return response;

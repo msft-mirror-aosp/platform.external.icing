@@ -12,42 +12,49 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-joinable-property-indexing-handler.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 
 #include <memory>
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/join/doc-join-info.h"
 #include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/join/qualified-id.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/logging.pb.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/store/document-id.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
 
 /* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>>
-QualifiedIdJoinablePropertyIndexingHandler::Create(
+    std::unique_ptr<QualifiedIdJoinIndexingHandler>>
+QualifiedIdJoinIndexingHandler::Create(
     const Clock* clock, QualifiedIdTypeJoinableIndex* qualified_id_join_index) {
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(qualified_id_join_index);
 
-  return std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler>(
-      new QualifiedIdJoinablePropertyIndexingHandler(clock,
-                                                     qualified_id_join_index));
+  return std::unique_ptr<QualifiedIdJoinIndexingHandler>(
+      new QualifiedIdJoinIndexingHandler(clock, qualified_id_join_index));
 }
 
-libtextclassifier3::Status QualifiedIdJoinablePropertyIndexingHandler::Handle(
+libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
     bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
-  // TODO(b/263890397): set qualified id join index processing latency and other
-  // stats.
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
+
+  if (!IsDocumentIdValid(document_id)) {
+    return absl_ports::InvalidArgumentError(
+        IcingStringUtil::StringPrintf("Invalid DocumentId %d", document_id));
+  }
 
   if (qualified_id_join_index_.last_added_document_id() != kInvalidDocumentId &&
       document_id <= qualified_id_join_index_.last_added_document_id()) {
@@ -87,6 +94,11 @@ libtextclassifier3::Status QualifiedIdJoinablePropertyIndexingHandler::Handle(
           << status.error_message();
       return status;
     }
+  }
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_qualified_id_join_index_latency_ms(
+        index_timer->GetElapsedMilliseconds());
   }
 
   return libtextclassifier3::Status::OK;

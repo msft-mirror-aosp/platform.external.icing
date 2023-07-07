@@ -184,7 +184,7 @@ ScoringSpecProto GetDefaultScoringSpec() {
 }
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64 timestamp_ms,
+                              int64_t timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);
@@ -425,6 +425,408 @@ TEST_F(IcingSearchEngineTest,
               "body", "Oh what a beautiful morning! Oh what a beautiful day!")
           .Build();
   ASSERT_THAT(icing.Get("namespace", "uri1", result_spec),
+              EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, GetDocumentProjectionPolymorphism) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Artist")
+                       .AddParentType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("company")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add a person document and an artist document
+  DocumentProto document_person =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Meg Ryan")
+          .AddStringProperty("emailAddress", "shopgirl@aol.com")
+          .Build();
+  DocumentProto document_artist =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Meg Artist")
+          .AddStringProperty("emailAddress", "artist@aol.com")
+          .AddStringProperty("company", "aol")
+          .Build();
+  ASSERT_THAT(icing.Put(document_person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_artist).status(), ProtoIsOk());
+
+  // Add type property masks
+  GetResultSpecProto result_spec;
+  TypePropertyMask* person_type_property_mask =
+      result_spec.add_type_property_masks();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("name");
+  // Since Artist is a child type of Person, the TypePropertyMask for Person
+  // will be merged to Artist's TypePropertyMask by polymorphism, so that 'name'
+  // will also show in Artist's projection results.
+  TypePropertyMask* artist_type_property_mask =
+      result_spec.add_type_property_masks();
+  artist_type_property_mask->set_schema_type("Artist");
+  artist_type_property_mask->add_paths("emailAddress");
+
+  // Verify that the returned person document only contains the 'name' property,
+  // and the returned artist document contain both the 'name' and 'emailAddress'
+  // properties.
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Meg Ryan")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri1", result_spec),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Meg Artist")
+          .AddStringProperty("emailAddress", "artist@aol.com")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri2", result_spec),
+              EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, GetDocumentProjectionMultipleParentPolymorphism) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("recipient")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("content")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("note")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("EmailMessage")
+                       .AddParentType("Email")
+                       .AddParentType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("recipient")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("content")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("note")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add an email document and a message document
+  DocumentProto document_email =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("sender", "sender1")
+          .AddStringProperty("recipient", "recipient1")
+          .Build();
+  DocumentProto document_message = DocumentBuilder()
+                                       .SetKey("namespace", "uri2")
+                                       .SetCreationTimestampMs(1000)
+                                       .SetSchema("Message")
+                                       .AddStringProperty("content", "content1")
+                                       .AddStringProperty("note", "note1")
+                                       .Build();
+  // Add an emailMessage document
+  DocumentProto document_email_message =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("EmailMessage")
+          .AddStringProperty("sender", "sender2")
+          .AddStringProperty("recipient", "recipient2")
+          .AddStringProperty("content", "content2")
+          .AddStringProperty("note", "note2")
+          .Build();
+
+  ASSERT_THAT(icing.Put(document_email).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_message).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_email_message).status(), ProtoIsOk());
+
+  // Add type property masks for Email and Message, and both of them will apply
+  // to EmailMessage.
+  GetResultSpecProto result_spec;
+  TypePropertyMask* email_type_property_mask =
+      result_spec.add_type_property_masks();
+  email_type_property_mask->set_schema_type("Email");
+  email_type_property_mask->add_paths("sender");
+
+  TypePropertyMask* message_type_property_mask =
+      result_spec.add_type_property_masks();
+  message_type_property_mask->set_schema_type("Message");
+  message_type_property_mask->add_paths("content");
+
+  // Verify that
+  // - The returned email document only contains the 'sender' property.
+  // - The returned message document only contains the 'content' property.
+  // - The returned email message document contains both the 'sender' and
+  //   'content' properties,
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("sender", "sender1")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri1", result_spec),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Message")
+          .AddStringProperty("content", "content1")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri2", result_spec),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("EmailMessage")
+          .AddStringProperty("sender", "sender2")
+          .AddStringProperty("content", "content2")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri3", result_spec),
+              EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, GetDocumentProjectionDiamondPolymorphism) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create a schema with a diamond inheritance relation.
+  //         Object
+  //      /          \
+  //   Email       Message
+  //       \         /
+  //      EmailMessage
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Object").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("objectId")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddParentType("Object")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("objectId")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("recipient")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Message")
+                       .AddParentType("Object")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("objectId")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("content")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("note")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("EmailMessage")
+                       .AddParentType("Email")
+                       .AddParentType("Message")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("objectId")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("recipient")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("content")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("note")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add an email document and a message document
+  DocumentProto document_email =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("objectId", "object1")
+          .AddStringProperty("sender", "sender1")
+          .AddStringProperty("recipient", "recipient1")
+          .Build();
+  DocumentProto document_message = DocumentBuilder()
+                                       .SetKey("namespace", "uri2")
+                                       .SetCreationTimestampMs(1000)
+                                       .SetSchema("Message")
+                                       .AddStringProperty("objectId", "object2")
+                                       .AddStringProperty("content", "content1")
+                                       .AddStringProperty("note", "note1")
+                                       .Build();
+  // Add an emailMessage document
+  DocumentProto document_email_message =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("EmailMessage")
+          .AddStringProperty("objectId", "object3")
+          .AddStringProperty("sender", "sender2")
+          .AddStringProperty("recipient", "recipient2")
+          .AddStringProperty("content", "content2")
+          .AddStringProperty("note", "note2")
+          .Build();
+
+  ASSERT_THAT(icing.Put(document_email).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_message).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document_email_message).status(), ProtoIsOk());
+
+  // Add type property masks for Object, which should apply to Email, Message
+  // and EmailMessage.
+  GetResultSpecProto result_spec;
+  TypePropertyMask* email_type_property_mask =
+      result_spec.add_type_property_masks();
+  email_type_property_mask->set_schema_type("Object");
+  email_type_property_mask->add_paths("objectId");
+
+  // Verify that all the documents only contain the 'objectId' property.
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddStringProperty("objectId", "object1")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri1", result_spec),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Message")
+          .AddStringProperty("objectId", "object2")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri2", result_spec),
+              EqualsProto(expected_get_result_proto));
+
+  *expected_get_result_proto.mutable_document() =
+      DocumentBuilder()
+          .SetKey("namespace", "uri3")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("EmailMessage")
+          .AddStringProperty("objectId", "object3")
+          .Build();
+  ASSERT_THAT(icing.Get("namespace", "uri3", result_spec),
               EqualsProto(expected_get_result_proto));
 }
 

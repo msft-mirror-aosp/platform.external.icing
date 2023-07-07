@@ -38,7 +38,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       DocumentStore::Create(&filesystem, doc_store_dir, &fake_clock,
-                            schema_store.get())
+                            schema_store.get(),
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            /*namespace_id_fingerprint=*/false,
+                            PortableFileBackedProtoLog<
+                                DocumentWrapper>::kDeflateCompressionLevel,
+                            /*initialize_stats=*/nullptr)
           .ValueOrDie()
           .document_store;
 
@@ -50,7 +55,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   AdvancedScorer::Create(scoring_spec,
                          /*default_score=*/10, document_store.get(),
-                         schema_store.get());
+                         schema_store.get(),
+                         fake_clock.GetSystemTimeMilliseconds());
 
   // Not able to test the GetScore method of AdvancedScorer, since it will only
   // be available after AdvancedScorer is successfully created. However, the

@@ -44,6 +44,7 @@ constexpr Feature kVerbatimSearchFeature =
 //   - expanding support for negation and property restriction expressions
 //   - prefix operator '*'
 //   - 'NOT' operator
+//   - propertyDefined("url")
 constexpr Feature kListFilterQueryLanguageFeature =
     "LIST_FILTER_QUERY_LANGUAGE";  // Features#LIST_FILTER_QUERY_LANGUAGE
 
