@@ -1164,7 +1164,6 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
 
   // JoinSpec
   JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-  join_spec->set_max_joined_child_count(std::numeric_limits<int32_t>::max());
   join_spec->set_parent_property_expression(
       std::string(JoinProcessor::kQualifiedIdExpr));
   join_spec->set_child_property_expression("personQualifiedId");
@@ -1181,6 +1180,8 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
   static constexpr int kNumPerPage = 10;
   ResultSpecProto result_spec;
   result_spec.set_num_per_page(kNumPerPage);
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
 
   ScoringSpecProto score_spec = ScoringSpecProto::default_instance();
 

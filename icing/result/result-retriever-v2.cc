@@ -14,12 +14,16 @@
 
 #include "icing/result/result-retriever-v2.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
@@ -29,12 +33,15 @@
 #include "icing/result/result-state-v2.h"
 #include "icing/result/snippet-context.h"
 #include "icing/result/snippet-retriever.h"
+#include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -54,7 +61,7 @@ void ApplyProjection(const ResultAdjustmentInfo* adjustment_info,
   } else {
     auto wildcard_projection_tree_itr =
         adjustment_info->projection_tree_map.find(
-            std::string(ProjectionTree::kSchemaTypeWildcard));
+            std::string(SchemaStore::kSchemaTypeWildcard));
     if (wildcard_projection_tree_itr !=
         adjustment_info->projection_tree_map.end()) {
       projector::Project(wildcard_projection_tree_itr->second.root().children,
@@ -93,10 +100,11 @@ bool GroupResultLimiterV2::ShouldBeRemoved(
     const ScoredDocumentHit& scored_document_hit,
     const std::unordered_map<int32_t, int>& entry_id_group_id_map,
     const DocumentStore& document_store, std::vector<int>& group_result_limits,
-    ResultSpecProto::ResultGroupingType result_group_type) const {
+    ResultSpecProto::ResultGroupingType result_group_type,
+    int64_t current_time_ms) const {
   auto document_filter_data_optional =
       document_store.GetAliveDocumentFilterData(
-          scored_document_hit.document_id());
+          scored_document_hit.document_id(), current_time_ms);
   if (!document_filter_data_optional) {
     // The document doesn't exist.
     return true;
@@ -146,7 +154,7 @@ ResultRetrieverV2::Create(
 }
 
 std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
-    ResultStateV2& result_state) const {
+    ResultStateV2& result_state, int64_t current_time_ms) const {
   absl_ports::unique_lock l(&result_state.mutex);
 
   // For calculating page
@@ -164,8 +172,8 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     if (group_result_limiter_->ShouldBeRemoved(
             next_best_document_hit.parent_scored_document_hit(),
             result_state.entry_id_group_id_map(), doc_store_,
-            result_state.group_result_limits,
-            result_state.result_group_type())) {
+            result_state.group_result_limits, result_state.result_group_type(),
+            current_time_ms)) {
       continue;
     }
 
@@ -199,6 +207,11 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
     // Retrieve child documents
     for (const ScoredDocumentHit& child_scored_document_hit :
          next_best_document_hit.child_scored_document_hits()) {
+      if (result.joined_results_size() >=
+          result_state.max_joined_children_per_parent_to_return()) {
+        break;
+      }
+
       libtextclassifier3::StatusOr<DocumentProto> child_document_or =
           doc_store_.Get(child_scored_document_hit.document_id());
       if (!child_document_or.ok()) {

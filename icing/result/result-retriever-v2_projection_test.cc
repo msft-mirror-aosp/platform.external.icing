@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -109,8 +110,77 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
                                      .SetDataTypeString(TERM_MATCH_PREFIX,
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Artist")
+                    .AddParentType("Person")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("name")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("emailAddress")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("Musician")
+                    .AddParentType("Artist")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("name")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("emailAddress")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("WithPhone")
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("phoneNumber")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("phoneModel")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
+            .AddType(SchemaTypeConfigBuilder()
+                         .SetType("PersonWithPhone")
+                         .AddParentType("Person")
+                         .AddParentType("WithPhone")
+                         .AddProperty(PropertyConfigBuilder()
+                                          .SetName("name")
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                             TOKENIZER_PLAIN)
+                                          .SetCardinality(CARDINALITY_OPTIONAL))
+                         .AddProperty(PropertyConfigBuilder()
+                                          .SetName("emailAddress")
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                             TOKENIZER_PLAIN)
+                                          .SetCardinality(CARDINALITY_OPTIONAL))
+                         .AddProperty(PropertyConfigBuilder()
+                                          .SetName("phoneNumber")
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                             TOKENIZER_PLAIN)
+                                          .SetCardinality(CARDINALITY_OPTIONAL))
+                         .AddProperty(PropertyConfigBuilder()
+                                          .SetName("phoneModel")
+                                          .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                             TOKENIZER_PLAIN)
+                                          .SetCardinality(CARDINALITY_OPTIONAL))
+                         .Build())
             .Build();
-    ASSERT_THAT(schema_store_->SetSchema(schema), IsOk());
+    ASSERT_THAT(schema_store_->SetSchema(
+                    schema, /*ignore_errors_and_delete_documents=*/false,
+                    /*allow_circular_schema_definitions=*/false),
+                IsOk());
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
@@ -232,7 +302,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -242,7 +312,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -330,7 +403,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -341,7 +414,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
   // 5. Verify that the returned results only contain the 'sender.name'
   // property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -439,7 +515,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -450,7 +526,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
   // 5. Verify that the returned results only contain the 'sender'
   // property and all of the subproperties of 'sender'.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -552,7 +631,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -563,7 +642,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
   // 5. Verify that the returned results only contain the 'sender.name' and
   // 'sender.address' properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -648,7 +730,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -658,7 +740,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one = DocumentBuilder()
@@ -727,7 +812,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -737,7 +822,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
 
   // 5. Verify that the returned results contain *no* properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one = DocumentBuilder()
@@ -807,7 +895,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -817,7 +905,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
 
   // 5. Verify that the returned results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -889,7 +980,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -900,7 +991,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results have all of their properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -963,7 +1057,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
   TypePropertyMask* wildcard_type_property_mask =
       result_spec.add_type_property_masks();
   wildcard_type_property_mask->set_schema_type(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
+      std::string(SchemaStore::kSchemaTypeWildcard));
   wildcard_type_property_mask->add_paths("name");
 
   // 4. Create ResultState with custom ResultSpec.
@@ -975,7 +1069,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -986,7 +1080,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
   // 5. Verify that the returned Email results only contain the 'name'
   // property and the returned Person results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1053,7 +1150,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   TypePropertyMask* wildcard_type_property_mask =
       result_spec.add_type_property_masks();
   wildcard_type_property_mask->set_schema_type(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
+      std::string(SchemaStore::kSchemaTypeWildcard));
   wildcard_type_property_mask->add_paths("name");
 
   // 4. Create ResultState with custom ResultSpec.
@@ -1065,7 +1162,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1076,7 +1173,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned Email results only contain the 'body'
   // property and the returned Person results  only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1152,7 +1252,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   TypePropertyMask* wildcard_type_property_mask =
       result_spec.add_type_property_masks();
   wildcard_type_property_mask->set_schema_type(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
+      std::string(SchemaStore::kSchemaTypeWildcard));
   wildcard_type_property_mask->add_paths("name");
 
   // 4. Create ResultState with custom ResultSpec.
@@ -1164,7 +1264,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1175,7 +1275,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results only contain the 'name' property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1255,7 +1358,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   TypePropertyMask* wildcard_type_property_mask =
       result_spec.add_type_property_masks();
   wildcard_type_property_mask->set_schema_type(
-      std::string(ProjectionTree::kSchemaTypeWildcard));
+      std::string(SchemaStore::kSchemaTypeWildcard));
   wildcard_type_property_mask->add_paths("sender");
 
   // 4. Create ResultState with custom ResultSpec.
@@ -1267,7 +1370,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1278,7 +1381,10 @@ TEST_F(ResultRetrieverV2ProjectionTest,
   // 5. Verify that the returned Email results only contain the 'sender.name'
   // property and the returned Person results contain no properties.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
   DocumentProto projected_document_one =
@@ -1369,6 +1475,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
 
   // 4. Create parent ResultSpec with type property mask.
   ResultSpecProto parent_result_spec = CreateResultSpec(/*num_per_page=*/2);
+  parent_result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int>::max());
   TypePropertyMask* type_property_mask =
       parent_result_spec.add_type_property_masks();
   type_property_mask->set_schema_type("Person");
@@ -1389,12 +1497,12 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       /*child_adjustment_info=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
-          SectionRestrictQueryTermsMap()),
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
       parent_result_spec, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1406,7 +1514,10 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
   //    - Person docs only contain the "name" property.
   //    - Email docs only contain the "body" property.
   PageResult page_result =
-      result_retriever->RetrieveNextPage(result_state).first;
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
 
   // Check parent doc.
@@ -1444,6 +1555,399 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           .Build();
   EXPECT_THAT(page_result.results.at(0).joined_results(1).document(),
               EqualsProto(projected_email_document2));
+}
+
+TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
+  // 1. Add two documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .AddStringProperty("emailAddress", "ny152@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(document_one));
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Joe Artist")
+          .AddStringProperty("emailAddress", "artist@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(document_two));
+
+  // 2. Setup the scored results.
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, kSectionIdMaskAll, /*score=*/0},
+      {document_id2, kSectionIdMaskAll, /*score=*/0}};
+
+  // 3. Create a ResultSpec with type property mask.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  // Since Artist is a child type of Person, the TypePropertyMask for Person
+  // also applies to Artist.
+  TypePropertyMask* person_type_property_mask =
+      result_spec.add_type_property_masks();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("name");
+
+  // 4. Create ResultState with custom ResultSpec.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // 5. Verify that the returned Person and Artist results only contain the
+  // 'name' property.
+  PageResult page_result =
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
+  ASSERT_THAT(page_result.results, SizeIs(2));
+
+  DocumentProto projected_document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).document(),
+              EqualsProto(projected_document_one));
+
+  DocumentProto projected_document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Joe Artist")
+          .Build();
+  EXPECT_THAT(page_result.results.at(1).document(),
+              EqualsProto(projected_document_two));
+}
+
+TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
+  // 1. Add two documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .AddStringProperty("emailAddress", "ny152@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(document_one));
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Musician")
+          .AddStringProperty("name", "Joe Musician")
+          .AddStringProperty("emailAddress", "Musician@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(document_two));
+
+  // 2. Setup the scored results.
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, kSectionIdMaskAll, /*score=*/0},
+      {document_id2, kSectionIdMaskAll, /*score=*/0}};
+
+  // 3. Create a ResultSpec with type property mask.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  // Since Musician is a transitive child type of Person, the TypePropertyMask
+  // for Person also applies to Musician.
+  TypePropertyMask* person_type_property_mask =
+      result_spec.add_type_property_masks();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("name");
+
+  // 4. Create ResultState with custom ResultSpec.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // 5. Verify that the returned Person and Musician results only contain the
+  // 'name' property.
+  PageResult page_result =
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
+  ASSERT_THAT(page_result.results, SizeIs(2));
+
+  DocumentProto projected_document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).document(),
+              EqualsProto(projected_document_one));
+
+  DocumentProto projected_document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Musician")
+          .AddStringProperty("name", "Joe Musician")
+          .Build();
+  EXPECT_THAT(page_result.results.at(1).document(),
+              EqualsProto(projected_document_two));
+}
+
+TEST_F(ResultRetrieverV2ProjectionTest,
+       ProjectionPolymorphismChildMissingProperty) {
+  // 1. Add an artist document with missing 'emailAddress', which is allowed
+  // since 'emailAddress' in the parent type 'Person' is defined as optional.
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetCreationTimestampMs(1000)
+                               .SetSchema("Artist")
+                               .AddStringProperty("name", "Joe Artist")
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(document));
+
+  // 2. Setup the scored results.
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id, kSectionIdMaskAll, /*score=*/0}};
+
+  // 3. Create a ResultSpec with type property mask for the missing property
+  // 'emailAddress' in the Person type. Since Artist is a child type of Person,
+  // the TypePropertyMask for Person also applies to Artist.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  TypePropertyMask* person_type_property_mask =
+      result_spec.add_type_property_masks();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("emailAddress");
+
+  // 4. Create ResultState with custom ResultSpec.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // 5. Verify that the returned person document does not contain any property,
+  // since 'emailAddress' is missing.
+  PageResult page_result =
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
+  ASSERT_THAT(page_result.results, SizeIs(1));
+  DocumentProto projected_document = DocumentBuilder()
+                                         .SetKey("namespace", "uri")
+                                         .SetCreationTimestampMs(1000)
+                                         .SetSchema("Artist")
+                                         .Build();
+  EXPECT_THAT(page_result.results.at(0).document(),
+              EqualsProto(projected_document));
+}
+
+TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
+  // 1. Add two documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .AddStringProperty("emailAddress", "ny152@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
+                             document_store_->Put(document_one));
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Joe Artist")
+          .AddStringProperty("emailAddress", "artist@aol.com")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
+                             document_store_->Put(document_two));
+
+  // 2. Setup the scored results.
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, kSectionIdMaskAll, /*score=*/0},
+      {document_id2, kSectionIdMaskAll, /*score=*/0}};
+
+  // 3. Create a ResultSpec with type property mask.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  TypePropertyMask* person_type_property_mask =
+      result_spec.add_type_property_masks();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("name");
+  // Since Artist is a child type of Person, the TypePropertyMask for Person
+  // will be merged to Artist's TypePropertyMask by polymorphism, so that 'name'
+  // will also show in Artist's projection results.
+  TypePropertyMask* artist_type_property_mask =
+      result_spec.add_type_property_masks();
+  artist_type_property_mask->set_schema_type("Artist");
+  artist_type_property_mask->add_paths("emailAddress");
+
+  // 4. Create ResultState with custom ResultSpec.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // 5. Verify that the returned Person results only contain the 'name'
+  // property and the returned Artist results contain both the 'name' and
+  // 'emailAddress' properties.
+  PageResult page_result =
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
+  ASSERT_THAT(page_result.results, SizeIs(2));
+
+  DocumentProto projected_document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Joe Fox")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).document(),
+              EqualsProto(projected_document_one));
+
+  DocumentProto projected_document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Artist")
+          .AddStringProperty("name", "Joe Artist")
+          .AddStringProperty("emailAddress", "artist@aol.com")
+          .Build();
+  EXPECT_THAT(page_result.results.at(1).document(),
+              EqualsProto(projected_document_two));
+}
+
+TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
+  // 1. Add a document
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri")
+                               .SetCreationTimestampMs(1000)
+                               .SetSchema("PersonWithPhone")
+                               .AddStringProperty("name", "name")
+                               .AddStringProperty("emailAddress", "email")
+                               .AddStringProperty("phoneNumber", "12345")
+                               .AddStringProperty("phoneModel", "pixel")
+                               .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(document));
+
+  // 2. Setup the scored results.
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id, kSectionIdMaskAll, /*score=*/0}};
+
+  // 3. Create a ResultSpec with type property mask.
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/1);
+  // Since PersonWithPhone is a child type of Person, the TypePropertyMask
+  // also applies to PersonWithPhone.
+  TypePropertyMask* person_type_property_mask =
+      result_spec.add_type_property_masks();
+  person_type_property_mask->set_schema_type("Person");
+  person_type_property_mask->add_paths("name");
+  // Since PersonWithPhone is a child type of WithPhone, the
+  // TypePropertyMask also applies to PersonWithPhone.
+  TypePropertyMask* with_phone_type_property_mask =
+      result_spec.add_type_property_masks();
+  with_phone_type_property_mask->set_schema_type("WithPhone");
+  with_phone_type_property_mask->add_paths("phoneNumber");
+
+  // 4. Create ResultState with custom ResultSpec.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(), SectionRestrictQueryTermsMap()),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get()));
+
+  // 5. Verify that the returned document only contains the 'name' and the
+  // 'phoneNumber' property.
+  PageResult page_result =
+      result_retriever
+          ->RetrieveNextPage(result_state,
+                             fake_clock_.GetSystemTimeMilliseconds())
+          .first;
+  ASSERT_THAT(page_result.results, SizeIs(1));
+
+  DocumentProto projected_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("PersonWithPhone")
+          .AddStringProperty("name", "name")
+          .AddStringProperty("phoneNumber", "12345")
+          .Build();
+  EXPECT_THAT(page_result.results.at(0).document(),
+              EqualsProto(projected_document));
 }
 
 }  // namespace

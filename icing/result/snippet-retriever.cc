@@ -488,9 +488,7 @@ void GetEntriesFromProperty(const PropertyProto* current_property,
         current_property->string_values_size(), /*index=*/i, property_path));
     std::string_view value = current_property->string_values(i);
     std::unique_ptr<Tokenizer::Iterator> iterator =
-        tokenizer
-            ->Tokenize(value, LanguageSegmenter::AccessType::kForwardIterator)
-            .ValueOrDie();
+        tokenizer->Tokenize(value).ValueOrDie();
     // All iterators are moved through positions sequentially. Constructing them
     // each time resets them to the beginning of the string. This means that,
     // for t tokens and in a string of n chars, each MoveToUtf8 call from the

@@ -23,7 +23,7 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Next tag: 8
+// Next tag: 11
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -81,6 +81,28 @@ message IcingSearchEngineOptions {
   // Valid values: [0, 9]
   // Optional.
   optional int32 compression_level = 7 [default = 3];
+
+  // OPTIONAL: Whether to allow circular references between schema types for
+  // the schema definition.
+  //
+  // Even when set to true, circular references are still not allowed in the
+  // following cases:
+  //    1. All edges of a cycle have index_nested_properties=true
+  //    2. One of the types in the cycle has a joinable property, or depends on
+  //       a type with a joinable property.
+  // This is because such a cycle would lead to an infinite number of
+  // indexed/joinable properties:
+  //
+  // The default value is false.
+  optional bool allow_circular_schema_definitions = 8;
+
+  // Whether memory map max possible file size for FileBackedVector before
+  // growing the actual file size.
+  optional bool pre_mapping_fbv = 9;
+
+  // Whether use persistent hash map as the key mapper (if false, then fall back
+  // to dynamic trie key mapper).
+  optional bool use_persistent_hash_map = 10;
 
   reserved 2;
 }

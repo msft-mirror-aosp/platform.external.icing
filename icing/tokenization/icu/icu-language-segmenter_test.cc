@@ -419,10 +419,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ContinuousWhitespaces) {
   // iterator is done.
   text_with_spaces = absl_ports::StrCat(std::string(kNumSeparators, ' '),
                                         "Hello", " ", "World");
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto itr,
-      language_segmenter->Segment(
-          text_with_spaces, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(auto itr,
+                             language_segmenter->Segment(text_with_spaces));
   std::vector<std::string_view> terms;
   while (itr->Advance()) {
     terms.push_back(itr->GetTerm());
@@ -518,10 +516,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToStartUtf32WordConnector) {
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "com.google.android is package";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:      "com.google.android is package"
   //               ^                 ^^ ^^
@@ -537,10 +533,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, NewIteratorResetToStartUtf32) {
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:     "How are you你好吗お元気ですか"
   //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -556,10 +550,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:     "How are you你好吗お元気ですか"
   //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -576,10 +568,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:     "How are you你好吗お元気ですか"
   //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -598,10 +588,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, IteratorDoneResetToStartUtf32) {
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:     "How are you你好吗お元気ですか"
   //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -619,10 +607,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32WordConnector) {
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "package com.google.android name";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:     "package com.google.android name"
   //              ^      ^^                 ^^
@@ -644,10 +630,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32OutOfBounds) {
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:     "How are you你好吗お元気ですか"
   //              ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -677,15 +661,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kText = "How are𡔖 you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kText));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kText));
   std::vector<std::string_view> reset_terms =
       GetAllTermsResetAfterUtf32(reset_to_term_itr.get());
 
@@ -701,15 +683,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kThai,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kThai));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
-      segmenter->Segment(kThai,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kThai));
   std::vector<std::string_view> reset_terms =
       GetAllTermsResetAfterUtf32(reset_to_term_itr.get());
 
@@ -725,15 +705,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kKorean = "나는 매일 출근합니다.";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kKorean,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kKorean));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
-      segmenter->Segment(kKorean,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kKorean));
   std::vector<std::string_view> reset_terms =
       GetAllTermsResetAfterUtf32(reset_to_term_itr.get());
 
@@ -753,15 +731,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kText = "How are𡔖 you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kText));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_and_reset_itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kText));
   std::vector<std::string_view> advance_and_reset_terms =
       GetAllTermsAdvanceAndResetAfterUtf32(advance_and_reset_itr.get());
 
@@ -778,15 +754,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kThai,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kThai));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_and_reset_itr,
-      segmenter->Segment(kThai,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kThai));
   std::vector<std::string_view> advance_and_reset_terms =
       GetAllTermsAdvanceAndResetAfterUtf32(advance_and_reset_itr.get());
 
@@ -803,15 +777,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kKorean = "나는 매일 출근합니다.";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kKorean,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kKorean));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_and_reset_itr,
-      segmenter->Segment(kKorean,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kKorean));
   std::vector<std::string_view> advance_and_reset_terms =
       GetAllTermsAdvanceAndResetAfterUtf32(advance_and_reset_itr.get());
 
@@ -828,9 +800,7 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          "How are you你好吗お元気ですか",
-          LanguageSegmenter::AccessType::kForwardIterator));
+      language_segmenter->Segment("How are you你好吗お元気ですか"));
 
   // String:      "How are you你好吗お元気ですか"
   //               ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -867,10 +837,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   // Multiple continuous whitespaces are treated as one.
   constexpr std::string_view kTextWithSpace = "Hello          World";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kTextWithSpace, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kTextWithSpace));
 
   // String:      "Hello          World"
   //               ^    ^         ^
@@ -909,10 +877,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermAfterUtf32) {
   // CJKT (Chinese, Japanese, Khmer, Thai) are the 4 main languages that
   // don't have whitespaces as word delimiter. Chinese
   constexpr std::string_view kChinese = "我每天走路去上班。";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kChinese, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kChinese));
   // String:       "我每天走路去上班。"
   //                ^ ^  ^   ^^   ^
   // UTF-8 idx:     0 3  9  15 18 24
@@ -938,10 +904,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermAfterUtf32) {
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   // Japanese
   constexpr std::string_view kJapanese = "私は毎日仕事に歩いています。";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kJapanese, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kJapanese));
   // String:       "私は毎日仕事に歩いています。"
   //                ^ ^ ^  ^  ^ ^ ^ ^  ^  ^
   // UTF-8 idx:     0 3 6  12 18212427 33 39
@@ -966,10 +930,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermAfterUtf32) {
       language_segmenter_factory::Create(
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kKhmer = "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kKhmer, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kKhmer));
   // String:            "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
   //                     ^ ^   ^   ^  ^
   // UTF-8 idx:          0 9   24  45 69
@@ -995,10 +957,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermAfterUtf32) {
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   // Thai
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kThai, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kThai));
   // String:      "ฉันเดินไปทำงานทุกวัน"
   //               ^ ^  ^ ^    ^ ^
   // UTF-8 idx:    0 9 21 27  42 51
@@ -1023,10 +983,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "package name com.google.android!";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:      "package name com.google.android!"
   //               ^      ^^   ^^                 ^
@@ -1048,10 +1006,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermBeforeOutOfBoundsUtf32) {
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kText = "How are you你好吗お元気ですか";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             segmenter->Segment(kText));
 
   // String:      "How are you你好吗お元気ですか"
   //               ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -1081,15 +1037,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kText = "How are𡔖 you你好吗お元気ですか";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kText));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
-      segmenter->Segment(kText,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kText));
   std::vector<std::string_view> reset_terms =
       GetAllTermsResetBeforeUtf32(reset_to_term_itr.get());
   std::reverse(reset_terms.begin(), reset_terms.end());
@@ -1107,15 +1061,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kThai,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kThai));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
-      segmenter->Segment(kThai,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kThai));
   std::vector<std::string_view> reset_terms =
       GetAllTermsResetBeforeUtf32(reset_to_term_itr.get());
   std::reverse(reset_terms.begin(), reset_terms.end());
@@ -1132,15 +1084,13 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   constexpr std::string_view kKorean = "나는 매일 출근합니다.";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> advance_itr,
-      segmenter->Segment(kKorean,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kKorean));
   std::vector<std::string_view> advance_terms =
       GetAllTermsAdvance(advance_itr.get());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> reset_to_term_itr,
-      segmenter->Segment(kKorean,
-                         LanguageSegmenter::AccessType::kForwardIterator));
+      segmenter->Segment(kKorean));
   std::vector<std::string_view> reset_terms =
       GetAllTermsResetBeforeUtf32(reset_to_term_itr.get());
   std::reverse(reset_terms.begin(), reset_terms.end());
@@ -1157,9 +1107,7 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          "How are you你好吗お元気ですか",
-          LanguageSegmenter::AccessType::kForwardIterator));
+      language_segmenter->Segment("How are you你好吗お元気ですか"));
 
   // String:      "How are you你好吗お元気ですか"
   //               ^  ^^  ^^  ^  ^ ^ ^  ^  ^
@@ -1197,10 +1145,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   // Multiple continuous whitespaces are treated as one.
   constexpr std::string_view kTextWithSpace = "Hello          World";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kTextWithSpace, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kTextWithSpace));
 
   // String:      "Hello          World"
   //               ^    ^         ^
@@ -1238,10 +1184,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermBeforeUtf32) {
   // CJKT (Chinese, Japanese, Khmer, Thai) are the 4 main languages that
   // don't have whitespaces as word delimiter. Chinese
   constexpr std::string_view kChinese = "我每天走路去上班。";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kChinese, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kChinese));
   // String:      "我每天走路去上班。"
   //               ^ ^  ^   ^^
   // UTF-8 idx:    0 3  9  15 18
@@ -1264,10 +1208,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermBeforeUtf32) {
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   // Japanese
   constexpr std::string_view kJapanese = "私は毎日仕事に歩いています。";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kJapanese, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kJapanese));
   // String:      "私は毎日仕事に歩いています。"
   //               ^ ^ ^  ^  ^ ^ ^ ^  ^
   // UTF-8 idx:    0 3 6  12 18212427 33
@@ -1289,10 +1231,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermBeforeUtf32) {
       language_segmenter_factory::Create(
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   constexpr std::string_view kKhmer = "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kKhmer, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kKhmer));
   // String:      "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
   //               ^ ^   ^   ^
   // UTF-8 idx:    0 9   24  45
@@ -1315,10 +1255,8 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ThaiResetToTermBeforeUtf32) {
           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
   // Thai
   constexpr std::string_view kThai = "ฉันเดินไปทำงานทุกวัน";
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<LanguageSegmenter::Iterator> itr,
-      language_segmenter->Segment(
-          kThai, LanguageSegmenter::AccessType::kForwardIterator));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
+                             language_segmenter->Segment(kThai));
   // String:      "ฉันเดินไปทำงานทุกวัน"
   //               ^ ^  ^ ^    ^ ^
   // UTF-8 idx:    0 9 21 27  42 51
@@ -1360,13 +1298,10 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, MultipleLangSegmentersTest) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> iterator_one,
-      language_segmenter->Segment(
-          "foo bar baz", LanguageSegmenter::AccessType::kForwardIterator));
+      language_segmenter->Segment("foo bar baz"));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<LanguageSegmenter::Iterator> iterator_two,
-      language_segmenter->Segment(
-          "abra kadabra alakazam",
-          LanguageSegmenter::AccessType::kForwardIterator));
+      language_segmenter->Segment("abra kadabra alakazam"));
 
   ASSERT_TRUE(iterator_one->Advance());
   ASSERT_TRUE(iterator_two->Advance());

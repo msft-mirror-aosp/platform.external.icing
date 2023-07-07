@@ -12,22 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "testing/base/public/benchmark.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/destructible-directory.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/integer-index-storage.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
+#include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/numeric/normal-distribution-number-generator.h"
 #include "icing/testing/numeric/number-generator.h"
 #include "icing/testing/numeric/uniform-distribution-integer-generator.h"
 #include "icing/testing/tmp-directory.h"
@@ -60,11 +68,14 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
+static constexpr bool kPreMappingFbv = true;
+
 static constexpr SectionId kDefaultSectionId = 12;
 static constexpr int kDefaultSeed = 12345;
 
 enum DistributionTypeEnum {
   kUniformDistribution,
+  kNormalDistribution,
 };
 
 class IntegerIndexStorageBenchmark {
@@ -103,6 +114,19 @@ CreateIntegerGenerator(DistributionTypeEnum distribution_type, int seed,
       return std::make_unique<UniformDistributionIntegerGenerator<int64_t>>(
           seed, /*range_lower=*/0,
           /*range_upper=*/static_cast<int64_t>(num_keys) * 10 - 1);
+    case DistributionTypeEnum::kNormalDistribution:
+      // Normal distribution with mean = 0 and stddev = num_keys / 1024.
+      // - keys in range [-1 * stddev, 1 * stddev]: 68.2%
+      // - keys in range [-2 * stddev, 2 * stddev]: 95.4%
+      // - keys in range [-3 * stddev, 3 * stddev]: 99.7%
+      //
+      // - When generating num_keys integers, 68.2% of them will be in range
+      //   [-num_keys / 1024, num_keys / 1024]
+      // - Each number in this range will be sampled (num_keys * 0.682) /
+      //   ((num_keys / 1024) * 2) = 349 times on average and become
+      //   "single-range bucket".
+      return std::make_unique<NormalDistributionNumberGenerator<int64_t>>(
+          seed, /*mean=*/0.0, /*stddev=*/num_keys / 1024.0);
     default:
       return absl_ports::InvalidArgumentError("Unknown type");
   }
@@ -129,7 +153,7 @@ void BM_Index(benchmark::State& state) {
     ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
                                IntegerIndexStorage::Create(
                                    benchmark.filesystem, benchmark.working_path,
-                                   IntegerIndexStorage::Options(),
+                                   IntegerIndexStorage::Options(kPreMappingFbv),
                                    &benchmark.posting_list_serializer));
     state.ResumeTiming();
 
@@ -155,7 +179,18 @@ BENCHMARK(BM_Index)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 17)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 18)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 19)
-    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20);
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 10)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 11)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 12)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 13)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 14)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 15)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 16)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 17)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 18)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 19)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 20);
 
 void BM_BatchIndex(benchmark::State& state) {
   DistributionTypeEnum distribution_type =
@@ -178,7 +213,7 @@ void BM_BatchIndex(benchmark::State& state) {
     ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
                                IntegerIndexStorage::Create(
                                    benchmark.filesystem, benchmark.working_path,
-                                   IntegerIndexStorage::Options(),
+                                   IntegerIndexStorage::Options(kPreMappingFbv),
                                    &benchmark.posting_list_serializer));
     std::vector<int64_t> keys_copy(keys);
     state.ResumeTiming();
@@ -203,7 +238,18 @@ BENCHMARK(BM_BatchIndex)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 17)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 18)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 19)
-    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20);
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 10)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 11)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 12)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 13)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 14)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 15)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 16)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 17)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 18)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 19)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 20);
 
 void BM_ExactQuery(benchmark::State& state) {
   DistributionTypeEnum distribution_type =
@@ -218,7 +264,7 @@ void BM_ExactQuery(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
       IntegerIndexStorage::Create(benchmark.filesystem, benchmark.working_path,
-                                  IntegerIndexStorage::Options(),
+                                  IntegerIndexStorage::Options(kPreMappingFbv),
                                   &benchmark.posting_list_serializer));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumberGenerator<int64_t>> generator,
@@ -269,7 +315,81 @@ BENCHMARK(BM_ExactQuery)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 17)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 18)
     ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 19)
-    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20);
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 10)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 11)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 12)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 13)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 14)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 15)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 16)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 17)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 18)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 19)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 20);
+
+void BM_RangeQueryAll(benchmark::State& state) {
+  DistributionTypeEnum distribution_type =
+      static_cast<DistributionTypeEnum>(state.range(0));
+  int num_keys = state.range(1);
+
+  IntegerIndexStorageBenchmark benchmark;
+  benchmark.filesystem.DeleteDirectoryRecursively(
+      benchmark.working_path.c_str());
+  DestructibleDirectory ddir(&benchmark.filesystem, benchmark.working_path);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage,
+      IntegerIndexStorage::Create(benchmark.filesystem, benchmark.working_path,
+                                  IntegerIndexStorage::Options(kPreMappingFbv),
+                                  &benchmark.posting_list_serializer));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumberGenerator<int64_t>> generator,
+      CreateIntegerGenerator(distribution_type, kDefaultSeed, num_keys));
+  for (int i = 0; i < num_keys; ++i) {
+    ICING_ASSERT_OK(storage->AddKeys(static_cast<DocumentId>(i),
+                                     kDefaultSectionId,
+                                     {generator->Generate()}));
+  }
+  ICING_ASSERT_OK(storage->PersistToDisk());
+
+  for (auto _ : state) {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<DocHitInfoIterator> iterator,
+        storage->GetIterator(
+            /*query_key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*query_key_upper=*/std::numeric_limits<int64_t>::max()));
+    std::vector<DocHitInfo> data;
+    while (iterator->Advance().ok()) {
+      data.push_back(iterator->doc_hit_info());
+    }
+
+    ASSERT_THAT(data, SizeIs(num_keys));
+  }
+}
+BENCHMARK(BM_RangeQueryAll)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 10)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 11)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 12)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 13)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 14)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 15)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 16)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 17)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 18)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 19)
+    ->ArgPair(DistributionTypeEnum::kUniformDistribution, 1 << 20)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 10)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 11)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 12)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 13)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 14)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 15)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 16)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 17)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 18)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 19)
+    ->ArgPair(DistributionTypeEnum::kNormalDistribution, 1 << 20);
 
 }  // namespace
 

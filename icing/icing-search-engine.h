@@ -567,6 +567,30 @@ class IcingSearchEngine {
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Implementation of IcingSearchEngine::Search that only grabs the overall
+  // read-lock, allowing for parallel non-exclusive operations.
+  // This implementation is used if search_spec.use_read_only_search is true.
+  SearchResultProto SearchLockedShared(const SearchSpecProto& search_spec,
+                                   const ScoringSpecProto& scoring_spec,
+                                   const ResultSpecProto& result_spec)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Implementation of IcingSearchEngine::Search that requires the overall
+  // write lock. No other operations of any kind can be executed in parallel if
+  // this version is used.
+  // This implementation is used if search_spec.use_read_only_search is false.
+  SearchResultProto SearchLockedExclusive(const SearchSpecProto& search_spec,
+                                 const ScoringSpecProto& scoring_spec,
+                                 const ResultSpecProto& result_spec)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Helper method for the actual work to Search. We need this separate
+  // method to manage locking for Search.
+  SearchResultProto InternalSearch(const SearchSpecProto& search_spec,
+                                   const ScoringSpecProto& scoring_spec,
+                                   const ResultSpecProto& result_spec)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
+
   // Processes query and scores according to the specs. It is a helper function
   // (called by Search) to process and score normal query and the nested child
   // query for join search.
@@ -596,7 +620,7 @@ class IcingSearchEngine {
   QueryScoringResults ProcessQueryAndScore(
       const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
       const ResultSpecProto& result_spec,
-      const JoinChildrenFetcher* join_children_fetcher)
+      const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
@@ -612,6 +636,15 @@ class IcingSearchEngine {
   //   NOT_FOUND if missing header file
   //   INTERNAL_ERROR on any IO errors or if header is inconsistent
   libtextclassifier3::Status CheckConsistency()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Discards all derived data.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION_ERROR if those instances are valid (non nullptr)
+  //   INTERNAL_ERROR on any I/O errors
+  libtextclassifier3::Status DiscardDerivedFiles()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Repopulates derived data off our ground truths.

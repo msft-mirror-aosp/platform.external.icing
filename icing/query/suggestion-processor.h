@@ -52,7 +52,7 @@ class SuggestionProcessor {
   //     - One vector that represents the entire TermMetadata
   //   INTERNAL_ERROR on all other errors
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> QuerySuggestions(
-      const SuggestionSpecProto& suggestion_spec);
+      const SuggestionSpecProto& suggestion_spec, int64_t current_time_ms);
 
  private:
   explicit SuggestionProcessor(Index* index,

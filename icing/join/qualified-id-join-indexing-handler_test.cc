@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-joinable-property-indexing-handler.h"
+#include "icing/join/qualified-id-join-indexing-handler.h"
 
 #include <memory>
 #include <string>
@@ -73,7 +73,7 @@ static constexpr JoinablePropertyId kQualifiedId2JoinablePropertyId = 1;
 
 static constexpr DocumentId kDefaultDocumentId = 3;
 
-class QualifiedIdJoinablePropertyIndexingHandlerTest : public ::testing::Test {
+class QualifiedIdJoinIndexingHandlerTest : public ::testing::Test {
  protected:
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
@@ -90,9 +90,11 @@ class QualifiedIdJoinablePropertyIndexingHandlerTest : public ::testing::Test {
     qualified_id_join_index_dir_ = base_dir_ + "/qualified_id_join_index";
     schema_store_dir_ = base_dir_ + "/schema_store";
 
-    ICING_ASSERT_OK_AND_ASSIGN(qualified_id_join_index_,
-                               QualifiedIdTypeJoinableIndex::Create(
-                                   filesystem_, qualified_id_join_index_dir_));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        qualified_id_join_index_,
+        QualifiedIdTypeJoinableIndex::Create(
+            filesystem_, qualified_id_join_index_dir_,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -135,7 +137,9 @@ class QualifiedIdJoinablePropertyIndexingHandlerTest : public ::testing::Test {
                                          JOINABLE_VALUE_TYPE_QUALIFIED_ID)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
-    ICING_ASSERT_OK(schema_store_->SetSchema(schema));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false,
+        /*allow_circular_schema_definitions=*/false));
   }
 
   void TearDown() override {
@@ -157,18 +161,17 @@ class QualifiedIdJoinablePropertyIndexingHandlerTest : public ::testing::Test {
   std::unique_ptr<SchemaStore> schema_store_;
 };
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
-       CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(QualifiedIdJoinablePropertyIndexingHandler::Create(
+TEST_F(QualifiedIdJoinIndexingHandlerTest, CreationWithNullPointerShouldFail) {
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
                   /*clock=*/nullptr, qualified_id_join_index_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(QualifiedIdJoinablePropertyIndexingHandler::Create(
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
                   &fake_clock_, /*qualified_id_join_index=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest, HandleJoinableProperty) {
+TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleJoinableProperty) {
   DocumentProto referenced_document =
       DocumentBuilder()
           .SetKey("pkg$db/ns", "ref_type/1")
@@ -192,9 +195,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest, HandleJoinableProperty) {
               Eq(kInvalidDocumentId));
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, kDefaultDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -207,8 +210,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest, HandleJoinableProperty) {
               IsOkAndHolds("pkg$db/ns#ref_type/1"));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
-       HandleNestedJoinableProperty) {
+TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleNestedJoinableProperty) {
   DocumentProto referenced_document1 =
       DocumentBuilder()
           .SetKey("pkg$db/ns", "ref_type/1")
@@ -246,9 +248,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               Eq(kInvalidDocumentId));
   // Handle nested_document.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
   EXPECT_THAT(handler->Handle(tokenized_document, kDefaultDocumentId,
                               /*recovery_mode=*/false,
                               /*put_document_stats=*/nullptr),
@@ -264,7 +266,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               IsOkAndHolds("pkg$db/ns#ref_type/1"));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerTest,
        HandleShouldSkipInvalidFormatQualifiedId) {
   static constexpr std::string_view kInvalidFormatQualifiedId =
       "invalid_format_qualified_id";
@@ -289,9 +291,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
   // Index data should remain unchanged since there is no valid qualified id,
   // but last_added_document_id should be updated.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, kDefaultDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -303,8 +305,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
-       HandleShouldSkipEmptyQualifiedId) {
+TEST_F(QualifiedIdJoinIndexingHandlerTest, HandleShouldSkipEmptyQualifiedId) {
   // Create a document without any qualified id.
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/1")
@@ -321,9 +322,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
   // Handle document. Index data should remain unchanged since there is no
   // qualified id, but last_added_document_id should be updated.
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, kDefaultDocumentId,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -335,7 +336,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerTest,
        HandleInvalidDocumentIdShouldReturnInvalidArgumentError) {
   DocumentProto referenced_document =
       DocumentBuilder()
@@ -361,9 +362,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               Eq(kDefaultDocumentId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
 
   // Handling document with kInvalidDocumentId should cause a failure, and both
   // index data and last_added_document_id should remain unchanged.
@@ -389,7 +390,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerTest,
        HandleOutOfOrderDocumentIdShouldReturnInvalidArgumentError) {
   DocumentProto referenced_document =
       DocumentBuilder()
@@ -415,9 +416,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               Eq(kDefaultDocumentId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
 
   // Handling document with document_id < last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -447,7 +448,7 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
+TEST_F(QualifiedIdJoinIndexingHandlerTest,
        HandleRecoveryModeShouldIgnoreDocsLELastAddedDocId) {
   DocumentProto referenced_document =
       DocumentBuilder()
@@ -473,9 +474,9 @@ TEST_F(QualifiedIdJoinablePropertyIndexingHandlerTest,
               Eq(kDefaultDocumentId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<QualifiedIdJoinablePropertyIndexingHandler> handler,
-      QualifiedIdJoinablePropertyIndexingHandler::Create(
-          &fake_clock_, qualified_id_join_index_.get()));
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_,
+                                             qualified_id_join_index_.get()));
 
   // Handle document with document_id < last_added_document_id in recovery mode.
   // We should not get any error, but the handler should ignore the document, so

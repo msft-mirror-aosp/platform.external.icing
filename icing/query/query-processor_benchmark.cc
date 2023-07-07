@@ -144,7 +144,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -178,7 +180,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -270,7 +273,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -322,7 +327,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -414,7 +420,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -451,7 +459,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -543,7 +552,9 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
       CreateDocumentStore(&filesystem, doc_store_dir, &clock,
@@ -580,7 +591,8 @@ void BM_QueryHiragana(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();

@@ -108,7 +108,8 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
@@ -123,14 +124,17 @@ void BM_ScoreAndRankDocumentHitsByDocumentScore(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
 
@@ -209,7 +213,8 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
@@ -224,7 +229,9 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
@@ -232,7 +239,8 @@ void BM_ScoreAndRankDocumentHitsByCreationTime(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -313,7 +321,8 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
@@ -328,14 +337,17 @@ void BM_ScoreAndRankDocumentHitsNoScoring(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);
@@ -411,7 +423,8 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   // Creates file directories
   Filesystem filesystem;
   filesystem.DeleteDirectoryRecursively(base_dir.c_str());
-  ASSERT_TRUE(filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
+  ASSERT_TRUE(
+      filesystem.CreateDirectoryRecursively(document_store_dir.c_str()));
   ASSERT_TRUE(filesystem.CreateDirectoryRecursively(schema_store_dir.c_str()));
 
   Clock clock;
@@ -426,14 +439,17 @@ void BM_ScoreAndRankDocumentHitsByRelevanceScoring(benchmark::State& state) {
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK(schema_store->SetSchema(CreateSchemaWithEmailType()));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      CreateSchemaWithEmailType(), /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ScoringProcessor> scoring_processor,
       ScoringProcessor::Create(scoring_spec, document_store.get(),
-                               schema_store.get()));
+                               schema_store.get(),
+                               clock.GetSystemTimeMilliseconds()));
 
   int num_to_score = state.range(0);
   int num_of_documents = state.range(1);

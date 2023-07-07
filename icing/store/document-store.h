@@ -146,6 +146,14 @@ class DocumentStore {
       int32_t compression_level,
       InitializeStatsProto* initialize_stats);
 
+  // Discards all derived data in the document store.
+  //
+  // Returns:
+  //   OK on success or nothing to discard
+  //   INTERNAL_ERROR on any I/O errors
+  static libtextclassifier3::Status DiscardDerivedFiles(
+      const Filesystem* filesystem, const std::string& base_dir);
+
   // Returns the maximum DocumentId that the DocumentStore has assigned. If
   // there has not been any DocumentIds assigned, i.e. the DocumentStore is
   // empty, then kInvalidDocumentId is returned. This does not filter out
@@ -221,7 +229,8 @@ class DocumentStore {
   //   NOT_FOUND if no document exists with namespace, uri
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Delete(std::string_view name_space,
-                                    std::string_view uri);
+                                    std::string_view uri,
+                                    int64_t current_time_ms);
 
   // Deletes the document identified by the given document_id. The document
   // proto will be erased immediately.
@@ -235,7 +244,8 @@ class DocumentStore {
   //   NOT_FOUND if the document doesn't exist (i.e. deleted or expired)
   //   INTERNAL_ERROR on IO error
   //   INVALID_ARGUMENT if document_id is invalid.
-  libtextclassifier3::Status Delete(DocumentId document_id);
+  libtextclassifier3::Status Delete(DocumentId document_id,
+                                    int64_t current_time_ms);
 
   // Returns the NamespaceId of the string namespace
   //
@@ -331,7 +341,7 @@ class DocumentStore {
   //   True:DocumentFilterData  if the given document exists.
   //   False                    if the given document doesn't exist.
   std::optional<DocumentFilterData> GetAliveDocumentFilterData(
-      DocumentId document_id) const;
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Gets the usage scores of a document.
   //
@@ -339,7 +349,7 @@ class DocumentStore {
   //   UsageScores on success
   //   nullopt if there are no usage scores stored for the requested docid.
   std::optional<UsageStore::UsageScores> GetUsageScores(
-      DocumentId document_id) const;
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Reports usage. The corresponding usage scores of the specified document in
   // the report will be updated.
@@ -706,7 +716,7 @@ class DocumentStore {
   //   True:DocumentFilterData  if the given document isn't expired.
   //   False                    if the given doesn't document is expired.
   std::optional<DocumentFilterData> GetNonExpiredDocumentFilterData(
-      DocumentId document_id) const;
+      DocumentId document_id, int64_t current_time_ms) const;
 
   // Updates the entry in the score cache for document_id.
   libtextclassifier3::Status UpdateDocumentAssociatedScoreCache(

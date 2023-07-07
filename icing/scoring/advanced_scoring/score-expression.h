@@ -219,7 +219,8 @@ class DocumentFunctionScoreExpression : public ScoreExpression {
       std::unique_ptr<DocumentFunctionScoreExpression>>
   Create(FunctionType function_type,
          std::vector<std::unique_ptr<ScoreExpression>> args,
-         const DocumentStore* document_store, double default_score);
+         const DocumentStore* document_store, double default_score,
+         int64_t current_time_ms);
 
   libtextclassifier3::StatusOr<double> eval(
       const DocHitInfo& hit_info,
@@ -233,16 +234,19 @@ class DocumentFunctionScoreExpression : public ScoreExpression {
   explicit DocumentFunctionScoreExpression(
       FunctionType function_type,
       std::vector<std::unique_ptr<ScoreExpression>> args,
-      const DocumentStore* document_store, double default_score)
+      const DocumentStore* document_store, double default_score,
+      int64_t current_time_ms)
       : args_(std::move(args)),
         document_store_(*document_store),
         default_score_(default_score),
-        function_type_(function_type) {}
+        function_type_(function_type),
+        current_time_ms_(current_time_ms) {}
 
   std::vector<std::unique_ptr<ScoreExpression>> args_;
   const DocumentStore& document_store_;
   double default_score_;
   FunctionType function_type_;
+  int64_t current_time_ms_;
 };
 
 class RelevanceScoreFunctionScoreExpression : public ScoreExpression {
@@ -275,16 +279,16 @@ class RelevanceScoreFunctionScoreExpression : public ScoreExpression {
   double default_score_;
 };
 
-class ChildrenScoresFunctionScoreExpression : public ScoreExpression {
+class ChildrenRankingSignalsFunctionScoreExpression : public ScoreExpression {
  public:
-  static constexpr std::string_view kFunctionName = "childrenScores";
+  static constexpr std::string_view kFunctionName = "childrenRankingSignals";
 
   // RETURNS:
-  //   - A ChildrenScoresFunctionScoreExpression instance on success.
+  //   - A ChildrenRankingSignalsFunctionScoreExpression instance on success.
   //   - FAILED_PRECONDITION on any null pointer in children.
   //   - INVALID_ARGUMENT on type errors.
   static libtextclassifier3::StatusOr<
-      std::unique_ptr<ChildrenScoresFunctionScoreExpression>>
+      std::unique_ptr<ChildrenRankingSignalsFunctionScoreExpression>>
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
          const JoinChildrenFetcher* join_children_fetcher);
 
@@ -297,7 +301,7 @@ class ChildrenScoresFunctionScoreExpression : public ScoreExpression {
   }
 
  private:
-  explicit ChildrenScoresFunctionScoreExpression(
+  explicit ChildrenRankingSignalsFunctionScoreExpression(
       const JoinChildrenFetcher& join_children_fetcher)
       : join_children_fetcher_(join_children_fetcher) {}
   const JoinChildrenFetcher& join_children_fetcher_;
@@ -315,7 +319,7 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
       std::unique_ptr<PropertyWeightsFunctionScoreExpression>>
   Create(std::vector<std::unique_ptr<ScoreExpression>> args,
          const DocumentStore* document_store,
-         const SectionWeights* section_weights);
+         const SectionWeights* section_weights, int64_t current_time_ms);
 
   libtextclassifier3::StatusOr<std::vector<double>> eval_list(
       const DocHitInfo& hit_info, const DocHitInfoIterator*) const override;
@@ -329,10 +333,13 @@ class PropertyWeightsFunctionScoreExpression : public ScoreExpression {
  private:
   explicit PropertyWeightsFunctionScoreExpression(
       const DocumentStore* document_store,
-      const SectionWeights* section_weights)
-      : document_store_(*document_store), section_weights_(*section_weights) {}
+      const SectionWeights* section_weights, int64_t current_time_ms)
+      : document_store_(*document_store),
+        section_weights_(*section_weights),
+        current_time_ms_(current_time_ms) {}
   const DocumentStore& document_store_;
   const SectionWeights& section_weights_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib
