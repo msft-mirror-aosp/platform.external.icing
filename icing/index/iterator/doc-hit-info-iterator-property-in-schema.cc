@@ -36,11 +36,12 @@ namespace lib {
 DocHitInfoIteratorPropertyInSchema::DocHitInfoIteratorPropertyInSchema(
     std::unique_ptr<DocHitInfoIterator> delegate,
     const DocumentStore* document_store, const SchemaStore* schema_store,
-    std::set<std::string> target_sections)
+    std::set<std::string> target_sections, int64_t current_time_ms)
     : delegate_(std::move(delegate)),
       document_store_(*document_store),
       schema_store_(*schema_store),
-      target_properties_(std::move(target_sections)) {}
+      target_properties_(std::move(target_sections)),
+      current_time_ms_(current_time_ms) {}
 
 libtextclassifier3::Status DocHitInfoIteratorPropertyInSchema::Advance() {
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
@@ -51,8 +52,8 @@ libtextclassifier3::Status DocHitInfoIteratorPropertyInSchema::Advance() {
   std::unordered_map<SchemaTypeId, bool> property_defined_types;
   while (delegate_->Advance().ok()) {
     DocumentId document_id = delegate_->doc_hit_info().document_id();
-    auto data_optional =
-        document_store_.GetAliveDocumentFilterData(document_id);
+    auto data_optional = document_store_.GetAliveDocumentFilterData(
+        document_id, current_time_ms_);
     if (!data_optional) {
       // Ran into some error retrieving information on this hit, skip
       continue;

@@ -191,19 +191,19 @@ TEST_F(AdvancedScorerTest, InvalidAdvancedScoringSpec) {
   ScoringSpecProto scoring_spec;
   scoring_spec.set_rank_by(
       ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  EXPECT_THAT(
-      scorer_factory::Create(scoring_spec, /*default_score=*/10,
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_factory::Create(scoring_spec, /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Non-empty scoring expression for normal scoring
   scoring_spec = ScoringSpecProto::default_instance();
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
   scoring_spec.set_advanced_scoring_expression("1");
-  EXPECT_THAT(
-      scorer_factory::Create(scoring_spec, /*default_score=*/10,
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(scorer_factory::Create(scoring_spec, /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(AdvancedScorerTest, SimpleExpression) {
@@ -215,7 +215,8 @@ TEST_F(AdvancedScorerTest, SimpleExpression) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("123"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
 
   DocHitInfo docHitInfo = DocHitInfo(document_id);
 
@@ -232,42 +233,43 @@ TEST_F(AdvancedScorerTest, BasicPureArithmeticExpression) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("1 + 2"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(3));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("-1 + 2"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("-1 + 2"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(1));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("1 + -2"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("1 + -2"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(-1));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("1 - 2"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("1 - 2"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(-1));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("1 * 2"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("1 * 2"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(2));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("1 / 2"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("1 / 2"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(0.5));
 }
 
@@ -281,91 +283,102 @@ TEST_F(AdvancedScorerTest, BasicMathFunctionExpression) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("log(10, 1000)"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(3, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("log(2.718281828459045)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(1, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("pow(2, 10)"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("pow(2, 10)"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(1024));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("max(10, 11, 12, 13, 14)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(14));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("min(10, 11, 12, 13, 14)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("len(10, 11, 12, 13, 14)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(5));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sum(10, 11, 12, 13, 14)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(10 + 11 + 12 + 13 + 14));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("avg(10, 11, 12, 13, 14)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq((10 + 11 + 12 + 13 + 14) / 5.));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(CreateAdvancedScoringSpec("sqrt(2)"),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("sqrt(2)"),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(sqrt(2), kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("abs(-2) + abs(2)"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(4));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sin(3.141592653589793)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(0, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("cos(3.141592653589793)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(-1, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("tan(3.141592653589793 / 4)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(1, kEps));
 }
 
@@ -381,14 +394,16 @@ TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("this.documentScore()"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(123));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.creationTimestamp()"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(kDefaultCreationTimestampMs));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -396,7 +411,8 @@ TEST_F(AdvancedScorerTest, DocumentScoreCreationTimestampFunctionExpression) {
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec(
               "this.documentScore() + this.creationTimestamp()"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo),
               Eq(123 + kDefaultCreationTimestampMs));
 }
@@ -412,7 +428,8 @@ TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.usageCount(1) + this.usageCount(2) "
                                     "+ this.usageLastUsedTimestamp(3)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(0));
   ICING_ASSERT_OK(document_store_->ReportUsage(
       CreateUsageReport("namespace", "uri", 100000, UsageReport::USAGE_TYPE1)));
@@ -428,19 +445,22 @@ TEST_F(AdvancedScorerTest, DocumentUsageFunctionExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.usageLastUsedTimestamp(1)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(100000));
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.usageLastUsedTimestamp(2)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(200000));
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("this.usageLastUsedTimestamp(3)"),
-          /*default_score=*/10, document_store_.get(), schema_store_.get()));
+          /*default_score=*/10, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(300000));
 }
 
@@ -459,19 +479,22 @@ TEST_F(AdvancedScorerTest, DocumentUsageFunctionOutOfRange) {
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("this.usageCount(4)"),
                              default_score, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(default_score));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("this.usageCount(0)"),
-                  default_score, document_store_.get(), schema_store_.get()));
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(default_score));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("this.usageCount(1.5)"),
-                  default_score, document_store_.get(), schema_store_.get()));
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), Eq(default_score));
 }
 
@@ -493,7 +516,8 @@ TEST_F(AdvancedScorerTest, RelevanceScoreFunctionScoreExpression) {
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("this.relevanceScore()"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   scorer->PrepareToScore(/*query_term_iterators=*/{});
 
   // Should get the default score.
@@ -541,7 +565,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("len(this.childrenRankingSignals())"),
-          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+          default_score, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(), &fetcher));
   // document_id_1 has two children.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(2));
   // document_id_2 has one child.
@@ -553,7 +578,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("sum(this.childrenRankingSignals())"),
-          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+          default_score, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(), &fetcher));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3));
   // document_id_2 has one child with score 4.
@@ -565,7 +591,8 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
       scorer,
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("avg(this.childrenRankingSignals())"),
-          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+          default_score, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(), &fetcher));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
   // document_id_2 has one child with score 4.
@@ -576,13 +603,13 @@ TEST_F(AdvancedScorerTest, ChildrenScoresFunctionScoreExpression) {
               Eq(default_score));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(
-          CreateAdvancedScoringSpec(
-              // Equivalent to "avg(this.childrenRankingSignals())"
-              "sum(this.childrenRankingSignals()) / "
-              "len(this.childrenRankingSignals())"),
-          default_score, document_store_.get(), schema_store_.get(), &fetcher));
+      scorer, AdvancedScorer::Create(
+                  CreateAdvancedScoringSpec(
+                      // Equivalent to "avg(this.childrenRankingSignals())"
+                      "sum(this.childrenRankingSignals()) / "
+                      "len(this.childrenRankingSignals())"),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds(), &fetcher));
   // document_id_1 has two children with scores 1 and 2.
   EXPECT_THAT(scorer->GetScore(docHitInfo1, /*query_it=*/nullptr), Eq(3 / 2.));
   // document_id_2 has one child with score 4.
@@ -643,7 +670,8 @@ TEST_F(AdvancedScorerTest, PropertyWeightsFunctionScoreExpression) {
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(spec_proto,
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   // min([1]) = 1
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1, /*query_it=*/nullptr), Eq(1));
   // min([0.5, 0.8]) = 0.5
@@ -653,10 +681,10 @@ TEST_F(AdvancedScorerTest, PropertyWeightsFunctionScoreExpression) {
 
   spec_proto.set_advanced_scoring_expression("max(this.propertyWeights())");
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(spec_proto,
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(spec_proto,
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   // max([1]) = 1
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1, /*query_it=*/nullptr), Eq(1));
   // max([0.5, 0.8]) = 0.8
@@ -666,10 +694,10 @@ TEST_F(AdvancedScorerTest, PropertyWeightsFunctionScoreExpression) {
 
   spec_proto.set_advanced_scoring_expression("sum(this.propertyWeights())");
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(spec_proto,
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(spec_proto,
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   // sum([1]) = 1
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1, /*query_it=*/nullptr), Eq(1));
   // sum([0.5, 0.8]) = 1.3
@@ -719,7 +747,8 @@ TEST_F(AdvancedScorerTest,
       std::unique_ptr<AdvancedScorer> scorer,
       AdvancedScorer::Create(spec_proto,
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   // min([1]) = 1
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1, /*query_it=*/nullptr), Eq(1));
   // min([0.5, 1, 0.5]) = 0.5
@@ -727,10 +756,10 @@ TEST_F(AdvancedScorerTest,
 
   spec_proto.set_advanced_scoring_expression("max(this.propertyWeights())");
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(spec_proto,
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(spec_proto,
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   // max([1]) = 1
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1, /*query_it=*/nullptr), Eq(1));
   // max([0.5, 1, 0.5]) = 1
@@ -738,10 +767,10 @@ TEST_F(AdvancedScorerTest,
 
   spec_proto.set_advanced_scoring_expression("sum(this.propertyWeights())");
   ICING_ASSERT_OK_AND_ASSIGN(
-      scorer,
-      AdvancedScorer::Create(spec_proto,
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+      scorer, AdvancedScorer::Create(spec_proto,
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   // sum([1]) = 1
   EXPECT_THAT(scorer->GetScore(doc_hit_info_1, /*query_it=*/nullptr), Eq(1));
   // sum([0.5, 1, 0.5]) = 2
@@ -757,6 +786,7 @@ TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
       AdvancedScorer::Create(
           CreateAdvancedScoringSpec("len(this.childrenRankingSignals())"),
           default_score, document_store_.get(), schema_store_.get(),
+          fake_clock_.GetSystemTimeMilliseconds(),
           /*join_children_fetcher=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
@@ -767,7 +797,7 @@ TEST_F(AdvancedScorerTest, InvalidChildrenScoresFunctionScoreExpression) {
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("this.childrenRankingSignals()"),
                   default_score, document_store_.get(), schema_store_.get(),
-                  &fake_fetcher),
+                  fake_clock_.GetSystemTimeMilliseconds(), &fake_fetcher),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -791,7 +821,8 @@ TEST_F(AdvancedScorerTest, ComplexExpression) {
                                  // This should evaluate to default score.
                                  "+ this.relevanceScore()"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_FALSE(scorer->is_constant());
   scorer->PrepareToScore(/*query_term_iterators=*/{});
 
@@ -816,17 +847,18 @@ TEST_F(AdvancedScorerTest, ConstantExpression) {
                                  "+ log(2, 122) / 12.34"
                                  "* (10 * pow(2 * 1, sin(2)) + 10 * (2 + 10))"),
                              /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()));
+                             schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_TRUE(scorer->is_constant());
 }
 
 // Should be a parsing Error
 TEST_F(AdvancedScorerTest, EmptyExpression) {
-  EXPECT_THAT(
-      AdvancedScorer::Create(CreateAdvancedScoringSpec(""),
-                             /*default_score=*/10, document_store_.get(),
-                             schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec(""),
+                                     /*default_score=*/10,
+                                     document_store_.get(), schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(AdvancedScorerTest, EvaluationErrorShouldReturnDefaultScore) {
@@ -840,25 +872,29 @@ TEST_F(AdvancedScorerTest, EvaluationErrorShouldReturnDefaultScore) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Scorer> scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("log(0)"), default_score,
-                             document_store_.get(), schema_store_.get()));
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer,
       AdvancedScorer::Create(CreateAdvancedScoringSpec("1 / 0"), default_score,
-                             document_store_.get(), schema_store_.get()));
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("sqrt(-1)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()));
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       scorer, AdvancedScorer::Create(CreateAdvancedScoringSpec("pow(-1, 0.5)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()));
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(scorer->GetScore(docHitInfo), DoubleNear(default_score, kEps));
 }
 
@@ -869,67 +905,80 @@ TEST_F(AdvancedScorerTest, MathTypeError) {
 
   EXPECT_THAT(
       AdvancedScorer::Create(CreateAdvancedScoringSpec("test"), default_score,
-                             document_store_.get(), schema_store_.get()),
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(
       AdvancedScorer::Create(CreateAdvancedScoringSpec("log()"), default_score,
-                             document_store_.get(), schema_store_.get()),
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("log(1, 2, 3)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("log(1, this)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(
       AdvancedScorer::Create(CreateAdvancedScoringSpec("pow(1)"), default_score,
-                             document_store_.get(), schema_store_.get()),
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("sqrt(1, 2)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("abs(1, 2)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("sin(1, 2)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("cos(1, 2)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("tan(1, 2)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(
       AdvancedScorer::Create(CreateAdvancedScoringSpec("this"), default_score,
-                             document_store_.get(), schema_store_.get()),
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(
       AdvancedScorer::Create(CreateAdvancedScoringSpec("-this"), default_score,
-                             document_store_.get(), schema_store_.get()),
+                             document_store_.get(), schema_store_.get(),
+                             fake_clock_.GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("1 + this"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -938,39 +987,48 @@ TEST_F(AdvancedScorerTest, DocumentFunctionTypeError) {
 
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("documentScore(1)"), default_score,
-                  document_store_.get(), schema_store_.get()),
+                  document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("this.creationTimestamp(1)"),
-                  default_score, document_store_.get(), schema_store_.get()),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("this.usageCount()"), default_score,
-                  document_store_.get(), schema_store_.get()),
+                  document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("usageLastUsedTimestamp(1, 1)"),
-                  default_score, document_store_.get(), schema_store_.get()),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("relevanceScore(1)"), default_score,
-                  document_store_.get(), schema_store_.get()),
+                  document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("documentScore(this)"),
-                  default_score, document_store_.get(), schema_store_.get()),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("that.documentScore()"),
-                  default_score, document_store_.get(), schema_store_.get()),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(
                   CreateAdvancedScoringSpec("this.this.creationTimestamp()"),
-                  default_score, document_store_.get(), schema_store_.get()),
+                  default_score, document_store_.get(), schema_store_.get(),
+                  fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(AdvancedScorer::Create(CreateAdvancedScoringSpec("this.log(2)"),
                                      default_score, document_store_.get(),
-                                     schema_store_.get()),
+                                     schema_store_.get(),
+                                     fake_clock_.GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 

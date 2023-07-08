@@ -47,7 +47,8 @@ class GroupResultLimiterV2 {
       const std::unordered_map<int32_t, int>& entry_id_group_id_map,
       const DocumentStore& document_store,
       std::vector<int>& group_result_limits,
-      ResultSpecProto::ResultGroupingType result_group_type) const;
+      ResultSpecProto::ResultGroupingType result_group_type,
+      int64_t current_time_ms) const;
 };
 
 class ResultRetrieverV2 {
@@ -87,8 +88,8 @@ class ResultRetrieverV2 {
   //
   // Returns:
   //   std::pair<PageResult, bool>
-  std::pair<PageResult, bool> RetrieveNextPage(
-      ResultStateV2& result_state) const;
+  std::pair<PageResult, bool> RetrieveNextPage(ResultStateV2& result_state,
+                                               int64_t current_time_ms) const;
 
  private:
   explicit ResultRetrieverV2(

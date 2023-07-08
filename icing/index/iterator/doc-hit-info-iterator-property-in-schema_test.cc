@@ -137,7 +137,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_target_sections=*/{indexed_section_0});
+      /*target_target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&property_defined_iterator),
               ElementsAre(document_id));
@@ -156,7 +157,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_target_sections=*/{unindexed_section_1});
+      /*target_target_sections=*/{unindexed_section_1},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&property_defined_iterator),
               ElementsAre(document_id));
@@ -172,7 +174,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest, NoMatchWithUndefinedProperty) {
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_target_sections=*/{not_defined_section_2});
+      /*target_target_sections=*/{not_defined_section_2},
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_FALSE(property_defined_iterator.Advance().ok());
 }
 
@@ -200,7 +203,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_target_sections=*/{indexed_section_0});
+      /*target_target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   std::vector<TermMatchInfo> matched_terms_stats;
   property_defined_iterator.PopulateMatchedTermsStats(&matched_terms_stats);
@@ -232,7 +236,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_target_sections=*/{indexed_section_0});
+      /*target_target_sections=*/{indexed_section_0},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(std::move(property_defined_iterator).TrimRightMostNode(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -249,7 +254,8 @@ TEST_F(DocHitInfoIteratorPropertyInSchemaTest,
 
   DocHitInfoIteratorPropertyInSchema property_defined_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
-      /*target_target_sections=*/{unindexed_section_1});
+      /*target_target_sections=*/{unindexed_section_1},
+      fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&property_defined_iterator),
               ElementsAre(document_id2, document_id1));

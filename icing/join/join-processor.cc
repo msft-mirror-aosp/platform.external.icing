@@ -119,7 +119,7 @@ libtextclassifier3::StatusOr<DocumentId>
 JoinProcessor::FetchReferencedQualifiedId(
     const DocumentId& document_id, const std::string& property_path) const {
   std::optional<DocumentFilterData> filter_data =
-      doc_store_->GetAliveDocumentFilterData(document_id);
+      doc_store_->GetAliveDocumentFilterData(document_id, current_time_ms_);
   if (!filter_data) {
     return kInvalidDocumentId;
   }
