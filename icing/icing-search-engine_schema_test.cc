@@ -1614,8 +1614,8 @@ TEST_F(IcingSearchEngineSchemaTest,
   // - "senderQualifiedId": qualified id joinable. Joinable property id = 0.
   //
   // If the index is not correctly rebuilt, then the joinable data of
-  // "senderQualifiedId" in the joinable index will still have old joinable
-  // property id of 1 and therefore won't take effect for join search query.
+  // "senderQualifiedId" in the join index will still have old joinable property
+  // id of 1 and therefore won't take effect for join search query.
   SchemaProto email_without_receiver_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
@@ -1917,8 +1917,8 @@ TEST_F(
   // - "zQualifiedId": qualified id joinable. Joinable property id = 1.
   //
   // If the index is not correctly rebuilt, then the joinable data of
-  // "senderQualifiedId" in the joinable index will still have old joinable
-  // property id of 1 and therefore won't take effect for join search query.
+  // "senderQualifiedId" in the join index will still have old joinable property
+  // id of 1 and therefore won't take effect for join search query.
   SchemaProto email_no_body_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(

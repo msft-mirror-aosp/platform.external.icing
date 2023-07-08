@@ -55,7 +55,7 @@ SchemaTypeManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
       }
 
       // Process section (indexable property)
-      if (iterator.GetCurrentNestedIndexable()) {
+      if (iterator.GetCurrentPropertyIndexable()) {
         ICING_RETURN_IF_ERROR(
             section_manager_builder.ProcessSchemaTypePropertyConfig(
                 schema_type_id, iterator.GetCurrentPropertyConfig(),
