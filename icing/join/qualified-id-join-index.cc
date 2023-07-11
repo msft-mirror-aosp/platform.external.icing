@@ -103,6 +103,8 @@ QualifiedIdJoinIndex::~QualifiedIdJoinIndex() {
 
 libtextclassifier3::Status QualifiedIdJoinIndex::Put(
     const DocJoinInfo& doc_join_info, std::string_view ref_qualified_id_str) {
+  SetDirty();
+
   if (!doc_join_info.is_valid()) {
     return absl_ports::InvalidArgumentError(
         "Cannot put data for an invalid DocJoinInfo");
@@ -215,6 +217,8 @@ libtextclassifier3::Status QualifiedIdJoinIndex::Optimize(
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndex::Clear() {
+  SetDirty();
+
   doc_join_info_mapper_.reset();
   // Discard and reinitialize doc join info mapper.
   std::string doc_join_info_mapper_path =
@@ -400,7 +404,12 @@ libtextclassifier3::Status QualifiedIdJoinIndex::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndex::PersistMetadataToDisk() {
+libtextclassifier3::Status QualifiedIdJoinIndex::PersistMetadataToDisk(
+    bool force) {
+  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   std::string metadata_file_path = GetMetadataFilePath(working_path_);
 
   ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
@@ -420,19 +429,32 @@ libtextclassifier3::Status QualifiedIdJoinIndex::PersistMetadataToDisk() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndex::PersistStoragesToDisk() {
+libtextclassifier3::Status QualifiedIdJoinIndex::PersistStoragesToDisk(
+    bool force) {
+  if (!force && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   ICING_RETURN_IF_ERROR(doc_join_info_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(qualified_id_storage_->PersistToDisk());
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndex::ComputeInfoChecksum() {
+libtextclassifier3::StatusOr<Crc32> QualifiedIdJoinIndex::ComputeInfoChecksum(
+    bool force) {
+  if (!force && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+
   return info().ComputeChecksum();
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndex::ComputeStoragesChecksum() {
+QualifiedIdJoinIndex::ComputeStoragesChecksum(bool force) {
+  if (!force && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
   ICING_ASSIGN_OR_RETURN(Crc32 doc_join_info_mapper_crc,
                          doc_join_info_mapper_->ComputeChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 qualified_id_storage_crc,

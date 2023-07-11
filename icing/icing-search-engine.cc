@@ -592,8 +592,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
         version_state_change, version_util::kVersion));
 
-    // Step 2: discard all derived data
-    ICING_RETURN_IF_ERROR(DiscardDerivedFiles());
+    // Step 2: discard all derived data if needed rebuild.
+    if (version_util::ShouldRebuildDerivedFiles(version_info)) {
+      ICING_RETURN_IF_ERROR(DiscardDerivedFiles());
+    }
 
     // Step 3: update version file
     version_util::VersionInfo new_version_info(
@@ -670,6 +672,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
         IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.integer_index_bucket_split_threshold(),
                              options_.pre_mapping_fbv()));
 
     // Discard qualified id join index directory and instantiate a new one.
@@ -774,11 +777,12 @@ libtextclassifier3::Status IcingSearchEngine::InitializeDocumentStore(
   }
   ICING_ASSIGN_OR_RETURN(
       DocumentStore::CreateResult create_result,
-      DocumentStore::Create(filesystem_.get(), document_dir, clock_.get(),
-                            schema_store_.get(),
-                            force_recovery_and_revalidate_documents,
-                            options_.document_store_namespace_id_fingerprint(),
-                            options_.compression_level(), initialize_stats));
+      DocumentStore::Create(
+          filesystem_.get(), document_dir, clock_.get(), schema_store_.get(),
+          force_recovery_and_revalidate_documents,
+          options_.document_store_namespace_id_fingerprint(),
+          options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
+          options_.compression_level(), initialize_stats));
   document_store_ = std::move(create_result.document_store);
 
   return libtextclassifier3::Status::OK;
@@ -825,8 +829,10 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
   std::string integer_index_dir =
       MakeIntegerIndexWorkingPath(options_.base_dir());
   InitializeStatsProto::RecoveryCause integer_index_recovery_cause;
-  auto integer_index_or = IntegerIndex::Create(*filesystem_, integer_index_dir,
-                                               options_.pre_mapping_fbv());
+  auto integer_index_or =
+      IntegerIndex::Create(*filesystem_, integer_index_dir,
+                           options_.integer_index_bucket_split_threshold(),
+                           options_.pre_mapping_fbv());
   if (!integer_index_or.ok()) {
     ICING_RETURN_IF_ERROR(
         IntegerIndex::Discard(*filesystem_, integer_index_dir));
@@ -837,6 +843,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     ICING_ASSIGN_OR_RETURN(
         integer_index_,
         IntegerIndex::Create(*filesystem_, std::move(integer_index_dir),
+                             options_.integer_index_bucket_split_threshold(),
                              options_.pre_mapping_fbv()));
   } else {
     // Integer index was created fine.
@@ -2250,8 +2257,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
   // Copies valid document data to tmp directory
   libtextclassifier3::StatusOr<std::vector<DocumentId>>
       document_id_old_to_new_or = document_store_->OptimizeInto(
-          temporary_document_dir, language_segmenter_.get(),
-          options_.document_store_namespace_id_fingerprint(), optimize_stats);
+          temporary_document_dir, language_segmenter_.get(), optimize_stats);
 
   // Handles error if any
   if (!document_id_old_to_new_or.ok()) {
@@ -2289,6 +2295,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
         filesystem_.get(), current_document_dir, clock_.get(),
         schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
         options_.document_store_namespace_id_fingerprint(),
+        options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
         options_.compression_level(), /*initialize_stats=*/nullptr);
     // TODO(b/144458732): Implement a more robust version of
     // TC_ASSIGN_OR_RETURN that can support error logging.
@@ -2316,6 +2323,7 @@ IcingSearchEngine::OptimizeDocumentStore(OptimizeStatsProto* optimize_stats) {
       filesystem_.get(), current_document_dir, clock_.get(),
       schema_store_.get(), /*force_recovery_and_revalidate_documents=*/false,
       options_.document_store_namespace_id_fingerprint(),
+      options_.pre_mapping_fbv(), options_.use_persistent_hash_map(),
       options_.compression_level(), /*initialize_stats=*/nullptr);
   if (!create_result_or.ok()) {
     // Unable to create DocumentStore from the new file. Mark as uninitialized

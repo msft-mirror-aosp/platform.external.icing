@@ -185,19 +185,20 @@ class DummyNumericIndex : public NumericIndex<T> {
                         PersistentStorage::WorkingPathType::kDummy),
         last_added_document_id_(kInvalidDocumentId) {}
 
-  libtextclassifier3::Status PersistStoragesToDisk() override {
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::Status PersistMetadataToDisk() override {
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override {
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override {
     return Crc32(0);
   }
 
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override {
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override {
     return Crc32(0);
   }
 
