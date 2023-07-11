@@ -44,6 +44,8 @@ constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_VERBATIM =
     StringIndexingConfig::TokenizerType::VERBATIM;
 constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_RFC822 =
     StringIndexingConfig::TokenizerType::RFC822;
+constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_URL =
+    StringIndexingConfig::TokenizerType::URL;
 
 constexpr TermMatchType::Code TERM_MATCH_UNKNOWN = TermMatchType::UNKNOWN;
 constexpr TermMatchType::Code TERM_MATCH_EXACT = TermMatchType::EXACT_ONLY;
@@ -125,6 +127,29 @@ class PropertyConfigBuilder {
     property_.set_schema_type(std::string(schema_type));
     property_.mutable_document_indexing_config()->set_index_nested_properties(
         index_nested_properties);
+    property_.mutable_document_indexing_config()
+        ->clear_indexable_nested_properties_list();
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDataTypeDocument(
+      std::string_view schema_type,
+      std::initializer_list<std::string> indexable_nested_properties_list) {
+    property_.set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+    property_.set_schema_type(std::string(schema_type));
+    property_.mutable_document_indexing_config()->set_index_nested_properties(
+        false);
+    for (const std::string& property : indexable_nested_properties_list) {
+      property_.mutable_document_indexing_config()
+          ->add_indexable_nested_properties_list(property);
+    }
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetJoinable(
+      JoinableConfig::ValueType::Code join_value_type, bool propagate_delete) {
+    property_.mutable_joinable_config()->set_value_type(join_value_type);
+    property_.mutable_joinable_config()->set_propagate_delete(propagate_delete);
     return *this;
   }
 
@@ -148,6 +173,11 @@ class SchemaTypeConfigBuilder {
 
   SchemaTypeConfigBuilder& SetType(std::string_view type) {
     type_config_.set_schema_type(std::string(type));
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& AddParentType(std::string_view parent_type) {
+    type_config_.add_parent_types(std::string(parent_type));
     return *this;
   }
 
