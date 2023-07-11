@@ -34,8 +34,8 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/join/doc-join-info.h"
 #include "icing/join/join-processor.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
@@ -3571,10 +3571,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false));
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(filesystem, GetQualifiedIdJoinIndexDir(),
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
     // Add data for document 0.
     ASSERT_THAT(qualified_id_join_index->last_added_document_id(),
                 kInvalidDocumentId);
@@ -3641,10 +3641,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false));
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(filesystem, GetQualifiedIdJoinIndexDir(),
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
     EXPECT_THAT(qualified_id_join_index->Get(
                     DocJoinInfo(/*document_id=*/0, /*joinable_property_id=*/0)),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -3742,10 +3742,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false));
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(filesystem, GetQualifiedIdJoinIndexDir(),
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
     // Add data for document 4.
     DocumentId original_last_added_doc_id =
         qualified_id_join_index->last_added_document_id();
@@ -3839,10 +3839,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     // `name:person` with a child query for `body:consectetur` based on the
     // child's `senderQualifiedId` field.
 
-    // Add document 4 without "senderQualifiedId". If joinable index is not
-    // rebuilt correctly, then it will still have the previously added
-    // senderQualifiedId for document 4 and include document 4 incorrectly in
-    // the right side.
+    // Add document 4 without "senderQualifiedId". If join index is not rebuilt
+    // correctly, then it will still have the previously added senderQualifiedId
+    // for document 4 and include document 4 incorrectly in the right side.
     DocumentProto another_message =
         DocumentBuilder()
             .SetKey("namespace", "message/4")
@@ -4829,7 +4828,7 @@ TEST_F(IcingSearchEngineInitializationTest,
   auto mock_filesystem = std::make_unique<MockFilesystem>();
   EXPECT_CALL(*mock_filesystem, PRead(A<const char*>(), _, _, _))
       .WillRepeatedly(DoDefault());
-  // This fails QualifiedIdTypeJoinableIndex::Create() once.
+  // This fails QualifiedIdJoinIndex::Create() once.
   EXPECT_CALL(
       *mock_filesystem,
       PRead(Matcher<const char*>(Eq(qualified_id_join_index_metadata_file)), _,
@@ -5146,8 +5145,8 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                              /*pre_mapping_fbv=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(
             *filesystem(), GetQualifiedIdJoinIndexDir(),
             /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
 
@@ -5160,16 +5159,14 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                                    integer_section_indexing_handler,
                                IntegerSectionIndexingHandler::Create(
                                    &fake_clock, integer_index.get()));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdJoinIndexingHandler>
-            qualified_id_joinable_property_indexing_handler,
-        QualifiedIdJoinIndexingHandler::Create(&fake_clock,
-                                               qualified_id_join_index.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                                   qualified_id_join_indexing_handler,
+                               QualifiedIdJoinIndexingHandler::Create(
+                                   &fake_clock, qualified_id_join_index.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(string_section_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
-    handlers.push_back(
-        std::move(qualified_id_joinable_property_indexing_handler));
+    handlers.push_back(std::move(qualified_id_join_indexing_handler));
     IndexProcessor index_processor(std::move(handlers), &fake_clock);
 
     DocumentProto incorrect_message =

@@ -25,8 +25,8 @@
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -129,9 +129,9 @@ class JoinProcessorTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         qualified_id_join_index_,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem_, qualified_id_join_index_dir_,
-            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
+        QualifiedIdJoinIndex::Create(filesystem_, qualified_id_join_index_dir_,
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
   }
 
   void TearDown() override {
@@ -185,7 +185,7 @@ class JoinProcessorTest : public ::testing::Test {
   std::unique_ptr<LanguageSegmenter> lang_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<DocumentStore> doc_store_;
-  std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index_;
+  std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index_;
 
   FakeClock fake_clock_;
 };
