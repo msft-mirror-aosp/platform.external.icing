@@ -227,6 +227,7 @@ void BM_IndexDocumentWithOneProperty(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -302,6 +303,7 @@ void BM_IndexDocumentWithTenProperties(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -378,6 +380,7 @@ void BM_IndexDocumentWithDiacriticLetters(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -454,6 +457,7 @@ void BM_IndexDocumentWithHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
       IntegerIndex::Create(filesystem, integer_index_dir,
+                           IntegerIndex::kDefaultNumDataThresholdForBucketSplit,
                            /*pre_mapping_fbv=*/true));
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =

@@ -23,7 +23,7 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
-// Next tag: 11
+// Next tag: 12
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -103,6 +103,9 @@ message IcingSearchEngineOptions {
   // Whether use persistent hash map as the key mapper (if false, then fall back
   // to dynamic trie key mapper).
   optional bool use_persistent_hash_map = 10;
+
+  // Integer index bucket split threshold.
+  optional int32 integer_index_bucket_split_threshold = 11 [default = 65536];
 
   reserved 2;
 }

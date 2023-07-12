@@ -115,6 +115,34 @@ bool IsIntegerNumericMatchTypeCompatible(
   return old_indexed.numeric_match_type() == new_indexed.numeric_match_type();
 }
 
+bool IsDocumentIndexingCompatible(const DocumentIndexingConfig& old_indexed,
+                                  const DocumentIndexingConfig& new_indexed) {
+  // TODO(b/265304217): This could mark the new schema as incompatible and
+  // generate some unnecessary index rebuilds if the two schemas have an
+  // equivalent set of indexed properties, but changed the way that it is
+  // declared.
+  if (old_indexed.index_nested_properties() !=
+      new_indexed.index_nested_properties()) {
+    return false;
+  }
+
+  if (old_indexed.indexable_nested_properties_list().size() !=
+      new_indexed.indexable_nested_properties_list().size()) {
+    return false;
+  }
+
+  std::unordered_set<std::string_view> old_indexable_nested_properies_set(
+      old_indexed.indexable_nested_properties_list().begin(),
+      old_indexed.indexable_nested_properties_list().end());
+  for (const auto& property : new_indexed.indexable_nested_properties_list()) {
+    if (old_indexable_nested_properies_set.find(property) ==
+        old_indexable_nested_properies_set.end()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void AddIncompatibleChangeToDelta(
     std::unordered_set<std::string>& incompatible_delta,
     const SchemaTypeConfigProto& old_type_config,
@@ -571,6 +599,10 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
                                  "data_types in schema property '",
                                  schema_type, ".", property_name, "'"));
         }
+
+        ICING_RETURN_IF_ERROR(ValidateDocumentIndexingConfig(
+            property_config.document_indexing_config(), schema_type,
+            property_name));
       }
 
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
@@ -748,6 +780,19 @@ libtextclassifier3::Status SchemaUtil::ValidateJoinableConfig(
                            "value type with delete propagation enabled"));
   }
 
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status SchemaUtil::ValidateDocumentIndexingConfig(
+    const DocumentIndexingConfig& config, std::string_view schema_type,
+    std::string_view property_name) {
+  if (!config.indexable_nested_properties_list().empty() &&
+      config.index_nested_properties()) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "DocumentIndexingConfig.index_nested_properties is required to be "
+        "false when providing a non-empty indexable_nested_properties_list "
+        "for property '", schema_type, ".", property_name, "'"));
+  }
   return libtextclassifier3::Status::OK;
 }
 
@@ -1005,10 +1050,9 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
           !IsIntegerNumericMatchTypeCompatible(
               old_property_config.integer_indexing_config(),
               new_property_config->integer_indexing_config()) ||
-          old_property_config.document_indexing_config()
-                  .index_nested_properties() !=
-              new_property_config->document_indexing_config()
-                  .index_nested_properties()) {
+          !IsDocumentIndexingCompatible(
+              old_property_config.document_indexing_config(),
+              new_property_config->document_indexing_config())) {
         is_index_incompatible = true;
       }
 

@@ -14,6 +14,8 @@
 
 #include "icing/schema/schema-util.h"
 
+#include <initializer_list>
+#include <string>
 #include <string_view>
 #include <unordered_set>
 
@@ -3081,6 +3083,239 @@ TEST_P(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   EXPECT_THAT(actual, Eq(schema_delta));
 }
 
+TEST_P(SchemaUtilTest, AddOrDropIndexableNestedProperties_IndexIncompatible) {
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("recipient")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema_1 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("emails")
+                                   .SetDataTypeDocument(
+                                       kEmailType,
+                                       /*indexable_nested_properties_list=*/
+                                       {"recipient", "subject", "body"})
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaProto schema_2 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emails")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*indexable_nested_properties=*/
+                                            {"recipient", "subject"})
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Dropping some indexable_nested_properties should make kPersonType
+  // index_incompatible. kEmailType should be unaffected.
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta actual =
+      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+
+  // Adding some indexable_nested_properties should also make kPersonType
+  // index_incompatible. kEmailType should be unaffected.
+  actual =
+      SchemaUtil::ComputeCompatibilityDelta(schema_2, schema_1, dependents_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, ChangingIndexableNestedProperties_IndexIncompatible) {
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("recipient")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema_1 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("emails")
+                                   .SetDataTypeDocument(
+                                       kEmailType,
+                                       /*indexable_nested_properties_list=*/
+                                       {"recipient", "subject"})
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaProto schema_2 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("emails")
+                                   .SetDataTypeDocument(
+                                       kEmailType,
+                                       /*indexable_nested_properties_list=*/
+                                       {"recipient", "body"})
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Changing 'subject' to 'body' for indexable_nested_properties_list should
+  // make kPersonType index_incompatible. kEmailType should be unaffected.
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta actual =
+      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest, IndexableNestedPropertiesFullSet_IndexIncompatible) {
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("recipient")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema_1 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emails")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaProto schema_2 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("emails")
+                                   .SetDataTypeDocument(
+                                       kEmailType,
+                                       /*indexable_nested_properties_list=*/
+                                       {"recipient", "body", "subject"})
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // This scenario also invalidates kPersonType and triggers an index rebuild at
+  // the moment, even though the set of indexable_nested_properties from
+  // schema_1 to schema_2 should be the same.
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta actual =
+      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest,
+       ChangingIndexableNestedPropertiesOrder_IndexIsCompatible) {
+  SchemaTypeConfigProto email_type_config =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("recipient")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema_1 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("emails")
+                                   .SetDataTypeDocument(
+                                       kEmailType,
+                                       /*indexable_nested_properties_list=*/
+                                       {"recipient", "subject", "body"})
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaProto schema_2 =
+      SchemaBuilder()
+          .AddType(email_type_config)
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("emails")
+                                   .SetDataTypeDocument(
+                                       kEmailType,
+                                       /*indexable_nested_properties_list=*/
+                                       {"subject", "body", "recipient"})
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Changing order of elements in indexable_nested_properties_list should have
+  // no effect on schema compatibility.
+  SchemaUtil::SchemaDelta schema_delta;
+  SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
+  SchemaUtil::SchemaDelta actual =
+      SchemaUtil::ComputeCompatibilityDelta(schema_1, schema_2, dependents_map);
+  EXPECT_THAT(actual, Eq(schema_delta));
+  EXPECT_THAT(actual.schema_types_index_incompatible, IsEmpty());
+}
+
 TEST_P(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
   SchemaProto schema =
       SchemaBuilder()
@@ -3669,6 +3904,137 @@ TEST_P(SchemaUtilTest, ValidateNestedJoinablePropertyDiamondRelationship) {
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
+  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(SchemaUtilTest,
+       ValidDocumentIndexingConfigFields_emptyIndexableListBooleanTrue) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("InnerSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("OuterSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("InnerProperty")
+                                        .SetDataTypeDocument(
+                                            "InnerSchema",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaTypeConfigProto* outerSchemaType = schema.mutable_types(1);
+  outerSchemaType->mutable_properties(0)
+      ->mutable_document_indexing_config()
+      ->clear_indexable_nested_properties_list();
+
+  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+}
+
+TEST_P(SchemaUtilTest,
+       ValidDocumentIndexingConfigFields_emptyIndexableListBooleanFalse) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("InnerSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("OuterSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("InnerProperty")
+                                        .SetDataTypeDocument(
+                                            "InnerSchema",
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaTypeConfigProto* outerSchemaType = schema.mutable_types(1);
+  outerSchemaType->mutable_properties(0)
+      ->mutable_document_indexing_config()
+      ->clear_indexable_nested_properties_list();
+
+  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+}
+
+TEST_P(SchemaUtilTest,
+       ValidDocumentIndexingConfigFields_nonEmptyIndexableList) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("InnerSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("OuterSchema")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("InnerProperty")
+                               .SetDataTypeDocument(
+                                   "InnerSchema",
+                                   /*indexable_nested_properties_list=*/
+                                   std::initializer_list<std::string>{"prop1"})
+                               .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  SchemaTypeConfigProto* outerSchemaType = schema.mutable_types(1);
+  outerSchemaType->mutable_properties(0)
+      ->mutable_document_indexing_config()
+      ->set_index_nested_properties(false);
+  EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()), IsOk());
+}
+
+TEST_P(SchemaUtilTest, InvalidDocumentIndexingConfigFields) {
+  // If indexable_nested_properties is non-empty, index_nested_properties is
+  // required to be false.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("InnerSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("OuterSchema")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("InnerProperty")
+                                        .SetDataTypeDocument(
+                                            "InnerSchema",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  // Setting a non-empty indexable_nested_properties_list while
+  // index_nested_properties=true is invalid.
+  SchemaTypeConfigProto* outerSchemaType = schema.mutable_types(1);
+  outerSchemaType->mutable_properties(0)
+      ->mutable_document_indexing_config()
+      ->add_indexable_nested_properties_list("prop");
+
   EXPECT_THAT(SchemaUtil::Validate(schema, GetParam()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
