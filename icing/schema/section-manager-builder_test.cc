@@ -270,9 +270,11 @@ TEST_P(NonIndexableSectionManagerBuilderTest, Build) {
   ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
       /*schema_type_id=*/0, property_config, std::string(kPropertyPath)));
 
+  // NonIndexable sections will still consume a sectionId.
   std::unique_ptr<SectionManager> section_manager = std::move(builder).Build();
   EXPECT_THAT(section_manager->GetMetadataList(std::string(kSchemaType)),
-              IsOkAndHolds(Pointee(IsEmpty())));
+              IsOkAndHolds(Pointee(ElementsAre(EqualsSectionMetadata(
+                  /*expected_id=*/0, kPropertyPath, property_config)))));
 }
 
 // The following types are considered non-indexable:
