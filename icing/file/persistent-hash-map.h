@@ -394,7 +394,9 @@ class PersistentHashMap : public PersistentStorage {
             std::move(metadata_mmapped_file))),
         bucket_storage_(std::move(bucket_storage)),
         entry_storage_(std::move(entry_storage)),
-        kv_storage_(std::move(kv_storage)) {}
+        kv_storage_(std::move(kv_storage)),
+        is_info_dirty_(false),
+        is_storage_dirty_(false) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<PersistentHashMap>>
   InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
@@ -409,20 +411,20 @@ class PersistentHashMap : public PersistentStorage {
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk() override;
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
 
   // Flushes contents of metadata file.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk() override;
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
 
   // Computes and returns Info checksum.
   //
   // Returns:
   //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
 
   // Computes and returns all storages checksum. Checksums of bucket_storage_,
   // entry_storage_ and kv_storage_ will be combined together by XOR.
@@ -430,7 +432,8 @@ class PersistentHashMap : public PersistentStorage {
   // Returns:
   //   - Crc of all storages on success
   //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override;
 
   // Find the index of the target entry (that contains the key) from a bucket
   // (specified by bucket index). Also return the previous entry index, since
@@ -496,6 +499,17 @@ class PersistentHashMap : public PersistentStorage {
                                           kInfoMetadataFileOffset);
   }
 
+  void SetInfoDirty() { is_info_dirty_ = true; }
+  // When storage is dirty, we have to set info dirty as well. So just expose
+  // SetDirty to set both.
+  void SetDirty() {
+    is_info_dirty_ = true;
+    is_storage_dirty_ = true;
+  }
+
+  bool is_info_dirty() const { return is_info_dirty_; }
+  bool is_storage_dirty() const { return is_storage_dirty_; }
+
   Options options_;
 
   std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_;
@@ -504,6 +518,9 @@ class PersistentHashMap : public PersistentStorage {
   std::unique_ptr<FileBackedVector<Bucket>> bucket_storage_;
   std::unique_ptr<FileBackedVector<Entry>> entry_storage_;
   std::unique_ptr<FileBackedVector<char>> kv_storage_;
+
+  bool is_info_dirty_;
+  bool is_storage_dirty_;
 };
 
 }  // namespace lib
