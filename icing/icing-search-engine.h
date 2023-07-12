@@ -31,7 +31,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/join/join-children-fetcher.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/proto/debug.pb.h"
@@ -479,7 +479,7 @@ class IcingSearchEngine {
       ICING_GUARDED_BY(mutex_);
 
   // Storage for all join qualified ids from the document store.
-  std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index_
+  std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index_
       ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references
