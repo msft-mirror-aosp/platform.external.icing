@@ -22,7 +22,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/join/join-children-fetcher.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -35,10 +35,10 @@ class JoinProcessor {
  public:
   static constexpr std::string_view kQualifiedIdExpr = "this.qualifiedId()";
 
-  explicit JoinProcessor(
-      const DocumentStore* doc_store, const SchemaStore* schema_store,
-      const QualifiedIdTypeJoinableIndex* qualified_id_join_index,
-      int64_t current_time_ms)
+  explicit JoinProcessor(const DocumentStore* doc_store,
+                         const SchemaStore* schema_store,
+                         const QualifiedIdJoinIndex* qualified_id_join_index,
+                         int64_t current_time_ms)
       : doc_store_(doc_store),
         schema_store_(schema_store),
         qualified_id_join_index_(qualified_id_join_index),
@@ -72,14 +72,13 @@ class JoinProcessor {
   //   - kInvalidDocumentId if the given document is not found, doesn't have
   //     qualified id joinable type for the given property_path, or doesn't have
   //     joinable value (an optional property)
-  //   - Any other QualifiedIdTypeJoinableIndex errors
+  //   - Any other QualifiedIdJoinIndex errors
   libtextclassifier3::StatusOr<DocumentId> FetchReferencedQualifiedId(
       const DocumentId& document_id, const std::string& property_path) const;
 
   const DocumentStore* doc_store_;  // Does not own.
   const SchemaStore* schema_store_;  // Does not own.
-  const QualifiedIdTypeJoinableIndex*
-      qualified_id_join_index_;  // Does not own.
+  const QualifiedIdJoinIndex* qualified_id_join_index_;  // Does not own.
   int64_t current_time_ms_;
 };
 

@@ -502,6 +502,71 @@ TEST_P(IcingSearchEngineSearchTest,
                                   expected_search_result_proto));
 }
 
+TEST_P(IcingSearchEngineSearchTest, SearchWithNumToScore) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  fake_clock->SetTimerElapsedMilliseconds(1000);
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  DocumentProto document_one = CreateMessageDocument("namespace", "uri1");
+  document_one.set_score(10);
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two = CreateMessageDocument("namespace", "uri2");
+  document_two.set_score(5);
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+  search_spec.set_search_type(GetParam());
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(10);
+  result_spec.set_num_to_score(10);
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  SearchResultProto expected_search_result_proto1;
+  expected_search_result_proto1.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto1.mutable_results()->Add()->mutable_document() =
+      document_one;
+  *expected_search_result_proto1.mutable_results()->Add()->mutable_document() =
+      document_two;
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto1));
+
+  result_spec.set_num_to_score(1);
+  // By setting num_to_score = 1, only document_two will be scored, ranked, and
+  // returned.
+  // - num_to_score cutoff is only affected by the reading order from posting
+  //   list. IOW, since we read posting lists in doc id descending order,
+  //   ScoringProcessor scores documents with higher doc ids first and cuts off
+  //   if exceeding num_to_score.
+  // - Therefore, even though document_one has higher score, ScoringProcessor
+  //   still skips document_one, because posting list reads document_two first
+  //   and ScoringProcessor stops after document_two given that total # of
+  //   scored document has already reached num_to_score.
+  SearchResultProto expected_search_result_google::protobuf;
+  expected_search_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_google::protobuf.mutable_results()->Add()->mutable_document() =
+      document_two;
+
+  search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_google::protobuf));
+}
+
 TEST_P(IcingSearchEngineSearchTest,
        SearchNegativeResultLimitReturnsInvalidArgument) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
@@ -575,6 +640,62 @@ TEST_P(IcingSearchEngineSearchTest,
       icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
   EXPECT_THAT(actual_results2.status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_P(IcingSearchEngineSearchTest,
+       SearchNegativeMaxJoinedChildrenPerParentReturnsInvalidArgument) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("");
+  search_spec.set_search_type(GetParam());
+
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(-1);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_search_result_proto.mutable_status()->set_message(
+      "ResultSpecProto.max_joined_children_per_parent_to_return cannot be "
+      "negative.");
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
+TEST_P(IcingSearchEngineSearchTest,
+       SearchNonPositiveNumToScoreReturnsInvalidArgument) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("");
+  search_spec.set_search_type(GetParam());
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_to_score(-1);
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(
+      StatusProto::INVALID_ARGUMENT);
+  expected_search_result_proto.mutable_status()->set_message(
+      "ResultSpecProto.num_to_score cannot be non-positive.");
+
+  SearchResultProto actual_results1 =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results1, EqualsSearchResultIgnoreStatsAndScores(
+                                   expected_search_result_proto));
+
+  result_spec.set_num_to_score(0);
+  SearchResultProto actual_results2 =
+      icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
+  EXPECT_THAT(actual_results2, EqualsSearchResultIgnoreStatsAndScores(
+                                   expected_search_result_proto));
 }
 
 TEST_P(IcingSearchEngineSearchTest, SearchWithPersistenceReturnsValidResults) {
