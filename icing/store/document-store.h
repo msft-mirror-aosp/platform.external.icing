@@ -142,8 +142,8 @@ class DocumentStore {
       const Filesystem* filesystem, const std::string& base_dir,
       const Clock* clock, const SchemaStore* schema_store,
       bool force_recovery_and_revalidate_documents,
-      bool namespace_id_fingerprint,
-      int32_t compression_level,
+      bool namespace_id_fingerprint, bool pre_mapping_fbv,
+      bool use_persistent_hash_map, int32_t compression_level,
       InitializeStatsProto* initialize_stats);
 
   // Discards all derived data in the document store.
@@ -456,7 +456,7 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeInto(
       const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
-      bool namespace_id_fingerprint, OptimizeStatsProto* stats = nullptr);
+      OptimizeStatsProto* stats = nullptr);
 
   // Calculates status for a potential Optimize call. Includes how many docs
   // there are vs how many would be optimized away. And also includes an
@@ -488,9 +488,12 @@ class DocumentStore {
 
  private:
   // Use DocumentStore::Create() to instantiate.
-  DocumentStore(const Filesystem* filesystem, std::string_view base_dir,
-                const Clock* clock, const SchemaStore* schema_store,
-                bool namespace_id_fingerprint, int32_t compression_level);
+  explicit DocumentStore(const Filesystem* filesystem,
+                         std::string_view base_dir, const Clock* clock,
+                         const SchemaStore* schema_store,
+                         bool namespace_id_fingerprint, bool pre_mapping_fbv,
+                         bool use_persistent_hash_map,
+                         int32_t compression_level);
 
   const Filesystem* const filesystem_;
   const std::string base_dir_;
@@ -506,6 +509,15 @@ class DocumentStore {
   // Whether to use namespace id or namespace name to build up fingerprint for
   // document_key_mapper_ and corpus_mapper_.
   bool namespace_id_fingerprint_;
+
+  // Flag indicating whether memory map max possible file size for underlying
+  // FileBackedVector before growing the actual file size.
+  bool pre_mapping_fbv_;
+
+  // Flag indicating whether use persistent hash map as the key mapper (if
+  // false, then fall back to dynamic trie key mapper). Note: we only use
+  // persistent hash map for uri mapper if it is true.
+  bool use_persistent_hash_map_;
 
   const int32_t compression_level_;
 

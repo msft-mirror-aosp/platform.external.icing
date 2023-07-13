@@ -37,13 +37,13 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       SchemaStore::Create(&filesystem, schema_store_dir, &fake_clock)
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
-      DocumentStore::Create(&filesystem, doc_store_dir, &fake_clock,
-                            schema_store.get(),
-                            /*force_recovery_and_revalidate_documents=*/false,
-                            /*namespace_id_fingerprint=*/false,
-                            PortableFileBackedProtoLog<
-                                DocumentWrapper>::kDeflateCompressionLevel,
-                            /*initialize_stats=*/nullptr)
+      DocumentStore::Create(
+          &filesystem, doc_store_dir, &fake_clock, schema_store.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+          /*use_persistent_hash_map=*/false,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          /*initialize_stats=*/nullptr)
           .ValueOrDie()
           .document_store;
 
