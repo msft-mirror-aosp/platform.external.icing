@@ -102,6 +102,44 @@ StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
   }
 }
 
+bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
+                               int32_t curr_version) {
+  StateChange state_change =
+      GetVersionStateChange(existing_version_info, curr_version);
+  switch (state_change) {
+    case StateChange::kCompatible:
+      return false;
+    case StateChange::kUndetermined:
+      [[fallthrough]];
+    case StateChange::kRollBack:
+      [[fallthrough]];
+    case StateChange::kRollForward:
+      [[fallthrough]];
+    case StateChange::kVersionZeroRollForward:
+      [[fallthrough]];
+    case StateChange::kVersionZeroUpgrade:
+      return true;
+    case StateChange::kUpgrade:
+      break;
+  }
+
+  bool should_rebuild = false;
+  int32_t existing_version = existing_version_info.version;
+  while (existing_version < curr_version) {
+    switch (existing_version) {
+      case 1: {
+        // version 1 -> version 2 upgrade, no need to rebuild
+        break;
+      }
+      default:
+        // This should not happen. Rebuild anyway if unsure.
+        should_rebuild |= true;
+    }
+    ++existing_version;
+  }
+  return should_rebuild;
+}
+
 }  // namespace version_util
 
 }  // namespace lib

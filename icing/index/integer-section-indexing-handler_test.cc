@@ -106,6 +106,7 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         integer_index_,
         IntegerIndex::Create(filesystem_, integer_index_working_path_,
+                             /*num_data_threshold_for_bucket_split=*/65536,
                              /*pre_mapping_fbv=*/false));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(ULOC_US);
@@ -169,6 +170,8 @@ class IntegerSectionIndexingHandlerTest : public ::testing::Test {
                               schema_store_.get(),
                               /*force_recovery_and_revalidate_documents=*/false,
                               /*namespace_id_fingerprint=*/false,
+                              /*pre_mapping_fbv=*/false,
+                              /*use_persistent_hash_map=*/false,
                               PortableFileBackedProtoLog<
                                   DocumentWrapper>::kDeflateCompressionLevel,
                               /*initialize_stats=*/nullptr));

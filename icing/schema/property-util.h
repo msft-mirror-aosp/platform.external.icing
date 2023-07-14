@@ -113,6 +113,26 @@ PropertyInfo ParsePropertyNameExpr(std::string_view property_name_expr);
 std::vector<PropertyInfo> ParsePropertyPathExpr(
     std::string_view property_path_expr);
 
+// A property path property_path_expr1 is considered a parent of another
+// property path property_path_expr2 if:
+// 1. property_path_expr2 == property_path_expr1, OR
+// 2. property_path_expr2 consists of the entire path of property_path_expr1
+//    + "." + [some other property path].
+//
+// Note that this can only be used for property name strings that do not
+// contain the property index.
+//
+// Examples:
+//   - IsParentPropertyPath("foo", "foo") will return true.
+//   - IsParentPropertyPath("foo", "foo.bar") will return true.
+//   - IsParentPropertyPath("foo", "bar.foo") will return false.
+//   - IsParentPropertyPath("foo.bar", "foo.foo.bar") will return false.
+//
+// Returns: true if property_path_expr1 is a parent property path of
+// property_path_expr2.
+bool IsParentPropertyPath(std::string_view property_path_expr1,
+                          std::string_view property_path_expr2);
+
 // Gets the desired PropertyProto from the document by given property name.
 // Since the input parameter is property name, this function only deals with
 // the first level of properties in the document and cannot deal with nested
