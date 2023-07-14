@@ -55,25 +55,29 @@ class IntegerIndex : public NumericIndex<int64_t> {
   // 'wildcard' storage.
   static constexpr int kMaxPropertyStorages = 32;
 
+  static constexpr int32_t kDefaultNumDataThresholdForBucketSplit =
+      IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit;
+
   struct Info {
-    static constexpr int32_t kMagic = 0x238a3dcb;
+    static constexpr int32_t kMagic = 0x5d8a1e8a;
 
     int32_t magic;
     DocumentId last_added_document_id;
+    int32_t num_data_threshold_for_bucket_split;
 
     Crc32 ComputeChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
   } __attribute__((packed));
-  static_assert(sizeof(Info) == 8, "");
+  static_assert(sizeof(Info) == 12, "");
 
   // Metadata file layout: <Crcs><Info>
   static constexpr int32_t kCrcsMetadataFileOffset = 0;
   static constexpr int32_t kInfoMetadataFileOffset =
       static_cast<int32_t>(sizeof(Crcs));
   static constexpr int32_t kMetadataFileSize = sizeof(Crcs) + sizeof(Info);
-  static_assert(kMetadataFileSize == 20, "");
+  static_assert(kMetadataFileSize == 24, "");
 
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
@@ -90,6 +94,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //               related files will be stored under this directory. See
   //               PersistentStorage for more details about the concept of
   //               working_path.
+  // num_data_threshold_for_bucket_split: see IntegerIndexStorage::Options for
+  //                                      more details.
   // pre_mapping_fbv: flag indicating whether memory map max possible file size
   //                  for underlying FileBackedVector before growing the actual
   //                  file size.
@@ -101,7 +107,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //   - Any FileBackedVector/MemoryMappedFile errors.
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>> Create(
       const Filesystem& filesystem, std::string working_path,
-      bool pre_mapping_fbv);
+      int32_t num_data_threshold_for_bucket_split, bool pre_mapping_fbv);
 
   // Deletes IntegerIndex under working_path.
   //
@@ -122,7 +128,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
       std::string_view property_path, DocumentId document_id,
       SectionId section_id) override {
     return std::make_unique<Editor>(property_path, document_id, section_id,
-                                    *this, pre_mapping_fbv_);
+                                    *this, num_data_threshold_for_bucket_split_,
+                                    pre_mapping_fbv_);
   }
 
   // Returns a DocHitInfoIterator for iterating through all docs which have the
@@ -172,6 +179,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
   }
 
   void set_last_added_document_id(DocumentId document_id) override {
+    SetInfoDirty();
+
     Info& info_ref = info();
     if (info_ref.last_added_document_id == kInvalidDocumentId ||
         document_id > info_ref.last_added_document_id) {
@@ -189,9 +198,12 @@ class IntegerIndex : public NumericIndex<int64_t> {
    public:
     explicit Editor(std::string_view property_path, DocumentId document_id,
                     SectionId section_id, IntegerIndex& integer_index,
+                    int32_t num_data_threshold_for_bucket_split,
                     bool pre_mapping_fbv)
         : NumericIndex<int64_t>::Editor(property_path, document_id, section_id),
           integer_index_(integer_index),
+          num_data_threshold_for_bucket_split_(
+              num_data_threshold_for_bucket_split),
           pre_mapping_fbv_(pre_mapping_fbv) {}
 
     ~Editor() override = default;
@@ -211,6 +223,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
 
     IntegerIndex& integer_index_;  // Does not own.
 
+    int32_t num_data_threshold_for_bucket_split_;
+
     // Flag indicating whether memory map max possible file size for underlying
     // FileBackedVector before growing the actual file size.
     bool pre_mapping_fbv_;
@@ -226,7 +240,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
           wildcard_property_storage,
       std::unordered_set<std::string> wildcard_properties_set,
       std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage,
-      bool pre_mapping_fbv)
+      int32_t num_data_threshold_for_bucket_split, bool pre_mapping_fbv)
       : NumericIndex<int64_t>(filesystem, std::move(working_path),
                               kWorkingPathType),
         posting_list_serializer_(std::move(posting_list_serializer)),
@@ -235,15 +249,22 @@ class IntegerIndex : public NumericIndex<int64_t> {
         wildcard_property_storage_(std::move(wildcard_property_storage)),
         wildcard_properties_set_(std::move(wildcard_properties_set)),
         wildcard_index_storage_(std::move(wildcard_index_storage)),
-        pre_mapping_fbv_(pre_mapping_fbv) {}
+        num_data_threshold_for_bucket_split_(
+            num_data_threshold_for_bucket_split),
+        pre_mapping_fbv_(pre_mapping_fbv),
+        is_info_dirty_(false),
+        is_storage_dirty_(false) {}
 
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
   InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
+                     int32_t num_data_threshold_for_bucket_split,
                      bool pre_mapping_fbv);
 
   static libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
   InitializeExistingFiles(const Filesystem& filesystem,
-                          std::string&& working_path, bool pre_mapping_fbv);
+                          std::string&& working_path,
+                          int32_t num_data_threshold_for_bucket_split,
+                          bool pre_mapping_fbv);
 
   // Adds the property path to the list of properties using wildcard storage.
   // This will both update the in-memory list (wildcard_properties_set_) and
@@ -296,20 +317,20 @@ class IntegerIndex : public NumericIndex<int64_t> {
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk() override;
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
 
   // Flushes contents of metadata file.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk() override;
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
 
   // Computes and returns Info checksum.
   //
   // Returns:
   //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
 
   // Computes and returns all storages checksum. Checksums of (storage_crc,
   // property_path) for all existing property paths will be combined together by
@@ -318,7 +339,8 @@ class IntegerIndex : public NumericIndex<int64_t> {
   // Returns:
   //   - Crc of all storages on success
   //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
@@ -340,6 +362,17 @@ class IntegerIndex : public NumericIndex<int64_t> {
                                           kInfoMetadataFileOffset);
   }
 
+  void SetInfoDirty() { is_info_dirty_ = true; }
+  // When storage is dirty, we have to set info dirty as well. So just expose
+  // SetDirty to set both.
+  void SetDirty() {
+    is_info_dirty_ = true;
+    is_storage_dirty_ = true;
+  }
+
+  bool is_info_dirty() const { return is_info_dirty_; }
+  bool is_storage_dirty() const { return is_storage_dirty_; }
+
   std::unique_ptr<PostingListIntegerIndexSerializer> posting_list_serializer_;
 
   std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_;
@@ -360,9 +393,14 @@ class IntegerIndex : public NumericIndex<int64_t> {
   // kMaxPropertyStorages in property_to_storage_map.
   std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage_;
 
+  int32_t num_data_threshold_for_bucket_split_;
+
   // Flag indicating whether memory map max possible file size for underlying
   // FileBackedVector before growing the actual file size.
   bool pre_mapping_fbv_;
+
+  bool is_info_dirty_;
+  bool is_storage_dirty_;
 };
 
 }  // namespace lib
