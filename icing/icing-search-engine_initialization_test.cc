@@ -34,8 +34,8 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/join/doc-join-info.h"
 #include "icing/join/join-processor.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
@@ -88,6 +88,7 @@ using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Matcher;
+using ::testing::Ne;
 using ::testing::Return;
 using ::testing::SizeIs;
 
@@ -1060,13 +1061,14 @@ TEST_F(IcingSearchEngineInitializationTest,
     // Puts message2 into DocumentStore but doesn't index it.
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
 
@@ -1490,6 +1492,108 @@ TEST_F(IcingSearchEngineInitializationTest, RecoverFromCorruptIntegerIndex) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       RecoverFromIntegerIndexBucketSplitThresholdChange) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("indexableInteger")
+                  .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto message =
+      DocumentBuilder()
+          .SetKey("namespace", "message/1")
+          .SetSchema("Message")
+          .AddInt64Property("indexableInteger", 123)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  // 1. Create an index with a message document.
+  {
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::make_unique<Filesystem>(),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+    EXPECT_THAT(icing.Put(message).status(), ProtoIsOk());
+  }
+
+  // 2. Create the index again with different
+  //    integer_index_bucket_split_threshold. This should trigger index
+  //    restoration.
+  {
+    // Mock filesystem to observe and check the behavior of all indices.
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
+        .WillRepeatedly(DoDefault());
+    // Ensure term index directory should never be discarded.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/index_dir")))
+        .Times(0);
+    // Ensure integer index directory should be discarded once, and Clear()
+    // should never be called (i.e. storage sub directory
+    // "*/integer_index_dir/*" should never be discarded) since we start it from
+    // scratch.
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(EndsWith("/integer_index_dir")))
+        .Times(1);
+    EXPECT_CALL(*mock_filesystem,
+                DeleteDirectoryRecursively(HasSubstr("/integer_index_dir/")))
+        .Times(0);
+    // Ensure qualified id join index directory should never be discarded, and
+    // Clear() should never be called (i.e. storage sub directory
+    // "*/qualified_id_join_index_dir/*" should never be discarded).
+    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(
+                                      EndsWith("/qualified_id_join_index_dir")))
+        .Times(0);
+    EXPECT_CALL(
+        *mock_filesystem,
+        DeleteDirectoryRecursively(HasSubstr("/qualified_id_join_index_dir/")))
+        .Times(0);
+
+    static constexpr int32_t kNewIntegerIndexBucketSplitThreshold = 1000;
+    IcingSearchEngineOptions options = GetDefaultIcingOptions();
+    ASSERT_THAT(kNewIntegerIndexBucketSplitThreshold,
+                Ne(options.integer_index_bucket_split_threshold()));
+    options.set_integer_index_bucket_split_threshold(
+        kNewIntegerIndexBucketSplitThreshold);
+
+    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
+                                std::make_unique<IcingFilesystem>(),
+                                std::make_unique<FakeClock>(),
+                                GetTestJniCache());
+    InitializeResultProto initialize_result = icing.Initialize();
+    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
+    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+    EXPECT_THAT(
+        initialize_result.initialize_stats().integer_index_restoration_cause(),
+        Eq(InitializeStatsProto::IO_ERROR));
+    EXPECT_THAT(initialize_result.initialize_stats()
+                    .qualified_id_join_index_restoration_cause(),
+                Eq(InitializeStatsProto::NONE));
+
+    // Verify integer index works normally
+    SearchSpecProto search_spec;
+    search_spec.set_query("indexableInteger == 123");
+    search_spec.set_search_type(
+        SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+    search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+
+    SearchResultProto results =
+        icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                     ResultSpecProto::default_instance());
+    ASSERT_THAT(results.results(), SizeIs(1));
+    EXPECT_THAT(results.results(0).document().uri(), Eq("message/1"));
+  }
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -3197,6 +3301,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem, GetIntegerIndexDir(),
+                             /*num_data_threshold_for_bucket_split=*/65536,
                              /*pre_mapping_fbv=*/false));
     // Add hits for document 0.
     ASSERT_THAT(integer_index->last_added_document_id(), kInvalidDocumentId);
@@ -3376,6 +3481,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem, GetIntegerIndexDir(),
+                             /*num_data_threshold_for_bucket_split=*/65536,
                              /*pre_mapping_fbv=*/false));
     // Add hits for document 4.
     DocumentId original_last_added_doc_id =
@@ -3571,10 +3677,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false));
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(filesystem, GetQualifiedIdJoinIndexDir(),
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
     // Add data for document 0.
     ASSERT_THAT(qualified_id_join_index->last_added_document_id(),
                 kInvalidDocumentId);
@@ -3641,10 +3747,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false));
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(filesystem, GetQualifiedIdJoinIndexDir(),
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
     EXPECT_THAT(qualified_id_join_index->Get(
                     DocJoinInfo(/*document_id=*/0, /*joinable_property_id=*/0)),
                 StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
@@ -3742,10 +3848,10 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     Filesystem filesystem;
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
-            filesystem, GetQualifiedIdJoinIndexDir(), /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/false));
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(filesystem, GetQualifiedIdJoinIndexDir(),
+                                     /*pre_mapping_fbv=*/false,
+                                     /*use_persistent_hash_map=*/false));
     // Add data for document 4.
     DocumentId original_last_added_doc_id =
         qualified_id_join_index->last_added_document_id();
@@ -3839,10 +3945,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     // `name:person` with a child query for `body:consectetur` based on the
     // child's `senderQualifiedId` field.
 
-    // Add document 4 without "senderQualifiedId". If joinable index is not
-    // rebuilt correctly, then it will still have the previously added
-    // senderQualifiedId for document 4 and include document 4 incorrectly in
-    // the right side.
+    // Add document 4 without "senderQualifiedId". If join index is not rebuilt
+    // correctly, then it will still have the previously added senderQualifiedId
+    // for document 4 and include document 4 incorrectly in the right side.
     DocumentProto another_message =
         DocumentBuilder()
             .SetKey("namespace", "message/4")
@@ -4829,7 +4934,7 @@ TEST_F(IcingSearchEngineInitializationTest,
   auto mock_filesystem = std::make_unique<MockFilesystem>();
   EXPECT_CALL(*mock_filesystem, PRead(A<const char*>(), _, _, _))
       .WillRepeatedly(DoDefault());
-  // This fails QualifiedIdTypeJoinableIndex::Create() once.
+  // This fails QualifiedIdJoinIndex::Create() once.
   EXPECT_CALL(
       *mock_filesystem,
       PRead(Matcher<const char*>(Eq(qualified_id_join_index_metadata_file)), _,
@@ -5123,13 +5228,14 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     // Put message into DocumentStore
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(filesystem(), GetDocumentDir(), &fake_clock,
-                              schema_store.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            filesystem(), GetDocumentDir(), &fake_clock, schema_store.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     std::unique_ptr<DocumentStore> document_store =
         std::move(create_result.document_store);
     ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, document_store->Put(message));
@@ -5143,11 +5249,12 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(*filesystem(), GetIntegerIndexDir(),
+                             /*num_data_threshold_for_bucket_split=*/65536,
                              /*pre_mapping_fbv=*/false));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> qualified_id_join_index,
-        QualifiedIdTypeJoinableIndex::Create(
+        std::unique_ptr<QualifiedIdJoinIndex> qualified_id_join_index,
+        QualifiedIdJoinIndex::Create(
             *filesystem(), GetQualifiedIdJoinIndexDir(),
             /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/false));
 
@@ -5160,16 +5267,14 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
                                    integer_section_indexing_handler,
                                IntegerSectionIndexingHandler::Create(
                                    &fake_clock, integer_index.get()));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        std::unique_ptr<QualifiedIdJoinIndexingHandler>
-            qualified_id_joinable_property_indexing_handler,
-        QualifiedIdJoinIndexingHandler::Create(&fake_clock,
-                                               qualified_id_join_index.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                                   qualified_id_join_indexing_handler,
+                               QualifiedIdJoinIndexingHandler::Create(
+                                   &fake_clock, qualified_id_join_index.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(string_section_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
-    handlers.push_back(
-        std::move(qualified_id_joinable_property_indexing_handler));
+    handlers.push_back(std::move(qualified_id_join_indexing_handler));
     IndexProcessor index_processor(std::move(handlers), &fake_clock);
 
     DocumentProto incorrect_message =
@@ -5302,12 +5407,8 @@ INSTANTIATE_TEST_SUITE_P(
             /*version_in=*/version_util::kVersion + 1,
             /*max_version_in=*/version_util::kVersion + 1),
 
-        // Manually change existing data set's version to kVersion - 1 and
-        // max_version to kVersion - 1. When initializing, it will detect
-        // "upgrade".
-        version_util::VersionInfo(
-            /*version_in=*/version_util::kVersion - 1,
-            /*max_version_in=*/version_util::kVersion - 1),
+        // Currently we don't have any "upgrade" that requires rebuild derived
+        // files, so skip this case until we have a case for it.
 
         // Manually change existing data set's version to kVersion - 1 and
         // max_version to kVersion. When initializing, it will detect "roll
