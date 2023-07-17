@@ -241,7 +241,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_changed_fully_compatible_by_name ==
           expected.schema_types_changed_fully_compatible_by_name &&
       actual.schema_types_index_incompatible_by_name ==
-          expected.schema_types_index_incompatible_by_name) {
+          expected.schema_types_index_incompatible_by_name &&
+      actual.schema_types_join_incompatible_by_name ==
+          expected.schema_types_join_incompatible_by_name) {
     return true;
   }
 
@@ -338,6 +340,21 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
                               ","),
           "]");
 
+  // Format schema_types_join_incompatible_by_name
+  std::string actual_schema_types_join_incompatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(actual.schema_types_join_incompatible_by_name,
+                              ","),
+          "]");
+
+  std::string expected_schema_types_join_incompatible_by_name =
+      absl_ports::StrCat(
+          "[",
+          absl_ports::StrJoin(expected.schema_types_join_incompatible_by_name,
+                              ","),
+          "]");
+
   *result_listener << IcingStringUtil::StringPrintf(
       "\nExpected {\n"
       "\tsuccess=%d,\n"
@@ -347,8 +364,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
       "\tschema_types_new_by_name=%s,\n"
-      "\tschema_types_index_incompatible_by_name=%s,\n"
       "\tschema_types_changed_fully_compatible_by_name=%s\n"
+      "\tschema_types_index_incompatible_by_name=%s,\n"
+      "\tschema_types_join_incompatible_by_name=%s\n"
       "}\n"
       "Actual {\n"
       "\tsuccess=%d,\n"
@@ -358,8 +376,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       "\tschema_types_incompatible_by_name=%s,\n"
       "\tschema_types_incompatible_by_id=%s\n"
       "\tschema_types_new_by_name=%s,\n"
-      "\tschema_types_index_incompatible_by_name=%s,\n"
       "\tschema_types_changed_fully_compatible_by_name=%s\n"
+      "\tschema_types_index_incompatible_by_name=%s,\n"
+      "\tschema_types_join_incompatible_by_name=%s\n"
       "}\n",
       expected.success, expected_old_schema_type_ids_changed.c_str(),
       expected_schema_types_deleted_by_name.c_str(),
@@ -368,7 +387,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       expected_schema_types_incompatible_by_id.c_str(),
       expected_schema_types_new_by_name.c_str(),
       expected_schema_types_changed_fully_compatible_by_name.c_str(),
-      expected_schema_types_index_incompatible_by_name.c_str(), actual.success,
+      expected_schema_types_index_incompatible_by_name.c_str(),
+      expected_schema_types_join_incompatible_by_name.c_str(), actual.success,
       actual_old_schema_type_ids_changed.c_str(),
       actual_schema_types_deleted_by_name.c_str(),
       actual_schema_types_deleted_by_id.c_str(),
@@ -376,7 +396,8 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual_schema_types_incompatible_by_id.c_str(),
       actual_schema_types_new_by_name.c_str(),
       actual_schema_types_changed_fully_compatible_by_name.c_str(),
-      actual_schema_types_index_incompatible_by_name.c_str());
+      actual_schema_types_index_incompatible_by_name.c_str(),
+      actual_schema_types_join_incompatible_by_name.c_str());
   return false;
 }
 
