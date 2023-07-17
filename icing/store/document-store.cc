@@ -54,6 +54,7 @@
 #include "icing/store/document-log-creator.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/clock.h"
@@ -73,6 +74,7 @@ namespace {
 // Used in DocumentId mapper to mark a document as deleted
 constexpr int64_t kDocDeletedFlag = -1;
 constexpr char kDocumentIdMapperFilename[] = "document_id_mapper";
+constexpr char kUriHashMapperWorkingPath[] = "uri_mapper";
 constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
 constexpr char kCorpusScoreCache[] = "corpus_score_cache";
@@ -81,9 +83,17 @@ constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
 constexpr char kUsageStoreDirectoryName[] = "usage_store";
 constexpr char kCorpusIdMapperFilename[] = "corpus_mapper";
 
-// Determined through manual testing to allow for 1 million uris. 1 million
-// because we allow up to 1 million DocumentIds.
-constexpr int32_t kUriMapperMaxSize = 36 * 1024 * 1024;  // 36 MiB
+// Determined through manual testing to allow for 4 million uris. 4 million
+// because we allow up to 4 million DocumentIds.
+constexpr int32_t kUriDynamicTrieKeyMapperMaxSize =
+    144 * 1024 * 1024;  // 144 MiB
+
+constexpr int32_t kUriHashKeyMapperMaxNumEntries =
+    kMaxDocumentId + 1;  // 1 << 22, 4M
+// - Key: namespace_id_str (3 bytes) + fingerprinted_uri (10 bytes) + '\0' (1
+//        byte)
+// - Value: DocumentId (4 bytes)
+constexpr int32_t kUriHashKeyMapperKVByteSize = 13 + 1 + sizeof(DocumentId);
 
 // 384 KiB for a DynamicTrieKeyMapper would allow each internal array to have a
 // max of 128 KiB for storage.
@@ -98,6 +108,10 @@ DocumentWrapper CreateDocumentWrapper(DocumentProto&& document) {
 
 std::string MakeHeaderFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentStoreHeaderFilename);
+}
+
+std::string MakeUriHashMapperWorkingPath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kUriHashMapperWorkingPath);
 }
 
 std::string MakeDocumentIdMapperFilename(const std::string& base_dir) {
@@ -207,6 +221,41 @@ std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
   return namespace_ids_to_namespaces;
 }
 
+libtextclassifier3::StatusOr<std::unique_ptr<
+    KeyMapper<DocumentId, fingerprint_util::FingerprintStringFormatter>>>
+CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
+                bool pre_mapping_fbv, bool use_persistent_hash_map) {
+  std::string uri_hash_mapper_working_path =
+      MakeUriHashMapperWorkingPath(base_dir);
+  // Due to historic issue, we use document store's base_dir directly as
+  // DynamicTrieKeyMapper's working directory for uri mapper.
+  // DynamicTrieKeyMapper also creates a subdirectory "key_mapper_dir", so the
+  // actual files will be put under "<base_dir>/key_mapper_dir/".
+  bool dynamic_trie_key_mapper_dir_exists = filesystem.DirectoryExists(
+      absl_ports::StrCat(base_dir, "/key_mapper_dir").c_str());
+  bool persistent_hash_map_dir_exists =
+      filesystem.DirectoryExists(uri_hash_mapper_working_path.c_str());
+  if ((use_persistent_hash_map && dynamic_trie_key_mapper_dir_exists) ||
+      (!use_persistent_hash_map && persistent_hash_map_dir_exists)) {
+    // Return a failure here so that the caller can properly delete and rebuild
+    // this component.
+    return absl_ports::FailedPreconditionError("Key mapper type mismatch");
+  }
+
+  if (use_persistent_hash_map) {
+    return PersistentHashMapKeyMapper<
+        DocumentId, fingerprint_util::FingerprintStringFormatter>::
+        Create(filesystem, std::move(uri_hash_mapper_working_path),
+               pre_mapping_fbv,
+               /*max_num_entries=*/kUriHashKeyMapperMaxNumEntries,
+               /*average_kv_byte_size=*/kUriHashKeyMapperKVByteSize);
+  } else {
+    return DynamicTrieKeyMapper<DocumentId,
+                                fingerprint_util::FingerprintStringFormatter>::
+        Create(filesystem, base_dir, kUriDynamicTrieKeyMapperMaxSize);
+  }
+}
+
 }  // namespace
 
 std::string DocumentStore::MakeFingerprint(
@@ -231,6 +280,7 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const Clock* clock,
                              const SchemaStore* schema_store,
                              bool namespace_id_fingerprint,
+                             bool pre_mapping_fbv, bool use_persistent_hash_map,
                              int32_t compression_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
@@ -238,6 +288,8 @@ DocumentStore::DocumentStore(const Filesystem* filesystem,
       schema_store_(schema_store),
       document_validator_(schema_store),
       namespace_id_fingerprint_(namespace_id_fingerprint),
+      pre_mapping_fbv_(pre_mapping_fbv),
+      use_persistent_hash_map_(use_persistent_hash_map),
       compression_level_(compression_level) {}
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
@@ -266,6 +318,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
     bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
+    bool pre_mapping_fbv, bool use_persistent_hash_map,
     int32_t compression_level, InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
@@ -273,7 +326,7 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
 
   auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
       filesystem, base_dir, clock, schema_store, namespace_id_fingerprint,
-      compression_level));
+      pre_mapping_fbv, use_persistent_hash_map, compression_level));
   ICING_ASSIGN_OR_RETURN(
       DataLoss data_loss,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -293,9 +346,12 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     return absl_ports::InternalError("Couldn't delete header file");
   }
 
-  // Document key mapper
+  // Document key mapper. Doesn't hurt to delete both dynamic trie and
+  // persistent hash map without checking.
   ICING_RETURN_IF_ERROR(
       DynamicTrieKeyMapper<DocumentId>::Delete(*filesystem, base_dir));
+  ICING_RETURN_IF_ERROR(PersistentHashMapKeyMapper<DocumentId>::Delete(
+      *filesystem, MakeUriHashMapperWorkingPath(base_dir)));
 
   // Document id mapper
   ICING_RETURN_IF_ERROR(FileBackedVector<int64_t>::Delete(
@@ -429,11 +485,8 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto document_key_mapper_or = DynamicTrieKeyMapper<
-      DocumentId,
-      fingerprint_util::FingerprintStringFormatter>::Create(*filesystem_,
-                                                            base_dir_,
-                                                            kUriMapperMaxSize);
+  auto document_key_mapper_or = CreateUriMapper(
+      *filesystem_, base_dir_, pre_mapping_fbv_, use_persistent_hash_map_);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to initialize KeyMapper";
@@ -646,6 +699,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
 }
 
 libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
+  // Only one type of KeyMapper (either DynamicTrieKeyMapper or
+  // PersistentHashMapKeyMapper) will actually exist at any moment, but it is ok
+  // to call Delete() for both since Delete() returns OK if any of them doesn't
+  // exist.
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   document_key_mapper_.reset();
   // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
@@ -654,17 +711,21 @@ libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
       DynamicTrieKeyMapper<DocumentId>::Delete(*filesystem_, base_dir_);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete old key mapper";
+                     << "Failed to delete old dynamic trie key mapper";
+    return status;
+  }
+  status = PersistentHashMapKeyMapper<DocumentId>::Delete(
+      *filesystem_, MakeUriHashMapperWorkingPath(base_dir_));
+  if (!status.ok()) {
+    ICING_LOG(ERROR) << status.error_message()
+                     << "Failed to delete old persistent hash map key mapper";
     return status;
   }
 
   // TODO(b/216487496): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto document_key_mapper_or = DynamicTrieKeyMapper<
-      DocumentId,
-      fingerprint_util::FingerprintStringFormatter>::Create(*filesystem_,
-                                                            base_dir_,
-                                                            kUriMapperMaxSize);
+  auto document_key_mapper_or = CreateUriMapper(
+      *filesystem_, base_dir_, pre_mapping_fbv_, use_persistent_hash_map_);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to re-init key mapper";
@@ -1771,7 +1832,6 @@ libtextclassifier3::Status DocumentStore::Optimize() {
 libtextclassifier3::StatusOr<std::vector<DocumentId>>
 DocumentStore::OptimizeInto(const std::string& new_directory,
                             const LanguageSegmenter* lang_segmenter,
-                            bool namespace_id_fingerprint,
                             OptimizeStatsProto* stats) {
   // Validates directory
   if (new_directory == base_dir_) {
@@ -1783,7 +1843,8 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
       auto doc_store_create_result,
       DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
                             /*force_recovery_and_revalidate_documents=*/false,
-                            namespace_id_fingerprint, compression_level_,
+                            namespace_id_fingerprint_, pre_mapping_fbv_,
+                            use_persistent_hash_map_, compression_level_,
                             /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
