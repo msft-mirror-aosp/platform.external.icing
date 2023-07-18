@@ -15,7 +15,10 @@
 #ifndef ICING_TESTING_COMMON_MATCHERS_H_
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
+#include <algorithm>
 #include <cmath>
+#include <string>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
@@ -24,10 +27,14 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
+#include "icing/proto/status.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -50,11 +57,12 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
   const DocHitInfo& actual = arg;
   SectionIdMask section_mask = kSectionIdMaskNone;
   for (SectionId section_id : section_ids) {
-    section_mask |= 1U << section_id;
+    section_mask |= UINT64_C(1) << section_id;
   }
   *result_listener << IcingStringUtil::StringPrintf(
-      "(actual is {document_id=%d, section_mask=%d}, but expected was "
-      "{document_id=%d, section_mask=%d}.)",
+      "(actual is {document_id=%d, section_mask=%" PRIu64
+      "}, but expected was "
+      "{document_id=%d, section_mask=%" PRIu64 "}.)",
       actual.document_id(), actual.hit_section_ids_mask(), document_id,
       section_mask);
   return actual.document_id() == document_id &&
@@ -64,7 +72,7 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
 // Used to match a DocHitInfo
 MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
            section_ids_to_term_frequencies_map, "") {
-  const DocHitInfo& actual = arg;
+  const DocHitInfoTermFrequencyPair& actual = arg;
   SectionIdMask section_mask = kSectionIdMaskNone;
 
   bool term_frequency_as_expected = true;
@@ -73,7 +81,7 @@ MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
   for (auto itr = section_ids_to_term_frequencies_map.begin();
        itr != section_ids_to_term_frequencies_map.end(); itr++) {
     SectionId section_id = itr->first;
-    section_mask |= 1U << section_id;
+    section_mask |= UINT64_C(1) << section_id;
     expected_tfs.push_back(itr->second);
     actual_tfs.push_back(actual.hit_term_frequency(section_id));
     if (actual.hit_term_frequency(section_id) != itr->second) {
@@ -88,30 +96,85 @@ MATCHER_P2(EqualsDocHitInfoWithTermFrequency, document_id,
       absl_ports::StrJoin(expected_tfs, ",", absl_ports::NumberFormatter()),
       "]");
   *result_listener << IcingStringUtil::StringPrintf(
-      "(actual is {document_id=%d, section_mask=%d, term_frequencies=%s}, but "
-      "expected was "
-      "{document_id=%d, section_mask=%d, term_frequencies=%s}.)",
-      actual.document_id(), actual.hit_section_ids_mask(),
+      "(actual is {document_id=%d, section_mask=%" PRIu64
+      ", term_frequencies=%s}, but expected was "
+      "{document_id=%d, section_mask=%" PRIu64 ", term_frequencies=%s}.)",
+      actual.doc_hit_info().document_id(),
+      actual.doc_hit_info().hit_section_ids_mask(),
       actual_term_frequencies.c_str(), document_id, section_mask,
       expected_term_frequencies.c_str());
-  return actual.document_id() == document_id &&
-         actual.hit_section_ids_mask() == section_mask &&
+  return actual.doc_hit_info().document_id() == document_id &&
+         actual.doc_hit_info().hit_section_ids_mask() == section_mask &&
          term_frequency_as_expected;
 }
 
+class ScoredDocumentHitFormatter {
+ public:
+  std::string operator()(const ScoredDocumentHit& scored_document_hit) {
+    return IcingStringUtil::StringPrintf(
+        "(document_id=%d, hit_section_id_mask=%" PRId64 ", score=%.2f)",
+        scored_document_hit.document_id(),
+        scored_document_hit.hit_section_id_mask(), scored_document_hit.score());
+  }
+};
+
+class ScoredDocumentHitEqualComparator {
+ public:
+  bool operator()(const ScoredDocumentHit& lhs,
+                  const ScoredDocumentHit& rhs) const {
+    return lhs.document_id() == rhs.document_id() &&
+           lhs.hit_section_id_mask() == rhs.hit_section_id_mask() &&
+           std::fabs(lhs.score() - rhs.score()) < 1e-6;
+  }
+};
+
 // Used to match a ScoredDocumentHit
 MATCHER_P(EqualsScoredDocumentHit, expected_scored_document_hit, "") {
-  if (arg.document_id() != expected_scored_document_hit.document_id() ||
-      arg.hit_section_id_mask() !=
-          expected_scored_document_hit.hit_section_id_mask() ||
-      std::fabs(arg.score() - expected_scored_document_hit.score()) > 1e-6) {
+  ScoredDocumentHitEqualComparator equal_comparator;
+  if (!equal_comparator(arg, expected_scored_document_hit)) {
+    ScoredDocumentHitFormatter formatter;
+    *result_listener << "Expected: " << formatter(expected_scored_document_hit)
+                     << ". Actual: " << formatter(arg);
+    return false;
+  }
+  return true;
+}
+
+// Used to match a JoinedScoredDocumentHit
+MATCHER_P(EqualsJoinedScoredDocumentHit, expected_joined_scored_document_hit,
+          "") {
+  ScoredDocumentHitEqualComparator equal_comparator;
+  if (std::fabs(arg.final_score() -
+                expected_joined_scored_document_hit.final_score()) > 1e-6 ||
+      !equal_comparator(
+          arg.parent_scored_document_hit(),
+          expected_joined_scored_document_hit.parent_scored_document_hit()) ||
+      arg.child_scored_document_hits().size() !=
+          expected_joined_scored_document_hit.child_scored_document_hits()
+              .size() ||
+      !std::equal(
+          arg.child_scored_document_hits().cbegin(),
+          arg.child_scored_document_hits().cend(),
+          expected_joined_scored_document_hit.child_scored_document_hits()
+              .cbegin(),
+          equal_comparator)) {
+    ScoredDocumentHitFormatter formatter;
+
     *result_listener << IcingStringUtil::StringPrintf(
-        "Expected: document_id=%d, hit_section_id_mask=%d, score=%.2f. Actual: "
-        "document_id=%d, hit_section_id_mask=%d, score=%.2f",
-        expected_scored_document_hit.document_id(),
-        expected_scored_document_hit.hit_section_id_mask(),
-        expected_scored_document_hit.score(), arg.document_id(),
-        arg.hit_section_id_mask(), arg.score());
+        "Expected: final_score=%.2f, parent_scored_document_hit=%s, "
+        "child_scored_document_hits=[%s]. Actual: final_score=%.2f, "
+        "parent_scored_document_hit=%s, child_scored_document_hits=[%s]",
+        expected_joined_scored_document_hit.final_score(),
+        formatter(
+            expected_joined_scored_document_hit.parent_scored_document_hit())
+            .c_str(),
+        absl_ports::StrJoin(
+            expected_joined_scored_document_hit.child_scored_document_hits(),
+            ",", formatter)
+            .c_str(),
+        arg.final_score(), formatter(arg.parent_scored_document_hit()).c_str(),
+        absl_ports::StrJoin(arg.child_scored_document_hits(), ",", formatter)
+            .c_str());
     return false;
   }
   return true;
@@ -274,7 +337,7 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
   return false;
 }
 
-std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
+inline std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   switch (code) {
     case libtextclassifier3::StatusCode::OK:
       return "OK";
@@ -315,7 +378,7 @@ std::string StatusCodeToString(libtextclassifier3::StatusCode code) {
   }
 }
 
-std::string ProtoStatusCodeToString(StatusProto::Code code) {
+inline std::string ProtoStatusCodeToString(StatusProto::Code code) {
   switch (code) {
     case StatusProto::OK:
       return "OK";
@@ -430,6 +493,11 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   actual_copy.clear_debug_info();
   for (SearchResultProto::ResultProto& result :
        *actual_copy.mutable_results()) {
+    // Joined results
+    for (SearchResultProto::ResultProto& joined_result :
+         *result.mutable_joined_results()) {
+      joined_result.clear_score();
+    }
     result.clear_score();
   }
 
@@ -438,10 +506,15 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   expected_copy.clear_debug_info();
   for (SearchResultProto::ResultProto& result :
        *expected_copy.mutable_results()) {
+    // Joined results
+    for (SearchResultProto::ResultProto& joined_result :
+         *result.mutable_joined_results()) {
+      joined_result.clear_score();
+    }
     result.clear_score();
   }
-  return ExplainMatchResult(testing::EqualsProto(expected_copy), actual_copy,
-                            result_listener);
+  return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
+                            actual_copy, result_listener);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
@@ -459,6 +532,10 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   auto statusor = (rexpr);                                    \
   ICING_ASSERT_OK(statusor.status());                         \
   lhs = std::move(statusor).ValueOrDie()
+
+#define ICING_ASSERT_HAS_VALUE_AND_ASSIGN(lhs, rexpr) \
+  ASSERT_TRUE(rexpr);                                 \
+  lhs = rexpr.value()
 
 }  // namespace lib
 }  // namespace icing
