@@ -83,13 +83,14 @@ class NumericIndexIntegerTest : public ::testing::Test {
         filesystem_.CreateDirectoryRecursively(document_store_dir.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -114,8 +115,10 @@ class NumericIndexIntegerTest : public ::testing::Test {
   template <>
   libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
   CreateIntegerIndex<IntegerIndex>() {
-    return IntegerIndex::Create(filesystem_, working_path_,
-                                /*pre_mapping_fbv=*/false);
+    return IntegerIndex::Create(
+        filesystem_, working_path_, /*num_data_threshold_for_bucket_split=*/
+        IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+        /*pre_mapping_fbv=*/false);
   }
 
   template <typename NotIntegerIndexType>
@@ -138,8 +141,7 @@ class NumericIndexIntegerTest : public ::testing::Test {
     }
     ICING_ASSIGN_OR_RETURN(
         std::vector<DocumentId> docid_map,
-        doc_store_->OptimizeInto(document_store_compact_dir, nullptr,
-                                 /*namespace_id_fingerprint=*/false));
+        doc_store_->OptimizeInto(document_store_compact_dir, nullptr));
 
     doc_store_.reset();
     if (!filesystem_.SwapFiles(document_store_dir.c_str(),
@@ -153,13 +155,14 @@ class NumericIndexIntegerTest : public ::testing::Test {
 
     ICING_ASSIGN_OR_RETURN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir, &clock_,
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir, &clock_, schema_store_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     doc_store_ = std::move(doc_store_create_result.document_store);
     return docid_map;
   }
@@ -1126,14 +1129,28 @@ TYPED_TEST(NumericIndexIntegerTest, Clear) {
           /*document_id=*/4, std::vector<SectionId>{kDefaultSectionId}))));
 }
 
+struct IntegerIndexTestParam {
+  int32_t num_data_threshold_for_bucket_split;
+  bool pre_mapping_fbv;
+
+  explicit IntegerIndexTestParam(int32_t num_data_threshold_for_bucket_split_in,
+                                 bool pre_mapping_fbv_in)
+      : num_data_threshold_for_bucket_split(
+            num_data_threshold_for_bucket_split_in),
+        pre_mapping_fbv(pre_mapping_fbv_in) {}
+};
+
 // Tests for persistent integer index only
-class IntegerIndexTest : public NumericIndexIntegerTest<IntegerIndex>,
-                         public ::testing::WithParamInterface<bool> {};
+class IntegerIndexTest
+    : public NumericIndexIntegerTest<IntegerIndex>,
+      public ::testing::WithParamInterface<IntegerIndexTestParam> {};
 
 TEST_P(IntegerIndexTest, InvalidWorkingPath) {
-  EXPECT_THAT(IntegerIndex::Create(filesystem_, "/dev/null/integer_index_test",
-                                   /*pre_mapping_fbv=*/GetParam()),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+  EXPECT_THAT(
+      IntegerIndex::Create(filesystem_, "/dev/null/integer_index_test",
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv),
+      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
 TEST_P(IntegerIndexTest, InitializeNewFiles) {
@@ -1142,7 +1159,8 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     ICING_ASSERT_OK(integer_index->PersistToDisk());
   }
@@ -1160,6 +1178,8 @@ TEST_P(IntegerIndexTest, InitializeNewFiles) {
                                 IntegerIndex::kInfoMetadataFileOffset));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.last_added_document_id, Eq(kInvalidDocumentId));
+  EXPECT_THAT(info.num_data_threshold_for_bucket_split,
+              Eq(GetParam().num_data_threshold_for_bucket_split));
 
   // Check crcs section
   Crcs crcs;
@@ -1183,7 +1203,8 @@ TEST_P(IntegerIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndex> integer_index,
       IntegerIndex::Create(filesystem_, working_path_,
-                           /*pre_mapping_fbv=*/GetParam()));
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
 
   // Insert some data.
   Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
@@ -1195,16 +1216,19 @@ TEST_P(IntegerIndexTest,
 
   // Without calling PersistToDisk, checksums will not be recomputed or synced
   // to disk, so initializing another instance on the same files should fail.
-  EXPECT_THAT(IntegerIndex::Create(filesystem_, working_path_,
-                                   /*pre_mapping_fbv=*/GetParam()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_P(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndex> integer_index1,
       IntegerIndex::Create(filesystem_, working_path_,
-                           /*pre_mapping_fbv=*/GetParam()));
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
 
   // Insert some data.
   Index(integer_index1.get(), kDefaultTestPropertyPath, /*document_id=*/0,
@@ -1228,7 +1252,8 @@ TEST_P(IntegerIndexTest, InitializationShouldSucceedWithPersistToDisk) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndex> integer_index2,
       IntegerIndex::Create(filesystem_, working_path_,
-                           /*pre_mapping_fbv=*/GetParam()));
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
   EXPECT_THAT(integer_index2->last_added_document_id(), Eq(2));
   EXPECT_THAT(Query(integer_index2.get(), kDefaultTestPropertyPath,
                     /*key_lower=*/std::numeric_limits<int64_t>::min(),
@@ -1243,7 +1268,8 @@ TEST_P(IntegerIndexTest, InitializationShouldSucceedAfterDestruction) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
@@ -1268,7 +1294,8 @@ TEST_P(IntegerIndexTest, InitializationShouldSucceedAfterDestruction) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
     EXPECT_THAT(integer_index->last_added_document_id(), Eq(2));
     EXPECT_THAT(Query(integer_index.get(), kDefaultTestPropertyPath,
                       /*key_lower=*/std::numeric_limits<int64_t>::min(),
@@ -1283,7 +1310,8 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
           /*section_id=*/20, /*keys=*/{0, 100, -100});
@@ -1315,8 +1343,10 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithWrongAllCrcShouldFail) {
     // Attempt to create the integer index with metadata containing corrupted
     // all_crc. This should fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-        integer_index_or = IntegerIndex::Create(filesystem_, working_path_,
-                                                /*pre_mapping_fbv=*/GetParam());
+        integer_index_or =
+            IntegerIndex::Create(filesystem_, working_path_,
+                                 GetParam().num_data_threshold_for_bucket_split,
+                                 GetParam().pre_mapping_fbv);
     EXPECT_THAT(integer_index_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(integer_index_or.status().error_message(),
@@ -1329,7 +1359,8 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
           /*section_id=*/20, /*keys=*/{0, 100, -100});
@@ -1362,8 +1393,10 @@ TEST_P(IntegerIndexTest, InitializeExistingFilesWithCorruptedInfoShouldFail) {
     // Attempt to create the integer index with info that doesn't match its
     // checksum and confirm that it fails.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-        integer_index_or = IntegerIndex::Create(filesystem_, working_path_,
-                                                /*pre_mapping_fbv=*/GetParam());
+        integer_index_or =
+            IntegerIndex::Create(filesystem_, working_path_,
+                                 GetParam().num_data_threshold_for_bucket_split,
+                                 GetParam().pre_mapping_fbv);
     EXPECT_THAT(integer_index_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(integer_index_or.status().error_message(),
@@ -1377,7 +1410,8 @@ TEST_P(IntegerIndexTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
     // Insert some data.
     Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
           /*section_id=*/20, /*keys=*/{0, 100, -100});
@@ -1400,7 +1434,9 @@ TEST_P(IntegerIndexTest,
         std::unique_ptr<IntegerIndexStorage> storage,
         IntegerIndexStorage::Create(
             filesystem_, std::move(storage_working_path),
-            IntegerIndexStorage::Options(/*pre_mapping_fbv=*/GetParam()),
+            IntegerIndexStorage::Options(
+                GetParam().num_data_threshold_for_bucket_split,
+                GetParam().pre_mapping_fbv),
             &posting_list_integer_index_serializer));
     ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/3, /*section_id=*/4,
                                      /*new_keys=*/{3, 4, 5}));
@@ -1412,12 +1448,49 @@ TEST_P(IntegerIndexTest,
     // Attempt to create the integer index with corrupted storages. This should
     // fail.
     libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
-        integer_index_or = IntegerIndex::Create(filesystem_, working_path_,
-                                                /*pre_mapping_fbv=*/GetParam());
+        integer_index_or =
+            IntegerIndex::Create(filesystem_, working_path_,
+                                 GetParam().num_data_threshold_for_bucket_split,
+                                 GetParam().pre_mapping_fbv);
     EXPECT_THAT(integer_index_or,
                 StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
     EXPECT_THAT(integer_index_or.status().error_message(),
                 HasSubstr("Invalid storages crc"));
+  }
+}
+
+TEST_P(
+    IntegerIndexTest,
+    InitializeExistingFilesWithMismatchNumDataThresholdForBucketSplitShouldFail) {
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(filesystem_, working_path_,
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
+    // Insert some data.
+    Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/0,
+          /*section_id=*/20, /*keys=*/{0, 100, -100});
+    Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+          /*section_id=*/2, /*keys=*/{3, -1000, 500});
+    Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+          /*section_id=*/15, /*keys=*/{-6, 321, 98});
+
+    ICING_ASSERT_OK(integer_index->PersistToDisk());
+  }
+
+  {
+    // Attempt to create the integer index with different
+    // num_data_threshold_for_bucket_split. This should fail.
+    libtextclassifier3::StatusOr<std::unique_ptr<IntegerIndex>>
+        integer_index_or = IntegerIndex::Create(
+            filesystem_, working_path_,
+            GetParam().num_data_threshold_for_bucket_split + 1,
+            GetParam().pre_mapping_fbv);
+    EXPECT_THAT(integer_index_or,
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+    EXPECT_THAT(integer_index_or.status().error_message(),
+                HasSubstr("Mismatch num_data_threshold_for_bucket_split"));
   }
 }
 
@@ -1586,7 +1659,8 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     // Index numeric content for other properties to force our property into the
     // wildcard storage.
@@ -1651,7 +1725,8 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndex> integer_index,
       IntegerIndex::Create(filesystem_, working_path_,
-                           /*pre_mapping_fbv=*/GetParam()));
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
 
   EXPECT_THAT(integer_index->num_property_indices(), Eq(33));
 
@@ -1691,7 +1766,8 @@ TEST_P(IntegerIndexTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     // Doc id = 1: insert 2 data for "prop1", "prop2"
     Index(integer_index.get(), kPropertyPath2, /*document_id=*/1, kSectionId2,
@@ -1742,7 +1818,8 @@ TEST_P(IntegerIndexTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     // Key = 1
     EXPECT_THAT(Query(integer_index.get(), kPropertyPath1, /*key_lower=*/1,
@@ -1968,7 +2045,8 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     // Index numeric content for other properties to force our property into the
     // wildcard storage.
@@ -2067,7 +2145,8 @@ TEST_P(IntegerIndexTest, WildcardStorageWorksAfterOptimize) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndex> integer_index,
       IntegerIndex::Create(filesystem_, working_path_,
-                           /*pre_mapping_fbv=*/GetParam()));
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
 
   EXPECT_THAT(integer_index->num_property_indices(), Eq(33));
 
@@ -2236,7 +2315,8 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<IntegerIndex> integer_index,
         IntegerIndex::Create(filesystem_, working_path_,
-                             /*pre_mapping_fbv=*/GetParam()));
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
 
     // Index numeric content for other properties to force our property into the
     // wildcard storage.
@@ -2317,7 +2397,8 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndex> integer_index,
       IntegerIndex::Create(filesystem_, working_path_,
-                           /*pre_mapping_fbv=*/GetParam()));
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
 
   EXPECT_THAT(integer_index->num_property_indices(), Eq(1));
 
@@ -2363,8 +2444,20 @@ TEST_P(IntegerIndexTest, WildcardStorageAvailableIndicesAfterOptimize) {
                   /*document_id=*/7, expected_sections_typea))));
 }
 
-INSTANTIATE_TEST_SUITE_P(IntegerIndexTest, IntegerIndexTest,
-                         testing::Values(true, false));
+INSTANTIATE_TEST_SUITE_P(
+    IntegerIndexTest, IntegerIndexTest,
+    testing::Values(
+        IntegerIndexTestParam(/*num_data_threshold_for_bucket_split_in=*/341,
+                              /*pre_mapping_fbv_in=*/false),
+        IntegerIndexTestParam(/*num_data_threshold_for_bucket_split_in=*/341,
+                              /*pre_mapping_fbv_in=*/true),
+
+        IntegerIndexTestParam(/*num_data_threshold_for_bucket_split_in=*/16384,
+                              /*pre_mapping_fbv_in=*/false),
+        IntegerIndexTestParam(/*num_data_threshold_for_bucket_split_in=*/32768,
+                              /*pre_mapping_fbv_in=*/false),
+        IntegerIndexTestParam(/*num_data_threshold_for_bucket_split_in=*/65536,
+                              /*pre_mapping_fbv_in=*/false)));
 
 }  // namespace
 

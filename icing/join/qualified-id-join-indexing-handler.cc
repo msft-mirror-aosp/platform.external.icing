@@ -21,7 +21,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/join/doc-join-info.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/logging.pb.h"
@@ -38,7 +38,7 @@ namespace lib {
 /* static */ libtextclassifier3::StatusOr<
     std::unique_ptr<QualifiedIdJoinIndexingHandler>>
 QualifiedIdJoinIndexingHandler::Create(
-    const Clock* clock, QualifiedIdTypeJoinableIndex* qualified_id_join_index) {
+    const Clock* clock, QualifiedIdJoinIndex* qualified_id_join_index) {
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(qualified_id_join_index);
 

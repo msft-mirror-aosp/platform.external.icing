@@ -127,6 +127,22 @@ class PropertyConfigBuilder {
     property_.set_schema_type(std::string(schema_type));
     property_.mutable_document_indexing_config()->set_index_nested_properties(
         index_nested_properties);
+    property_.mutable_document_indexing_config()
+        ->clear_indexable_nested_properties_list();
+    return *this;
+  }
+
+  PropertyConfigBuilder& SetDataTypeDocument(
+      std::string_view schema_type,
+      std::initializer_list<std::string> indexable_nested_properties_list) {
+    property_.set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+    property_.set_schema_type(std::string(schema_type));
+    property_.mutable_document_indexing_config()->set_index_nested_properties(
+        false);
+    for (const std::string& property : indexable_nested_properties_list) {
+      property_.mutable_document_indexing_config()
+          ->add_indexable_nested_properties_list(property);
+    }
     return *this;
   }
 
