@@ -1084,6 +1084,137 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
 }
 
+TEST_F(SchemaStoreTest, SetSchemaWithAddedIndexableNestedTypeOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with a optional property, and a type that
+  //    references the ContactPoint type.
+  SchemaTypeConfigBuilder contact_point =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REPEATED));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point).AddType(person).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // 2. Add another nested document property to "Person" that has type
+  //    "ContactPoint"
+  SchemaTypeConfigBuilder new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("contactPoints")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("anotherContactPoint")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED));
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(contact_point).AddType(new_person).Build();
+
+  // 3. Set to new schema. "Person" should be index-incompatible since we need
+  //    to index an additional property: 'anotherContactPoint.label'.
+  // - "Person" is also considered join-incompatible since the added nested
+  //   document property could also contain a joinable property.
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_index_incompatible_by_name.insert("Person");
+  expected_result.schema_types_join_incompatible_by_name.insert("Person");
+
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+
+  // 1. Create a ContactPoint type with a optional property, and a type that
+  //    references the ContactPoint type.
+  SchemaTypeConfigBuilder contact_point =
+      SchemaTypeConfigBuilder()
+          .SetType("ContactPoint")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("label")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                               /*propagate_delete=*/false)
+                  .SetCardinality(CARDINALITY_REQUIRED));
+  SchemaTypeConfigBuilder person =
+      SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("contactPoints")
+              .SetDataTypeDocument("ContactPoint",
+                                   /*index_nested_properties=*/true)
+              .SetCardinality(CARDINALITY_OPTIONAL));
+  SchemaProto old_schema =
+      SchemaBuilder().AddType(contact_point).AddType(person).Build();
+  ICING_EXPECT_OK(schema_store->SetSchema(
+      old_schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
+
+  // 2. Add another nested document property to "Person" that has type
+  //    "ContactPoint", but make it non-indexable
+  SchemaTypeConfigBuilder new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("contactPoints")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("anotherContactPoint")
+                  .SetDataTypeDocument("ContactPoint",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL));
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(contact_point).AddType(new_person).Build();
+
+  // 3. Set to new schema. "Person" should be join-incompatible but
+  //    index-compatible.
+  SchemaStore::SetSchemaResult expected_result;
+  expected_result.success = true;
+  expected_result.schema_types_join_incompatible_by_name.insert("Person");
+
+  EXPECT_THAT(schema_store->SetSchema(
+                  new_schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
+                             schema_store->GetSchema());
+  EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+}
+
 TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,

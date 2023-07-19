@@ -121,6 +121,9 @@ class SchemaUtil {
 
     // Total number of properties that have joinable config
     int32_t num_joinable_properties = 0;
+
+    // Total number of properties that have DataType::DOCUMENT
+    int32_t num_nested_document_properties = 0;
   };
 
   // This function validates:
