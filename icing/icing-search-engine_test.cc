@@ -27,6 +27,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/join-processor.h"
 #include "icing/legacy/index/icing-mock-filesystem.h"
 #include "icing/portable/endian.h"
 #include "icing/portable/equals-proto.h"
@@ -46,6 +47,7 @@
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -55,9 +57,9 @@
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/random-string.h"
-#include "icing/testing/snippet-helpers.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/snippet-helpers.h"
 
 namespace icing {
 namespace lib {
@@ -96,21 +98,6 @@ constexpr std::string_view kIpsumText =
     "Nullam ultrices sed nibh vitae aliquet. Ut risus neque, consectetur "
     "vehicula posuere vitae, convallis eu lorem. Donec semper augue eu nibh "
     "placerat semper.";
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
-    PropertyConfigProto::Cardinality::REQUIRED;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
-    PropertyConfigProto::Cardinality::REPEATED;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_NONE =
-    StringIndexingConfig::TokenizerType::NONE;
-
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-constexpr TermMatchType::Code MATCH_NONE = TermMatchType::UNKNOWN;
 
 PortableFileBackedProtoLog<DocumentWrapper>::Header ReadDocumentLogHeader(
     Filesystem filesystem, const std::string& file_path) {
@@ -219,51 +206,55 @@ SchemaProto CreateMessageSchema() {
       .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
           PropertyConfigBuilder()
               .SetName("body")
-              .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
               .SetCardinality(CARDINALITY_REQUIRED)))
       .Build();
 }
 
 SchemaProto CreateEmailSchema() {
   return SchemaBuilder()
-      .AddType(
-          SchemaTypeConfigBuilder()
-              .SetType("Email")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_REQUIRED))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_REQUIRED)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Email")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("body")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_REQUIRED))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("subject")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_REQUIRED)))
       .Build();
 }
 
 SchemaProto CreatePersonAndEmailSchema() {
   return SchemaBuilder()
-      .AddType(
-          SchemaTypeConfigBuilder()
-              .SetType("Person")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("name")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("emailAddress")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Person")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("name")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("emailAddress")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL)))
       .AddType(
           SchemaTypeConfigBuilder()
               .SetType("Email")
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-              .AddProperty(PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                      .SetName("body")
+                      .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                      .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                      .SetName("subject")
+                      .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                      .SetCardinality(CARDINALITY_OPTIONAL))
               .AddProperty(PropertyConfigBuilder()
                                .SetName("sender")
                                .SetDataTypeDocument(
@@ -1285,10 +1276,11 @@ TEST_F(IcingSearchEngineTest,
   SchemaTypeConfigProto person_proto =
       SchemaTypeConfigBuilder()
           .SetType("Person")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("name")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto nested_schema =
       SchemaBuilder()
@@ -1301,11 +1293,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SetSchemaResultProto set_schema_result = icing.SetSchema(nested_schema);
@@ -1373,11 +1365,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/false)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   set_schema_result = icing.SetSchema(no_nested_schema);
@@ -1415,16 +1407,16 @@ TEST_F(IcingSearchEngineTest,
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SetSchemaResultProto set_schema_result =
@@ -1472,7 +1464,7 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -1507,16 +1499,16 @@ TEST_F(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SetSchemaResultProto set_schema_result =
@@ -1564,16 +1556,16 @@ TEST_F(
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("to")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("to")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   set_schema_result = icing.SetSchema(
@@ -1608,25 +1600,26 @@ TEST_F(IcingSearchEngineTest, ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
                   .SetDataTypeDocument("Person",
                                        /*index_nested_properties=*/true)
                   .SetCardinality(CARDINALITY_OPTIONAL))
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("subject")
-                           .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("subject")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto nested_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Person")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("name")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("company")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("company")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_schema_type)
           .Build();
 
@@ -1681,7 +1674,7 @@ TEST_F(IcingSearchEngineTest, ForceSetSchemaIncompatibleNestedDocsAreDeleted) {
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(email_schema_type)
           .Build();
@@ -2619,6 +2612,24 @@ TEST_F(IcingSearchEngineTest, SearchWithNoScoringShouldReturnMultiplePages) {
   search_result_proto = icing.GetNextPage(next_page_token);
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchWithUnknownEnabledFeatureShouldReturnError) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("message");
+  search_spec.add_enabled_features("BAD_FEATURE");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 TEST_F(IcingSearchEngineTest, ShouldReturnMultiplePagesWithSnippets) {
@@ -5112,6 +5123,70 @@ TEST_F(IcingSearchEngineTest, Bm25fRelevanceScoringOneNamespace) {
                           "namespace1/uri6"));  // 'food' 1 time
 }
 
+TEST_F(IcingSearchEngineTest, Bm25fRelevanceScoringOneNamespaceAdvanced) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+
+  // Create and index documents in namespace "namespace1".
+  DocumentProto document = CreateEmailDocument(
+      "namespace1", "namespace1/uri0", /*score=*/10, "sushi belmont",
+      "fresh fish. inexpensive. good sushi.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument(
+      "namespace1", "namespace1/uri1", /*score=*/13, "peacock koriander",
+      "indian food. buffet. spicy food. kadai chicken.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri2", /*score=*/4,
+                                 "panda express",
+                                 "chinese food. cheap. inexpensive. kung pao.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri3", /*score=*/23,
+                                 "speederia pizza",
+                                 "thin-crust pizza. good and fast.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri4", /*score=*/8,
+                                 "whole foods",
+                                 "salads. pizza. organic food. expensive.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument(
+      "namespace1", "namespace1/uri5", /*score=*/18, "peets coffee",
+      "espresso. decaf. brewed coffee. whole beans. excellent coffee.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument(
+      "namespace1", "namespace1/uri6", /*score=*/4, "costco",
+      "bulk. cheap whole beans. frozen fish. food samples.");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  document = CreateEmailDocument("namespace1", "namespace1/uri7", /*score=*/4,
+                                 "starbucks coffee",
+                                 "habit. birthday rewards. good coffee");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("coffee OR food");
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_advanced_scoring_expression("this.relevanceScore() * 2 + 1");
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+
+  // Result should be in descending score order
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+  // Both doc5 and doc7 have "coffee" in name and text sections.
+  // However, doc5 has more matches in the text section.
+  // Documents with "food" are ranked lower as the term "food" is commonly
+  // present in this corpus, and thus, has a lower IDF.
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("namespace1/uri5",    // 'coffee' 3 times
+                          "namespace1/uri7",    // 'coffee' 2 times
+                          "namespace1/uri1",    // 'food' 2 times
+                          "namespace1/uri4",    // 'food' 2 times
+                          "namespace1/uri2",    // 'food' 1 time
+                          "namespace1/uri6"));  // 'food' 1 time
+}
+
 TEST_F(IcingSearchEngineTest, Bm25fRelevanceScoringOneNamespaceNotOperator) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -5660,14 +5735,143 @@ TEST_F(IcingSearchEngineTest,
 
   // Specify "namespace1" twice. This should result in an error.
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(1);
-  result_grouping->add_namespaces("namespace1");
-  result_grouping->add_namespaces("namespace2");
+  entry->set_namespace_("namespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace1");
+  result_grouping = result_spec.add_result_groupings();
+  entry = result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingDuplicateSchemaShouldReturnError) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  // Specify "Message" twice. This should result in an error.
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("nonexistentMessage");
   result_grouping = result_spec.add_result_groupings();
   result_grouping->set_max_results(1);
-  result_grouping->add_namespaces("namespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("Message");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(search_result_proto.status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingDuplicateNamespaceAndSchemaSchemaShouldReturnError) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  // Specify "namespace1xMessage" twice. This should result in an error.
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
 
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -5715,9 +5919,14 @@ TEST_F(IcingSearchEngineTest,
   ResultSpecProto result_spec;
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(0);
-  result_grouping->add_namespaces("namespace1");
-  result_grouping->add_namespaces("namespace2");
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
 
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -5803,14 +6012,19 @@ TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiNamespaceGrouping) {
   scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
 
   ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
   ResultSpecProto::ResultGrouping* result_grouping =
       result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
   result_grouping->set_max_results(1);
-  result_grouping->add_namespaces("namespace1");
+  entry->set_namespace_("namespace1");
   result_grouping = result_spec.add_result_groupings();
   result_grouping->set_max_results(2);
-  result_grouping->add_namespaces("namespace2");
-  result_grouping->add_namespaces("namespace3");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace3");
 
   SearchResultProto search_result_proto =
       icing.Search(search_spec, scoring_spec, result_spec);
@@ -5827,6 +6041,427 @@ TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiNamespaceGrouping) {
       document5;
   *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
       document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest, SearchResultGroupingMultiSchemaGrouping) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("sender")
+                                        .SetDataTypeDocument(
+                                            "Person",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Email")
+          .SetScore(1)
+          .SetCreationTimestampMs(10)
+          .AddStringProperty("subject", "foo")
+          .AddDocumentProperty("sender", DocumentBuilder()
+                                             .SetKey("namespace", "uri1-sender")
+                                             .SetSchema("Person")
+                                             .AddStringProperty("name", "foo")
+                                             .Build())
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace1", "uri2")
+                                .SetSchema("Message")
+                                .SetScore(2)
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace2", "uri3")
+                                .SetSchema("Message")
+                                .SetScore(3)
+                                .SetCreationTimestampMs(10)
+                                .AddStringProperty("body", "fo")
+                                .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+
+  // "f" will match all 3 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("f");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("Email");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Each of the highest scored documents of schema type "Message" (document3)
+  // and "Email" (document1) should be returned.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document3;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document1;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingMultiNamespaceAndSchemaGrouping) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 3 documents and ensures the relationship in terms of document
+  // score is: document1 < document2 < document3 < document4 < document5 <
+  // document6
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message3")
+          .SetScore(3)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document4 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/4")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(4)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document5 =
+      DocumentBuilder()
+          .SetKey("namespace3", "uri/5")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message3")
+          .SetScore(5)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document6 =
+      DocumentBuilder()
+          .SetKey("namespace3", "uri/6")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(6)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document6).status(), ProtoIsOk());
+
+  // "m" will match all 6 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
+  result_grouping = result_spec.add_result_groupings();
+  result_grouping->set_max_results(1);
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("namespace3");
+  entry->set_schema("Message");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // The three highest scored documents that fit the criteria of
+  // "namespace1xMessage" (document2), "namespace2xMessage" (document4),
+  // and "namespace3xMessage" (document6) should be returned.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document6;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingNonexistentNamespaceShouldBeIgnored) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace1");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_namespace_("nonexistentNamespace");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Only the top ranked document in "namespace" (document2), should be
+  // returned. The presence of "nonexistentNamespace" in the same result
+  // grouping should have no effect.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingNonexistentSchemaShouldBeIgnored) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("nonexistentMessage");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Only the top ranked document in "Message" (document2), should be
+  // returned. The presence of "nonexistentMessage" in the same result
+  // grouping should have no effect.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document2;
+
+  EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
+                                       expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineTest,
+       SearchResultGroupingNonexistentNamespaceAndSchemaShouldBeIgnored) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  // Creates 2 documents and ensures the relationship in terms of document
+  // score is: document1 < document2
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message1")
+          .SetScore(1)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri/2")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message2")
+          .SetScore(2)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto document3 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/3")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message3")
+          .SetScore(3)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  DocumentProto document4 =
+      DocumentBuilder()
+          .SetKey("namespace2", "uri/4")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message4")
+          .SetScore(4)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+
+  // "m" will match all 2 documents
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("m");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE);
+
+  ResultSpecProto result_spec;
+  result_spec.set_result_group_type(ResultSpecProto::SCHEMA_TYPE);
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(1);
+  entry->set_namespace_("namespace2");
+  entry->set_schema("Message");
+  entry = result_grouping->add_entry_groupings();
+  entry->set_schema("namespace1");
+  entry->set_schema("nonexistentMessage");
+
+  SearchResultProto search_result_proto =
+      icing.Search(search_spec, scoring_spec, result_spec);
+
+  // Only the top ranked document in "namespace2xMessage" (document4), should be
+  // returned. The presence of "namespace1xnonexistentMessage" in the same
+  // result grouping should have no effect. If either the namespace or the
+  // schema type is nonexistent, the entire entry will be ignored.
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      document4;
 
   EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
                                        expected_search_result_proto));
@@ -6833,7 +7468,7 @@ TEST_F(IcingSearchEngineTest,
             .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
                 PropertyConfigBuilder()
                     .SetName("unindexedField")
-                    .SetDataTypeString(MATCH_NONE, TOKENIZER_NONE)
+                    .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
                     .SetCardinality(CARDINALITY_REQUIRED)))
             .Build();
     ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -7294,16 +7929,16 @@ TEST_F(IcingSearchEngineTest,
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType("Message")
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("body")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_REQUIRED))
-                    .AddProperty(
-                        PropertyConfigBuilder()
-                            .SetName("subject")
-                            .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                            .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("body")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_REQUIRED))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("subject")
+                                     .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                        TOKENIZER_PLAIN)
+                                     .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     // Write the marker file
     std::string marker_filepath =
@@ -8148,7 +8783,7 @@ TEST_F(IcingSearchEngineTest, SnippetErrorTest) {
           .AddType(SchemaTypeConfigBuilder().SetType("Generic").AddProperty(
               PropertyConfigBuilder()
                   .SetName("subject")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -8257,7 +8892,7 @@ TEST_F(IcingSearchEngineTest, CJKSnippetTest) {
   // Search and request snippet matching but no windowing.
   SearchSpecProto search_spec;
   search_spec.set_query("走");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
 
   ResultSpecProto result_spec;
   result_spec.mutable_snippet_spec()->set_num_to_snippet(
@@ -8328,7 +8963,7 @@ TEST_F(IcingSearchEngineTest, InvalidToEmptyQueryTest) {
   // Search and request snippet matching but no windowing.
   SearchSpecProto search_spec;
   search_spec.set_query("?");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
   ScoringSpecProto scoring_spec;
   ResultSpecProto result_spec;
 
@@ -8394,7 +9029,7 @@ TEST_F(IcingSearchEngineTest, EmojiSnippetTest) {
   // Search and request snippet matching but no windowing.
   SearchSpecProto search_spec;
   search_spec.set_query("🐟");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
 
   ResultSpecProto result_spec;
   result_spec.mutable_snippet_spec()->set_num_to_snippet(1);
@@ -8455,7 +9090,7 @@ TEST_F(IcingSearchEngineTest, PutDocumentIndexFailureDeletion) {
   // Make sure that the document isn't searchable.
   SearchSpecProto search_spec;
   search_spec.set_query("foo");
-  search_spec.set_term_match_type(MATCH_PREFIX);
+  search_spec.set_term_match_type(TERM_MATCH_PREFIX);
 
   SearchResultProto search_results =
       icing.Search(search_spec, ScoringSpecProto::default_instance(),
@@ -8532,6 +9167,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Query all suggestions, and they will be ranked.
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -8586,6 +9223,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8636,6 +9275,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8672,6 +9313,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NamespaceNotFound) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   EXPECT_THAT(response.status().code(), Eq(StatusProto::OK));
@@ -8730,6 +9373,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8769,6 +9414,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DeletionTest) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
@@ -8834,6 +9481,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ShouldReturnInOneDocument) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1->set_namespace_("namespace1");
@@ -8897,6 +9546,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1_uri2 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1_uri2->set_namespace_("namespace1");
@@ -8950,6 +9601,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_namespace_filters("namespace1");
   suggestion_spec.add_namespace_filters("namespace2");
   NamespaceDocumentUriGroup* namespace1_uri1 =
@@ -8991,6 +9644,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_DocumentIdDoesntExist) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_namespace_filters("namespace3");
   NamespaceDocumentUriGroup* namespace3_uri3 =
       suggestion_spec.add_document_uri_filters();
@@ -9031,6 +9686,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1->set_namespace_("namespace1");
@@ -9062,6 +9719,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   NamespaceDocumentUriGroup* namespace1_uri1 =
       suggestion_spec.add_document_uri_filters();
   namespace1_uri1->set_namespace_("namespace1");
@@ -9079,12 +9738,12 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
@@ -9094,11 +9753,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -9133,6 +9792,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Email");
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -9150,7 +9811,7 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_SchemaTypeNotFound) {
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -9168,6 +9829,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_SchemaTypeNotFound) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Email");
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
@@ -9208,6 +9871,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Only search in subject.
   TypePropertyMask* mask = suggestion_spec.add_type_property_filters();
@@ -9259,6 +9924,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   // Only search in Person.name.
   suggestion_spec.add_schema_type_filters("Person");
@@ -9280,12 +9947,12 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
@@ -9295,11 +9962,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -9335,6 +10002,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Email");
   suggestion_spec.add_schema_type_filters("Message");
   TypePropertyMask* mask1 = suggestion_spec.add_type_property_filters();
@@ -9357,12 +10026,12 @@ TEST_F(IcingSearchEngineTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
               PropertyConfigBuilder()
                   .SetName("name")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("Email")
@@ -9372,11 +10041,11 @@ TEST_F(IcingSearchEngineTest,
                                             "Person",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
 
@@ -9394,6 +10063,8 @@ TEST_F(IcingSearchEngineTest,
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
   suggestion_spec.add_schema_type_filters("Message");
   TypePropertyMask* mask1 = suggestion_spec.add_type_property_filters();
   mask1->set_schema_type("Email");
@@ -9401,6 +10072,53 @@ TEST_F(IcingSearchEngineTest,
 
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   EXPECT_THAT(response.status().code(), Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_OrderByTermFrequency) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace1", "uri1")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(10)
+          .AddStringProperty(
+              "body", "termthree termthree termthree termtwo termtwo termone")
+          .Build();
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+
+  // Search in sender.name of Email but schema type is Message.
+  SuggestionSpecProto suggestion_spec;
+  suggestion_spec.set_prefix("t");
+  suggestion_spec.set_num_to_return(10);
+  suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
+      TermMatchType::EXACT_ONLY);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::TERM_FREQUENCY);
+
+  SuggestionResponse::Suggestion suggestionTermOne;
+  suggestionTermOne.set_query("termone");
+  SuggestionResponse::Suggestion suggestionTermTwo;
+  suggestionTermTwo.set_query("termtwo");
+  SuggestionResponse::Suggestion suggestionTermThree;
+  suggestionTermThree.set_query("termthree");
+
+  SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
+  ASSERT_THAT(response.status(), ProtoIsOk());
+  ASSERT_THAT(response.suggestions(),
+              ElementsAre(EqualsProto(suggestionTermThree),
+                          EqualsProto(suggestionTermTwo),
+                          EqualsProto(suggestionTermOne)));
 }
 
 TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
@@ -9443,6 +10161,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
     suggestion_spec.set_num_to_return(10);
     suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
         TermMatchType::PREFIX);
+    suggestion_spec.mutable_scoring_spec()->set_rank_by(
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
     SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
     ASSERT_THAT(response.status(), ProtoIsOk());
@@ -9476,6 +10196,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_ExpiredTest) {
     suggestion_spec.set_num_to_return(10);
     suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
         TermMatchType::PREFIX);
+    suggestion_spec.mutable_scoring_spec()->set_rank_by(
+        SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
     // Now namespace1 will return empty
     suggestion_spec.clear_namespace_filters();
@@ -9505,6 +10227,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_emptyPrefix) {
   suggestion_spec.set_num_to_return(10);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
@@ -9519,6 +10243,8 @@ TEST_F(IcingSearchEngineTest, SearchSuggestionsTest_NonPositiveNumToReturn) {
   suggestion_spec.set_num_to_return(0);
   suggestion_spec.mutable_scoring_spec()->set_scoring_match_type(
       TermMatchType::PREFIX);
+  suggestion_spec.mutable_scoring_spec()->set_rank_by(
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT);
 
   ASSERT_THAT(icing.SearchSuggestions(suggestion_spec).status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
@@ -9606,49 +10332,49 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFor64Sections) {
           .AddType(SchemaTypeConfigBuilder()
                        // Person has 4 sections.
                        .SetType("Person")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("firstName")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("lastName")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("emailAddress")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("phoneNumber")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("phoneNumber")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        // Email has 16 sections.
                        .SetType("Email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("date")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("time")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("date")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("time")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
                        .AddProperty(
                            PropertyConfigBuilder()
                                .SetName("sender")
@@ -9811,6 +10537,325 @@ TEST_F(IcingSearchEngineTest, IcingShouldWorkFor64Sections) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
+}
+
+TEST_F(IcingSearchEngineTest, JoinByQualifiedId) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("firstName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("lastName")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailAddress")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person1 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person1")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first1")
+          .AddStringProperty("lastName", "last1")
+          .AddStringProperty("emailAddress", "email1@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(1)
+          .Build();
+  DocumentProto person2 =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person2")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first2")
+          .AddStringProperty("lastName", "last2")
+          .AddStringProperty("emailAddress", "email2@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(2)
+          .Build();
+  DocumentProto person3 =
+      DocumentBuilder()
+          .SetKey(R"(pkg$db/name#space\\)", "person3")
+          .SetSchema("Person")
+          .AddStringProperty("firstName", "first3")
+          .AddStringProperty("lastName", "last3")
+          .AddStringProperty("emailAddress", "email3@gmail.com")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(3)
+          .Build();
+
+  DocumentProto email1 =
+      DocumentBuilder()
+          .SetKey("namespace", "email1")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject 1")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person1")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(3)
+          .Build();
+  DocumentProto email2 =
+      DocumentBuilder()
+          .SetKey("namespace", "email2")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject 2")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person2")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(2)
+          .Build();
+  DocumentProto email3 =
+      DocumentBuilder()
+          .SetKey("namespace", "email3")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "test subject 3")
+          .AddStringProperty("personQualifiedId",
+                             R"(pkg$db/name\#space\\\\#person3)")  // escaped
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .SetScore(1)
+          .Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email3).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_max_joined_child_count(100);
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  join_spec->set_aggregation_scoring_strategy(
+      JoinSpecProto::AggregationScoringStrategy::MAX);
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(1);
+
+  // Since we:
+  // - Use MAX for aggregation scoring strategy.
+  // - (Default) use DOCUMENT_SCORE to score child documents.
+  // - (Default) use DESC as the ranking order.
+  //
+  // person1 + email1 should have the highest aggregated score (3) and be
+  // returned first. person2 + email2 (aggregated score = 2) should be the
+  // second, and person3 + email3 (aggregated score = 1) should be the last.
+  SearchResultProto expected_result1;
+  expected_result1.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto1 =
+      expected_result1.mutable_results()->Add();
+  *result_proto1->mutable_document() = person1;
+  *result_proto1->mutable_joined_results()->Add()->mutable_document() = email1;
+
+  SearchResultProto expected_result2;
+  expected_result2.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto2 =
+      expected_result2.mutable_results()->Add();
+  *result_proto2->mutable_document() = person2;
+  *result_proto2->mutable_joined_results()->Add()->mutable_document() = email2;
+
+  SearchResultProto expected_result3;
+  expected_result3.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto3 =
+      expected_result3.mutable_results()->Add();
+  *result_proto3->mutable_document() = person3;
+  *result_proto3->mutable_joined_results()->Add()->mutable_document() = email3;
+
+  SearchResultProto result1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  uint64_t next_page_token = result1.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result1.set_next_page_token(next_page_token);
+  EXPECT_THAT(result1,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result1));
+
+  SearchResultProto result2 = icing.GetNextPage(next_page_token);
+  next_page_token = result2.next_page_token();
+  EXPECT_THAT(next_page_token, Ne(kInvalidNextPageToken));
+  expected_result2.set_next_page_token(next_page_token);
+  EXPECT_THAT(result2,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result2));
+
+  SearchResultProto result3 = icing.GetNextPage(next_page_token);
+  next_page_token = result3.next_page_token();
+  EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
+  EXPECT_THAT(result3,
+              EqualsSearchResultIgnoreStatsAndScores(expected_result3));
+}
+
+TEST_F(IcingSearchEngineTest, NumericFilterAdvancedQuerySucceeds) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("price")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("cost")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document_one = DocumentBuilder()
+                                   .SetKey("namespace", "1")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 10)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two = DocumentBuilder()
+                                   .SetKey("namespace", "2")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 25)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  DocumentProto document_three = DocumentBuilder()
+                                     .SetKey("namespace", "3")
+                                     .SetSchema("transaction")
+                                     .SetCreationTimestampMs(1)
+                                     .AddInt64Property("cost", 2)
+                                     .Build();
+  ASSERT_THAT(icing.Put(document_three).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("price < 20");
+  search_spec.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto results =
+      icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_one));
+
+  search_spec.set_query("price == 25");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_two));
+
+  search_spec.set_query("cost > 2");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.results(), IsEmpty());
+
+  search_spec.set_query("cost >= 2");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_three));
+
+  search_spec.set_query("price <= 25");
+  results = icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                         ResultSpecProto::default_instance());
+  ASSERT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(document_two));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(document_one));
+}
+
+TEST_F(IcingSearchEngineTest, NumericFilterOldQueryFails) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("price")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("cost")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document_one = DocumentBuilder()
+                                   .SetKey("namespace", "1")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 10)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two = DocumentBuilder()
+                                   .SetKey("namespace", "2")
+                                   .SetSchema("transaction")
+                                   .SetCreationTimestampMs(1)
+                                   .AddInt64Property("price", 25)
+                                   .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  DocumentProto document_three = DocumentBuilder()
+                                     .SetKey("namespace", "3")
+                                     .SetSchema("transaction")
+                                     .SetCreationTimestampMs(1)
+                                     .AddInt64Property("cost", 2)
+                                     .Build();
+  ASSERT_THAT(icing.Put(document_three).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("price < 20");
+  search_spec.set_search_type(SearchSpecProto::SearchType::ICING_RAW_QUERY);
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+
+  SearchResultProto results =
+      icing.Search(search_spec, ScoringSpecProto::default_instance(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 }  // namespace

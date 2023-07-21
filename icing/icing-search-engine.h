@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -26,6 +27,7 @@
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/index.h"
+#include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
@@ -41,8 +43,10 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/usage.pb.h"
+#include "icing/query/query-terms.h"
 #include "icing/result/result-state-manager.h"
 #include "icing/schema/schema-store.h"
+#include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
@@ -464,8 +468,13 @@ class IcingSearchEngine {
 
   std::unique_ptr<const Normalizer> normalizer_ ICING_GUARDED_BY(mutex_);
 
-  // Storage for all hits of content from the document store.
+  // Storage for all hits of string contents from the document store.
   std::unique_ptr<Index> index_ ICING_GUARDED_BY(mutex_);
+
+  // Storage for all hits of numeric contents from the document store.
+  // TODO(b/249829533): integrate more functions with integer_index_.
+  std::unique_ptr<NumericIndex<int64_t>> integer_index_
+      ICING_GUARDED_BY(mutex_);
 
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
@@ -550,6 +559,37 @@ class IcingSearchEngine {
   //   INTERNAL on I/O error
   libtextclassifier3::Status InitializeIndex(
       InitializeStatsProto* initialize_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Processes query and scores according to the specs. It is a helper function
+  // (called by Search) to process and score normal query and the nested child
+  // query for join search.
+  //
+  // Returns a QueryScoringResults
+  //   OK on success with a vector of ScoredDocumentHits,
+  //      SectionRestrictQueryTermsMap, and other stats fields for logging.
+  //   Any other errors when processing the query or scoring
+  struct QueryScoringResults {
+    libtextclassifier3::Status status;
+    SectionRestrictQueryTermsMap query_terms;
+    std::vector<ScoredDocumentHit> scored_document_hits;
+    int64_t parse_query_latency_ms;
+    int64_t scoring_latency_ms;
+
+    explicit QueryScoringResults(
+        libtextclassifier3::Status status_in,
+        SectionRestrictQueryTermsMap&& query_terms_in,
+        std::vector<ScoredDocumentHit>&& scored_document_hits_in,
+        int64_t parse_query_latency_ms_in, int64_t scoring_latency_ms_in)
+        : status(std::move(status_in)),
+          query_terms(std::move(query_terms_in)),
+          scored_document_hits(std::move(scored_document_hits_in)),
+          parse_query_latency_ms(parse_query_latency_ms_in),
+          scoring_latency_ms(scoring_latency_ms_in) {}
+  };
+  QueryScoringResults ProcessQueryAndScore(const SearchSpecProto& search_spec,
+                                           const ScoringSpecProto& scoring_spec,
+                                           const ResultSpecProto& result_spec)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.

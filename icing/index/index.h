@@ -33,6 +33,7 @@
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -197,7 +198,8 @@ class Index {
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
       const std::string& prefix, int num_to_return,
-      TermMatchType::Code term_match_type,
+      TermMatchType::Code scoring_match_type,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code rank_by,
       const SuggestionResultChecker* suggestion_result_checker);
 
   // A class that can be used to add hits to the index.
@@ -287,6 +289,7 @@ class Index {
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
       const std::string& prefix,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code rank_by,
       const SuggestionResultChecker* suggestion_result_checker);
 
   std::unique_ptr<LiteIndex> lite_index_;

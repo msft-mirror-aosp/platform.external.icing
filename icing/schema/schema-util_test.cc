@@ -38,33 +38,6 @@ constexpr char kEmailType[] = "EmailMessage";
 constexpr char kMessageType[] = "Text";
 constexpr char kPersonType[] = "Person";
 
-constexpr PropertyConfigProto::DataType::Code TYPE_DOCUMENT =
-    PropertyConfigProto::DataType::DOCUMENT;
-constexpr PropertyConfigProto::DataType::Code TYPE_STRING =
-    PropertyConfigProto::DataType::STRING;
-constexpr PropertyConfigProto::DataType::Code TYPE_INT =
-    PropertyConfigProto::DataType::INT64;
-constexpr PropertyConfigProto::DataType::Code TYPE_DOUBLE =
-    PropertyConfigProto::DataType::DOUBLE;
-
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_UNKNOWN =
-    PropertyConfigProto::Cardinality::UNKNOWN;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REQUIRED =
-    PropertyConfigProto::Cardinality::REQUIRED;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_REPEATED =
-    PropertyConfigProto::Cardinality::REPEATED;
-
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_NONE =
-    StringIndexingConfig::TokenizerType::NONE;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
-constexpr TermMatchType::Code MATCH_UNKNOWN = TermMatchType::UNKNOWN;
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr TermMatchType::Code MATCH_PREFIX = TermMatchType::PREFIX;
-
 TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
   // Create a schema with the following dependencies:
   //         C
@@ -125,10 +98,11 @@ TEST(SchemaUtilTest, DependencyGraphAlphabeticalOrder) {
   SchemaTypeConfigProto type_f =
       SchemaTypeConfigBuilder()
           .SetType("F")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("text")
-                           .SetCardinality(CARDINALITY_OPTIONAL)
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
   // Provide these in alphabetical (also parent-child) order: A, B, C, D, E, F
@@ -211,10 +185,11 @@ TEST(SchemaUtilTest, DependencyGraphReverseAlphabeticalOrder) {
   SchemaTypeConfigProto type_f =
       SchemaTypeConfigBuilder()
           .SetType("F")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("text")
-                           .SetCardinality(CARDINALITY_OPTIONAL)
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
   // Provide these in reverse alphabetical (also child-parent) order:
@@ -298,10 +273,11 @@ TEST(SchemaUtilTest, DependencyGraphMixedOrder) {
   SchemaTypeConfigProto type_f =
       SchemaTypeConfigBuilder()
           .SetType("F")
-          .AddProperty(PropertyConfigBuilder()
-                           .SetName("text")
-                           .SetCardinality(CARDINALITY_OPTIONAL)
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("text")
+                  .SetCardinality(CARDINALITY_OPTIONAL)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
   // Provide these in a random order: C, E, F, A, B, D
@@ -760,7 +736,7 @@ TEST(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
                                         .SetCardinality(CARDINALITY_REQUIRED))
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("OldOptional")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -792,7 +768,7 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
                        .SetType(kEmailType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("Property")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
 
@@ -803,7 +779,7 @@ TEST(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
                        .SetType(kEmailType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("Property")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
@@ -834,7 +810,7 @@ TEST(SchemaUtilTest, DifferentDataTypeIsIncompatible) {
                        .SetType(kEmailType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("Property")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
 
@@ -865,13 +841,13 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
                        .SetType(kPersonType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("prop")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kMessageType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("prop")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
@@ -890,13 +866,13 @@ TEST(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
                        .SetType(kPersonType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("prop")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kMessageType)
                        .AddProperty(PropertyConfigBuilder()
                                         .SetName("prop")
-                                        .SetDataType(TYPE_INT)
+                                        .SetDataType(TYPE_INT64)
                                         .SetCardinality(CARDINALITY_REPEATED)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
@@ -926,11 +902,11 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   // Configure new schema
@@ -938,11 +914,11 @@ TEST(SchemaUtilTest, ChangingIndexedPropertiesMakesIndexIncompatible) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_UNKNOWN, TOKENIZER_NONE)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
@@ -968,11 +944,11 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   // Configure new schema
@@ -980,16 +956,16 @@ TEST(SchemaUtilTest, AddingNewIndexedPropertyMakesIndexIncompatible) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("NewIndexedProperty")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewIndexedProperty")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
@@ -1007,29 +983,29 @@ TEST(SchemaUtilTest, AddingTypeIsCompatible) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaProto new_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
@@ -1048,29 +1024,29 @@ TEST(SchemaUtilTest, DeletingTypeIsNoted) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kPersonType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaProto new_schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
@@ -1090,11 +1066,11 @@ TEST(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
                                         .SetName("Property1")
                                         .SetDataType(TYPE_STRING)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property2")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_REQUIRED)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
   // Remove Property2 and make Property1 indexed now. Removing Property2 should
@@ -1103,11 +1079,11 @@ TEST(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType(kEmailType)
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("Property1")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
@@ -1127,7 +1103,7 @@ TEST(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
           .SetType(kEmailType)
           .AddProperty(PropertyConfigBuilder()
                            .SetName("subject")
-                           .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                            .SetCardinality(CARDINALITY_OPTIONAL))
           .Build();
   SchemaProto no_nested_index_schema =
@@ -1180,7 +1156,7 @@ TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
               PropertyConfigBuilder()
                   .SetName("Foo")
-                  .SetDataTypeString(MATCH_UNKNOWN, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -1193,7 +1169,7 @@ TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTermMatchType) {
                .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
                    PropertyConfigBuilder()
                        .SetName("Foo")
-                       .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                       .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
@@ -1205,7 +1181,7 @@ TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
               PropertyConfigBuilder()
                   .SetName("Foo")
-                  .SetDataTypeString(MATCH_EXACT, TOKENIZER_NONE)
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_NONE)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
@@ -1218,7 +1194,7 @@ TEST(SchemaUtilTest, ValidateStringIndexingConfigShouldHaveTokenizer) {
                .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
                    PropertyConfigBuilder()
                        .SetName("Foo")
-                       .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
+                       .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
                        .SetCardinality(CARDINALITY_REQUIRED)))
                .Build();
   EXPECT_THAT(SchemaUtil::Validate(schema), IsOk());
@@ -1278,11 +1254,11 @@ TEST(SchemaUtilTest, InvalidSelfReferenceEvenWithOtherProperties) {
                                             "OwnSchema",
                                             /*index_nested_properties=*/true)
                                         .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("SomeString")
-                               .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("SomeString")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   EXPECT_THAT(SchemaUtil::Validate(schema),

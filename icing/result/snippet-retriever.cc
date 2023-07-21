@@ -88,6 +88,8 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
       [[fallthrough]];
     case Token::Type::RFC822_LOCAL_ADDRESS:
       [[fallthrough]];
+    case Token::Type::RFC822_HOST_ADDRESS:
+      [[fallthrough]];
     case Token::Type::RFC822_ADDRESS:
       [[fallthrough]];
     case Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL:
@@ -95,6 +97,28 @@ std::string NormalizeToken(const Normalizer& normalizer, const Token& token) {
     case Token::Type::RFC822_ADDRESS_COMPONENT_HOST:
       [[fallthrough]];
     case Token::Type::RFC822_TOKEN:
+      [[fallthrough]];
+    case Token::Type::URL_SCHEME:
+      [[fallthrough]];
+    case Token::Type::URL_USERNAME:
+      [[fallthrough]];
+    case Token::Type::URL_PASSWORD:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_COMMON_PART:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_SIGNIFICANT_PART:
+      [[fallthrough]];
+    case Token::Type::URL_PORT:
+      [[fallthrough]];
+    case Token::Type::URL_PATH_PART:
+      [[fallthrough]];
+    case Token::Type::URL_QUERY:
+      [[fallthrough]];
+    case Token::Type::URL_REF:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX_INNERMOST:
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.NormalizeTerm(token.text);
@@ -153,6 +177,8 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
       [[fallthrough]];
     case Token::Type::RFC822_LOCAL_ADDRESS:
       [[fallthrough]];
+    case Token::Type::RFC822_HOST_ADDRESS:
+      [[fallthrough]];
     case Token::Type::RFC822_ADDRESS:
       [[fallthrough]];
     case Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL:
@@ -160,6 +186,28 @@ CharacterIterator FindMatchEnd(const Normalizer& normalizer, const Token& token,
     case Token::Type::RFC822_ADDRESS_COMPONENT_HOST:
       [[fallthrough]];
     case Token::Type::RFC822_TOKEN:
+      [[fallthrough]];
+    case Token::Type::URL_SCHEME:
+      [[fallthrough]];
+    case Token::Type::URL_USERNAME:
+      [[fallthrough]];
+    case Token::Type::URL_PASSWORD:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_COMMON_PART:
+      [[fallthrough]];
+    case Token::Type::URL_HOST_SIGNIFICANT_PART:
+      [[fallthrough]];
+    case Token::Type::URL_PORT:
+      [[fallthrough]];
+    case Token::Type::URL_QUERY:
+      [[fallthrough]];
+    case Token::Type::URL_PATH_PART:
+      [[fallthrough]];
+    case Token::Type::URL_REF:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX:
+      [[fallthrough]];
+    case Token::Type::URL_SUFFIX_INNERMOST:
       [[fallthrough]];
     case Token::Type::REGULAR:
       return normalizer.FindNormalizedMatchEndPosition(token.text,
@@ -288,7 +336,9 @@ libtextclassifier3::StatusOr<CharacterIterator> DetermineWindowStart(
 CharacterIterator IncludeTrailingPunctuation(
     std::string_view value, CharacterIterator window_end_exclusive,
     int window_end_max_exclusive_utf32) {
-  while (window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
+  size_t max_search_index = value.length() - 1;
+  while (window_end_exclusive.utf8_index() <= max_search_index &&
+         window_end_exclusive.utf32_index() < window_end_max_exclusive_utf32) {
     int char_len = 0;
     if (!i18n_utils::IsPunctuationAt(value, window_end_exclusive.utf8_index(),
                                      &char_len)) {

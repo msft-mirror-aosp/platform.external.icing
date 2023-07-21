@@ -15,12 +15,14 @@
 #ifndef ICING_QUERY_QUERY_PROCESSOR_H_
 #define ICING_QUERY_QUERY_PROCESSOR_H_
 
+#include <cstdint>
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/numeric-index.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
@@ -45,9 +47,9 @@ class QueryProcessor {
   //   An QueryProcessor on success
   //   FAILED_PRECONDITION if any of the pointers is null.
   static libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>> Create(
-      Index* index, const LanguageSegmenter* language_segmenter,
-      const Normalizer* normalizer, const DocumentStore* document_store,
-      const SchemaStore* schema_store);
+      Index* index, const NumericIndex<int64_t>* numeric_index,
+      const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
+      const DocumentStore* document_store, const SchemaStore* schema_store);
 
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
@@ -69,10 +71,21 @@ class QueryProcessor {
 
  private:
   explicit QueryProcessor(Index* index,
+                          const NumericIndex<int64_t>* numeric_index,
                           const LanguageSegmenter* language_segmenter,
                           const Normalizer* normalizer,
                           const DocumentStore* document_store,
                           const SchemaStore* schema_store);
+
+  // Parse the query into a one DocHitInfoIterator that represents the root of a
+  // query tree in our new Advanced Query Language.
+  //
+  // Returns:
+  //   On success,
+  //     - One iterator that represents the entire query
+  //   INVALID_ARGUMENT if query syntax is incorrect and cannot be tokenized
+  libtextclassifier3::StatusOr<QueryResults> ParseAdvancedQuery(
+      const SearchSpecProto& search_spec) const;
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.
@@ -90,6 +103,7 @@ class QueryProcessor {
   // Not const because we could modify/sort the hit buffer in the lite index at
   // query time.
   Index& index_;
+  const NumericIndex<int64_t>& numeric_index_;
   const LanguageSegmenter& language_segmenter_;
   const Normalizer& normalizer_;
   const DocumentStore& document_store_;

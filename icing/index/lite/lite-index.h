@@ -39,6 +39,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
@@ -146,20 +147,23 @@ class LiteIndex {
   // is nullptr.
   //
   // Only those hits which belongs to the given namespaces will be counted and
-  // appended. A nullptr namespace checker  will disable this check.
+  // appended. A nullptr namespace checker will disable this check.
   //
-  // Returns the number of hits that would be added to hits_out.
+  // Returns the score of hits that would be added to hits_out according the
+  // given score_by.
   int AppendHits(
       uint32_t term_id, SectionIdMask section_id_mask,
       bool only_from_prefix_sections,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
       const SuggestionResultChecker* suggestion_result_checker,
       std::vector<DocHitInfo>* hits_out,
       std::vector<Hit::TermFrequencyArray>* term_frequency_out = nullptr);
 
   // Returns the hit count of the term.
   // Only those hits which belongs to the given namespaces will be counted.
-  libtextclassifier3::StatusOr<int> CountHits(
+  libtextclassifier3::StatusOr<int> ScoreHits(
       uint32_t term_id,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
       const SuggestionResultChecker* suggestion_result_checker);
 
   // Check if buffer has reached its capacity.
