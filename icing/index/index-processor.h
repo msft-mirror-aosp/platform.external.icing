@@ -20,12 +20,9 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/index/index.h"
-#include "icing/index/numeric/numeric-index.h"
-#include "icing/index/section-indexing-handler.h"
+#include "icing/index/data-indexing-handler.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
-#include "icing/transform/normalizer.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
@@ -33,16 +30,12 @@ namespace lib {
 
 class IndexProcessor {
  public:
-  // Factory function to create an IndexProcessor which does not take ownership
-  // of any input components, and all pointers must refer to valid objects that
-  // outlive the created IndexProcessor instance.
-  //
-  // Returns:
-  //   An IndexProcessor on success
-  //   FAILED_PRECONDITION if any of the pointers is null.
-  static libtextclassifier3::StatusOr<std::unique_ptr<IndexProcessor>> Create(
-      const Normalizer* normalizer, Index* index,
-      NumericIndex<int64_t>* integer_index_, const Clock* clock);
+  explicit IndexProcessor(std::vector<std::unique_ptr<DataIndexingHandler>>&&
+                              data_indexing_handlers,
+                          const Clock* clock, bool recovery_mode = false)
+      : data_indexing_handlers_(std::move(data_indexing_handlers)),
+        clock_(*clock),
+        recovery_mode_(recovery_mode) {}
 
   // Add tokenized document to the index, associated with document_id. If the
   // number of tokens in the document exceeds max_tokens_per_document, then only
@@ -57,21 +50,15 @@ class IndexProcessor {
   //
   // Returns:
   //   - OK on success.
-  //   - Any SectionIndexingHandler errors.
+  //   - Any DataIndexingHandler errors.
   libtextclassifier3::Status IndexDocument(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
       PutDocumentStatsProto* put_document_stats = nullptr);
 
  private:
-  explicit IndexProcessor(std::vector<std::unique_ptr<SectionIndexingHandler>>&&
-                              section_indexing_handlers,
-                          const Clock* clock)
-      : section_indexing_handlers_(std::move(section_indexing_handlers)),
-        clock_(*clock) {}
-
-  std::vector<std::unique_ptr<SectionIndexingHandler>>
-      section_indexing_handlers_;
-  const Clock& clock_;
+  std::vector<std::unique_ptr<DataIndexingHandler>> data_indexing_handlers_;
+  const Clock& clock_;  // Does not own.
+  bool recovery_mode_;
 };
 
 }  // namespace lib

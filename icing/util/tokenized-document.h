@@ -21,6 +21,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -62,19 +63,27 @@ class TokenizedDocument {
     return integer_sections_;
   }
 
+  const std::vector<JoinableProperty<std::string_view>>&
+  qualified_id_join_properties() const {
+    return joinable_property_group_.qualified_id_properties;
+  }
+
  private:
   // Use TokenizedDocument::Create() to instantiate.
   explicit TokenizedDocument(
       DocumentProto&& document,
       std::vector<TokenizedSection>&& tokenized_string_sections,
-      std::vector<Section<int64_t>>&& integer_sections)
+      std::vector<Section<int64_t>>&& integer_sections,
+      JoinablePropertyGroup&& joinable_property_group)
       : document_(std::move(document)),
         tokenized_string_sections_(std::move(tokenized_string_sections)),
-        integer_sections_(std::move(integer_sections)) {}
+        integer_sections_(std::move(integer_sections)),
+        joinable_property_group_(std::move(joinable_property_group)) {}
 
   DocumentProto document_;
   std::vector<TokenizedSection> tokenized_string_sections_;
   std::vector<Section<int64_t>> integer_sections_;
+  JoinablePropertyGroup joinable_property_group_;
 };
 
 }  // namespace lib
