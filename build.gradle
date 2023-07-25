@@ -14,27 +14,13 @@
  * limitations under the License.
  */
 
-import androidx.build.SupportConfig
-
-buildscript {
-    dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.13')
-    }
-}
-
 plugins {
+    id('AndroidXPlugin')
     id('com.android.library')
     id('com.google.protobuf')
 }
 
 android {
-    buildToolsVersion SupportConfig.buildToolsVersion(project)
-    compileSdkVersion SupportConfig.COMPILE_SDK_VERSION
-    defaultConfig {
-        minSdkVersion SupportConfig.DEFAULT_MIN_SDK_VERSION
-        targetSdkVersion SupportConfig.TARGET_SDK_VERSION
-        testInstrumentationRunner SupportConfig.INSTRUMENTATION_RUNNER
-    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -110,4 +96,8 @@ android.libraryVariants.all { variant ->
 
     def exportConfiguration = configurations.register("export${suffix}")
     artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
+}
+
+androidx {
+    mavenVersion = LibraryVersions.APPSEARCH
 }
