@@ -27,6 +27,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/util/crc32.h"
 #include "icing/util/status-macros.h"
 
@@ -167,6 +168,8 @@ PersistentHashMap::~PersistentHashMap() {
 
 libtextclassifier3::Status PersistentHashMap::Put(std::string_view key,
                                                   const void* value) {
+  SetDirty();
+
   ICING_RETURN_IF_ERROR(ValidateKey(key));
   ICING_ASSIGN_OR_RETURN(
       int32_t bucket_idx,
@@ -207,6 +210,7 @@ libtextclassifier3::Status PersistentHashMap::GetOrPut(std::string_view key,
                          FindEntryIndexByKey(bucket_idx, key));
   if (idx_pair.target_entry_index == Entry::kInvalidIndex) {
     // If not found, then insert new key value pair.
+    SetDirty();
     return Insert(bucket_idx, key, next_value);
   }
 
@@ -232,6 +236,8 @@ libtextclassifier3::Status PersistentHashMap::Get(std::string_view key,
 }
 
 libtextclassifier3::Status PersistentHashMap::Delete(std::string_view key) {
+  SetDirty();
+
   ICING_RETURN_IF_ERROR(ValidateKey(key));
   ICING_ASSIGN_OR_RETURN(
       int32_t bucket_idx,
@@ -514,6 +520,7 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
                   << " to "
                   << persistent_hash_map->options_.max_load_factor_percent;
 
+    persistent_hash_map->SetInfoDirty();
     persistent_hash_map->info().max_load_factor_percent =
         persistent_hash_map->options_.max_load_factor_percent;
     ICING_RETURN_IF_ERROR(
@@ -525,26 +532,50 @@ PersistentHashMap::InitializeExistingFiles(const Filesystem& filesystem,
   return persistent_hash_map;
 }
 
-libtextclassifier3::Status PersistentHashMap::PersistStoragesToDisk() {
+libtextclassifier3::Status PersistentHashMap::PersistStoragesToDisk(
+    bool force) {
+  if (!force && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   ICING_RETURN_IF_ERROR(bucket_storage_->PersistToDisk());
   ICING_RETURN_IF_ERROR(entry_storage_->PersistToDisk());
   ICING_RETURN_IF_ERROR(kv_storage_->PersistToDisk());
+  is_storage_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status PersistentHashMap::PersistMetadataToDisk() {
+libtextclassifier3::Status PersistentHashMap::PersistMetadataToDisk(
+    bool force) {
+  // We can skip persisting metadata to disk only if both info and storage are
+  // clean.
+  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   // Changes should have been applied to the underlying file when using
   // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
   // extra safety step to ensure they are written out.
-  return metadata_mmapped_file_->PersistToDisk();
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file_->PersistToDisk());
+  is_info_dirty_ = false;
+  return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeInfoChecksum() {
+libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeInfoChecksum(
+    bool force) {
+  if (!force && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+
   return info().ComputeChecksum();
 }
 
-libtextclassifier3::StatusOr<Crc32>
-PersistentHashMap::ComputeStoragesChecksum() {
+libtextclassifier3::StatusOr<Crc32> PersistentHashMap::ComputeStoragesChecksum(
+    bool force) {
+  if (!force && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
   // Compute crcs
   ICING_ASSIGN_OR_RETURN(Crc32 bucket_storage_crc,
                          bucket_storage_->ComputeChecksum());
@@ -602,6 +633,8 @@ libtextclassifier3::Status PersistentHashMap::CopyEntryValue(
 libtextclassifier3::Status PersistentHashMap::Insert(int32_t bucket_idx,
                                                      std::string_view key,
                                                      const void* value) {
+  SetDirty();
+
   // If entry_storage_->num_elements() + 1 exceeds options_.max_num_entries,
   // then return error.
   // We compute max_file_size of 3 storages by options_.max_num_entries. Since
@@ -654,6 +687,8 @@ libtextclassifier3::Status PersistentHashMap::RehashIfNecessary(
   if (!force_rehash && new_num_bucket == bucket_storage_->num_elements()) {
     return libtextclassifier3::Status::OK;
   }
+
+  SetDirty();
 
   // Resize and reset buckets.
   ICING_RETURN_IF_ERROR(
