@@ -40,7 +40,6 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/filesystem.h"
@@ -53,6 +52,7 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
+#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 
 namespace icing {
 namespace lib {
@@ -575,8 +575,8 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
     return absl_ports::NotFoundError("The proto data has been erased.");
   }
 
-  google::protobuf::io::ArrayInputStream proto_stream(
-      mmapped_file.mutable_region(), stored_size);
+  google::protobuf::io::ArrayInputStream proto_stream(mmapped_file.mutable_region(),
+                                            stored_size);
 
   // Deserialize proto
   ProtoT proto;
