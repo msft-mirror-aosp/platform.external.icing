@@ -37,6 +37,7 @@
 #include "icing/join/join-processor.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/persist.pb.h"
 #include "icing/proto/reset.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
@@ -1213,6 +1214,58 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_JoinQueryQualifiedId);
+
+void BM_PersistToDisk(benchmark::State& state) {
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+  DestructibleDirectory ddir(filesystem, test_dir);
+
+  // Create the schema.
+  std::default_random_engine random;
+  int num_types = kAvgNumNamespaces * kAvgNumTypes;
+  ExactStringPropertyGenerator property_generator;
+  SchemaGenerator<ExactStringPropertyGenerator> schema_generator(
+      /*num_properties=*/state.range(1), &property_generator);
+  SchemaProto schema = schema_generator.GenerateSchema(num_types);
+  EvenDistributionTypeSelector type_selector(schema);
+
+  // Generate documents.
+  int num_docs = state.range(0);
+  std::vector<std::string> language = CreateLanguages(kLanguageSize, &random);
+  const std::vector<DocumentProto> random_docs =
+      GenerateRandomDocuments(&type_selector, num_docs, language);
+
+  for (auto _ : state) {
+    state.PauseTiming();
+    // Create the index.
+    IcingSearchEngineOptions options;
+    options.set_base_dir(test_dir);
+    options.set_index_merge_size(kIcingFullIndexSize);
+    options.set_use_persistent_hash_map(true);
+    std::unique_ptr<IcingSearchEngine> icing =
+        std::make_unique<IcingSearchEngine>(options);
+
+    ASSERT_THAT(icing->Reset().status(), ProtoIsOk());
+    ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+    for (const DocumentProto& doc : random_docs) {
+      ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+    }
+
+    state.ResumeTiming();
+
+    ASSERT_THAT(icing->PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+    state.PauseTiming();
+    icing.reset();
+    ASSERT_TRUE(filesystem.DeleteDirectoryRecursively(test_dir.c_str()));
+    state.ResumeTiming();
+  }
+}
+BENCHMARK(BM_PersistToDisk)
+    // Arguments: num_indexed_documents, num_sections
+    ->ArgPair(1024, 5);
 
 }  // namespace
 

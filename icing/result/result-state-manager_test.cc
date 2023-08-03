@@ -107,13 +107,14 @@ class ResultStateManagerTest : public testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
-        DocumentStore::Create(&filesystem_, test_dir_, clock_.get(),
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDeflateCompressionLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(result.document_store);
 
     ICING_ASSERT_OK_AND_ASSIGN(
