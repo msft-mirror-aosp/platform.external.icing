@@ -18,6 +18,9 @@
 #include <algorithm>
 #include <numeric>
 #include <string>
+#include <string_view>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -44,7 +47,7 @@ class SchemaPropertyIterator {
       : type_config_map_(type_config_map) {
     levels_.push_back(LevelInfo(base_schema_type_config,
                                 /*base_property_path=*/"",
-                                /*is_nested_indexable=*/true));
+                                /*all_nested_properties_indexable=*/true));
     parent_type_config_names_.insert(base_schema_type_config.schema_type());
   }
 
@@ -62,11 +65,31 @@ class SchemaPropertyIterator {
     return levels_.back().GetCurrentPropertyPath();
   }
 
-  // Gets if the current property is nested indexable.
+  // Returns whether the current property is indexable. This would be true if
+  // either the current level is nested indexable, or if the current property is
+  // declared indexable in the indexable_nested_properties_list of the top-level
+  // schema type.
   //
   // REQUIRES: The preceding call for Advance() is OK.
-  bool GetCurrentNestedIndexable() const {
-    return levels_.back().GetCurrentNestedIndexable();
+  bool GetCurrentPropertyIndexable() const {
+    return levels_.back().GetCurrentPropertyIndexable();
+  }
+
+  // Returns whether the current schema level is nested indexable. If this is
+  // true, all properties in the level are indexed.
+  //
+  // REQUIRES: The preceding call for Advance() is OK.
+  bool GetLevelNestedIndexable() const {
+    return levels_.back().GetLevelNestedIndexable();
+  }
+
+  // The set of indexable nested properties that are defined in the
+  // indexable_nested_properties_list but are not found in the schema
+  // definition. These properties still consume sectionIds, but will not be
+  // indexed.
+  const std::vector<std::string>& unknown_indexable_nested_property_paths()
+      const {
+    return unknown_indexable_nested_property_paths_;
   }
 
   // Advances to the next leaf property.
@@ -87,12 +110,14 @@ class SchemaPropertyIterator {
   class LevelInfo {
    public:
     explicit LevelInfo(const SchemaTypeConfigProto& schema_type_config,
-                       std::string base_property_path, bool is_nested_indexable)
+                       std::string base_property_path,
+                       bool all_nested_properties_indexable)
         : schema_type_config_(schema_type_config),
           base_property_path_(std::move(base_property_path)),
           sorted_property_indices_(schema_type_config.properties_size()),
           current_vec_idx_(-1),
-          is_nested_indexable_(is_nested_indexable) {
+          sorted_property_indexable_(schema_type_config.properties_size()),
+          all_nested_properties_indexable_(all_nested_properties_indexable) {
       // Index sort property by lexicographical order.
       std::iota(sorted_property_indices_.begin(),
                 sorted_property_indices_.end(),
@@ -119,7 +144,17 @@ class SchemaPropertyIterator {
           base_property_path_, GetCurrentPropertyConfig().property_name());
     }
 
-    bool GetCurrentNestedIndexable() const { return is_nested_indexable_; }
+    bool GetLevelNestedIndexable() const {
+      return all_nested_properties_indexable_;
+    }
+
+    bool GetCurrentPropertyIndexable() const {
+      return sorted_property_indexable_[current_vec_idx_];
+    }
+
+    void SetCurrentPropertyIndexable(bool indexable) {
+      sorted_property_indexable_[current_vec_idx_] = indexable;
+    }
 
     std::string_view GetSchemaTypeName() const {
       return schema_type_config_.schema_type();
@@ -137,12 +172,20 @@ class SchemaPropertyIterator {
     std::vector<int> sorted_property_indices_;
     int current_vec_idx_;
 
-    // Indicates if the current level is nested indexable. Document type
-    // property has index_nested_properties flag indicating whether properties
-    // under this level should be indexed or not. If any of parent document type
-    // property sets its flag false, then all child level properties should not
-    // be indexed.
-    bool is_nested_indexable_;
+    // Vector indicating whether each property in the current level is
+    // indexable. We can declare different indexable settings for properties in
+    // the same level using indexable_nested_properties_list.
+    //
+    // Element indices in this vector correspond to property indices in the
+    // sorted order.
+    std::vector<bool> sorted_property_indexable_;
+
+    // Indicates if all properties in the current level is nested indexable.
+    // This would be true for a level if the document declares
+    // index_nested_properties=true. If any of parent document type
+    // property sets its flag false, then this would be false for all its child
+    // properties.
+    bool all_nested_properties_indexable_;
   };
 
   const SchemaUtil::TypeConfigMap& type_config_map_;  // Does not own
@@ -154,7 +197,23 @@ class SchemaPropertyIterator {
 
   // Maintaining all traversed parent schema type config names of the current
   // stack (levels_). It is used to detect nested schema cycle dependency.
-  std::unordered_set<std::string_view> parent_type_config_names_;
+  std::unordered_multiset<std::string_view> parent_type_config_names_;
+
+  // Sorted list of indexable nested properties for the top-level schema.
+  std::vector<std::string> sorted_top_level_indexable_nested_properties_;
+
+  // Current iteration index in the sorted_top_level_indexable_nested_properties
+  // list.
+  int current_top_level_indexable_nested_properties_idx_ = 0;
+
+  // Vector of indexable nested properties defined in the
+  // indexable_nested_properties_list, but not found in the schema definition.
+  // These properties still consume sectionIds, but will not be indexed.
+  // Properties are inserted into this vector in sorted order.
+  //
+  // TODO(b/289152024): Implement support for indexing these properties if they
+  // are in the child types of polymorphic nested properties.
+  std::vector<std::string> unknown_indexable_nested_property_paths_;
 };
 
 }  // namespace lib
