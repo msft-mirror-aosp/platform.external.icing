@@ -885,6 +885,184 @@ TEST_F(IcingSearchEngineSchemaTest,
                                   expected_search_result_proto));
 }
 
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    SetSchemaNewIndexedDocumentPropertyTriggersIndexRestorationAndReturnsOk) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Create a schema with a nested document type:
+  //
+  // Section id assignment for 'Person':
+  // - "age": integer type, indexed. Section id = 0
+  // - "name": string type, indexed. Section id = 1.
+  // - "worksFor.name": string type, (nested) indexed. Section id = 2.
+  SchemaProto schema_one =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("worksFor")
+                                        .SetDataTypeDocument(
+                                            "Organization",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema_one);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_new_schema_types()->Add("Organization");
+  expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  DocumentProto personDocument =
+      DocumentBuilder()
+          .SetKey("namespace", "person/2")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("name", "John")
+          .AddInt64Property("age", 20)
+          .AddDocumentProperty("worksFor",
+                               DocumentBuilder()
+                                   .SetKey("namespace", "org/1")
+                                   .SetSchema("Organization")
+                                   .AddStringProperty("name", "Google")
+                                   .Build())
+          .Build();
+  EXPECT_THAT(icing.Put(personDocument).status(), ProtoIsOk());
+
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      personDocument;
+
+  SearchResultProto empty_result;
+  empty_result.mutable_status()->set_code(StatusProto::OK);
+
+  // Verify term search
+  SearchSpecProto search_spec1;
+  search_spec1.set_query("worksFor.name:Google");
+  search_spec1.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec1, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Verify numeric (integer) search
+  SearchSpecProto search_spec2;
+  search_spec2.set_query("age == 20");
+  search_spec2.set_search_type(
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY);
+  search_spec2.add_enabled_features(std::string(kNumericSearchFeature));
+
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // Change the schema to add another nested document property to 'Person'
+  //
+  // New section id assignment for 'Person':
+  // - "age": integer type, indexed. Section id = 0
+  // - "almaMater.name", string type, indexed. Section id = 1
+  // - "name": string type, indexed. Section id = 2
+  // - "worksFor.name": string type, (nested) indexed. Section id = 3
+  SchemaProto schema_two =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("worksFor")
+                                        .SetDataTypeDocument(
+                                            "Organization",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("almaMater")
+                                        .SetDataTypeDocument(
+                                            "Organization",
+                                            /*index_nested_properties=*/true)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  // This schema change is compatible since the added 'almaMater' property has
+  // CARDINALITY_OPTIONAL.
+  //
+  // Index restoration should be triggered here because new schema requires more
+  // properties to be indexed. Also new section ids will be reassigned and index
+  // restoration should use new section ids to rebuild.
+  set_schema_result = icing.SetSchema(schema_two);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_latency_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
+      ->Add("Person");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("Person");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Verify term search:
+  // Searching for "worksFor.name:Google" should still match document
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+
+  // In new_schema the 'name' property is now indexed at section id 2. If
+  // searching for "name:Google" matched the document, this means that index
+  // rebuild was not triggered and Icing is still searching the old index, where
+  // 'worksFor.name' was indexed at section id 2.
+  search_spec1.set_query("name:Google");
+  actual_results = icing.Search(search_spec1, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results,
+              EqualsSearchResultIgnoreStatsAndScores(empty_result));
+
+  // Verify numeric (integer) search: should still match document
+  actual_results = icing.Search(search_spec2, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_search_result_proto));
+}
+
 TEST_F(IcingSearchEngineSchemaTest,
        SetSchemaChangeNestedPropertiesTriggersIndexRestorationAndReturnsOk) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
