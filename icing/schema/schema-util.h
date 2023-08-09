@@ -121,6 +121,9 @@ class SchemaUtil {
 
     // Total number of properties that have joinable config
     int32_t num_joinable_properties = 0;
+
+    // Total number of properties that have DataType::DOCUMENT
+    int32_t num_nested_document_properties = 0;
   };
 
   // This function validates:
@@ -157,6 +160,9 @@ class SchemaUtil {
   //              (property whose joinable config is not NONE), OR
   //          ii. Any type node in the cycle has a nested-type (direct or
   //              indirect) with a joinable property.
+  //  15. For DOCUMENT data types, if
+  //      DocumentIndexingConfig.indexable_nested_properties_list is non-empty,
+  //      DocumentIndexingConfig.index_nested_properties must be false.
   //
   // Returns:
   //   On success, a dependent map from each types to their dependent types
@@ -314,6 +320,17 @@ class SchemaUtil {
       PropertyConfigProto::DataType::Code data_type,
       PropertyConfigProto::Cardinality::Code cardinality,
       std::string_view schema_type, std::string_view property_name);
+
+  // Checks that the 'document_indexing_config' satisfies the following rule:
+  //    1. If indexable_nested_properties is non-empty, index_nested_properties
+  //       must be set to false.
+  //
+  // Returns:
+  //   INVALID_ARGUMENT if any of the rules are not followed
+  //   OK on success
+  static libtextclassifier3::Status ValidateDocumentIndexingConfig(
+      const DocumentIndexingConfig& config, std::string_view schema_type,
+      std::string_view property_name);
 
   // Returns if 'parent_type' is a direct or indirect parent of 'child_type'.
   static bool IsParent(const SchemaUtil::InheritanceMap& inheritance_map,
