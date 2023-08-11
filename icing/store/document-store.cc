@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -53,11 +54,13 @@
 #include "icing/store/document-log-creator.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/namespace-id.h"
+#include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/data-loss.h"
+#include "icing/util/encode-util.h"
 #include "icing/util/fingerprint-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -71,6 +74,7 @@ namespace {
 // Used in DocumentId mapper to mark a document as deleted
 constexpr int64_t kDocDeletedFlag = -1;
 constexpr char kDocumentIdMapperFilename[] = "document_id_mapper";
+constexpr char kUriHashMapperWorkingPath[] = "uri_mapper";
 constexpr char kDocumentStoreHeaderFilename[] = "document_store_header";
 constexpr char kScoreCacheFilename[] = "score_cache";
 constexpr char kCorpusScoreCache[] = "corpus_score_cache";
@@ -79,9 +83,17 @@ constexpr char kNamespaceMapperFilename[] = "namespace_mapper";
 constexpr char kUsageStoreDirectoryName[] = "usage_store";
 constexpr char kCorpusIdMapperFilename[] = "corpus_mapper";
 
-// Determined through manual testing to allow for 1 million uris. 1 million
-// because we allow up to 1 million DocumentIds.
-constexpr int32_t kUriMapperMaxSize = 36 * 1024 * 1024;  // 36 MiB
+// Determined through manual testing to allow for 4 million uris. 4 million
+// because we allow up to 4 million DocumentIds.
+constexpr int32_t kUriDynamicTrieKeyMapperMaxSize =
+    144 * 1024 * 1024;  // 144 MiB
+
+constexpr int32_t kUriHashKeyMapperMaxNumEntries =
+    kMaxDocumentId + 1;  // 1 << 22, 4M
+// - Key: namespace_id_str (3 bytes) + fingerprinted_uri (10 bytes) + '\0' (1
+//        byte)
+// - Value: DocumentId (4 bytes)
+constexpr int32_t kUriHashKeyMapperKVByteSize = 13 + 1 + sizeof(DocumentId);
 
 // 384 KiB for a DynamicTrieKeyMapper would allow each internal array to have a
 // max of 128 KiB for storage.
@@ -96,6 +108,10 @@ DocumentWrapper CreateDocumentWrapper(DocumentProto&& document) {
 
 std::string MakeHeaderFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentStoreHeaderFilename);
+}
+
+std::string MakeUriHashMapperWorkingPath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kUriHashMapperWorkingPath);
 }
 
 std::string MakeDocumentIdMapperFilename(const std::string& base_dir) {
@@ -126,18 +142,23 @@ std::string MakeCorpusMapperFilename(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kCorpusIdMapperFilename);
 }
 
-// TODO(adorokhine): This class internally uses an 8-byte fingerprint of the
-// Key and stores the key/value in a file-backed-trie that adds an ~80 byte
-// overhead per key. As we know that these fingerprints are always 8-bytes in
-// length and that they're random, we might be able to store them more
-// compactly.
-std::string MakeFingerprint(std::string_view field1, std::string_view field2) {
-  // Using a 64-bit fingerprint to represent the key could lead to collisions.
-  // But, even with 200K unique keys, the probability of collision is about
-  // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
-  uint64_t fprint =
-      tc3farmhash::Fingerprint64(absl_ports::StrCat(field1, field2));
-  return fingerprint_util::GetFingerprintString(fprint);
+// This function will encode a namespace id into a fixed 3 bytes string.
+std::string EncodeNamespaceId(NamespaceId namespace_id) {
+  // encoding should be 1 to 3 bytes based on the value of namespace_id.
+  std::string encoding = encode_util::EncodeIntToCString(namespace_id);
+  // Make encoding to fixed 3 bytes.
+  while (encoding.size() < 3) {
+    // DynamicTrie cannot handle keys with 0 as bytes, so we append it using 1,
+    // just like what we do in encode_util::EncodeIntToCString.
+    //
+    // The reason that this works is because DecodeIntToString decodes a byte
+    // value of 0x01 as 0x00. When EncodeIntToCString returns a namespaceid
+    // encoding that is less than 3 bytes, it means that the id contains
+    // unencoded leading 0x00. So here we're explicitly encoding those bytes as
+    // 0x01.
+    encoding.push_back(1);
+  }
+  return encoding;
 }
 
 int64_t CalculateExpirationTimestampMs(int64_t creation_timestamp_ms,
@@ -200,17 +221,76 @@ std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
   return namespace_ids_to_namespaces;
 }
 
+libtextclassifier3::StatusOr<std::unique_ptr<
+    KeyMapper<DocumentId, fingerprint_util::FingerprintStringFormatter>>>
+CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
+                bool pre_mapping_fbv, bool use_persistent_hash_map) {
+  std::string uri_hash_mapper_working_path =
+      MakeUriHashMapperWorkingPath(base_dir);
+  // Due to historic issue, we use document store's base_dir directly as
+  // DynamicTrieKeyMapper's working directory for uri mapper.
+  // DynamicTrieKeyMapper also creates a subdirectory "key_mapper_dir", so the
+  // actual files will be put under "<base_dir>/key_mapper_dir/".
+  bool dynamic_trie_key_mapper_dir_exists = filesystem.DirectoryExists(
+      absl_ports::StrCat(base_dir, "/key_mapper_dir").c_str());
+  bool persistent_hash_map_dir_exists =
+      filesystem.DirectoryExists(uri_hash_mapper_working_path.c_str());
+  if ((use_persistent_hash_map && dynamic_trie_key_mapper_dir_exists) ||
+      (!use_persistent_hash_map && persistent_hash_map_dir_exists)) {
+    // Return a failure here so that the caller can properly delete and rebuild
+    // this component.
+    return absl_ports::FailedPreconditionError("Key mapper type mismatch");
+  }
+
+  if (use_persistent_hash_map) {
+    return PersistentHashMapKeyMapper<
+        DocumentId, fingerprint_util::FingerprintStringFormatter>::
+        Create(filesystem, std::move(uri_hash_mapper_working_path),
+               pre_mapping_fbv,
+               /*max_num_entries=*/kUriHashKeyMapperMaxNumEntries,
+               /*average_kv_byte_size=*/kUriHashKeyMapperKVByteSize);
+  } else {
+    return DynamicTrieKeyMapper<DocumentId,
+                                fingerprint_util::FingerprintStringFormatter>::
+        Create(filesystem, base_dir, kUriDynamicTrieKeyMapperMaxSize);
+  }
+}
+
 }  // namespace
+
+std::string DocumentStore::MakeFingerprint(
+    NamespaceId namespace_id, std::string_view namespace_,
+    std::string_view uri_or_schema) const {
+  if (!namespace_id_fingerprint_) {
+    // Using a 64-bit fingerprint to represent the key could lead to collisions.
+    // But, even with 200K unique keys, the probability of collision is about
+    // one-in-a-billion (https://en.wikipedia.org/wiki/Birthday_attack).
+    uint64_t fprint = tc3farmhash::Fingerprint64(
+        absl_ports::StrCat(namespace_, uri_or_schema));
+    return fingerprint_util::GetFingerprintString(fprint);
+  } else {
+    return absl_ports::StrCat(EncodeNamespaceId(namespace_id),
+                              encode_util::EncodeIntToCString(
+                                  tc3farmhash::Fingerprint64(uri_or_schema)));
+  }
+}
 
 DocumentStore::DocumentStore(const Filesystem* filesystem,
                              const std::string_view base_dir,
                              const Clock* clock,
-                             const SchemaStore* schema_store)
+                             const SchemaStore* schema_store,
+                             bool namespace_id_fingerprint,
+                             bool pre_mapping_fbv, bool use_persistent_hash_map,
+                             int32_t compression_level)
     : filesystem_(filesystem),
       base_dir_(base_dir),
       clock_(*clock),
       schema_store_(schema_store),
-      document_validator_(schema_store) {}
+      document_validator_(schema_store),
+      namespace_id_fingerprint_(namespace_id_fingerprint),
+      pre_mapping_fbv_(pre_mapping_fbv),
+      use_persistent_hash_map_(use_persistent_hash_map),
+      compression_level_(compression_level) {}
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     const DocumentProto& document, int32_t num_tokens,
@@ -222,7 +302,7 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::Put(
     DocumentProto&& document, int32_t num_tokens,
     PutDocumentStatsProto* put_document_stats) {
   document.mutable_internal_fields()->set_length_in_tokens(num_tokens);
-  return InternalPut(document, put_document_stats);
+  return InternalPut(std::move(document), put_document_stats);
 }
 
 DocumentStore::~DocumentStore() {
@@ -237,14 +317,16 @@ DocumentStore::~DocumentStore() {
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
     const Filesystem* filesystem, const std::string& base_dir,
     const Clock* clock, const SchemaStore* schema_store,
-    bool force_recovery_and_revalidate_documents,
-    InitializeStatsProto* initialize_stats) {
+    bool force_recovery_and_revalidate_documents, bool namespace_id_fingerprint,
+    bool pre_mapping_fbv, bool use_persistent_hash_map,
+    int32_t compression_level, InitializeStatsProto* initialize_stats) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  auto document_store = std::unique_ptr<DocumentStore>(
-      new DocumentStore(filesystem, base_dir, clock, schema_store));
+  auto document_store = std::unique_ptr<DocumentStore>(new DocumentStore(
+      filesystem, base_dir, clock, schema_store, namespace_id_fingerprint,
+      pre_mapping_fbv, use_persistent_hash_map, compression_level));
   ICING_ASSIGN_OR_RETURN(
       DataLoss data_loss,
       document_store->Initialize(force_recovery_and_revalidate_documents,
@@ -256,10 +338,53 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> DocumentStore::Create(
   return create_result;
 }
 
+/* static */ libtextclassifier3::Status DocumentStore::DiscardDerivedFiles(
+    const Filesystem* filesystem, const std::string& base_dir) {
+  // Header
+  const std::string header_filename = MakeHeaderFilename(base_dir);
+  if (!filesystem->DeleteFile(MakeHeaderFilename(base_dir).c_str())) {
+    return absl_ports::InternalError("Couldn't delete header file");
+  }
+
+  // Document key mapper. Doesn't hurt to delete both dynamic trie and
+  // persistent hash map without checking.
+  ICING_RETURN_IF_ERROR(
+      DynamicTrieKeyMapper<DocumentId>::Delete(*filesystem, base_dir));
+  ICING_RETURN_IF_ERROR(PersistentHashMapKeyMapper<DocumentId>::Delete(
+      *filesystem, MakeUriHashMapperWorkingPath(base_dir)));
+
+  // Document id mapper
+  ICING_RETURN_IF_ERROR(FileBackedVector<int64_t>::Delete(
+      *filesystem, MakeDocumentIdMapperFilename(base_dir)));
+
+  // Document associated score cache
+  ICING_RETURN_IF_ERROR(FileBackedVector<DocumentAssociatedScoreData>::Delete(
+      *filesystem, MakeScoreCacheFilename(base_dir)));
+
+  // Filter cache
+  ICING_RETURN_IF_ERROR(FileBackedVector<DocumentFilterData>::Delete(
+      *filesystem, MakeFilterCacheFilename(base_dir)));
+
+  // Namespace mapper
+  ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<NamespaceId>::Delete(
+      *filesystem, MakeNamespaceMapperFilename(base_dir)));
+
+  // Corpus mapper
+  ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<CorpusId>::Delete(
+      *filesystem, MakeCorpusMapperFilename(base_dir)));
+
+  // Corpus associated score cache
+  ICING_RETURN_IF_ERROR(FileBackedVector<CorpusAssociatedScoreData>::Delete(
+      *filesystem, MakeCorpusScoreCache(base_dir)));
+
+  return libtextclassifier3::Status::OK;
+}
+
 libtextclassifier3::StatusOr<DataLoss> DocumentStore::Initialize(
     bool force_recovery_and_revalidate_documents,
     InitializeStatsProto* initialize_stats) {
-  auto create_result_or = DocumentLogCreator::Create(filesystem_, base_dir_);
+  auto create_result_or =
+      DocumentLogCreator::Create(filesystem_, base_dir_, compression_level_);
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
@@ -352,18 +477,16 @@ libtextclassifier3::Status DocumentStore::InitializeExistingDerivedFiles() {
         absl_ports::StrCat("Couldn't read: ", MakeHeaderFilename(base_dir_)));
   }
 
-  if (header.magic != DocumentStore::Header::kMagic) {
+  if (header.magic !=
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_)) {
     return absl_ports::InternalError(absl_ports::StrCat(
         "Invalid header kMagic for file: ", MakeHeaderFilename(base_dir_)));
   }
 
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto document_key_mapper_or = DynamicTrieKeyMapper<
-      DocumentId,
-      fingerprint_util::FingerprintStringFormatter>::Create(*filesystem_,
-                                                            base_dir_,
-                                                            kUriMapperMaxSize);
+  auto document_key_mapper_or = CreateUriMapper(
+      *filesystem_, base_dir_, pre_mapping_fbv_, use_persistent_hash_map_);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to initialize KeyMapper";
@@ -489,10 +612,16 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
         continue;
       }
     }
+
+    ICING_ASSIGN_OR_RETURN(
+        NamespaceId namespace_id,
+        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
+                                    namespace_mapper_->num_keys()));
+
     // Updates key mapper and document_id mapper with the new document
     DocumentId new_document_id = document_id_mapper_->num_elements();
     ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-        MakeFingerprint(document_wrapper.document().namespace_(),
+        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
                         document_wrapper.document().uri()),
         new_document_id));
     ICING_RETURN_IF_ERROR(
@@ -517,14 +646,9 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
       schema_type_id = schema_type_id_or.ValueOrDie();
     }
 
-    ICING_ASSIGN_OR_RETURN(
-        NamespaceId namespace_id,
-        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
-                                    namespace_mapper_->num_keys()));
-
     // Update corpus maps
     std::string corpus =
-        MakeFingerprint(document_wrapper.document().namespace_(),
+        MakeFingerprint(namespace_id, document_wrapper.document().namespace_(),
                         document_wrapper.document().schema());
     ICING_ASSIGN_OR_RETURN(
         CorpusId corpusId,
@@ -575,6 +699,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
 }
 
 libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
+  // Only one type of KeyMapper (either DynamicTrieKeyMapper or
+  // PersistentHashMapKeyMapper) will actually exist at any moment, but it is ok
+  // to call Delete() for both since Delete() returns OK if any of them doesn't
+  // exist.
   // TODO(b/139734457): Replace ptr.reset()->Delete->Create flow with Reset().
   document_key_mapper_.reset();
   // TODO(b/216487496): Implement a more robust version of TC_RETURN_IF_ERROR
@@ -583,17 +711,21 @@ libtextclassifier3::Status DocumentStore::ResetDocumentKeyMapper() {
       DynamicTrieKeyMapper<DocumentId>::Delete(*filesystem_, base_dir_);
   if (!status.ok()) {
     ICING_LOG(ERROR) << status.error_message()
-                     << "Failed to delete old key mapper";
+                     << "Failed to delete old dynamic trie key mapper";
+    return status;
+  }
+  status = PersistentHashMapKeyMapper<DocumentId>::Delete(
+      *filesystem_, MakeUriHashMapperWorkingPath(base_dir_));
+  if (!status.ok()) {
+    ICING_LOG(ERROR) << status.error_message()
+                     << "Failed to delete old persistent hash map key mapper";
     return status;
   }
 
   // TODO(b/216487496): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
-  auto document_key_mapper_or = DynamicTrieKeyMapper<
-      DocumentId,
-      fingerprint_util::FingerprintStringFormatter>::Create(*filesystem_,
-                                                            base_dir_,
-                                                            kUriMapperMaxSize);
+  auto document_key_mapper_or = CreateUriMapper(
+      *filesystem_, base_dir_, pre_mapping_fbv_, use_persistent_hash_map_);
   if (!document_key_mapper_or.ok()) {
     ICING_LOG(ERROR) << document_key_mapper_or.status().error_message()
                      << "Failed to re-init key mapper";
@@ -824,7 +956,8 @@ bool DocumentStore::HeaderExists() {
 libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
   // Write the header
   DocumentStore::Header header;
-  header.magic = DocumentStore::Header::kMagic;
+  header.magic =
+      DocumentStore::Header::GetCurrentMagic(namespace_id_fingerprint_);
   header.checksum = checksum.Get();
 
   // This should overwrite the header.
@@ -840,7 +973,7 @@ libtextclassifier3::Status DocumentStore::UpdateHeader(const Crc32& checksum) {
 }
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
-    DocumentProto& document, PutDocumentStatsProto* put_document_stats) {
+    DocumentProto&& document, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> put_timer = clock_.GetNewTimer();
   ICING_RETURN_IF_ERROR(document_validator_.Validate(document));
 
@@ -892,20 +1025,21 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
         "some space.");
   }
 
-  ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
-      MakeFingerprint(name_space, uri), new_document_id));
-  ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
-
   // Update namespace maps
   ICING_ASSIGN_OR_RETURN(
       NamespaceId namespace_id,
       namespace_mapper_->GetOrPut(name_space, namespace_mapper_->num_keys()));
 
+  // Updates key mapper and document_id mapper
+  ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
+      MakeFingerprint(namespace_id, name_space, uri), new_document_id));
+  ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
+
   // Update corpus maps
-  ICING_ASSIGN_OR_RETURN(
-      CorpusId corpusId,
-      corpus_mapper_->GetOrPut(MakeFingerprint(name_space, schema),
-                               corpus_mapper_->num_keys()));
+  ICING_ASSIGN_OR_RETURN(CorpusId corpusId,
+                         corpus_mapper_->GetOrPut(
+                             MakeFingerprint(namespace_id, name_space, schema),
+                             corpus_mapper_->num_keys()));
 
   ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
                          GetCorpusAssociatedScoreDataToUpdate(corpusId));
@@ -937,7 +1071,8 @@ libtextclassifier3::StatusOr<DocumentId> DocumentStore::InternalPut(
 
     // Delete the old document. It's fine if it's not found since it might have
     // been deleted previously.
-    auto delete_status = Delete(old_document_id);
+    auto delete_status =
+        Delete(old_document_id, clock_.GetSystemTimeMilliseconds());
     if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
       // Real error, pass it up.
       return delete_status;
@@ -982,7 +1117,9 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
     DocumentId document_id, bool clear_internal_fields) const {
-  auto document_filter_data_optional_ = GetAliveDocumentFilterData(document_id);
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
+  auto document_filter_data_optional_ =
+      GetAliveDocumentFilterData(document_id, current_time_ms);
   if (!document_filter_data_optional_) {
     // The document doesn't exist. Let's check if the document id is invalid, we
     // will return InvalidArgumentError. Otherwise we should return NOT_FOUND
@@ -1023,17 +1160,21 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 libtextclassifier3::StatusOr<DocumentId> DocumentStore::GetDocumentId(
     const std::string_view name_space, const std::string_view uri) const {
-  auto document_id_or =
-      document_key_mapper_->Get(MakeFingerprint(name_space, uri));
-  if (!document_id_or.ok()) {
-    return absl_ports::Annotate(
-        document_id_or.status(),
-        absl_ports::StrCat("Failed to find DocumentId by key: ", name_space,
-                           ", ", uri));
+  auto namespace_id_or = namespace_mapper_->Get(name_space);
+  libtextclassifier3::Status status = namespace_id_or.status();
+  if (status.ok()) {
+    NamespaceId namespace_id = namespace_id_or.ValueOrDie();
+    auto document_id_or = document_key_mapper_->Get(
+        MakeFingerprint(namespace_id, name_space, uri));
+    status = document_id_or.status();
+    if (status.ok()) {
+      // Guaranteed to have a DocumentId now
+      return document_id_or.ValueOrDie();
+    }
   }
-
-  // Guaranteed to have a DocumentId now
-  return document_id_or.ValueOrDie();
+  return absl_ports::Annotate(
+      status, absl_ports::StrCat(
+                  "Failed to find DocumentId by key: ", name_space, ", ", uri));
 }
 
 std::vector<std::string> DocumentStore::GetAllNamespaces() const {
@@ -1041,6 +1182,7 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
       GetNamespaceIdsToNamespaces(namespace_mapper_.get());
 
   std::unordered_set<NamespaceId> existing_namespace_ids;
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
@@ -1053,7 +1195,7 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
     }
     const DocumentFilterData* data = status_or_data.ValueOrDie();
 
-    if (GetAliveDocumentFilterData(document_id)) {
+    if (GetAliveDocumentFilterData(document_id, current_time_ms)) {
       existing_namespace_ids.insert(data->namespace_id());
     }
   }
@@ -1067,14 +1209,11 @@ std::vector<std::string> DocumentStore::GetAllNamespaces() const {
 }
 
 std::optional<DocumentFilterData> DocumentStore::GetAliveDocumentFilterData(
-    DocumentId document_id) const {
-  if (!IsDocumentIdValid(document_id)) {
-    return std::nullopt;
-  }
+    DocumentId document_id, int64_t current_time_ms) const {
   if (IsDeleted(document_id)) {
     return std::nullopt;
   }
-  return GetNonExpiredDocumentFilterData(document_id);
+  return GetNonExpiredDocumentFilterData(document_id, current_time_ms);
 }
 
 bool DocumentStore::IsDeleted(DocumentId document_id) const {
@@ -1094,7 +1233,8 @@ bool DocumentStore::IsDeleted(DocumentId document_id) const {
 // Returns DocumentFilterData if the document is not expired. Otherwise,
 // std::nullopt.
 std::optional<DocumentFilterData>
-DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id) const {
+DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id,
+                                               int64_t current_time_ms) const {
   auto filter_data_or = filter_cache_->GetCopy(document_id);
   if (!filter_data_or.ok()) {
     // This would only happen if document_id is out of range of the
@@ -1107,15 +1247,15 @@ DocumentStore::GetNonExpiredDocumentFilterData(DocumentId document_id) const {
   DocumentFilterData document_filter_data = filter_data_or.ValueOrDie();
 
   // Check if it's past the expiration time
-  if (clock_.GetSystemTimeMilliseconds() >=
-      document_filter_data.expiration_timestamp_ms()) {
+  if (current_time_ms >= document_filter_data.expiration_timestamp_ms()) {
     return std::nullopt;
   }
   return document_filter_data;
 }
 
 libtextclassifier3::Status DocumentStore::Delete(
-    const std::string_view name_space, const std::string_view uri) {
+    const std::string_view name_space, const std::string_view uri,
+    int64_t current_time_ms) {
   // Try to get the DocumentId first
   auto document_id_or = GetDocumentId(name_space, uri);
   if (!document_id_or.ok()) {
@@ -1124,11 +1264,13 @@ libtextclassifier3::Status DocumentStore::Delete(
         absl_ports::StrCat("Failed to delete Document. namespace: ", name_space,
                            ", uri: ", uri));
   }
-  return Delete(document_id_or.ValueOrDie());
+  return Delete(document_id_or.ValueOrDie(), current_time_ms);
 }
 
-libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id) {
-  auto document_filter_data_optional_ = GetAliveDocumentFilterData(document_id);
+libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
+                                                 int64_t current_time_ms) {
+  auto document_filter_data_optional_ =
+      GetAliveDocumentFilterData(document_id, current_time_ms);
   if (!document_filter_data_optional_) {
     // The document doesn't exist. We should return InvalidArgumentError if the
     // document id is invalid. Otherwise we should return NOT_FOUND error.
@@ -1158,29 +1300,73 @@ libtextclassifier3::StatusOr<NamespaceId> DocumentStore::GetNamespaceId(
 
 libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
     const std::string_view name_space, const std::string_view schema) const {
-  return corpus_mapper_->Get(MakeFingerprint(name_space, schema));
+  ICING_ASSIGN_OR_RETURN(NamespaceId namespace_id,
+                         namespace_mapper_->Get(name_space));
+  return corpus_mapper_->Get(MakeFingerprint(namespace_id, name_space, schema));
+}
+
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
+    ResultSpecProto::ResultGroupingType result_group_type,
+    const std::string_view name_space, const std::string_view schema) const {
+  auto namespace_id = GetNamespaceId(name_space);
+  auto schema_type_id = schema_store_->GetSchemaTypeId(schema);
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      if (schema_type_id.ok()) {
+        return schema_type_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE:
+      if (namespace_id.ok()) {
+        return namespace_id.ValueOrDie();
+      }
+      break;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      if (namespace_id.ok() && schema_type_id.ok()) {
+        // TODO(b/258715421): Temporary workaround to get a
+        //                    ResultGroupingEntryId given the Namespace string
+        //                    and Schema string.
+        return namespace_id.ValueOrDie() << 16 | schema_type_id.ValueOrDie();
+      }
+      break;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
+}
+
+libtextclassifier3::StatusOr<int32_t> DocumentStore::GetResultGroupingEntryId(
+    ResultSpecProto::ResultGroupingType result_group_type,
+    const NamespaceId namespace_id, const SchemaTypeId schema_type_id) const {
+  switch (result_group_type) {
+    case ResultSpecProto::NONE:
+      return absl_ports::InvalidArgumentError(
+          "Cannot group by ResultSpecProto::NONE");
+    case ResultSpecProto::SCHEMA_TYPE:
+      return schema_type_id;
+    case ResultSpecProto::NAMESPACE:
+      return namespace_id;
+    case ResultSpecProto::NAMESPACE_AND_SCHEMA_TYPE:
+      // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
+      //                    given the Namespace Id and SchemaType Id.
+      return namespace_id << 16 | schema_type_id;
+  }
+  return absl_ports::NotFoundError("Cannot generate ResultGrouping Entry Id");
 }
 
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
-  if (!GetAliveDocumentFilterData(document_id)) {
-    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-        "Can't get usage scores, document id '%d' doesn't exist", document_id));
-  }
-
   auto score_data_or = score_cache_->GetCopy(document_id);
   if (!score_data_or.ok()) {
     ICING_LOG(ERROR) << " while trying to access DocumentId " << document_id
                      << " from score_cache_";
-    return score_data_or.status();
+    return absl_ports::NotFoundError(
+        std::move(score_data_or).status().error_message());
   }
 
   DocumentAssociatedScoreData document_associated_score_data =
       std::move(score_data_or).ValueOrDie();
-  if (document_associated_score_data.document_score() < 0) {
-    // An negative / invalid score means that the score data has been deleted.
-    return absl_ports::NotFoundError("Document score data not found.");
-  }
   return document_associated_score_data;
 }
 
@@ -1212,13 +1398,25 @@ DocumentStore::GetCorpusAssociatedScoreDataToUpdate(CorpusId corpus_id) const {
   return corpus_scoring_data_or.status();
 }
 
-libtextclassifier3::StatusOr<UsageStore::UsageScores>
-DocumentStore::GetUsageScores(DocumentId document_id) const {
-  if (!GetAliveDocumentFilterData(document_id)) {
-    return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
-        "Can't get usage scores, document id '%d' doesn't exist", document_id));
+// TODO(b/273826815): Decide on and adopt a consistent pattern for handling
+// NOT_FOUND 'errors' returned by our internal classes.
+std::optional<UsageStore::UsageScores> DocumentStore::GetUsageScores(
+    DocumentId document_id, int64_t current_time_ms) const {
+  std::optional<DocumentFilterData> opt =
+      GetAliveDocumentFilterData(document_id, current_time_ms);
+  if (!opt) {
+    return std::nullopt;
   }
-  return usage_store_->GetUsageScores(document_id);
+  if (document_id >= usage_store_->num_elements()) {
+    return std::nullopt;
+  }
+  auto usage_scores_or = usage_store_->GetUsageScores(document_id);
+  if (!usage_scores_or.ok()) {
+    ICING_LOG(ERROR) << "Error retrieving usage for " << document_id << ": "
+                     << usage_scores_or.status().error_message();
+    return std::nullopt;
+  }
+  return std::move(usage_scores_or).ValueOrDie();
 }
 
 libtextclassifier3::Status DocumentStore::ReportUsage(
@@ -1229,7 +1427,8 @@ libtextclassifier3::Status DocumentStore::ReportUsage(
   // We can use the internal version here because we got our document_id from
   // our internal data structures. We would have thrown some error if the
   // namespace and/or uri were incorrect.
-  if (!GetAliveDocumentFilterData(document_id)) {
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
+  if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
     // Document was probably deleted or expired.
     return absl_ports::NotFoundError(absl_ports::StrCat(
         "Couldn't report usage on a nonexistent document: (namespace: '",
@@ -1305,6 +1504,7 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 
   // Traverse FilterCache and delete all docs that match namespace_id and
   // schema_type_id.
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
     // filter_cache_->Get can only fail if document_id is < 0
@@ -1332,7 +1532,8 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 
     // The document has the desired namespace and schema type, it either
     // exists or has expired.
-    libtextclassifier3::Status delete_status = Delete(document_id);
+    libtextclassifier3::Status delete_status =
+        Delete(document_id, current_time_ms);
     if (absl_ports::IsNotFound(delete_status)) {
       continue;
     } else if (!delete_status.ok()) {
@@ -1404,6 +1605,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
   std::unordered_map<std::string, NamespaceStorageInfoProto>
       namespace_to_storage_info;
 
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0;
        document_id < document_id_mapper_->num_elements(); ++document_id) {
     // Check if it's deleted first.
@@ -1447,7 +1649,7 @@ DocumentStorageInfoProto DocumentStore::CalculateDocumentStatusCounts(
     UsageStore::UsageScores usage_scores = usage_scores_or.ValueOrDie();
 
     // Update our stats
-    if (!GetNonExpiredDocumentFilterData(document_id)) {
+    if (!GetNonExpiredDocumentFilterData(document_id, current_time_ms)) {
       ++total_num_expired;
       namespace_storage_info.set_num_expired_documents(
           namespace_storage_info.num_expired_documents() + 1);
@@ -1510,6 +1712,7 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id);
     if (absl_ports::IsNotFound(document_or.status())) {
@@ -1539,7 +1742,8 @@ libtextclassifier3::Status DocumentStore::UpdateSchemaStore(
     } else {
       // Document is no longer valid with the new SchemaStore. Mark as
       // deleted
-      auto delete_status = Delete(document.namespace_(), document.uri());
+      auto delete_status =
+          Delete(document.namespace_(), document.uri(), current_time_ms);
       if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
@@ -1563,8 +1767,9 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
   document_validator_.UpdateSchemaStore(schema_store);
 
   int size = document_id_mapper_->num_elements();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
-    if (!GetAliveDocumentFilterData(document_id)) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
       // Skip nonexistent documents
       continue;
     }
@@ -1608,7 +1813,7 @@ libtextclassifier3::Status DocumentStore::OptimizedUpdateSchemaStore(
 
     if (delete_document) {
       // Document is no longer valid with the new SchemaStore. Mark as deleted
-      auto delete_status = Delete(document_id);
+      auto delete_status = Delete(document_id, current_time_ms);
       if (!delete_status.ok() && !absl_ports::IsNotFound(delete_status)) {
         // Real error, pass up
         return delete_status;
@@ -1634,9 +1839,13 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
         "New directory is the same as the current one.");
   }
 
-  ICING_ASSIGN_OR_RETURN(auto doc_store_create_result,
-                         DocumentStore::Create(filesystem_, new_directory,
-                                               &clock_, schema_store_));
+  ICING_ASSIGN_OR_RETURN(
+      auto doc_store_create_result,
+      DocumentStore::Create(filesystem_, new_directory, &clock_, schema_store_,
+                            /*force_recovery_and_revalidate_documents=*/false,
+                            namespace_id_fingerprint_, pre_mapping_fbv_,
+                            use_persistent_hash_map_, compression_level_,
+                            /*initialize_stats=*/nullptr));
   std::unique_ptr<DocumentStore> new_doc_store =
       std::move(doc_store_create_result.document_store);
 
@@ -1646,12 +1855,14 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
   int num_expired = 0;
   UsageStore::UsageScores default_usage;
   std::vector<DocumentId> document_id_old_to_new(size, kInvalidDocumentId);
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < size; document_id++) {
     auto document_or = Get(document_id, /*clear_internal_fields=*/false);
     if (absl_ports::IsNotFound(document_or.status())) {
       if (IsDeleted(document_id)) {
         ++num_deleted;
-      } else if (!GetNonExpiredDocumentFilterData(document_id)) {
+      } else if (!GetNonExpiredDocumentFilterData(document_id,
+                                                  current_time_ms)) {
         ++num_expired;
       }
       continue;
@@ -1664,7 +1875,7 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
     }
 
     // Guaranteed to have a document now.
-    DocumentProto document_to_keep = document_or.ValueOrDie();
+    DocumentProto document_to_keep = std::move(document_or).ValueOrDie();
 
     libtextclassifier3::StatusOr<DocumentId> new_document_id_or;
     if (document_to_keep.internal_fields().length_in_tokens() == 0) {
@@ -1678,12 +1889,13 @@ DocumentStore::OptimizeInto(const std::string& new_directory,
       }
       TokenizedDocument tokenized_document(
           std::move(tokenized_document_or).ValueOrDie());
-      new_document_id_or =
-          new_doc_store->Put(document_to_keep, tokenized_document.num_tokens());
+      new_document_id_or = new_doc_store->Put(
+          std::move(document_to_keep), tokenized_document.num_string_tokens());
     } else {
       // TODO(b/144458732): Implement a more robust version of
       // TC_ASSIGN_OR_RETURN that can support error logging.
-      new_document_id_or = new_doc_store->InternalPut(document_to_keep);
+      new_document_id_or =
+          new_doc_store->InternalPut(std::move(document_to_keep));
     }
     if (!new_document_id_or.ok()) {
       ICING_LOG(ERROR) << new_document_id_or.status().error_message()
@@ -1720,9 +1932,10 @@ DocumentStore::GetOptimizeInfo() const {
 
   // Figure out our ratio of optimizable/total docs.
   int32_t num_documents = document_id_mapper_->num_elements();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = kMinDocumentId; document_id < num_documents;
        ++document_id) {
-    if (!GetAliveDocumentFilterData(document_id)) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
       ++optimize_info.optimizable_docs;
     }
 
@@ -1822,8 +2035,7 @@ libtextclassifier3::Status DocumentStore::SetUsageScores(
 libtextclassifier3::StatusOr<
     google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
-  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
-      corpus_info;
+  google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
       schema_store_->GetSchema();
   if (!schema_proto_or.ok()) {
@@ -1834,9 +2046,10 @@ DocumentStore::CollectCorpusInfo() const {
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
       GetNamespaceIdsToNamespaces(namespace_mapper_.get());
   const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
+  int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
-    if (!GetAliveDocumentFilterData(document_id)) {
+    if (!GetAliveDocumentFilterData(document_id, current_time_ms)) {
       continue;
     }
     ICING_ASSIGN_OR_RETURN(const DocumentFilterData* filter_data,
@@ -1868,10 +2081,10 @@ DocumentStore::GetDebugInfo(int verbosity) const {
   ICING_ASSIGN_OR_RETURN(Crc32 crc, ComputeChecksum());
   debug_info.set_crc(crc.Get());
   if (verbosity > 0) {
-    ICING_ASSIGN_OR_RETURN(google::protobuf::RepeatedPtrField<
-                               DocumentDebugInfoProto::CorpusInfo>
-                               corpus_info,
-                           CollectCorpusInfo());
+    ICING_ASSIGN_OR_RETURN(
+        google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>
+            corpus_info,
+        CollectCorpusInfo());
     *debug_info.mutable_corpus_info() = std::move(corpus_info);
   }
   return debug_info;
