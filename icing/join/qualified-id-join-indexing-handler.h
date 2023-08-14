@@ -17,7 +17,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/data-indexing-handler.h"
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
 #include "icing/util/clock.h"
@@ -37,13 +37,12 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
   //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
   static libtextclassifier3::StatusOr<
       std::unique_ptr<QualifiedIdJoinIndexingHandler>>
-  Create(const Clock* clock,
-         QualifiedIdTypeJoinableIndex* qualified_id_join_index);
+  Create(const Clock* clock, QualifiedIdJoinIndex* qualified_id_join_index);
 
   ~QualifiedIdJoinIndexingHandler() override = default;
 
   // Handles the joinable qualified id data indexing process: add data into the
-  // qualified id type joinable cache.
+  // qualified id join index.
   //
   /// Returns:
   //   - OK on success.
@@ -51,18 +50,18 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
   //     than or equal to the document_id of a previously indexed document in
   //     non recovery mode.
   //   - INTERNAL_ERROR if any other errors occur.
-  //   - Any QualifiedIdTypeJoinableIndex errors.
+  //   - Any QualifiedIdJoinIndex errors.
   libtextclassifier3::Status Handle(
       const TokenizedDocument& tokenized_document, DocumentId document_id,
       bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
 
  private:
   explicit QualifiedIdJoinIndexingHandler(
-      const Clock* clock, QualifiedIdTypeJoinableIndex* qualified_id_join_index)
+      const Clock* clock, QualifiedIdJoinIndex* qualified_id_join_index)
       : DataIndexingHandler(clock),
         qualified_id_join_index_(*qualified_id_join_index) {}
 
-  QualifiedIdTypeJoinableIndex& qualified_id_join_index_;  // Does not own.
+  QualifiedIdJoinIndex& qualified_id_join_index_;  // Does not own.
 };
 
 }  // namespace lib

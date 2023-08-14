@@ -98,7 +98,8 @@ libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
   return DocumentStore::Create(
       filesystem, base_dir, clock, schema_store,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false,
+      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/false,
       PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
       /*initialize_stats=*/nullptr);
 }
