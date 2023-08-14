@@ -44,7 +44,7 @@ class JoinChildrenFetcher {
   // Get a vector of children ScoredDocumentHit by parent document id.
   //
   // TODO(b/256022027): Implement property value joins with types of string and
-  // int. In these cases, GetChildren should look up joinable cache to fetch
+  // int. In these cases, GetChildren should look up join index to fetch
   // joinable property value of the given parent_doc_id according to
   // join_spec_.parent_property_expression, and then fetch children by the
   // corresponding map in this class using the joinable property value.

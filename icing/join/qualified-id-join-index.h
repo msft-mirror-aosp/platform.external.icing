@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_INDEX_H_
-#define ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_INDEX_H_
+#ifndef ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_H_
+#define ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_H_
 
 #include <cstdint>
 #include <memory>
@@ -34,9 +34,9 @@
 namespace icing {
 namespace lib {
 
-// QualifiedIdTypeJoinableIndex: a class to maintain data mapping DocJoinInfo to
+// QualifiedIdJoinIndex: a class to maintain data mapping DocJoinInfo to
 // joinable qualified ids and delete propagation info.
-class QualifiedIdTypeJoinableIndex : public PersistentStorage {
+class QualifiedIdJoinIndex : public PersistentStorage {
  public:
   struct Info {
     static constexpr int32_t kMagic = 0x48cabdc6;
@@ -61,23 +61,23 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
 
-  // Creates a QualifiedIdTypeJoinableIndex instance to store qualified ids for
-  // future joining search. If any of the underlying file is missing, then
-  // delete the whole working_path and (re)initialize with new ones. Otherwise
-  // initialize and create the instance by existing files.
+  // Creates a QualifiedIdJoinIndex instance to store qualified ids for future
+  // joining search. If any of the underlying file is missing, then delete the
+  // whole working_path and (re)initialize with new ones. Otherwise initialize
+  // and create the instance by existing files.
   //
   // filesystem: Object to make system level calls
   // working_path: Specifies the working path for PersistentStorage.
-  //               QualifiedIdTypeJoinableIndex uses working path as working
-  //               directory and all related files will be stored under this
-  //               directory. It takes full ownership and of working_path_,
-  //               including creation/deletion. It is the caller's
-  //               responsibility to specify correct working path and avoid
-  //               mixing different persistent storages together under the same
-  //               path. Also the caller has the ownership for the parent
-  //               directory of working_path_, and it is responsible for parent
-  //               directory creation/deletion. See PersistentStorage for more
-  //               details about the concept of working_path.
+  //               QualifiedIdJoinIndex uses working path as working directory
+  //               and all related files will be stored under this directory. It
+  //               takes full ownership and of working_path_, including
+  //               creation/deletion. It is the caller's responsibility to
+  //               specify correct working path and avoid mixing different
+  //               persistent storages together under the same path. Also the
+  //               caller has the ownership for the parent directory of
+  //               working_path_, and it is responsible for parent directory
+  //               creation/deletion. See PersistentStorage for more details
+  //               about the concept of working_path.
   // pre_mapping_fbv: flag indicating whether memory map max possible file size
   //                  for underlying FileBackedVector before growing the actual
   //                  file size.
@@ -90,12 +90,11 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   //                               checksum
   //   - INTERNAL_ERROR on I/O errors
   //   - Any KeyMapper errors
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdTypeJoinableIndex>>
+  static libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   Create(const Filesystem& filesystem, std::string working_path,
          bool pre_mapping_fbv, bool use_persistent_hash_map);
 
-  // Deletes QualifiedIdTypeJoinableIndex under working_path.
+  // Deletes QualifiedIdJoinIndex under working_path.
   //
   // Returns:
   //   - OK on success
@@ -107,15 +106,13 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   }
 
   // Delete copy and move constructor/assignment operator.
-  QualifiedIdTypeJoinableIndex(const QualifiedIdTypeJoinableIndex&) = delete;
-  QualifiedIdTypeJoinableIndex& operator=(const QualifiedIdTypeJoinableIndex&) =
-      delete;
+  QualifiedIdJoinIndex(const QualifiedIdJoinIndex&) = delete;
+  QualifiedIdJoinIndex& operator=(const QualifiedIdJoinIndex&) = delete;
 
-  QualifiedIdTypeJoinableIndex(QualifiedIdTypeJoinableIndex&&) = delete;
-  QualifiedIdTypeJoinableIndex& operator=(QualifiedIdTypeJoinableIndex&&) =
-      delete;
+  QualifiedIdJoinIndex(QualifiedIdJoinIndex&&) = delete;
+  QualifiedIdJoinIndex& operator=(QualifiedIdJoinIndex&&) = delete;
 
-  ~QualifiedIdTypeJoinableIndex() override;
+  ~QualifiedIdJoinIndex() override;
 
   // Puts a new data into index: DocJoinInfo (DocumentId, JoinablePropertyId)
   // references to ref_qualified_id_str (the identifier of another document).
@@ -175,6 +172,8 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   }
 
   void set_last_added_document_id(DocumentId document_id) {
+    SetInfoDirty();
+
     Info& info_ref = info();
     if (info_ref.last_added_document_id == kInvalidDocumentId ||
         document_id > info_ref.last_added_document_id) {
@@ -183,7 +182,7 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   }
 
  private:
-  explicit QualifiedIdTypeJoinableIndex(
+  explicit QualifiedIdJoinIndex(
       const Filesystem& filesystem, std::string&& working_path,
       std::unique_ptr<uint8_t[]> metadata_buffer,
       std::unique_ptr<KeyMapper<int32_t>> doc_join_info_mapper,
@@ -195,15 +194,15 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
         doc_join_info_mapper_(std::move(doc_join_info_mapper)),
         qualified_id_storage_(std::move(qualified_id_storage)),
         pre_mapping_fbv_(pre_mapping_fbv),
-        use_persistent_hash_map_(use_persistent_hash_map) {}
+        use_persistent_hash_map_(use_persistent_hash_map),
+        is_info_dirty_(false),
+        is_storage_dirty_(false) {}
 
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdTypeJoinableIndex>>
+  static libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   InitializeNewFiles(const Filesystem& filesystem, std::string&& working_path,
                      bool pre_mapping_fbv, bool use_persistent_hash_map);
 
-  static libtextclassifier3::StatusOr<
-      std::unique_ptr<QualifiedIdTypeJoinableIndex>>
+  static libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
   InitializeExistingFiles(const Filesystem& filesystem,
                           std::string&& working_path, bool pre_mapping_fbv,
                           bool use_persistent_hash_map);
@@ -217,34 +216,35 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status TransferIndex(
       const std::vector<DocumentId>& document_id_old_to_new,
-      QualifiedIdTypeJoinableIndex* new_index) const;
+      QualifiedIdJoinIndex* new_index) const;
 
   // Flushes contents of metadata file.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk() override;
+  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
 
   // Flushes contents of all storages to underlying files.
   //
   // Returns:
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk() override;
+  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
 
   // Computes and returns Info checksum.
   //
   // Returns:
   //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
 
   // Computes and returns all storages checksum.
   //
   // Returns:
   //   - Crc of all storages on success
   //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
+      bool force) override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_buffer_.get() +
@@ -266,6 +266,17 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
                                           kInfoMetadataBufferOffset);
   }
 
+  void SetInfoDirty() { is_info_dirty_ = true; }
+  // When storage is dirty, we have to set info dirty as well. So just expose
+  // SetDirty to set both.
+  void SetDirty() {
+    is_info_dirty_ = true;
+    is_storage_dirty_ = true;
+  }
+
+  bool is_info_dirty() const { return is_info_dirty_; }
+  bool is_storage_dirty() const { return is_storage_dirty_; }
+
   // Metadata buffer
   std::unique_ptr<uint8_t[]> metadata_buffer_;
 
@@ -286,9 +297,12 @@ class QualifiedIdTypeJoinableIndex : public PersistentStorage {
   // Flag indicating whether use persistent hash map as the key mapper (if
   // false, then fall back to dynamic trie key mapper).
   bool use_persistent_hash_map_;
+
+  bool is_info_dirty_;
+  bool is_storage_dirty_;
 };
 
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_JOIN_QUALIFIED_ID_TYPE_JOINABLE_INDEX_H_
+#endif  // ICING_JOIN_QUALIFIED_ID_JOIN_INDEX_H_
