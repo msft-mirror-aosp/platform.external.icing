@@ -2646,6 +2646,261 @@ TEST_P(QueryProcessorTest, PropertyFilterTermAndUnrestrictedTerm) {
   EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
 }
 
+TEST_P(QueryProcessorTest, TypePropertyFilter) {
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email")
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("bar")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("baz")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message")
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("bar")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("baz")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
+  int email_bar_section_id = 0;
+  int email_baz_section_id = 1;
+  int email_foo_section_id = 2;
+  int message_bar_section_id = 0;
+  int message_baz_section_id = 1;
+  int message_foo_section_id = 2;
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "1")
+                                                      .SetSchema("email")
+                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "2")
+                                                      .SetSchema("message")
+                                                      .Build()));
+
+  // Poplate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email document has content "animal" in all sections
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_baz_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Message document has content "animal" in all sections
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_baz_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("animal");
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
+
+  // email has property filters for foo and baz properties
+  TypePropertyMask *email_mask = search_spec.add_type_property_filters();
+  email_mask->set_schema_type("email");
+  email_mask->add_paths("foo");
+  email_mask->add_paths("baz");
+
+  // message has property filters for bar and baz properties
+  TypePropertyMask *message_mask = search_spec.add_type_property_filters();
+  message_mask->set_schema_type("message");
+  message_mask->add_paths("bar");
+  message_mask->add_paths("baz");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  DocHitInfo expected_doc_hit_info1(message_document_id);
+  expected_doc_hit_info1.UpdateSection(message_bar_section_id);
+  expected_doc_hit_info1.UpdateSection(message_baz_section_id);
+  DocHitInfo expected_doc_hit_info2(email_document_id);
+  expected_doc_hit_info2.UpdateSection(email_foo_section_id);
+  expected_doc_hit_info2.UpdateSection(email_baz_section_id);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1, expected_doc_hit_info2));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+}
+
+TEST_P(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("email")
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("bar")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("baz")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("message")
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("foo")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("bar")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                  .SetName("baz")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
+  int email_bar_section_id = 0;
+  int email_baz_section_id = 1;
+  int email_foo_section_id = 2;
+  int message_bar_section_id = 0;
+  int message_baz_section_id = 1;
+  int message_foo_section_id = 2;
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "1")
+                                                      .SetSchema("email")
+                                                      .Build()));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId message_document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace", "2")
+                                                      .SetSchema("message")
+                                                      .Build()));
+
+  // Poplate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email document has content "animal" in all sections
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(email_document_id, email_baz_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Message document has content "animal" in all sections
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+  ASSERT_THAT(AddTokenToIndex(message_document_id, message_baz_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  SearchSpecProto search_spec;
+  // Create a section filter '<section name>:<query term>'
+  search_spec.set_query("foo:animal");
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
+
+  // email has property filters for foo and baz properties
+  TypePropertyMask *email_mask = search_spec.add_type_property_filters();
+  email_mask->set_schema_type("email");
+  email_mask->add_paths("foo");
+  email_mask->add_paths("baz");
+
+  // message has property filters for bar and baz properties
+  TypePropertyMask *message_mask = search_spec.add_type_property_filters();
+  message_mask->set_schema_type("message");
+  message_mask->add_paths("bar");
+  message_mask->add_paths("baz");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Only hits in sections allowed by both the property filters and section
+  // restricts should be returned. Message document should not be returned since
+  // section foo specified in the section restrict is not allowed by the
+  // property filters.
+  DocHitInfo expected_doc_hit_info(email_document_id);
+  expected_doc_hit_info.UpdateSection(email_foo_section_id);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
+}
+
 TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
   // Create the schema and document store
   SchemaProto schema = SchemaBuilder()
