@@ -487,6 +487,9 @@ libtextclassifier3::Status FlashIndexStorage::FreePostingList(
     PostingListHolder&& holder) {
   ICING_ASSIGN_OR_RETURN(IndexBlock block,
                          GetIndexBlock(holder.id.block_index()));
+  if (block.posting_list_bytes() == max_posting_list_bytes()) {
+    block.SetNextBlockIndex(kInvalidBlockIndex);
+  }
 
   uint32_t posting_list_bytes = block.posting_list_bytes();
   int best_block_info_index = FindBestIndexBlockInfo(posting_list_bytes);

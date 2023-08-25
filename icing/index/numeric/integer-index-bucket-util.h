@@ -61,7 +61,7 @@ struct DataRangeAndBucketInfo {
 // - Data slice (i.e. [start, end)) can be empty.
 //
 // REQUIRES:
-// - original_key_lower <= original_key_upper
+// - original_key_lower < original_key_upper
 // - num_data_threshold > 0
 // - Keys of all data are in range [original_key_lower, original_key_upper]
 //
