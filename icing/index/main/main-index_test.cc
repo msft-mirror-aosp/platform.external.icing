@@ -91,7 +91,9 @@ class MainIndexTest : public testing::Test {
 
     std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
     LiteIndex::Options options(lite_index_file_name,
-                               /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                               /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                               /*hit_buffer_sort_at_indexing=*/true,
+                               /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));
 
@@ -362,7 +364,9 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   // - Doc4 {"four", "foul" is_in_prefix_section=true}
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                             /*hit_buffer_sort_at_indexing=*/true,
+                             /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -632,7 +636,9 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   // - Doc1 {"foot" is_in_prefix_section=false}
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                             /*hit_buffer_sort_at_indexing=*/true,
+                             /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
