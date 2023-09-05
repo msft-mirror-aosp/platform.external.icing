@@ -122,6 +122,17 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     }
   }
 
+  // Check and sort the LiteIndex HitBuffer if we're successful.
+  if (status.ok() && index_.LiteIndexNeedSort()) {
+    std::unique_ptr<Timer> sort_timer = clock_.GetNewTimer();
+    index_.SortLiteIndex();
+
+    if (put_document_stats != nullptr) {
+      put_document_stats->set_lite_index_sort_latency_ms(
+          sort_timer->GetElapsedMilliseconds());
+    }
+  }
+
   if (put_document_stats != nullptr) {
     put_document_stats->set_term_index_latency_ms(
         index_timer->GetElapsedMilliseconds());

@@ -96,7 +96,9 @@ class SuggestionProcessorTest : public Test {
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
-                           /*index_merge_size=*/1024 * 1024);
+                           /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_));
     // TODO(b/249829533): switch to use persistent numeric index.
