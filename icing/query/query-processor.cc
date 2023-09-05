@@ -176,6 +176,13 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
       options, current_time_ms);
+  // TODO(b/294114230): Move this SectionRestrict filter from root level to
+  // lower levels if that would improve performance.
+  if (!search_spec.type_property_filters().empty()) {
+    results.root_iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
+        std::move(results.root_iterator), &document_store_, &schema_store_,
+        search_spec, current_time_ms);
+  }
   return results;
 }
 
