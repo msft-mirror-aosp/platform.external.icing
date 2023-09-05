@@ -77,6 +77,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
     icingSearchEngineImpl.close();
   }
 
+  @SuppressWarnings("deprecation")
   @Override
   protected void finalize() throws Throwable {
     icingSearchEngineImpl.close();
