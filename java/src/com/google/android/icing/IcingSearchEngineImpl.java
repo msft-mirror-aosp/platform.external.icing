@@ -17,10 +17,11 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.google.android.apps.common.proguard.UsedByNative;
 import java.io.Closeable;
 
 /**
- * Java wrapper to access native APIs in external/icing/icing/icing-search-engine.h
+ * Java wrapper to access native APIs in //third_party/icing/icing-search-engine.h
  *
  * <p>If this instance has been closed, the instance is no longer usable.
  *
@@ -32,6 +33,7 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static final String TAG = "IcingSearchEngineImpl";
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private long nativePointer;
 
   private boolean closed = false;
@@ -258,30 +260,41 @@ public class IcingSearchEngineImpl implements Closeable {
     return tag;
   }
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native long nativeCreate(byte[] icingSearchEngineOptionsBytes);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native void nativeDestroy(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeInitialize(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeSetSchema(
       IcingSearchEngineImpl instance, byte[] schemaBytes, boolean ignoreErrorsAndDeleteDocuments);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetSchema(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetSchemaType(
       IcingSearchEngineImpl instance, String schemaType);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativePut(IcingSearchEngineImpl instance, byte[] documentBytes);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGet(
       IcingSearchEngineImpl instance, String namespace, String uri, byte[] getResultSpecBytes);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeReportUsage(
       IcingSearchEngineImpl instance, byte[] usageReportBytes);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetAllNamespaces(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeSearch(
       IcingSearchEngineImpl instance,
       byte[] searchSpecBytes,
@@ -289,42 +302,58 @@ public class IcingSearchEngineImpl implements Closeable {
       byte[] resultSpecBytes,
       long javaToNativeStartTimestampMs);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetNextPage(
       IcingSearchEngineImpl instance, long nextPageToken, long javaToNativeStartTimestampMs);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeDeleteByNamespace(
       IcingSearchEngineImpl instance, String namespace);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeDeleteBySchemaType(
       IcingSearchEngineImpl instance, String schemaType);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeDeleteByQuery(
       IcingSearchEngineImpl instance, byte[] searchSpecBytes, boolean returnDeletedDocumentInfo);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativePersistToDisk(IcingSearchEngineImpl instance, int persistType);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeOptimize(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetOptimizeInfo(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetStorageInfo(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeReset(IcingSearchEngineImpl instance);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeSearchSuggestions(
       IcingSearchEngineImpl instance, byte[] suggestionSpecBytes);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native byte[] nativeGetDebugInfo(IcingSearchEngineImpl instance, int verbosity);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native boolean nativeShouldLog(short severity, short verbosity);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native boolean nativeSetLoggingLevel(short severity, short verbosity);
 
+  @UsedByNative("icing-search-engine-jni.cc")
   private static native String nativeGetLoggingTag();
 }
