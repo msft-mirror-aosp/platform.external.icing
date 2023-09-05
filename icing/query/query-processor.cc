@@ -18,8 +18,8 @@
 #include <memory>
 #include <stack>
 #include <string>
-#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -35,12 +35,13 @@
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/search.pb.h"
-
-#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
-#include "icing/query/advanced-query-processor.h"
-#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
-
+#include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
+#include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/parser.h"
+#include "icing/query/advanced_query_parser/query-visitor.h"
+#include "icing/query/query-features.h"
 #include "icing/query/query-processor.h"
+#include "icing/query/query-results.h"
 #include "icing/query/query-terms.h"
 #include "icing/query/query-utils.h"
 #include "icing/schema/schema-store.h"
@@ -107,27 +108,31 @@ std::unique_ptr<DocHitInfoIterator> ProcessParserStateFrame(
 }  // namespace
 
 libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>>
-QueryProcessor::Create(Index* index,
+QueryProcessor::Create(Index* index, const NumericIndex<int64_t>* numeric_index,
                        const LanguageSegmenter* language_segmenter,
                        const Normalizer* normalizer,
                        const DocumentStore* document_store,
                        const SchemaStore* schema_store) {
   ICING_RETURN_ERROR_IF_NULL(index);
+  ICING_RETURN_ERROR_IF_NULL(numeric_index);
   ICING_RETURN_ERROR_IF_NULL(language_segmenter);
   ICING_RETURN_ERROR_IF_NULL(normalizer);
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
 
-  return std::unique_ptr<QueryProcessor>(new QueryProcessor(
-      index, language_segmenter, normalizer, document_store, schema_store));
+  return std::unique_ptr<QueryProcessor>(
+      new QueryProcessor(index, numeric_index, language_segmenter, normalizer,
+                         document_store, schema_store));
 }
 
 QueryProcessor::QueryProcessor(Index* index,
+                               const NumericIndex<int64_t>* numeric_index,
                                const LanguageSegmenter* language_segmenter,
                                const Normalizer* normalizer,
                                const DocumentStore* document_store,
                                const SchemaStore* schema_store)
     : index_(*index),
+      numeric_index_(*numeric_index),
       language_segmenter_(*language_segmenter),
       normalizer_(*normalizer),
       document_store_(*document_store),
@@ -135,7 +140,8 @@ QueryProcessor::QueryProcessor(Index* index,
 
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
     const SearchSpecProto& search_spec,
-    ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+    int64_t current_time_ms) {
   if (search_spec.search_type() == SearchSpecProto::SearchType::UNDEFINED) {
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         "Search type ",
@@ -145,38 +151,80 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
   QueryResults results;
   if (search_spec.search_type() ==
       SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
-#ifdef ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
     ICING_VLOG(1) << "Using EXPERIMENTAL_ICING_ADVANCED_QUERY parser!";
     ICING_ASSIGN_OR_RETURN(
-        std::unique_ptr<AdvancedQueryProcessor> advanced_query_processor,
-        AdvancedQueryProcessor::Create(&index_, &language_segmenter_,
-                                       &normalizer_, &document_store_,
-                                       &schema_store_));
-    ICING_ASSIGN_OR_RETURN(results, advanced_query_processor->ParseSearch(
-                                        search_spec, ranking_strategy));
-#else   // !ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
-    ICING_LOG(ERROR) << "Requested EXPERIMENTAL_ICING_ADVANCED_QUERY search "
-                        "type, but advanced query is not compiled in. Falling "
-                        "back to ICING_RAW_QUERY.";
-    ICING_ASSIGN_OR_RETURN(results,
-                           ParseRawQuery(search_spec, ranking_strategy));
-#endif  // ENABLE_EXPERIMENTAL_ICING_ADVANCED_QUERY
+        results,
+        ParseAdvancedQuery(search_spec, ranking_strategy, current_time_ms));
   } else {
-    ICING_ASSIGN_OR_RETURN(results,
-                           ParseRawQuery(search_spec, ranking_strategy));
+    ICING_ASSIGN_OR_RETURN(
+        results, ParseRawQuery(search_spec, ranking_strategy, current_time_ms));
+  }
+
+  // Check that all new features used in the search have been enabled in the
+  // SearchSpec.
+  const std::unordered_set<Feature> enabled_features(
+      search_spec.enabled_features().begin(),
+      search_spec.enabled_features().end());
+  for (const Feature feature : results.features_in_use) {
+    if (enabled_features.find(feature) == enabled_features.end()) {
+      return absl_ports::InvalidArgumentError(
+          absl_ports::StrCat("Attempted use of unenabled feature ", feature));
+    }
   }
 
   DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
   results.root_iterator = std::make_unique<DocHitInfoIteratorFilter>(
       std::move(results.root_iterator), &document_store_, &schema_store_,
-      options);
+      options, current_time_ms);
+  // TODO(b/294114230): Move this SectionRestrict filter from root level to
+  // lower levels if that would improve performance.
+  if (!search_spec.type_property_filters().empty()) {
+    results.root_iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
+        std::move(results.root_iterator), &document_store_, &schema_store_,
+        search_spec, current_time_ms);
+  }
   return results;
+}
+
+libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseAdvancedQuery(
+    const SearchSpecProto& search_spec,
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+    int64_t current_time_ms) const {
+  QueryResults results;
+  Lexer lexer(search_spec.query(), Lexer::Language::QUERY);
+  ICING_ASSIGN_OR_RETURN(std::vector<Lexer::LexerToken> lexer_tokens,
+                         lexer.ExtractTokens());
+
+  Parser parser = Parser::Create(std::move(lexer_tokens));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Node> tree_root,
+                         parser.ConsumeQuery());
+
+  if (tree_root == nullptr) {
+    results.root_iterator = std::make_unique<DocHitInfoIteratorAllDocumentId>(
+        document_store_.last_added_document_id());
+    return results;
+  }
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<Tokenizer> plain_tokenizer,
+      tokenizer_factory::CreateIndexingTokenizer(
+          StringIndexingConfig::TokenizerType::PLAIN, &language_segmenter_));
+  DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
+  bool needs_term_frequency_info =
+      ranking_strategy == ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE;
+  QueryVisitor query_visitor(&index_, &numeric_index_, &document_store_,
+                             &schema_store_, &normalizer_,
+                             plain_tokenizer.get(), search_spec.query(),
+                             std::move(options), search_spec.term_match_type(),
+                             needs_term_frequency_info, current_time_ms);
+  tree_root->Accept(&query_visitor);
+  return std::move(query_visitor).ConsumeResults();
 }
 
 // TODO(cassiewang): Collect query stats to populate the SearchResultsProto
 libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
     const SearchSpecProto& search_spec,
-    ScoringSpecProto::RankingStrategy::Code ranking_strategy) {
+    ScoringSpecProto::RankingStrategy::Code ranking_strategy,
+    int64_t current_time_ms) {
   DocHitInfoIteratorFilter::Options options = GetFilterOptions(search_spec);
 
   // Tokenize the incoming raw query
@@ -194,7 +242,6 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
 
   std::stack<ParserStateFrame> frames;
   frames.emplace();
-
   QueryResults results;
   // Process all the tokens
   for (int i = 0; i < tokens.size(); i++) {
@@ -273,11 +320,12 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
         // We do the same amount of disk reads, so it may be dependent on how
         // big the schema is and/or how popular schema type filtering and
         // section filtering is.
-
         ICING_ASSIGN_OR_RETURN(
             result_iterator,
             index_.GetIterator(
-                normalized_text, kSectionIdMaskAll,
+                normalized_text,
+                token.text.data() - search_spec.query().c_str(),
+                token.text.length(), kSectionIdMaskAll,
                 search_spec.term_match_type(),
                 /*need_hit_term_frequency=*/ranking_strategy ==
                     ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
@@ -288,20 +336,21 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
         // section restricts. Those are not currently supported. If they became
         // supported, this handling for query terms would need to be altered.
         if (!frames.top().saw_exclude) {
-          ICING_ASSIGN_OR_RETURN(
-              std::unique_ptr<DocHitInfoIterator> term_iterator,
-              index_.GetIterator(
-                  normalized_text, kSectionIdMaskAll,
-                  search_spec.term_match_type(),
-                  /*need_hit_term_frequency=*/ranking_strategy ==
-                      ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
-
           if (ranking_strategy ==
               ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE) {
+            ICING_ASSIGN_OR_RETURN(
+                std::unique_ptr<DocHitInfoIterator> term_iterator,
+                index_.GetIterator(
+                    normalized_text,
+                    token.text.data() - search_spec.query().c_str(),
+                    token.text.length(), kSectionIdMaskAll,
+                    search_spec.term_match_type(),
+                    /*need_hit_term_frequency=*/ranking_strategy ==
+                        ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE));
             results.query_term_iterators[normalized_text] =
                 std::make_unique<DocHitInfoIteratorFilter>(
                     std::move(term_iterator), &document_store_, &schema_store_,
-                    options);
+                    options, current_time_ms);
           }
           results.query_terms[frames.top().section_restrict].insert(
               std::move(normalized_text));
@@ -355,9 +404,11 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseRawQuery(
       if (!frames.top().section_restrict.empty()) {
         // We saw a section restrict earlier, wrap the result iterator in
         // the section restrict
+        std::set<std::string> section_restricts;
+        section_restricts.insert(std::move(frames.top().section_restrict));
         result_iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
             std::move(result_iterator), &document_store_, &schema_store_,
-            std::move(frames.top().section_restrict));
+            std::move(section_restricts), current_time_ms);
 
         frames.top().section_restrict = "";
       }
