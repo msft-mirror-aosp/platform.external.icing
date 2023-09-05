@@ -14,31 +14,38 @@
 
 #include "icing/index/index.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/lite/lite-index.h"
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
+#include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
-#include "icing/index/term-property-id.h"
+#include "icing/index/term-metadata.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/ranker.h"
 #include "icing/store/document-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -59,7 +66,9 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         options.index_merge_size));
   }
   return LiteIndex::Options(options.base_dir + "/idx/lite.",
-                            options.index_merge_size);
+                            options.index_merge_size,
+                            options.lite_index_sort_at_indexing,
+                            options.lite_index_sort_size);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -117,8 +126,7 @@ std::vector<TermMetadata> MergeAndRankTermMetadatas(
         ++main_term_itr;
         break;
       case MergeAction::kMergeTerms:
-        int total_est_hit_count =
-            lite_term_itr->hit_count + main_term_itr->hit_count;
+        int total_est_hit_count = lite_term_itr->score + main_term_itr->score;
         PushToTermHeap(TermMetadata(std::move(lite_term_itr->content),
                                     total_est_hit_count),
                        num_to_return, merged_term_metadata_heap);
@@ -152,9 +160,17 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
           IcingDynamicTrie::max_value_index(GetMainLexiconOptions()),
           IcingDynamicTrie::max_value_index(
               lite_index_options.lexicon_options)));
+
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<LiteIndex> lite_index,
       LiteIndex::Create(lite_index_options, icing_filesystem));
+  // Sort the lite index if we've enabled sorting the HitBuffer at indexing
+  // time, and there's an unsorted tail exceeding the threshold.
+  if (options.lite_index_sort_at_indexing &&
+      lite_index->HasUnsortedHitsExceedingSortThreshold()) {
+    lite_index->SortHits();
+  }
+
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,
@@ -162,6 +178,12 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
   return std::unique_ptr<Index>(new Index(options, std::move(term_id_codec),
                                           std::move(lite_index),
                                           std::move(main_index), filesystem));
+}
+
+/* static */ libtextclassifier3::StatusOr<int> Index::ReadFlashIndexMagic(
+    const Filesystem* filesystem, const std::string& base_dir) {
+  return MainIndex::ReadFlashIndexMagic(filesystem,
+                                        MakeMainIndexFilepath(base_dir));
 }
 
 libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
@@ -183,7 +205,8 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
-Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
+Index::GetIterator(const std::string& term, int term_start_index,
+                   int unnormalized_term_length, SectionIdMask section_id_mask,
                    TermMatchType::Code term_match_type,
                    bool need_hit_term_frequency) {
   std::unique_ptr<DocHitInfoIterator> lite_itr;
@@ -191,17 +214,19 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
   switch (term_match_type) {
     case TermMatchType::EXACT_ONLY:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLiteExact>(
-          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
-          need_hit_term_frequency);
+          term_id_codec_.get(), lite_index_.get(), term, term_start_index,
+          unnormalized_term_length, section_id_mask, need_hit_term_frequency);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainExact>(
-          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
+          main_index_.get(), term, term_start_index, unnormalized_term_length,
+          section_id_mask, need_hit_term_frequency);
       break;
     case TermMatchType::PREFIX:
       lite_itr = std::make_unique<DocHitInfoIteratorTermLitePrefix>(
-          term_id_codec_.get(), lite_index_.get(), term, section_id_mask,
-          need_hit_term_frequency);
+          term_id_codec_.get(), lite_index_.get(), term, term_start_index,
+          unnormalized_term_length, section_id_mask, need_hit_term_frequency);
       main_itr = std::make_unique<DocHitInfoIteratorTermMainPrefix>(
-          main_index_.get(), term, section_id_mask, need_hit_term_frequency);
+          main_index_.get(), term, term_start_index, unnormalized_term_length,
+          section_id_mask, need_hit_term_frequency);
       break;
     default:
       return absl_ports::InvalidArgumentError(
@@ -215,6 +240,7 @@ Index::GetIterator(const std::string& term, SectionIdMask section_id_mask,
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 Index::FindLiteTermsByPrefix(
     const std::string& prefix,
+    SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
     const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
   IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
@@ -229,12 +255,12 @@ Index::FindLiteTermsByPrefix(
         term_id_codec_->EncodeTvi(term_value_index, TviType::LITE),
         absl_ports::InternalError("Failed to access terms in lexicon."));
     ICING_ASSIGN_OR_RETURN(
-        int hit_count,
-        lite_index_->CountHits(term_id, suggestion_result_checker));
-    if (hit_count > 0) {
+        int hit_score,
+        lite_index_->ScoreHits(term_id, score_by, suggestion_result_checker));
+    if (hit_score > 0) {
       // There is at least one document in the given namespace has this term.
       term_metadata_list.push_back(
-          TermMetadata(term_iterator.GetKey(), hit_count));
+          TermMetadata(term_iterator.GetKey(), hit_score));
     }
 
     term_iterator.Advance();
@@ -245,20 +271,22 @@ Index::FindLiteTermsByPrefix(
 libtextclassifier3::StatusOr<std::vector<TermMetadata>>
 Index::FindTermsByPrefix(
     const std::string& prefix, int num_to_return,
-    TermMatchType::Code term_match_type,
+    TermMatchType::Code scoring_match_type,
+    SuggestionScoringSpecProto::SuggestionRankingStrategy::Code rank_by,
     const SuggestionResultChecker* suggestion_result_checker) {
   std::vector<TermMetadata> term_metadata_list;
   if (num_to_return <= 0) {
     return term_metadata_list;
   }
   // Get results from the LiteIndex.
+  // TODO(b/250648165) support score term by prefix_hit in lite_index.
   ICING_ASSIGN_OR_RETURN(
       std::vector<TermMetadata> lite_term_metadata_list,
-      FindLiteTermsByPrefix(prefix, suggestion_result_checker));
+      FindLiteTermsByPrefix(prefix, rank_by, suggestion_result_checker));
   // Append results from the MainIndex.
   ICING_ASSIGN_OR_RETURN(
       std::vector<TermMetadata> main_term_metadata_list,
-      main_index_->FindTermsByPrefix(prefix, term_match_type,
+      main_index_->FindTermsByPrefix(prefix, scoring_match_type, rank_by,
                                      suggestion_result_checker));
   return MergeAndRankTermMetadatas(std::move(lite_term_metadata_list),
                                    std::move(main_term_metadata_list),

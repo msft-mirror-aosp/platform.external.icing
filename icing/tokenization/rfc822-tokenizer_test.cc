@@ -21,9 +21,6 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/jni-test-helpers.h"
-#include "icing/tokenization/language-segmenter-factory.h"
-#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
@@ -31,21 +28,7 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
-class Rfc822TokenizerTest : public testing::Test {
- protected:
-  void SetUp() override {
-    jni_cache_ = GetTestJniCache();
-    language_segmenter_factory::SegmenterOptions options(ULOC_US,
-                                                         jni_cache_.get());
-    ICING_ASSERT_OK_AND_ASSIGN(
-        language_segmenter_,
-        language_segmenter_factory::Create(std::move(options)));
-  }
-  std::unique_ptr<const JniCache> jni_cache_;
-  std::unique_ptr<LanguageSegmenter> language_segmenter_;
-};
-
-TEST_F(Rfc822TokenizerTest, StartingState) {
+TEST(Rfc822TokenizerTest, StartingState) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c";
   auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();
@@ -55,7 +38,7 @@ TEST_F(Rfc822TokenizerTest, StartingState) {
   ASSERT_THAT(token_iterator->GetTokens(), Not(IsEmpty()));
 }
 
-TEST_F(Rfc822TokenizerTest, EmptyMiddleToken) {
+TEST(Rfc822TokenizerTest, EmptyMiddleToken) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string s("<alex>,,<tom>");
@@ -64,14 +47,16 @@ TEST_F(Rfc822TokenizerTest, EmptyMiddleToken) {
       rfc822_tokenizer.TokenizeAll(s),
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<alex>"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "alex"),
           EqualsToken(Token::Type::RFC822_TOKEN, "<tom>"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "tom"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "tom"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "tom"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Simple) {
+TEST(Rfc822TokenizerTest, Simple) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("<你alex@google.com>");
@@ -81,13 +66,14 @@ TEST_F(Rfc822TokenizerTest, Simple) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<你alex@google.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "你alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "你alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "你alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Small) {
+TEST(Rfc822TokenizerTest, Small) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string s = "\"a\"";
@@ -96,7 +82,8 @@ TEST_F(Rfc822TokenizerTest, Small) {
               IsOkAndHolds(ElementsAre(
                   EqualsToken(Token::Type::RFC822_TOKEN, "a"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "a"),
-                  EqualsToken(Token::Type::RFC822_ADDRESS, "a"))));
+                  EqualsToken(Token::Type::RFC822_ADDRESS, "a"),
+                  EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "a"))));
 
   s = "\"a\", \"b\"";
 
@@ -105,9 +92,11 @@ TEST_F(Rfc822TokenizerTest, Small) {
                   EqualsToken(Token::Type::RFC822_TOKEN, "a"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "a"),
                   EqualsToken(Token::Type::RFC822_ADDRESS, "a"),
+                  EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "a"),
                   EqualsToken(Token::Type::RFC822_TOKEN, "b"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "b"),
-                  EqualsToken(Token::Type::RFC822_ADDRESS, "b"))));
+                  EqualsToken(Token::Type::RFC822_ADDRESS, "b"),
+                  EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "b"))));
 
   s = "(a)";
 
@@ -117,7 +106,7 @@ TEST_F(Rfc822TokenizerTest, Small) {
                                EqualsToken(Token::Type::RFC822_COMMENT, "a"))));
 }
 
-TEST_F(Rfc822TokenizerTest, PB) {
+TEST(Rfc822TokenizerTest, PB) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("peanut (comment) butter, <alex@google.com>");
@@ -128,20 +117,23 @@ TEST_F(Rfc822TokenizerTest, PB) {
           EqualsToken(Token::Type::RFC822_TOKEN, "peanut"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "peanut"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "peanut"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "peanut"),
           EqualsToken(Token::Type::RFC822_TOKEN, "comment"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"),
           EqualsToken(Token::Type::RFC822_TOKEN, "butter"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "butter"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "butter"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "butter"),
           EqualsToken(Token::Type::RFC822_TOKEN, "<alex@google.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NoBrackets) {
+TEST(Rfc822TokenizerTest, NoBrackets) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("alex@google.com");
@@ -154,10 +146,11 @@ TEST_F(Rfc822TokenizerTest, NoBrackets) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex@google.com"),
-          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"))));
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, TwoAddresses) {
+TEST(Rfc822TokenizerTest, TwoAddresses) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("<你alex@google.com>; <alexsav@gmail.com>");
@@ -167,19 +160,21 @@ TEST_F(Rfc822TokenizerTest, TwoAddresses) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<你alex@google.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "你alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "你alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "你alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_TOKEN, "<alexsav@gmail.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alexsav"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "gmail.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alexsav@gmail.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alexsav"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "gmail"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Comment) {
+TEST(Rfc822TokenizerTest, Comment) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("(a comment) <alex@google.com>");
@@ -191,13 +186,14 @@ TEST_F(Rfc822TokenizerTest, Comment) {
           EqualsToken(Token::Type::RFC822_COMMENT, "a"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NameAndComment) {
+TEST(Rfc822TokenizerTest, NameAndComment) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string_view s("\"a name\" also a name <alex@google.com>");
@@ -212,6 +208,7 @@ TEST_F(Rfc822TokenizerTest, NameAndComment) {
           EqualsToken(Token::Type::RFC822_NAME, "a"),
           EqualsToken(Token::Type::RFC822_NAME, "name"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
@@ -219,7 +216,7 @@ TEST_F(Rfc822TokenizerTest, NameAndComment) {
 }
 
 // Test from tokenizer_test.cc.
-TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
+TEST(Rfc822TokenizerTest, Rfc822SanityCheck) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string addr1("A name (A comment) <address@domain.com>");
@@ -239,6 +236,7 @@ TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
           EqualsToken(Token::Type::RFC822_COMMENT, "A"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "address"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "domain.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "address@domain.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "domain"),
@@ -251,6 +249,7 @@ TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
           EqualsToken(Token::Type::RFC822_COMMENT, "different"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "bob-loblaw"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "foo.bar.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "bob-loblaw@foo.bar.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "bob"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "loblaw"),
@@ -259,6 +258,7 @@ TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
 
           EqualsToken(Token::Type::RFC822_TOKEN, addr3),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "no.at.sign.present"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "no.at.sign.present"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "no"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "at"),
@@ -267,6 +267,7 @@ TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
 
           EqualsToken(Token::Type::RFC822_TOKEN, addr4),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "double@at"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "signs.present"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "double@at@signs.present"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "double"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "at"),
@@ -275,7 +276,7 @@ TEST_F(Rfc822TokenizerTest, Rfc822SanityCheck) {
 }
 
 // Tests from rfc822 converter.
-TEST_F(Rfc822TokenizerTest, SimpleRfcText) {
+TEST(Rfc822TokenizerTest, SimpleRfcText) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string test_string =
       "foo@google.com,bar@google.com,baz@google.com,foo+hello@google.com,baz@"
@@ -290,18 +291,24 @@ TEST_F(Rfc822TokenizerTest, SimpleRfcText) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "foo@google.com"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "foo"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
+
           EqualsToken(Token::Type::RFC822_TOKEN, "bar@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "bar"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "bar@google.com"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "bar"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
+
           EqualsToken(Token::Type::RFC822_TOKEN, "baz@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "baz"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "baz@google.com"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "baz"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
+
           EqualsToken(Token::Type::RFC822_TOKEN, "foo+hello@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "foo"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "hello"),
@@ -309,16 +316,19 @@ TEST_F(Rfc822TokenizerTest, SimpleRfcText) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "foo+hello@google.com"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "foo+hello"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
+
           EqualsToken(Token::Type::RFC822_TOKEN, "baz@corp.google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "baz"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "corp"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "baz@corp.google.com"),
-          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "baz"))));
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "baz"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "corp.google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, ComplicatedRfcText) {
+TEST(Rfc822TokenizerTest, ComplicatedRfcText) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string test_string =
       R"raw("Weird, But&(Also)\\Valid" Name (!With, "an" \\odd\\ cmt too¡) <Foo B(a)r,Baz@g.co>
@@ -341,6 +351,7 @@ TEST_F(Rfc822TokenizerTest, ComplicatedRfcText) {
           EqualsToken(Token::Type::RFC822_COMMENT, "cmt"),
           EqualsToken(Token::Type::RFC822_COMMENT, "too"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "Foo B(a)r,Baz"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "g.co"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "Foo B(a)r,Baz@g.co"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "Foo"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "B"),
@@ -351,13 +362,14 @@ TEST_F(Rfc822TokenizerTest, ComplicatedRfcText) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "co"),
           EqualsToken(Token::Type::RFC822_TOKEN, "<easy@google.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "easy"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "easy@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "easy"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, FromHtmlBugs) {
+TEST(Rfc822TokenizerTest, FromHtmlBugs) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   // This input used to cause HTML parsing exception. We don't do HTML parsing
   // any more (b/8388100) so we are just checking that it does not crash and
@@ -382,13 +394,14 @@ TEST_F(Rfc822TokenizerTest, FromHtmlBugs) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, s),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "foo"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "foo@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "foo"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, EmptyComponentsTest) {
+TEST(Rfc822TokenizerTest, EmptyComponentsTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(""),
               IsOkAndHolds(testing::IsEmpty()));
@@ -399,7 +412,8 @@ TEST_F(Rfc822TokenizerTest, EmptyComponentsTest) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 
   // Empty name and address means that there is no token.
   EXPECT_THAT(
@@ -419,7 +433,8 @@ TEST_F(Rfc822TokenizerTest, EmptyComponentsTest) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(R"((comment) "")"),
               IsOkAndHolds(ElementsAre(
@@ -427,7 +442,7 @@ TEST_F(Rfc822TokenizerTest, EmptyComponentsTest) {
                   EqualsToken(Token::Type::RFC822_COMMENT, "comment"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NameTest) {
+TEST(Rfc822TokenizerTest, NameTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   // Name spread between address or comment.
@@ -436,6 +451,7 @@ TEST_F(Rfc822TokenizerTest, NameTest) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "peanut <address> butter"),
           EqualsToken(Token::Type::RFC822_NAME, "peanut"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "address"),
           EqualsToken(Token::Type::RFC822_NAME, "butter"))));
@@ -446,11 +462,13 @@ TEST_F(Rfc822TokenizerTest, NameTest) {
           EqualsToken(Token::Type::RFC822_TOKEN, "peanut"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "peanut"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "peanut"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "peanut"),
           EqualsToken(Token::Type::RFC822_TOKEN, "comment"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"),
           EqualsToken(Token::Type::RFC822_TOKEN, "butter"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "butter"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "butter"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "butter"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "butter"))));
 
   // Dropping quotes when they're not needed.
   std::string s = R"(peanut <address> "butter")";
@@ -459,6 +477,7 @@ TEST_F(Rfc822TokenizerTest, NameTest) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, s),
           EqualsToken(Token::Type::RFC822_NAME, "peanut"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "address"),
           EqualsToken(Token::Type::RFC822_NAME, "butter"))));
@@ -470,9 +489,11 @@ TEST_F(Rfc822TokenizerTest, NameTest) {
           EqualsToken(Token::Type::RFC822_TOKEN, "peanut"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "peanut"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "peanut"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "peanut"),
           EqualsToken(Token::Type::RFC822_TOKEN, "butter"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "butter"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "butter"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "butter"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "butter"))));
   // Adding quotes when they are needed.
   EXPECT_THAT(
       rfc822_tokenizer.TokenizeAll("ple@se quote this <addr>"),
@@ -482,11 +503,12 @@ TEST_F(Rfc822TokenizerTest, NameTest) {
           EqualsToken(Token::Type::RFC822_NAME, "se"),
           EqualsToken(Token::Type::RFC822_NAME, "quote"),
           EqualsToken(Token::Type::RFC822_NAME, "this"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "addr"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "addr"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "addr"))));
 }
 
-TEST_F(Rfc822TokenizerTest, CommentEscapeTest) {
+TEST(Rfc822TokenizerTest, CommentEscapeTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   // '(', ')', '\\' chars should be escaped. All other escaped chars should be
   // unescaped.
@@ -505,7 +527,8 @@ TEST_F(Rfc822TokenizerTest, CommentEscapeTest) {
           EqualsToken(Token::Type::RFC822_COMMENT, R"(c\om\ment)"),
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 
   EXPECT_THAT(
       rfc822_tokenizer.TokenizeAll(R"((co(m\))ment) name)"),
@@ -516,10 +539,11 @@ TEST_F(Rfc822TokenizerTest, CommentEscapeTest) {
           EqualsToken(Token::Type::RFC822_COMMENT, "ment"),
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 }
 
-TEST_F(Rfc822TokenizerTest, QuoteEscapeTest) {
+TEST(Rfc822TokenizerTest, QuoteEscapeTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   // All names that include non-alphanumeric chars must be quoted and have '\\'
   // and '"' chars escaped.
@@ -530,6 +554,7 @@ TEST_F(Rfc822TokenizerTest, QuoteEscapeTest) {
           EqualsToken(Token::Type::RFC822_NAME, "n"),
           EqualsToken(Token::Type::RFC822_NAME, "a"),
           EqualsToken(Token::Type::RFC822_NAME, "me"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "addr"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "addr"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "addr"))));
 
@@ -543,10 +568,11 @@ TEST_F(Rfc822TokenizerTest, QuoteEscapeTest) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "n"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "a\\m"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "e"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, R"(n\\a\m\"e)"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, R"(n\\a\m\"e)"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, R"(n\\a\m\"e)"))));
 }
 
-TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
+TEST(Rfc822TokenizerTest, UnterminatedComponentTest) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   EXPECT_THAT(
@@ -555,6 +581,7 @@ TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"),
           EqualsToken(Token::Type::RFC822_TOKEN, "comment"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"))));
 
@@ -564,20 +591,24 @@ TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
           EqualsToken(Token::Type::RFC822_TOKEN, "half"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "half"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "half"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "half"),
           EqualsToken(Token::Type::RFC822_TOKEN, "of"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "of"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "of"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "of"),
           EqualsToken(Token::Type::RFC822_TOKEN, "the name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "the"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "the name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "the name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "the name"))));
 
   EXPECT_THAT(
       rfc822_tokenizer.TokenizeAll(R"("name\)"),
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 
   EXPECT_THAT(
       rfc822_tokenizer.TokenizeAll(R"(name (comment\)"),
@@ -585,6 +616,7 @@ TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"),
           EqualsToken(Token::Type::RFC822_TOKEN, "comment"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"))));
 
@@ -592,6 +624,7 @@ TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
       rfc822_tokenizer.TokenizeAll(R"(<addr> "name\)"),
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<addr> \"name\\"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "addr"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "addr"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "addr"),
           EqualsToken(Token::Type::RFC822_NAME, "name"))));
@@ -602,11 +635,12 @@ TEST_F(Rfc822TokenizerTest, UnterminatedComponentTest) {
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"),
           EqualsToken(Token::Type::RFC822_TOKEN, "comment"),
           EqualsToken(Token::Type::RFC822_COMMENT, "comment"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Tokenize) {
+TEST(Rfc822TokenizerTest, Tokenize) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   std::string text =
@@ -619,6 +653,7 @@ TEST_F(Rfc822TokenizerTest, Tokenize) {
           EqualsToken(Token::Type::RFC822_NAME, "Berg"),
           EqualsToken(Token::Type::RFC822_COMMENT, "home"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "berg\\"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "berg\\@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "berg"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
@@ -628,6 +663,7 @@ TEST_F(Rfc822TokenizerTest, Tokenize) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "tom\\@google.com"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "tom\\@google.com"),
           EqualsToken(Token::Type::RFC822_TOKEN, "work"),
           EqualsToken(Token::Type::RFC822_COMMENT, "work"))));
 
@@ -642,6 +678,7 @@ TEST_F(Rfc822TokenizerTest, Tokenize) {
           EqualsToken(Token::Type::RFC822_NAME, "Bar"),
           EqualsToken(Token::Type::RFC822_COMMENT, "something"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "foo\\"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "foo\\@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "foo"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
@@ -651,11 +688,12 @@ TEST_F(Rfc822TokenizerTest, Tokenize) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "blah\\@google.com"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "blah\\@google.com"),
           EqualsToken(Token::Type::RFC822_TOKEN, "something"),
           EqualsToken(Token::Type::RFC822_COMMENT, "something"))));
 }
 
-TEST_F(Rfc822TokenizerTest, EdgeCases) {
+TEST(Rfc822TokenizerTest, EdgeCases) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
 
   // Text to trigger the scenario where you have a non-alphabetic followed
@@ -667,6 +705,7 @@ TEST_F(Rfc822TokenizerTest, EdgeCases) {
           EqualsToken(Token::Type::RFC822_TOKEN,
                       R"raw(<be.\&rg@google.com>)raw"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "be.\\&rg"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "be.\\&rg@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "be"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "rg"),
@@ -680,6 +719,7 @@ TEST_F(Rfc822TokenizerTest, EdgeCases) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<a\\lex@google.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "a\\lex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "a\\lex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "a\\lex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
@@ -699,7 +739,8 @@ TEST_F(Rfc822TokenizerTest, EdgeCases) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS,
                       R"(al\\ex@goo\"<idk>gle.com)"),
-          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "al\\\\ex"))));
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "al\\\\ex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "goo\\\"<idk>gle.com"))));
 
   text = "<alex@google.com";
   EXPECT_THAT(
@@ -707,13 +748,14 @@ TEST_F(Rfc822TokenizerTest, EdgeCases) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<alex@google.com"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, NumberInAddress) {
+TEST(Rfc822TokenizerTest, NumberInAddress) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "<3alex@google.com>";
   EXPECT_THAT(
@@ -721,13 +763,14 @@ TEST_F(Rfc822TokenizerTest, NumberInAddress) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "<3alex@google.com>"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "3alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "3alex@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "3alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
+TEST(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = R"("alex\"")";
   EXPECT_THAT(
@@ -735,7 +778,8 @@ TEST_F(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "alex"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "alex"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "alex"))));
 
   text = R"("alex\\\a")";
   EXPECT_THAT(
@@ -744,10 +788,11 @@ TEST_F(Rfc822TokenizerTest, DoubleQuoteDoubleSlash) {
           EqualsToken(Token::Type::RFC822_TOKEN, R"(alex\\\a)"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "alex"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "a"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, R"(alex\\\a)"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, R"(alex\\\a)"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, R"(alex\\\a)"))));
 }
 
-TEST_F(Rfc822TokenizerTest, TwoEmails) {
+TEST(Rfc822TokenizerTest, TwoEmails) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "tjbarron@google.com alexsav@google.com";
   EXPECT_THAT(
@@ -759,15 +804,17 @@ TEST_F(Rfc822TokenizerTest, TwoEmails) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "tjbarron@google.com"),
           EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "tjbarron"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"),
           EqualsToken(Token::Type::RFC822_TOKEN, "alexsav@google.com"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alexsav"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alexsav@google.com"),
-          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alexsav"))));
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alexsav"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, BackSlashes) {
+TEST(Rfc822TokenizerTest, BackSlashes) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = R"("\name")";
   EXPECT_THAT(
@@ -775,7 +822,8 @@ TEST_F(Rfc822TokenizerTest, BackSlashes) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "name"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "name"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "name"))));
 
   text = R"("name@foo\@gmail")";
   EXPECT_THAT(
@@ -786,10 +834,11 @@ TEST_F(Rfc822TokenizerTest, BackSlashes) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "foo"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "gmail"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "name@foo\\@gmail"),
-          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "name"))));
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "name"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "foo\\@gmail"))));
 }
 
-TEST_F(Rfc822TokenizerTest, BigWhitespace) {
+TEST(Rfc822TokenizerTest, BigWhitespace) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "\"quoted\"              <address>";
   EXPECT_THAT(
@@ -797,11 +846,12 @@ TEST_F(Rfc822TokenizerTest, BigWhitespace) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, text),
           EqualsToken(Token::Type::RFC822_NAME, "quoted"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "address"))));
 }
 
-TEST_F(Rfc822TokenizerTest, AtSignFirst) {
+TEST(Rfc822TokenizerTest, AtSignFirst) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "\"@foo\"";
   EXPECT_THAT(
@@ -809,33 +859,37 @@ TEST_F(Rfc822TokenizerTest, AtSignFirst) {
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, "foo"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "foo"),
-          EqualsToken(Token::Type::RFC822_ADDRESS, "foo"))));
+          EqualsToken(Token::Type::RFC822_ADDRESS, "foo"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "foo"))));
 }
 
-TEST_F(Rfc822TokenizerTest, SlashThenUnicode) {
+TEST(Rfc822TokenizerTest, SlashThenUnicode) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = R"("quoted\你cjk")";
-  EXPECT_THAT(rfc822_tokenizer.TokenizeAll(text),
-              IsOkAndHolds(ElementsAre(
-                  EqualsToken(Token::Type::RFC822_TOKEN, "quoted\\你cjk"),
-                  EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST,
-                              "quoted\\你cjk"),
-                  EqualsToken(Token::Type::RFC822_ADDRESS, "quoted\\你cjk"))));
+  EXPECT_THAT(
+      rfc822_tokenizer.TokenizeAll(text),
+      IsOkAndHolds(ElementsAre(
+          EqualsToken(Token::Type::RFC822_TOKEN, "quoted\\你cjk"),
+          EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST,
+                      "quoted\\你cjk"),
+          EqualsToken(Token::Type::RFC822_ADDRESS, "quoted\\你cjk"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "quoted\\你cjk"))));
 }
 
-TEST_F(Rfc822TokenizerTest, AddressEmptyAddress) {
+TEST(Rfc822TokenizerTest, AddressEmptyAddress) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "<address> <> Name";
   EXPECT_THAT(
       rfc822_tokenizer.TokenizeAll(text),
       IsOkAndHolds(ElementsAre(
           EqualsToken(Token::Type::RFC822_TOKEN, text),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "address"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "address"),
           EqualsToken(Token::Type::RFC822_NAME, "Name"))));
 }
 
-TEST_F(Rfc822TokenizerTest, ProperComment) {
+TEST(Rfc822TokenizerTest, ProperComment) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "(comment)alex@google.com";
   EXPECT_THAT(
@@ -847,10 +901,11 @@ TEST_F(Rfc822TokenizerTest, ProperComment) {
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "google"),
           EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "com"),
           EqualsToken(Token::Type::RFC822_ADDRESS, "alex@google.com"),
-          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"))));
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "google.com"))));
 }
 
-TEST_F(Rfc822TokenizerTest, SmallNameToEmail) {
+TEST(Rfc822TokenizerTest, SmallNameToEmail) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(text),
@@ -861,12 +916,14 @@ TEST_F(Rfc822TokenizerTest, SmallNameToEmail) {
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "c"),
                   EqualsToken(Token::Type::RFC822_ADDRESS, "a@g.c"),
                   EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "a"),
+                  EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "g.c"),
                   EqualsToken(Token::Type::RFC822_TOKEN, "b@g.c"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "b"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "g"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "c"),
                   EqualsToken(Token::Type::RFC822_ADDRESS, "b@g.c"),
-                  EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "b"))));
+                  EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "b"),
+                  EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "g.c"))));
 
   text = "a\\\\@g.c";
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(text),
@@ -876,16 +933,33 @@ TEST_F(Rfc822TokenizerTest, SmallNameToEmail) {
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "g"),
                   EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_HOST, "c"),
                   EqualsToken(Token::Type::RFC822_ADDRESS, "a\\\\@g.c"),
-                  EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "a"))));
+                  EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "a"),
+                  EqualsToken(Token::Type::RFC822_HOST_ADDRESS, "g.c"))));
 }
 
-TEST_F(Rfc822TokenizerTest, Commas) {
+TEST(Rfc822TokenizerTest, AtSignLast) {
+  Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
+  std::string_view text("<alex@>, tim@");
+  EXPECT_THAT(
+      rfc822_tokenizer.TokenizeAll(text),
+      IsOkAndHolds(ElementsAre(
+          EqualsToken(Token::Type::RFC822_TOKEN, "<alex@>"),
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "alex"),
+          EqualsToken(Token::Type::RFC822_ADDRESS, "alex@"),
+          EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "alex"),
+          EqualsToken(Token::Type::RFC822_TOKEN, "tim"),
+          EqualsToken(Token::Type::RFC822_ADDRESS_COMPONENT_LOCAL, "tim"),
+          EqualsToken(Token::Type::RFC822_ADDRESS, "tim"),
+          EqualsToken(Token::Type::RFC822_LOCAL_ADDRESS, "tim"))));
+}
+
+TEST(Rfc822TokenizerTest, Commas) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = ",,,,,,,,,,,,,,,,,,,,,,,,,,;";
   EXPECT_THAT(rfc822_tokenizer.TokenizeAll(text), IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
+TEST(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
   auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();
@@ -901,7 +975,7 @@ TEST_F(Rfc822TokenizerTest, ResetToTokenStartingAfter) {
   ASSERT_FALSE(token_iterator->ResetToTokenStartingAfter(6));
 }
 
-TEST_F(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
+TEST(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
   Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
   std::string text = "a@g.c,b@g.c";
   auto token_iterator = rfc822_tokenizer.Tokenize(text).ValueOrDie();

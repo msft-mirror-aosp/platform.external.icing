@@ -20,14 +20,16 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/index/main/flash-index-storage.h"
-#include "icing/index/main/posting-list-accessor.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
+#include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/index/term-metadata.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/store/namespace-id.h"
@@ -46,44 +48,58 @@ class MainIndex {
       const std::string& index_directory, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
 
-  // Get a PostingListAccessor that holds the posting list chain for 'term'.
+  // Reads magic from existing flash index storage file header. We need this
+  // during Icing initialization phase to determine the version.
   //
   // RETURNS:
-  //  - On success, a valid PostingListAccessor
+  //   - On success, a valid magic.
+  //   - NOT_FOUND if the flash index doesn't exist.
+  //   - INTERNAL on I/O error.
+  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
+      const Filesystem* filesystem, const std::string& index_directory);
+
+  // Get a PostingListHitAccessor that holds the posting list chain for 'term'.
+  //
+  // RETURNS:
+  //  - On success, a valid PostingListHitAccessor
   //  - NOT_FOUND if term is not present in the main index.
-  libtextclassifier3::StatusOr<std::unique_ptr<PostingListAccessor>>
+  libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
   GetAccessorForExactTerm(const std::string& term);
 
-  // Get a PostingListAccessor for 'prefix'.
+  // Get a PostingListHitAccessor for 'prefix'.
   //
   // RETURNS:
-  //  - On success, a result containing a valid PostingListAccessor.
+  //  - On success, a result containing a valid PostingListHitAccessor.
   //  - NOT_FOUND if neither 'prefix' nor any terms for which 'prefix' is a
   //    prefix are present in the main index.
   struct GetPrefixAccessorResult {
-    // A PostingListAccessor that holds the posting list chain for the term
+    // A PostingListHitAccessor that holds the posting list chain for the term
     // that best represents 'prefix' in the main index.
-    std::unique_ptr<PostingListAccessor> accessor;
+    std::unique_ptr<PostingListHitAccessor> accessor;
     // True if the returned posting list chain is for 'prefix' or false if the
     // returned posting list chain is for a term for which 'prefix' is a prefix.
     bool exact;
+
+    explicit GetPrefixAccessorResult(
+        std::unique_ptr<PostingListHitAccessor> accessor_in, bool exact_in)
+        : accessor(std::move(accessor_in)), exact(exact_in) {}
   };
   libtextclassifier3::StatusOr<GetPrefixAccessorResult>
   GetAccessorForPrefixTerm(const std::string& prefix);
 
-  // Finds terms with the given prefix in the given namespaces. If
-  // 'namespace_ids' is empty, returns results from all the namespaces. The
+  // Finds terms with the given prefix in the given result checker. The
   // input prefix must be normalized, otherwise inaccurate results may be
-  // returned. If term_match_type is EXACT, only exact hit will be counted and
-  // it is PREFIX, both prefix and exact hits will be counted. Results are not
-  // sorted specifically and are in lexigraphical order. Number of results are
-  // no more than 'num_to_return'.
+  // returned. If scoring_match_type is EXACT, only exact hit will be counted
+  // and it is PREFIX, both prefix and exact hits will be counted. Results are
+  // not sorted specifically and are in lexigraphical order. Number of results
+  // are no more than 'num_to_return'.
   //
   // Returns:
   //   A list of TermMetadata on success
   //   INTERNAL_ERROR if failed to access term data.
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindTermsByPrefix(
-      const std::string& prefix, TermMatchType::Code term_match_type,
+      const std::string& prefix, TermMatchType::Code scoring_match_type,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
       const SuggestionResultChecker* suggestion_result_checker);
 
   struct LexiconMergeOutputs {
@@ -155,7 +171,7 @@ class MainIndex {
     if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
       return libtextclassifier3::Status::OK;
     }
-    return absl_ports::InternalError("Unable to sync lite index components.");
+    return absl_ports::InternalError("Unable to sync main index components.");
   }
 
   DocumentId last_added_document_id() const {
@@ -202,8 +218,9 @@ class MainIndex {
       const std::vector<DocumentId>& document_id_old_to_new);
 
  private:
-  MainIndex(const std::string& index_directory, const Filesystem* filesystem,
-            const IcingFilesystem* icing_filesystem);
+  explicit MainIndex(const std::string& index_directory,
+                     const Filesystem* filesystem,
+                     const IcingFilesystem* icing_filesystem);
 
   libtextclassifier3::Status Init();
 
@@ -299,7 +316,7 @@ class MainIndex {
   //  posting list.
   libtextclassifier3::Status AddPrefixBackfillHits(
       PostingListIdentifier backfill_posting_list_id,
-      PostingListAccessor* hit_accum);
+      PostingListHitAccessor* hit_accum);
 
   // Transfer hits from old_pl_accessor to new_index for term.
   //
@@ -308,7 +325,7 @@ class MainIndex {
   //   INTERNAL_ERROR on IO error
   static libtextclassifier3::StatusOr<DocumentId> TransferAndAddHits(
       const std::vector<DocumentId>& document_id_old_to_new, const char* term,
-      PostingListAccessor& old_pl_accessor, MainIndex* new_index);
+      PostingListHitAccessor& old_pl_accessor, MainIndex* new_index);
 
   // Transfer hits from the current main index to new_index.
   //
@@ -322,6 +339,7 @@ class MainIndex {
   std::string base_dir_;
   const Filesystem* filesystem_;
   const IcingFilesystem* icing_filesystem_;
+  std::unique_ptr<PostingListHitSerializer> posting_list_hit_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
 };
