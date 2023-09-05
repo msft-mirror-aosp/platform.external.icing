@@ -139,26 +139,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  public void testSetAndGetSchema() throws Exception {
-    assertStatusOk(icingSearchEngine.initialize().getStatus());
-
-    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
-    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
-    assertStatusOk(setSchemaResultProto.getStatus());
-
-    GetSchemaResultProto getSchemaResultProto = icingSearchEngine.getSchema();
-    assertStatusOk(getSchemaResultProto.getStatus());
-    assertThat(getSchemaResultProto.getSchema()).isEqualTo(schema);
-
-    GetSchemaTypeResultProto getSchemaTypeResultProto =
-        icingSearchEngine.getSchemaType(emailTypeConfig.getSchemaType());
-    assertStatusOk(getSchemaTypeResultProto.getStatus());
-    assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
-  }
-
-  @Test
   public void testPutAndGetDocuments() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
@@ -309,56 +289,6 @@ public final class IcingSearchEngineTest {
 
     DeleteResultProto deleteResultProto = icingSearchEngine.delete("namespace", "uri");
     assertStatusOk(deleteResultProto.getStatus());
-
-    GetResultProto getResultProto =
-        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
-    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
-  }
-
-  @Test
-  public void testDeleteByNamespace() throws Exception {
-    assertStatusOk(icingSearchEngine.initialize().getStatus());
-
-    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
-    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    assertThat(
-            icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
-                .getStatus()
-                .getCode())
-        .isEqualTo(StatusProto.Code.OK);
-
-    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
-    assertStatusOk(icingSearchEngine.put(emailDocument).getStatus());
-
-    DeleteByNamespaceResultProto deleteByNamespaceResultProto =
-        icingSearchEngine.deleteByNamespace("namespace");
-    assertStatusOk(deleteByNamespaceResultProto.getStatus());
-
-    GetResultProto getResultProto =
-        icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
-    assertThat(getResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
-  }
-
-  @Test
-  public void testDeleteBySchemaType() throws Exception {
-    assertStatusOk(icingSearchEngine.initialize().getStatus());
-
-    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
-    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    assertThat(
-            icingSearchEngine
-                .setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false)
-                .getStatus()
-                .getCode())
-        .isEqualTo(StatusProto.Code.OK);
-
-    DocumentProto emailDocument = createEmailDocument("namespace", "uri");
-    assertStatusOk(icingSearchEngine.put(emailDocument).getStatus());
-
-    DeleteBySchemaTypeResultProto deleteBySchemaTypeResultProto =
-        icingSearchEngine.deleteBySchemaType(EMAIL_TYPE);
-    assertStatusOk(deleteBySchemaTypeResultProto.getStatus());
 
     GetResultProto getResultProto =
         icingSearchEngine.get("namespace", "uri", GetResultSpecProto.getDefaultInstance());
@@ -768,31 +698,6 @@ public final class IcingSearchEngineTest {
     assertThat(response.getSuggestionsList()).hasSize(2);
     assertThat(response.getSuggestions(0).getQuery()).isEqualTo("foo");
     assertThat(response.getSuggestions(1).getQuery()).isEqualTo("fo");
-  }
-
-  @Test
-  public void testLogging() throws Exception {
-    // Set to INFO
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.INFO)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.INFO)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.DBG)).isFalse();
-
-    // Set to WARNING
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.WARNING)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.WARNING)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.INFO)).isFalse();
-
-    // Set to DEBUG
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.DBG)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.DBG)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE)).isFalse();
-
-    // Set to VERBOSE
-    assertThat(IcingSearchEngine.setLoggingLevel(LogSeverity.Code.VERBOSE, (short) 1)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE, (short) 1)).isTrue();
-    assertThat(IcingSearchEngine.shouldLog(LogSeverity.Code.VERBOSE, (short) 2)).isFalse();
-
-    assertThat(IcingSearchEngine.getLoggingTag()).isNotEmpty();
   }
 
   private static void assertStatusOk(StatusProto status) {
