@@ -1853,7 +1853,9 @@ TEST_F(IcingSearchEngineInitializationTest, RestoreIndexLoseTermIndex) {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(Index::Options(GetIndexDir(),
-                                     /*index_merge_size=*/100),
+                                     /*index_merge_size=*/100,
+                                     /*lite_index_sort_at_indexing=*/true,
+                                     /*lite_index_sort_size=*/50),
                       filesystem(), icing_filesystem()));
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -2463,7 +2465,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
-                           /*index_merge_size=*/message.ByteSizeLong()),
+                           /*index_merge_size=*/message.ByteSizeLong(),
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/8),
             filesystem(), icing_filesystem()));
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
@@ -2595,7 +2599,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
-                           /*index_merge_size=*/message.ByteSizeLong()),
+                           /*index_merge_size=*/message.ByteSizeLong(),
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/8),
             filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
@@ -2707,7 +2713,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
-                           /*index_merge_size=*/message.ByteSizeLong()),
+                           /*index_merge_size=*/message.ByteSizeLong(),
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/8),
             filesystem(), icing_filesystem()));
     DocumentId original_last_added_doc_id = index->last_added_document_id();
     index->set_last_added_document_id(original_last_added_doc_id + 1);
@@ -2844,7 +2852,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
-                           /*index_merge_size=*/message.ByteSizeLong()),
+                           /*index_merge_size=*/message.ByteSizeLong(),
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/8),
             filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
@@ -2904,7 +2914,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         Index::Create(
             // index merge size is not important here because we will manually
             // invoke merge below.
-            Index::Options(GetIndexDir(), /*index_merge_size=*/100),
+            Index::Options(GetIndexDir(), /*index_merge_size=*/100,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/50),
             filesystem(), icing_filesystem()));
     // Add hits for document 0 and merge.
     ASSERT_THAT(index->last_added_document_id(), kInvalidDocumentId);
@@ -2980,7 +2992,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
-        Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100),
+        Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100,
+                                     /*lite_index_sort_at_indexing=*/true,
+                                     /*lite_index_sort_size=*/50),
                       filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
@@ -3096,7 +3110,9 @@ TEST_F(IcingSearchEngineInitializationTest,
         std::unique_ptr<Index> index,
         Index::Create(
             Index::Options(GetIndexDir(),
-                           /*index_merge_size=*/message.ByteSizeLong()),
+                           /*index_merge_size=*/message.ByteSizeLong(),
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/8),
             filesystem(), icing_filesystem()));
     // Add hits for document 4 and merge.
     DocumentId original_last_added_doc_id = index->last_added_document_id();
@@ -3239,7 +3255,9 @@ TEST_F(IcingSearchEngineInitializationTest,
   {
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
-        Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100),
+        Index::Create(Index::Options(GetIndexDir(), /*index_merge_size=*/100,
+                                     /*lite_index_sort_at_indexing=*/true,
+                                     /*lite_index_sort_size=*/50),
                       filesystem(), icing_filesystem()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<DocHitInfoIterator> doc_hit_info_iter,
@@ -4412,7 +4430,9 @@ TEST_F(IcingSearchEngineInitializationTest,
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(Index::Options(GetIndexDir(),
-                                     /*index_merge_size=*/100),
+                                     /*index_merge_size=*/100,
+                                     /*lite_index_sort_at_indexing=*/true,
+                                     /*lite_index_sort_size=*/50),
                       filesystem(), icing_filesystem()));
     ICING_ASSERT_OK(index->PersistToDisk());
   }
@@ -5241,7 +5261,9 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
     ICING_ASSERT_OK_AND_ASSIGN(DocumentId doc_id, document_store->Put(message));
 
     // Index doc_id with incorrect data
-    Index::Options options(GetIndexDir(), /*index_merge_size=*/1024 * 1024);
+    Index::Options options(GetIndexDir(), /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<Index> index,
         Index::Create(options, filesystem(), icing_filesystem()));
