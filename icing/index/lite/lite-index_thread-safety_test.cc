@@ -19,12 +19,9 @@
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/lite/lite-index.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/schema/section.h"
-#include "icing/store/suggestion-result-checker.h"
-#include "icing/testing/always-false-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 
@@ -52,7 +49,9 @@ class LiteIndexThreadSafetyTest : public testing::Test {
     std::string lite_index_file_name =
         index_dir_ + "/test_file.lite-idx-thread-safety.index";
     LiteIndex::Options options(lite_index_file_name,
-                               /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                               /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                               /*hit_buffer_sort_at_indexing=*/true,
+                               /*hit_buffer_sort_threshold_bytes=*/64);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));
 
