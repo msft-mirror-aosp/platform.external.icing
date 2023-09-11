@@ -20,6 +20,7 @@
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/index.h"
 #include "icing/legacy/core/icing-string-util.h"
@@ -29,25 +30,44 @@
 #include "icing/store/document-id.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
 
+/* static */ libtextclassifier3::StatusOr<
+    std::unique_ptr<StringSectionIndexingHandler>>
+StringSectionIndexingHandler::Create(const Clock* clock,
+                                     const Normalizer* normalizer,
+                                     Index* index) {
+  ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(normalizer);
+  ICING_RETURN_ERROR_IF_NULL(index);
+
+  return std::unique_ptr<StringSectionIndexingHandler>(
+      new StringSectionIndexingHandler(clock, normalizer, index));
+}
+
 libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    PutDocumentStatsProto* put_document_stats) {
+    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (index_.last_added_document_id() != kInvalidDocumentId &&
       document_id <= index_.last_added_document_id()) {
+    if (recovery_mode) {
+      // Skip the document if document_id <= last_added_document_id in recovery
+      // mode without returning an error.
+      return libtextclassifier3::Status::OK;
+    }
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "DocumentId %d must be greater than last added document_id %d",
         document_id, index_.last_added_document_id()));
   }
-  // TODO(b/259744228): revisit last_added_document_id with numeric index for
-  //                    index rebuilding before rollout.
   index_.set_last_added_document_id(document_id);
+
   uint32_t num_tokens = 0;
   libtextclassifier3::Status status;
   for (const TokenizedSection& section :
@@ -102,9 +122,19 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
     }
   }
 
+  // Check and sort the LiteIndex HitBuffer if we're successful.
+  if (status.ok() && index_.LiteIndexNeedSort()) {
+    std::unique_ptr<Timer> sort_timer = clock_.GetNewTimer();
+    index_.SortLiteIndex();
+
+    if (put_document_stats != nullptr) {
+      put_document_stats->set_lite_index_sort_latency_ms(
+          sort_timer->GetElapsedMilliseconds());
+    }
+  }
+
   if (put_document_stats != nullptr) {
-    // TODO(b/259744228): switch to set individual index latency.
-    put_document_stats->set_index_latency_ms(
+    put_document_stats->set_term_index_latency_ms(
         index_timer->GetElapsedMilliseconds());
     put_document_stats->mutable_tokenization_stats()->set_num_tokens_indexed(
         num_tokens);
@@ -114,7 +144,7 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
   // merge.
   if ((status.ok() || absl_ports::IsResourceExhausted(status)) &&
       index_.WantsMerge()) {
-    ICING_LOG(ERROR) << "Merging the index at docid " << document_id << ".";
+    ICING_LOG(INFO) << "Merging the index at docid " << document_id << ".";
 
     std::unique_ptr<Timer> merge_timer = clock_.GetNewTimer();
     libtextclassifier3::Status merge_status = index_.Merge();
