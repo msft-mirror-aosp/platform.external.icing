@@ -499,6 +499,9 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeGetSchema",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;)[B",
        reinterpret_cast<void*>(nativeGetSchema)},
+      {"nativeGetSchemaType",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/String;)[B",
+       reinterpret_cast<void*>(nativeGetSchemaType)},
       {"nativePut", "(Lcom/google/android/icing/IcingSearchEngineImpl;[B)[B",
        reinterpret_cast<void*>(nativePut)},
       {"nativeGet",
@@ -524,6 +527,12 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
        "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/"
        "String;Ljava/lang/String;)[B",
        reinterpret_cast<void*>(nativeDelete)},
+      {"nativeDeleteByNamespace",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/String;)[B",
+       reinterpret_cast<void*>(nativeDeleteByNamespace)},
+      {"nativeDeleteBySchemaType",
+       "(Lcom/google/android/icing/IcingSearchEngineImpl;Ljava/lang/String;)[B",
+       reinterpret_cast<void*>(nativeDeleteBySchemaType)},
       {"nativeDeleteByQuery",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;[BZ)[B",
        reinterpret_cast<void*>(nativeDeleteByQuery)},
@@ -546,6 +555,11 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
       {"nativeGetDebugInfo",
        "(Lcom/google/android/icing/IcingSearchEngineImpl;I)[B",
        reinterpret_cast<void*>(nativeGetDebugInfo)},
+      {"nativeShouldLog", "(SS)Z", reinterpret_cast<void*>(nativeShouldLog)},
+      {"nativeSetLoggingLevel", "(SS)Z",
+       reinterpret_cast<void*>(nativeSetLoggingLevel)},
+      {"nativeGetLoggingTag", "()Ljava/lang/String;",
+       reinterpret_cast<void*>(nativeGetLoggingTag)},
   };
   int register_natives_success = env->RegisterNatives(
       java_class, methods, sizeof(methods) / sizeof(JNINativeMethod));
