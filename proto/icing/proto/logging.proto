@@ -76,7 +76,7 @@ message InitializeStatsProto {
   // Time used to restore the index.
   optional int32 index_restoration_latency_ms = 6;
 
-  // Time used to restore the index.
+  // Time used to restore the schema store.
   optional int32 schema_store_recovery_latency_ms = 7;
 
   // Status regarding how much data is lost during the initialization.
@@ -117,7 +117,7 @@ message InitializeStatsProto {
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
-// Next tag: 10
+// Next tag: 11
 message PutDocumentStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -151,6 +151,9 @@ message PutDocumentStatsProto {
 
   // Time used to index all qualified id join strings in the document.
   optional int32 qualified_id_join_index_latency_ms = 9;
+
+  // Time used to sort and merge the LiteIndex's HitBuffer.
+  optional int32 lite_index_sort_latency_ms = 10;
 }
 
 // Stats of the top-level function IcingSearchEngine::Search() and
