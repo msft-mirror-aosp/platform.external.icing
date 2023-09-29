@@ -14,22 +14,59 @@
 
 #include "icing/index/integer-section-indexing-handler.h"
 
+#include <cstdint>
+#include <memory>
+#include <utility>
+
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/schema/section-manager.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/index/numeric/numeric-index.h"
+#include "icing/legacy/core/icing-string-util.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
 
+/* static */ libtextclassifier3::StatusOr<
+    std::unique_ptr<IntegerSectionIndexingHandler>>
+IntegerSectionIndexingHandler::Create(const Clock* clock,
+                                      NumericIndex<int64_t>* integer_index) {
+  ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(integer_index);
+
+  return std::unique_ptr<IntegerSectionIndexingHandler>(
+      new IntegerSectionIndexingHandler(clock, integer_index));
+}
+
 libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    PutDocumentStatsProto* put_document_stats) {
-  // TODO(b/259744228):
-  // 1. Resolve last_added_document_id for index rebuilding before rollout
-  // 2. Set integer indexing latency and other stats
+    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
+  std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
+
+  if (!IsDocumentIdValid(document_id)) {
+    return absl_ports::InvalidArgumentError(
+        IcingStringUtil::StringPrintf("Invalid DocumentId %d", document_id));
+  }
+
+  if (integer_index_.last_added_document_id() != kInvalidDocumentId &&
+      document_id <= integer_index_.last_added_document_id()) {
+    if (recovery_mode) {
+      // Skip the document if document_id <= last_added_document_id in recovery
+      // mode without returning an error.
+      return libtextclassifier3::Status::OK;
+    }
+    return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+        "DocumentId %d must be greater than last added document_id %d",
+        document_id, integer_index_.last_added_document_id()));
+  }
+  integer_index_.set_last_added_document_id(document_id);
 
   libtextclassifier3::Status status;
   // We have to add integer sections into integer index in reverse order because
@@ -55,12 +92,17 @@ libtextclassifier3::Status IntegerSectionIndexingHandler::Handle(
     }
 
     // Add all the seen keys to the integer index.
-    status = editor->IndexAllBufferedKeys();
+    status = std::move(*editor).IndexAllBufferedKeys();
     if (!status.ok()) {
       ICING_LOG(WARNING) << "Failed to add keys into integer index due to: "
                          << status.error_message();
       break;
     }
+  }
+
+  if (put_document_stats != nullptr) {
+    put_document_stats->set_integer_index_latency_ms(
+        index_timer->GetElapsedMilliseconds());
   }
 
   return status;
