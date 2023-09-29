@@ -18,26 +18,21 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/document-builder.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
 #include "icing/icing-search-engine.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
+#include "icing/proto/schema.pb.h"
 #include "icing/proto/scoring.pb.h"
+#include "icing/proto/search.pb.h"
+#include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
 namespace lib {
 namespace {
-
-constexpr PropertyConfigProto_Cardinality_Code CARDINALITY_REQUIRED =
-    PropertyConfigProto_Cardinality_Code_REQUIRED;
-
-constexpr StringIndexingConfig_TokenizerType_Code TOKENIZER_PLAIN =
-    StringIndexingConfig_TokenizerType_Code_PLAIN;
-
-constexpr TermMatchType_Code MATCH_PREFIX = TermMatchType_Code_PREFIX;
 
 IcingSearchEngineOptions Setup() {
   IcingSearchEngineOptions icing_options;
@@ -83,7 +78,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
               PropertyConfigBuilder()
                   .SetName("body")
-                  .SetDataTypeString(MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
   icing.SetSchema(schema_proto);
