@@ -70,14 +70,16 @@ class MonkeyDocumentGenerator {
  public:
   explicit MonkeyDocumentGenerator(MonkeyTestRandomEngine* random,
                                    const SchemaProto* schema,
+                                   std::vector<int> possible_num_tokens,
                                    uint32_t num_namespaces,
                                    uint32_t num_uris = 0)
       : random_(random),
         schema_(schema),
+        possible_num_tokens_(std::move(possible_num_tokens)),
         num_namespaces_(num_namespaces),
         num_uris_(num_uris) {}
 
-  SchemaTypeConfigProto GetType() const {
+  const SchemaTypeConfigProto& GetType() const {
     std::uniform_int_distribution<> dist(0, schema_->types_size() - 1);
     return schema_->types(dist(*random_));
   }
@@ -104,6 +106,11 @@ class MonkeyDocumentGenerator {
  private:
   MonkeyTestRandomEngine* random_;  // Does not own.
   const SchemaProto* schema_;       // Does not own.
+
+  // The possible number of tokens that may appear in generated documents, with
+  // a noise factor from 0.5 to 1 applied.
+  std::vector<int> possible_num_tokens_;
+
   uint32_t num_namespaces_;
   uint32_t num_uris_;
   uint32_t num_docs_generated_ = 0;

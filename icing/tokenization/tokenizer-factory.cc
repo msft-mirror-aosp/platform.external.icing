@@ -24,6 +24,11 @@
 #include "icing/tokenization/raw-query-tokenizer.h"
 #include "icing/tokenization/rfc822-tokenizer.h"
 #include "icing/tokenization/tokenizer.h"
+
+#ifdef ENABLE_URL_TOKENIZER
+#include "icing/tokenization/url-tokenizer.h"
+#endif  // ENABLE_URL_TOKENIZER
+
 #include "icing/tokenization/verbatim-tokenizer.h"
 #include "icing/util/status-macros.h"
 
@@ -44,6 +49,12 @@ CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
       return std::make_unique<VerbatimTokenizer>();
     case StringIndexingConfig::TokenizerType::RFC822:
       return std::make_unique<Rfc822Tokenizer>();
+// TODO (b/246964044): remove ifdef guard when url-tokenizer is ready for export
+// to Android.
+#ifdef ENABLE_URL_TOKENIZER
+    case StringIndexingConfig::TokenizerType::URL:
+      return std::make_unique<UrlTokenizer>();
+#endif  // ENABLE_URL_TOKENIZER
     case StringIndexingConfig::TokenizerType::NONE:
       [[fallthrough]];
     default:

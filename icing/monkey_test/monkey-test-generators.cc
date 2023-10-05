@@ -106,19 +106,8 @@ std::string MonkeyDocumentGenerator::GetUri() const {
 }
 
 int MonkeyDocumentGenerator::GetNumTokens() const {
-  std::uniform_int_distribution<> int_dist(-1, 4);
-  int n = int_dist(*random_);
-  if (n == -1) {
-    // 1/6 chance of getting zero token for a property
-    return 0;
-  }
-  if (n == 0) {
-    // 1/6 chance of getting one token for a property
-    return 1;
-  }
-  // 1/6 chance of getting one of 4, 16, 64, 256
-  n = 1 << (2 * n);
-
+  std::uniform_int_distribution<> dist(0, possible_num_tokens_.size() - 1);
+  int n = possible_num_tokens_[dist(*random_)];
   // Add some noise
   std::uniform_real_distribution<> real_dist(0.5, 1);
   float p = real_dist(*random_);
@@ -153,8 +142,9 @@ MonkeyTokenizedDocument MonkeyDocumentGenerator::GenerateDocument() {
     if (prop.data_type() == PropertyConfigProto::DataType::STRING &&
         prop.string_indexing_config().term_match_type() !=
             TermMatchType::UNKNOWN) {
-      MonkeyTokenizedSection section = {prop.property_name(),
-                                        std::move(prop_content)};
+      MonkeyTokenizedSection section = {
+          prop.property_name(), prop.string_indexing_config().term_match_type(),
+          std::move(prop_content)};
       document.tokenized_sections.push_back(std::move(section));
     }
   }

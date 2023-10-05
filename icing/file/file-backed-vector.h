@@ -57,6 +57,7 @@
 #define ICING_FILE_FILE_BACKED_VECTOR_H_
 
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cinttypes>
@@ -76,6 +77,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
@@ -147,16 +149,30 @@ class FileBackedVector {
     }
   };
 
-  // Absolute max file size for FileBackedVector. Note that Android has a
-  // (2^31-1)-byte single file size limit, so kMaxFileSize is 2^31-1.
+  // Absolute max file size for FileBackedVector.
+  // - We memory map the whole file, so file size ~= memory size.
+  // - On 32-bit platform, the virtual memory address space is 4GB. To avoid
+  //   exhausting the memory, set smaller file size limit for 32-bit platform.
+#ifdef ICING_ARCH_BIT_64
   static constexpr int32_t kMaxFileSize =
-      std::numeric_limits<int32_t>::max();  // 2^31-1 Bytes, ~2.1 GB;
+      std::numeric_limits<int32_t>::max();  // 2^31-1 Bytes, ~2.1 GB
+#else
+  static constexpr int32_t kMaxFileSize =
+      (1 << 28) + Header::kHeaderSize;  // 2^28 + 12 Bytes, ~256 MiB
+#endif
 
   // Size of element type T. The value is same as sizeof(T), while we should
   // avoid using sizeof(T) in our codebase to prevent unexpected unsigned
   // integer casting.
   static constexpr int32_t kElementTypeSize = static_cast<int32_t>(sizeof(T));
   static_assert(sizeof(T) <= (1 << 10));
+
+  // Absolute max # of elements allowed. Since we are using int32_t to store
+  // num_elements, max value is 2^31-1. Still the actual max # of elements are
+  // determined by max_file_size, kMaxFileSize, kElementTypeSize, and
+  // Header::kHeaderSize.
+  static constexpr int32_t kMaxNumElements =
+      std::numeric_limits<int32_t>::max();
 
   // Creates a new FileBackedVector to read/write content to.
   //
@@ -342,6 +358,14 @@ class FileBackedVector {
   //   OUT_OF_RANGE_ERROR if len < 0 or len >= num_elements()
   libtextclassifier3::Status TruncateTo(int32_t new_num_elements);
 
+  // Sorts the vector within range [begin_idx, end_idx).
+  // It handles SetDirty properly for the file-backed-vector.
+  //
+  // Returns:
+  //   OUT_OF_RANGE_ERROR if (0 <= begin_idx < end_idx <= num_elements()) does
+  //                      not hold
+  libtextclassifier3::Status Sort(int32_t begin_idx, int32_t end_idx);
+
   // Mark idx as changed iff idx < changes_end_, so later ComputeChecksum() can
   // update checksum by the cached changes without going over [0, changes_end_).
   //
@@ -459,12 +483,6 @@ class FileBackedVector {
   // Grow file by at least this many elements if array is growable.
   static constexpr int64_t kGrowElements = 1u << 14;  // 16K
 
-  // Absolute max # of elements allowed. Since we are using int32_t to store
-  // num_elements, max value is 2^31-1. Still the actual max # of elements are
-  // determined by max_file_size, kElementTypeSize, and Header::kHeaderSize.
-  static constexpr int32_t kMaxNumElements =
-      std::numeric_limits<int32_t>::max();
-
   // Absolute max index allowed.
   static constexpr int32_t kMaxIndex = kMaxNumElements - 1;
 
@@ -523,13 +541,13 @@ template <typename T>
 constexpr int32_t FileBackedVector<T>::kElementTypeSize;
 
 template <typename T>
+constexpr int32_t FileBackedVector<T>::kMaxNumElements;
+
+template <typename T>
 constexpr int32_t FileBackedVector<T>::kPartialCrcLimitDiv;
 
 template <typename T>
 constexpr int64_t FileBackedVector<T>::kGrowElements;
-
-template <typename T>
-constexpr int32_t FileBackedVector<T>::kMaxNumElements;
 
 template <typename T>
 constexpr int32_t FileBackedVector<T>::kMaxIndex;
@@ -938,6 +956,21 @@ libtextclassifier3::Status FileBackedVector<T>::TruncateTo(
   header_->vector_checksum = 0;
 
   header_->num_elements = new_num_elements;
+  return libtextclassifier3::Status::OK;
+}
+
+template <typename T>
+libtextclassifier3::Status FileBackedVector<T>::Sort(int32_t begin_idx,
+                                                     int32_t end_idx) {
+  if (begin_idx < 0 || begin_idx >= end_idx ||
+      end_idx > header_->num_elements) {
+    return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
+        "Invalid sort index, %d, %d", begin_idx, end_idx));
+  }
+  for (int32_t i = begin_idx; i < end_idx; ++i) {
+    SetDirty(i);
+  }
+  std::sort(mutable_array() + begin_idx, mutable_array() + end_idx);
   return libtextclassifier3::Status::OK;
 }
 

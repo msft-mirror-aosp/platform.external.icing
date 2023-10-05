@@ -41,12 +41,6 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 
-constexpr TermMatchType::Code MATCH_EXACT = TermMatchType::EXACT_ONLY;
-constexpr PropertyConfigProto::Cardinality::Code CARDINALITY_OPTIONAL =
-    PropertyConfigProto::Cardinality::OPTIONAL;
-constexpr StringIndexingConfig::TokenizerType::Code TOKENIZER_PLAIN =
-    StringIndexingConfig::TokenizerType::PLAIN;
-
 // For mocking purpose, we allow tests to provide a custom Filesystem.
 class TestIcingSearchEngine : public IcingSearchEngine {
  public:
@@ -124,16 +118,17 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest,
   IcingSearchEngine icing(icing_options, GetTestJniCache());
   InitializeResultProto init_result = icing.Initialize();
   EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+  // Since there will be version change, the recovery cause will be
+  // VERSION_CHANGED.
   EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
               Eq(InitializeStatsProto::NO_DATA_LOSS));
   EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  // The main and lite indexes are in legacy formats and therefore will need to
-  // be rebuilt from scratch.
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::IO_ERROR));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
 
   // Set up schema, this is the one used to validate documents in the testdata
   // files. Do not change unless you're also updating the testdata files.
@@ -141,16 +136,16 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest,
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   // Make sure our schema is still the same as we expect. If not, there's
@@ -263,17 +258,17 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest, MigrateToLargerScale) {
   IcingSearchEngine icing(icing_options, GetTestJniCache());
   InitializeResultProto init_result = icing.Initialize();
   EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+  // Since there will be version change, the recovery cause will be
+  // VERSION_CHANGED.
   EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
               Eq(InitializeStatsProto::NO_DATA_LOSS));
-  // No recovery is required for the document store.
   EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  // The main and lite indexes are in legacy formats and therefore will need to
-  // be rebuilt from scratch.
+              Eq(InitializeStatsProto::VERSION_CHANGED));
   EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::IO_ERROR));
+              Eq(InitializeStatsProto::VERSION_CHANGED));
 
   // Verify that the schema stored in the index matches the one that we expect.
   // Do not change unless you're also updating the testdata files.
@@ -281,16 +276,16 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest, MigrateToLargerScale) {
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder()
                        .SetType("email")
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("subject")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(
-                           PropertyConfigBuilder()
-                               .SetName("body")
-                               .SetDataTypeString(MATCH_EXACT, TOKENIZER_PLAIN)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   // Make sure our schema is still the same as we expect. If not, there's
@@ -388,6 +383,185 @@ TEST_F(IcingSearchEngineBackwardsCompatibilityTest, MigrateToLargerScale) {
                                 ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
                                   expected_document3_search));
+}
+
+TEST_F(IcingSearchEngineBackwardsCompatibilityTest,
+       MigrateToAppendOnlySchemaStorage) {
+  // Copy the testdata files into our IcingSearchEngine directory
+  std::string test_data_dir = GetTestDataDir("blob_schema_store");
+
+  // Create dst directory that we'll initialize the IcingSearchEngine over.
+  std::string base_dir = GetTestBaseDir() + "_migrate";
+  ASSERT_THAT(filesystem()->DeleteDirectoryRecursively(base_dir.c_str()), true);
+  ASSERT_THAT(filesystem()->CreateDirectoryRecursively(base_dir.c_str()), true);
+
+  ASSERT_TRUE(filesystem()->CopyDirectory(test_data_dir.c_str(),
+                                          base_dir.c_str(),
+                                          /*recursive=*/true));
+
+  IcingSearchEngineOptions icing_options;
+  icing_options.set_base_dir(base_dir);
+
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  InitializeResultProto init_result = icing.Initialize();
+  EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+  // Since there will be version change, the recovery cause will be
+  // VERSION_CHANGED.
+  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
+              Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
+              Eq(InitializeStatsProto::VERSION_CHANGED));
+  // TODO: create enum code for legacy schema store recovery after schema store
+  // change is made.
+  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
+              Eq(InitializeStatsProto::VERSION_CHANGED));
+  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
+              Eq(InitializeStatsProto::VERSION_CHANGED));
+
+  // Verify that the schema stored in the index matches the one that we expect.
+  // Do not change unless you're also updating the testdata files.
+  SchemaProto expected_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("transaction")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("unindexedStringProperty")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("unindexedIntegerProperty")
+                                        .SetDataType(TYPE_INT64)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("indexableIntegerProperty")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("stringExactProperty")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("stringPrefixProperty")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  GetSchemaResultProto expected_get_schema_result_proto;
+  expected_get_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_schema_result_proto.mutable_schema() = expected_schema;
+  ASSERT_THAT(icing.GetSchema(), EqualsProto(expected_get_schema_result_proto));
+
+  // These are the documents that are stored in the testdata files. Do not
+  // change unless you're also updating the testdata files.
+  DocumentProto expected_document1 = DocumentBuilder()
+                                         .SetKey("namespace1", "uri1")
+                                         .SetSchema("email")
+                                         .SetCreationTimestampMs(10)
+                                         .AddStringProperty("subject", "foo")
+                                         .AddStringProperty("body", "bar")
+                                         .Build();
+
+  DocumentProto expected_document2 = DocumentBuilder()
+                                         .SetKey("namespace2", "uri1")
+                                         .SetSchema("email")
+                                         .SetCreationTimestampMs(20)
+                                         .SetScore(123)
+                                         .AddStringProperty("subject", "phoo")
+                                         .Build();
+
+  DocumentProto expected_document3 =
+      DocumentBuilder()
+          .SetKey("namespace3", "uri3")
+          .SetSchema("transaction")
+          .SetCreationTimestampMs(30)
+          .SetScore(123)
+          .AddStringProperty("stringExactProperty", "foo")
+          .AddInt64Property("indexableIntegerProperty", 10)
+          .Build();
+
+  EXPECT_THAT(
+      icing
+          .Get(expected_document1.namespace_(), expected_document1.uri(),
+               GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(expected_document1));
+  EXPECT_THAT(
+      icing
+          .Get(expected_document2.namespace_(), expected_document2.uri(),
+               GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(expected_document2));
+  EXPECT_THAT(
+      icing
+          .Get(expected_document3.namespace_(), expected_document3.uri(),
+               GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(expected_document3));
+
+  // Searching for "foo" should get us document1 and not document3 due to the
+  // schema type filter.
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("foo");
+  search_spec.add_schema_type_filters("email");
+
+  SearchResultProto expected_document1_search;
+  expected_document1_search.mutable_status()->set_code(StatusProto::OK);
+  *expected_document1_search.mutable_results()->Add()->mutable_document() =
+      expected_document1;
+
+  SearchResultProto actual_results =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_document1_search));
+
+  // Searching for "phoo" should get us document2.
+  search_spec.set_query("phoo");
+
+  SearchResultProto expected_document2_search;
+  expected_document2_search.mutable_status()->set_code(StatusProto::OK);
+  *expected_document2_search.mutable_results()->Add()->mutable_document() =
+      expected_document2;
+
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_document2_search));
+
+  // Searching for "foo" should get us both document 1 and document3 now that
+  // schema type 'transaction' has been added to the schema filter.
+  search_spec.set_query("foo");
+  search_spec.add_schema_type_filters("transaction");
+
+  SearchResultProto expected_document_1_and_3_search;
+  expected_document_1_and_3_search.mutable_status()->set_code(StatusProto::OK);
+  *expected_document_1_and_3_search.mutable_results()
+       ->Add()
+       ->mutable_document() = expected_document3;
+  *expected_document_1_and_3_search.mutable_results()
+       ->Add()
+       ->mutable_document() = expected_document1;
+
+  actual_results = icing.Search(search_spec, GetDefaultScoringSpec(),
+                                ResultSpecProto::default_instance());
+  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
+                                  expected_document_1_and_3_search));
 }
 
 }  // namespace

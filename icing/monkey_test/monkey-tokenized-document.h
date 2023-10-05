@@ -18,12 +18,14 @@
 #include <string>
 
 #include "icing/proto/document.pb.h"
+#include "icing/proto/term.pb.h"
 
 namespace icing {
 namespace lib {
 
 struct MonkeyTokenizedSection {
   std::string path;
+  TermMatchType::Code term_match_type;
   std::vector<std::string> token_sequence;
 };
 
