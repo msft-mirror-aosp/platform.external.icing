@@ -19,10 +19,13 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -43,6 +46,12 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       std::set<std::string> target_sections, int64_t current_time_ms);
+
+  explicit DocHitInfoIteratorSectionRestrict(
+      std::unique_ptr<DocHitInfoIterator> delegate,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const SearchSpecProto& search_spec,
+      int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
 
@@ -72,12 +81,51 @@ class DocHitInfoIteratorSectionRestrict : public DocHitInfoIterator {
   }
 
  private:
+  explicit DocHitInfoIteratorSectionRestrict(
+      std::unique_ptr<DocHitInfoIterator> delegate,
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      std::unordered_map<std::string, std::set<std::string>>
+      type_property_filters,
+      std::unordered_map<std::string, SectionIdMask> type_property_masks,
+      int64_t current_time_ms);
+  // Calculates the section mask of allowed sections(determined by the property
+  // filters map) for the given schema type and caches the same for any future
+  // calls.
+  //
+  // Returns:
+  //  - If type_property_filters_ has an entry for the given schema type or
+  //    wildcard(*), return a bitwise or of section IDs in the schema type that
+  //    that are also present in the relevant filter list.
+  //  - Otherwise, return kSectionIdMaskAll.
+  SectionIdMask ComputeAndCacheSchemaTypeAllowedSectionsMask(
+      const std::string& schema_type);
+  // Generates a section mask for the given schema type and the target sections.
+  //
+  // Returns:
+  //  - A bitwise or of section IDs in the schema_type that that are also
+  //    present in the target_sections list.
+  //  - If none of the sections in the schema_type are present in the
+  //    target_sections list, return kSectionIdMaskNone.
+  // This is done by doing a bitwise or of the target section ids for the given
+  // schema type.
+  SectionIdMask GenerateSectionMask(const std::string& schema_type,
+                                    const std::set<std::string>&
+                                    target_sections) const;
+
   std::unique_ptr<DocHitInfoIterator> delegate_;
   const DocumentStore& document_store_;
   const SchemaStore& schema_store_;
-
-  std::set<std::string> target_sections_;
   int64_t current_time_ms_;
+
+  // Map of property filters per schema type. Supports wildcard(*) for schema
+  // type that will apply to all schema types that are not specifically
+  // specified in the mapping otherwise.
+  std::unordered_map<std::string, std::set<std::string>>
+      type_property_filters_;
+  // Mapping of schema type to the section mask of allowed sections for that
+  // schema type. This section mask is lazily calculated based on the specified
+  // property filters and cached for any future use.
+  std::unordered_map<std::string, SectionIdMask> type_property_masks_;
 };
 
 }  // namespace lib

@@ -654,7 +654,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // We're going to need to build the index from scratch. So just delete its
     // directory now.
     // Discard index directory and instantiate a new one.
-    Index::Options index_options(index_dir, options_.index_merge_size());
+    Index::Options index_options(index_dir, options_.index_merge_size(),
+                                 options_.lite_index_sort_at_indexing(),
+                                 options_.lite_index_sort_size());
     if (!filesystem_->DeleteDirectoryRecursively(index_dir.c_str()) ||
         !filesystem_->CreateDirectoryRecursively(index_dir.c_str())) {
       return absl_ports::InternalError(
@@ -798,7 +800,9 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
     return absl_ports::InternalError(
         absl_ports::StrCat("Could not create directory: ", index_dir));
   }
-  Index::Options index_options(index_dir, options_.index_merge_size());
+  Index::Options index_options(index_dir, options_.index_merge_size(),
+                               options_.lite_index_sort_at_indexing(),
+                               options_.lite_index_sort_size());
 
   // Term index
   InitializeStatsProto::RecoveryCause index_recovery_cause;
