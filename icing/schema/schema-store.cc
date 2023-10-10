@@ -448,7 +448,7 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
         "Combined checksum of SchemaStore was inconsistent");
   }
 
-  BuildInMemoryCache();
+  ICING_RETURN_IF_ERROR(BuildInMemoryCache());
   return libtextclassifier3::Status::OK;
 }
 
@@ -463,7 +463,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
     ICING_RETURN_IF_ERROR(schema_type_mapper_->Put(
         type_config.schema_type(), schema_type_mapper_->num_keys()));
   }
-  BuildInMemoryCache();
+  ICING_RETURN_IF_ERROR(BuildInMemoryCache());
 
   if (create_overlay_if_necessary) {
     ICING_ASSIGN_OR_RETURN(
@@ -494,7 +494,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
           /*overlay_created=*/true, min_overlay_version_compatibility);
       // Rebuild in memory data - references to the old schema will be invalid
       // now.
-      BuildInMemoryCache();
+      ICING_RETURN_IF_ERROR(BuildInMemoryCache());
     }
   }
 
@@ -778,6 +778,17 @@ libtextclassifier3::StatusOr<SchemaTypeId> SchemaStore::GetSchemaTypeId(
     std::string_view schema_type) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
   return schema_type_mapper_->Get(schema_type);
+}
+
+libtextclassifier3::StatusOr<const std::string*> SchemaStore::GetSchemaType(
+      SchemaTypeId schema_type_id) const {
+  ICING_RETURN_IF_ERROR(CheckSchemaSet());
+  if (const auto it = reverse_schema_type_mapper_.find(schema_type_id);
+      it == reverse_schema_type_mapper_.end()) {
+    return absl_ports::InvalidArgumentError("Invalid schema type id");
+  } else {
+    return &it->second;
+  }
 }
 
 libtextclassifier3::StatusOr<const std::unordered_set<SchemaTypeId>*>
