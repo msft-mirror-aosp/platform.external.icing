@@ -280,8 +280,6 @@ libtextclassifier3::Status CalculateTransitiveNestedTypeRelations(
     // 4. "adjacent" has been fully expanded. Add all of its transitive
     // outgoing relations to this type's transitive outgoing relations.
     auto adjacent_expanded_itr = expanded_nested_types_map->find(adjacent_type);
-    expanded_relations.reserve(expanded_relations.size() +
-                               adjacent_expanded_itr->second.size());
     for (const auto& [transitive_reachable, _] :
          adjacent_expanded_itr->second) {
       // Insert a transitive reachable node `transitive_reachable` for `type` if
@@ -345,8 +343,6 @@ libtextclassifier3::Status CalculateAcyclicTransitiveRelations(
     // 3. "adjacent" has been fully expanded. Add all of its transitive outgoing
     // relations to this type's transitive outgoing relations.
     auto adjacent_expanded_itr = expanded_relation_map->find(adjacent);
-    expanded_relations.reserve(expanded_relations.size() +
-                               adjacent_expanded_itr->second.size());
     for (const auto& [transitive_reachable, _] :
          adjacent_expanded_itr->second) {
       // Insert a transitive reachable node `transitive_reachable` for `type`.
@@ -526,7 +522,6 @@ BuildTransitiveDependentGraph(const SchemaProto& schema,
     // Insert the parent_type into the dependent map if it is not present
     // already.
     merged_dependent_map.insert({parent_type, {}});
-    merged_dependent_map[parent_type].reserve(inheritance_relation.size());
     for (const auto& [child_type, _] : inheritance_relation) {
       // Insert the child_type into parent_type's dependent map if it's not
       // present already, in which case the value will be an empty vector.
@@ -791,7 +786,8 @@ libtextclassifier3::Status SchemaUtil::ValidateDocumentIndexingConfig(
     return absl_ports::InvalidArgumentError(absl_ports::StrCat(
         "DocumentIndexingConfig.index_nested_properties is required to be "
         "false when providing a non-empty indexable_nested_properties_list "
-        "for property '", schema_type, ".", property_name, "'"));
+        "for property '",
+        schema_type, ".", property_name, "'"));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -807,11 +803,19 @@ libtextclassifier3::Status SchemaUtil::ValidateDocumentIndexingConfig(
     case PropertyConfigProto::DataType::INT64:
       return property_config.integer_indexing_config().numeric_match_type() !=
              IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+    case PropertyConfigProto::DataType::DOCUMENT:
+      // A document property is considered indexed if it has
+      // index_nested_properties=true, or a non-empty
+      // indexable_nested_properties_list.
+      return property_config.document_indexing_config()
+                 .index_nested_properties() ||
+             !property_config.document_indexing_config()
+                  .indexable_nested_properties_list()
+                  .empty();
     case PropertyConfigProto::DataType::UNKNOWN:
     case PropertyConfigProto::DataType::DOUBLE:
     case PropertyConfigProto::DataType::BOOLEAN:
     case PropertyConfigProto::DataType::BYTES:
-    case PropertyConfigProto::DataType::DOCUMENT:
       return false;
   }
 }
@@ -944,6 +948,13 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
         JoinableConfig::ValueType::NONE) {
       ++parsed_property_configs.num_joinable_properties;
     }
+
+    // Also keep track of how many nested document properties there are. Adding
+    // new nested document properties will result in join-index rebuild.
+    if (property_config.data_type() ==
+        PropertyConfigProto::DataType::DOCUMENT) {
+      ++parsed_property_configs.num_nested_document_properties;
+    }
   }
 
   return parsed_property_configs;
@@ -982,6 +993,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     int32_t old_required_properties = 0;
     int32_t old_indexed_properties = 0;
     int32_t old_joinable_properties = 0;
+    int32_t old_nested_document_properties = 0;
 
     // If there is a different number of properties, then there must have been a
     // change.
@@ -1011,6 +1023,14 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         ++old_joinable_properties;
       }
 
+      // A nested-document property is a property of DataType::DOCUMENT.
+      bool is_nested_document_property =
+          old_property_config.data_type() ==
+          PropertyConfigProto::DataType::DOCUMENT;
+      if (is_nested_document_property) {
+        ++old_nested_document_properties;
+      }
+
       auto new_property_name_and_config =
           new_parsed_property_configs.property_config_map.find(
               old_property_config.property_name());
@@ -1024,7 +1044,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
             "' was not defined in new schema");
         is_incompatible = true;
         is_index_incompatible |= is_indexed_property;
-        is_join_incompatible |= is_joinable_property;
+        is_join_incompatible |=
+            is_joinable_property || is_nested_document_property;
         continue;
       }
 
@@ -1076,8 +1097,9 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       is_incompatible = true;
     }
 
-    // If we've gained any new indexed properties, then the section ids may
-    // change. Since the section ids are stored in the index, we'll need to
+    // If we've gained any new indexed properties (this includes gaining new
+    // indexed nested document properties), then the section ids may change.
+    // Since the section ids are stored in the index, we'll need to
     // reindex everything.
     if (new_parsed_property_configs.num_indexed_properties >
         old_indexed_properties) {
@@ -1089,9 +1111,15 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
 
     // If we've gained any new joinable properties, then the joinable property
     // ids may change. Since the joinable property ids are stored in the cache,
-    // we'll need to reconstruct joinable cache.
+    // we'll need to reconstruct join index.
+    // If we've gained any new nested document properties, we also rebuild the
+    // join index. This is because we index all nested joinable properties, so
+    // adding a nested document property will most probably result in having
+    // more joinable properties.
     if (new_parsed_property_configs.num_joinable_properties >
-        old_joinable_properties) {
+            old_joinable_properties ||
+        new_parsed_property_configs.num_nested_document_properties >
+            old_nested_document_properties) {
       ICING_VLOG(1) << "Set of joinable properties in schema type '"
                     << old_type_config.schema_type()
                     << "' has changed, required reconstructing joinable cache.";
