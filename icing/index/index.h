@@ -18,8 +18,9 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -27,6 +28,7 @@
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/lite-index.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/main/main-index-merger.h"
 #include "icing/index/main/main-index.h"
 #include "icing/index/term-id-codec.h"
@@ -40,7 +42,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/suggestion-result-checker.h"
-#include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -68,11 +70,18 @@ namespace lib {
 class Index {
  public:
   struct Options {
-    explicit Options(const std::string& base_dir, uint32_t index_merge_size)
-        : base_dir(base_dir), index_merge_size(index_merge_size) {}
+    explicit Options(const std::string& base_dir, uint32_t index_merge_size,
+                     bool lite_index_sort_at_indexing,
+                     uint32_t lite_index_sort_size)
+        : base_dir(base_dir),
+          index_merge_size(index_merge_size),
+          lite_index_sort_at_indexing(lite_index_sort_at_indexing),
+          lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
+    bool lite_index_sort_at_indexing;
+    int32_t lite_index_sort_size;
   };
 
   // Creates an instance of Index in the directory pointed by file_dir.
@@ -85,6 +94,16 @@ class Index {
   static libtextclassifier3::StatusOr<std::unique_ptr<Index>> Create(
       const Options& options, const Filesystem* filesystem,
       const IcingFilesystem* icing_filesystem);
+
+  // Reads magic from existing flash (main) index file header. We need this
+  // during Icing initialization phase to determine the version.
+  //
+  // Returns
+  //   Valid magic on success
+  //   NOT_FOUND if the lite index doesn't exist
+  //   INTERNAL on I/O error
+  static libtextclassifier3::StatusOr<int> ReadFlashIndexMagic(
+      const Filesystem* filesystem, const std::string& base_dir);
 
   // Clears all files created by the index. Returns OK if all files were
   // cleared.
@@ -177,15 +196,18 @@ class Index {
   IndexStorageInfoProto GetStorageInfo() const;
 
   // Create an iterator to iterate through all doc hit infos in the index that
-  // match the term. section_id_mask can be set to ignore hits from sections not
-  // listed in the mask. Eg. section_id_mask = 1U << 3; would only return hits
-  // that occur in section 3.
+  // match the term. term_start_index is the start index of the given term in
+  // the search query. unnormalized_term_length is the length of the given
+  // unnormalized term in the search query not listed in the mask.
+  // Eg. section_id_mask = 1U << 3; would only return hits that occur in
+  // section 3.
   //
   // Returns:
   //   unique ptr to a valid DocHitInfoIterator that matches the term
   //   INVALID_ARGUMENT if given an invalid term_match_type
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
-      const std::string& term, SectionIdMask section_id_mask,
+      const std::string& term, int term_start_index,
+      int unnormalized_term_length, SectionIdMask section_id_mask,
       TermMatchType::Code term_match_type, bool need_hit_term_frequency = true);
 
   // Finds terms with the given prefix in the given namespaces. If
@@ -262,7 +284,21 @@ class Index {
     ICING_RETURN_IF_ERROR(main_index_->AddHits(
         *term_id_codec_, std::move(outputs.backfill_map),
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
+    ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
     return lite_index_->Reset();
+  }
+
+  // Whether the LiteIndex HitBuffer requires sorting. This is only true if
+  // Icing has enabled sorting during indexing time, and the HitBuffer's
+  // unsorted tail has exceeded the lite_index_sort_size.
+  bool LiteIndexNeedSort() const {
+    return options_.lite_index_sort_at_indexing &&
+           lite_index_->HasUnsortedHitsExceedingSortThreshold();
+  }
+
+  // Sorts the LiteIndex HitBuffer.
+  void SortLiteIndex() {
+    lite_index_->SortHits();
   }
 
   // Reduces internal file sizes by reclaiming space of deleted documents.
