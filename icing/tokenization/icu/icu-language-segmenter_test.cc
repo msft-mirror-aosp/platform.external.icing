@@ -15,14 +15,15 @@
 #include <memory>
 #include <string_view>
 
-#include "icing/jni/jni-cache.h"
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/helpers/icu/icu-data-file-helper.h"
+#include "icing/jni/jni-cache.h"
+#include "icing/portable/platform.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/icu-i18n-test-utils.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
@@ -118,6 +119,9 @@ class IcuLanguageSegmenterAllLocalesTest
     : public testing::TestWithParam<const char*> {
  protected:
   void SetUp() override {
+    if (!IsIcuTokenization()) {
+      GTEST_SKIP() << "ICU tokenization not enabled!";
+    }
     ICING_ASSERT_OK(
         // File generated via icu_data_file rule in //icing/BUILD.
         icu_data_file_helper::SetUpICUDataFile(
@@ -191,7 +195,7 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, Non_ASCII_Non_Alphabetic) {
   // Full-width (non-ASCII) punctuation marks and special characters are left
   // out.
   EXPECT_THAT(language_segmenter->GetAllTerms("。？·Hello！×"),
-              IsOkAndHolds(ElementsAre("Hello")));
+              IsOkAndHolds(ElementsAre("。", "？", "·", "Hello", "！", "×")));
 }
 
 TEST_P(IcuLanguageSegmenterAllLocalesTest, Acronym) {
@@ -223,46 +227,42 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
   // Word connecters
   EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android"),
               IsOkAndHolds(ElementsAre("com.google.android")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("com:google:android"),
-              IsOkAndHolds(ElementsAre("com:google:android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com'google'android"),
               IsOkAndHolds(ElementsAre("com'google'android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com_google_android"),
               IsOkAndHolds(ElementsAre("com_google_android")));
 
   // Word connecters can be mixed
-  EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android:icing"),
-              IsOkAndHolds(ElementsAre("com.google.android:icing")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("com.google.android_icing"),
+              IsOkAndHolds(ElementsAre("com.google.android_icing")));
 
   // Connectors that don't have valid terms on both sides of it are not
   // considered connectors.
-  EXPECT_THAT(language_segmenter->GetAllTerms(":bar:baz"),
-              IsOkAndHolds(ElementsAre(":", "bar:baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("'bar'baz"),
+              IsOkAndHolds(ElementsAre("'", "bar'baz")));
 
-  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:"),
-              IsOkAndHolds(ElementsAre("bar:baz", ":")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar.baz."),
+              IsOkAndHolds(ElementsAre("bar.baz", ".")));
 
   // Connectors that don't have valid terms on both sides of it are not
   // considered connectors.
-  EXPECT_THAT(language_segmenter->GetAllTerms(" :bar:baz"),
-              IsOkAndHolds(ElementsAre(" ", ":", "bar:baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms(" .bar.baz"),
+              IsOkAndHolds(ElementsAre(" ", ".", "bar.baz")));
 
-  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz: "),
-              IsOkAndHolds(ElementsAre("bar:baz", ":", " ")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar'baz' "),
+              IsOkAndHolds(ElementsAre("bar'baz", "'", " ")));
 
   // Connectors don't connect if one side is an invalid term (？)
-  EXPECT_THAT(language_segmenter->GetAllTerms("bar:baz:？"),
-              IsOkAndHolds(ElementsAre("bar:baz", ":")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("？:bar:baz"),
-              IsOkAndHolds(ElementsAre(":", "bar:baz")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("3:14"),
-              IsOkAndHolds(ElementsAre("3", ":", "14")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("私:は"),
-              IsOkAndHolds(ElementsAre("私", ":", "は")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("我:每"),
-              IsOkAndHolds(ElementsAre("我", ":", "每")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("เดิน:ไป"),
-              IsOkAndHolds(ElementsAre("เดิน:ไป")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("bar.baz.？"),
+              IsOkAndHolds(ElementsAre("bar.baz", ".", "？")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("？'bar'baz"),
+              IsOkAndHolds(ElementsAre("？", "'", "bar'baz")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("私'は"),
+              IsOkAndHolds(ElementsAre("私", "'", "は")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("我.每"),
+              IsOkAndHolds(ElementsAre("我", ".", "每")));
+  EXPECT_THAT(language_segmenter->GetAllTerms("เดิน'ไป"),
+              IsOkAndHolds(ElementsAre("เดิน'ไป")));
 
   // Any heading and trailing characters are not connecters
   EXPECT_THAT(language_segmenter->GetAllTerms(".com.google.android."),
@@ -277,8 +277,6 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
               IsOkAndHolds(ElementsAre("com", "+", "google", "+", "android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com*google*android"),
               IsOkAndHolds(ElementsAre("com", "*", "google", "*", "android")));
-  EXPECT_THAT(language_segmenter->GetAllTerms("com@google@android"),
-              IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com^google^android"),
               IsOkAndHolds(ElementsAre("com", "^", "google", "^", "android")));
   EXPECT_THAT(language_segmenter->GetAllTerms("com&google&android"),
@@ -292,6 +290,29 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, WordConnector) {
   EXPECT_THAT(
       language_segmenter->GetAllTerms("com\"google\"android"),
       IsOkAndHolds(ElementsAre("com", "\"", "google", "\"", "android")));
+
+  // In ICU 72, there were a few changes:
+  //   1. ':' stopped being a word connector
+  //   2. '@' became a word connector
+  //   3. <numeric><word-connector><numeric> such as "3'14" is now considered as
+  //      a single token.
+  if (IsIcu72PlusTokenization()) {
+    EXPECT_THAT(
+        language_segmenter->GetAllTerms("com:google:android"),
+        IsOkAndHolds(ElementsAre("com", ":", "google", ":", "android")));
+    EXPECT_THAT(language_segmenter->GetAllTerms("com@google@android"),
+                IsOkAndHolds(ElementsAre("com@google@android")));
+    EXPECT_THAT(language_segmenter->GetAllTerms("3'14"),
+                IsOkAndHolds(ElementsAre("3'14")));
+  } else {
+    EXPECT_THAT(language_segmenter->GetAllTerms("com:google:android"),
+                IsOkAndHolds(ElementsAre("com:google:android")));
+    EXPECT_THAT(
+        language_segmenter->GetAllTerms("com@google@android"),
+        IsOkAndHolds(ElementsAre("com", "@", "google", "@", "android")));
+    EXPECT_THAT(language_segmenter->GetAllTerms("3'14"),
+                IsOkAndHolds(ElementsAre("3", "'", "14")));
+  }
 }
 
 TEST_P(IcuLanguageSegmenterAllLocalesTest, Apostrophes) {
@@ -417,15 +438,16 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, CJKT) {
   // have whitespaces as word delimiter.
 
   // Chinese
-  EXPECT_THAT(language_segmenter->GetAllTerms("我每天走路去上班。"),
-              IsOkAndHolds(ElementsAre("我", "每天", "走路", "去", "上班")));
+  EXPECT_THAT(
+      language_segmenter->GetAllTerms("我每天走路去上班。"),
+      IsOkAndHolds(ElementsAre("我", "每天", "走路", "去", "上班", "。")));
   // Japanese
   EXPECT_THAT(language_segmenter->GetAllTerms("私は毎日仕事に歩いています。"),
               IsOkAndHolds(ElementsAre("私", "は", "毎日", "仕事", "に", "歩",
-                                       "い", "てい", "ます")));
+                                       "い", "てい", "ます", "。")));
   // Khmer
   EXPECT_THAT(language_segmenter->GetAllTerms("ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"),
-              IsOkAndHolds(ElementsAre("ញុំ", "ដើរទៅ", "ធ្វើការ", "រាល់ថ្ងៃ")));
+              IsOkAndHolds(ElementsAre("ញុំ", "ដើរទៅ", "ធ្វើការ", "រាល់ថ្ងៃ", "។")));
   // Thai
   EXPECT_THAT(
       language_segmenter->GetAllTerms("ฉันเดินไปทำงานทุกวัน"),
@@ -493,17 +515,17 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToStartUtf32WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
-  constexpr std::string_view kText = "com:google:android is package";
+  constexpr std::string_view kText = "com.google.android is package";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String:      "com:google:android is package"
+  // String:      "com.google.android is package"
   //               ^                 ^^ ^^
   // UTF-8 idx:    0              18 19 21 22
   // UTF-32 idx:   0              18 19 21 22
   auto position_or = itr->ResetToStartUtf32();
   EXPECT_THAT(position_or, IsOk());
-  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
+  ASSERT_THAT(itr->GetTerm(), Eq("com.google.android"));
 }
 
 TEST_P(IcuLanguageSegmenterAllLocalesTest, NewIteratorResetToStartUtf32) {
@@ -584,11 +606,11 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32WordConnector) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
-  constexpr std::string_view kText = "package com:google:android name";
+  constexpr std::string_view kText = "package com.google.android name";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String:     "package com:google:android name"
+  // String:     "package com.google.android name"
   //              ^      ^^                 ^^
   // UTF-8 idx:   0      7 8               26 27
   // UTF-32 idx:  0      7 8               26 27
@@ -600,7 +622,7 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32WordConnector) {
   position_or = itr->ResetToTermStartingAfterUtf32(7);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(8));
-  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
+  ASSERT_THAT(itr->GetTerm(), Eq("com.google.android"));
 }
 
 TEST_P(IcuLanguageSegmenterAllLocalesTest, ResetToTermAfterUtf32OutOfBounds) {
@@ -858,16 +880,19 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, ChineseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kChinese));
   // String:       "我每天走路去上班。"
-  //                ^ ^  ^   ^^
-  // UTF-8 idx:     0 3  9  15 18
-  // UTF-832 idx:   0 1  3   5 6
+  //                ^ ^  ^   ^^   ^
+  // UTF-8 idx:     0 3  9  15 18 24
+  // UTF-832 idx:   0 1  3   5 6  8
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("每天"));
 
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(2), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("走路"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(7),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(7), IsOkAndHolds(Eq(8)));
+  EXPECT_THAT(itr->GetTerm(), Eq("。"));
+
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(8),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
@@ -882,18 +907,21 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, JapaneseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kJapanese));
   // String:       "私は毎日仕事に歩いています。"
-  //                ^ ^ ^  ^  ^ ^ ^ ^  ^
-  // UTF-8 idx:     0 3 6  12 18212427 33
-  // UTF-32 idx:    0 1 2  4  6 7 8 9  11
+  //                ^ ^ ^  ^  ^ ^ ^ ^  ^  ^
+  // UTF-8 idx:     0 3 6  12 18212427 33 39
+  // UTF-32 idx:    0 1 2  4  6 7 8 9  11 13
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(1)));
   EXPECT_THAT(itr->GetTerm(), Eq("は"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(11),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(13),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(3), IsOkAndHolds(Eq(4)));
   EXPECT_THAT(itr->GetTerm(), Eq("仕事"));
+
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(12), IsOkAndHolds(Eq(13)));
+  EXPECT_THAT(itr->GetTerm(), Eq("。"));
 }
 
 TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermAfterUtf32) {
@@ -905,13 +933,16 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, KhmerResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              language_segmenter->Segment(kKhmer));
   // String:            "ញុំដើរទៅធ្វើការរាល់ថ្ងៃ។"
-  //                     ^ ^   ^   ^
-  // UTF-8 idx:          0 9   24  45
-  // UTF-32 idx:         0 3   8   15
+  //                     ^ ^   ^   ^  ^
+  // UTF-8 idx:          0 9   24  45 69
+  // UTF-32 idx:         0 3   8   15 23
   EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(3)));
   EXPECT_THAT(itr->GetTerm(), Eq("ដើរទៅ"));
 
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15),
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15), IsOkAndHolds(Eq(23)));
+  EXPECT_THAT(itr->GetTerm(), Eq("។"));
+
+  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(23),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 
@@ -951,18 +982,18 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest,
   ICING_ASSERT_OK_AND_ASSIGN(
       auto segmenter, language_segmenter_factory::Create(
                           GetSegmenterOptions(GetLocale(), jni_cache_.get())));
-  constexpr std::string_view kText = "package name com:google:android!";
+  constexpr std::string_view kText = "package name com.google.android!";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
                              segmenter->Segment(kText));
 
-  // String:      "package name com:google:android!"
+  // String:      "package name com.google.android!"
   //               ^      ^^   ^^                 ^
   // UTF-8 idx:    0      7 8 12 13               31
   // UTF-32 idx:   0      7 8 12 13               31
   auto position_or = itr->ResetToTermEndingBeforeUtf32(31);
   EXPECT_THAT(position_or, IsOk());
   EXPECT_THAT(position_or.ValueOrDie(), Eq(13));
-  ASSERT_THAT(itr->GetTerm(), Eq("com:google:android"));
+  ASSERT_THAT(itr->GetTerm(), Eq("com.google.android"));
 
   position_or = itr->ResetToTermEndingBeforeUtf32(21);
   EXPECT_THAT(position_or, IsOk());
@@ -1257,6 +1288,50 @@ TEST_P(IcuLanguageSegmenterAllLocalesTest, QuerySyntax) {
   EXPECT_THAT(terms, ElementsAre("(", "-", "term1", " ", "OR", " ", "term2",
                                  ")", " ", "AND", " ", "property1", ".",
                                  "subproperty2", ":", "term3"));
+}
+
+TEST_P(IcuLanguageSegmenterAllLocalesTest, MultipleLangSegmentersTest) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(
+          GetSegmenterOptions(GetLocale(), jni_cache_.get())));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LanguageSegmenter::Iterator> iterator_one,
+      language_segmenter->Segment("foo bar baz"));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LanguageSegmenter::Iterator> iterator_two,
+      language_segmenter->Segment("abra kadabra alakazam"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("foo"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("abra"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("bar"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("kadabra"));
+
+  ASSERT_TRUE(iterator_one->Advance());
+  ASSERT_TRUE(iterator_two->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq(" "));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq(" "));
+
+  ASSERT_TRUE(iterator_two->Advance());
+  ASSERT_TRUE(iterator_one->Advance());
+  EXPECT_THAT(iterator_one->GetTerm(), Eq("baz"));
+  EXPECT_THAT(iterator_two->GetTerm(), Eq("alakazam"));
+
+  ASSERT_FALSE(iterator_two->Advance());
+  ASSERT_FALSE(iterator_one->Advance());
 }
 
 INSTANTIATE_TEST_SUITE_P(

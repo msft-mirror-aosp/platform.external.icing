@@ -30,14 +30,20 @@ namespace lib {
 // be necessary.
 class DocumentLogCreator {
  public:
+  // Version 0 refers to FileBackedProtoLog
+  // Version 1 refers to PortableFileBackedProtoLog with kFileFormatVersion = 0
+  static constexpr int32_t kCurrentVersion = 1;
   struct CreateResult {
     // The create result passed up from the PortableFileBackedProtoLog::Create.
     // Contains the document log.
     PortableFileBackedProtoLog<DocumentWrapper>::CreateResult log_create_result;
 
-    // Whether the caller needs to also regenerate/generate any derived files
-    // based off of the initialized document log.
-    bool regen_derived_files;
+    // The version number of the pre-existing document log file.
+    // If there is no document log file, it will be set to kCurrentVersion.
+    int preexisting_file_version;
+
+    // Whether the created file is new.
+    bool new_file;
   };
 
   // Creates the document log in the base_dir. Will create one if it doesn't
@@ -51,7 +57,8 @@ class DocumentLogCreator {
   //   CreateResult on success.
   //   INTERNAL on any I/O error.
   static libtextclassifier3::StatusOr<DocumentLogCreator::CreateResult> Create(
-      const Filesystem* filesystem, const std::string& base_dir);
+      const Filesystem* filesystem, const std::string& base_dir,
+      int32_t compression_level);
 
   // Returns the filename of the document log, without any directory prefixes.
   // Used mainly for testing purposes.
@@ -68,7 +75,8 @@ class DocumentLogCreator {
   //   INVALID_ARGUMENT if some invalid option was passed to the document log.
   //   INTERNAL on I/O error.
   static libtextclassifier3::Status MigrateFromV0ToV1(
-      const Filesystem* filesystem, const std::string& base_dir);
+      const Filesystem* filesystem, const std::string& base_dir,
+      int32_t compression_level);
 };
 
 }  // namespace lib
