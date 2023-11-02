@@ -183,7 +183,11 @@ class DummyNumericIndex : public NumericIndex<T> {
                              std::string&& working_path)
       : NumericIndex<T>(filesystem, std::move(working_path),
                         PersistentStorage::WorkingPathType::kDummy),
-        last_added_document_id_(kInvalidDocumentId) {}
+        dummy_crcs_buffer_(
+            std::make_unique<uint8_t[]>(sizeof(PersistentStorage::Crcs))),
+        last_added_document_id_(kInvalidDocumentId) {
+    memset(dummy_crcs_buffer_.get(), 0, sizeof(PersistentStorage::Crcs));
+  }
 
   libtextclassifier3::Status PersistStoragesToDisk(bool force) override {
     return libtextclassifier3::Status::OK;
@@ -202,11 +206,17 @@ class DummyNumericIndex : public NumericIndex<T> {
     return Crc32(0);
   }
 
-  PersistentStorage::Crcs& crcs() override { return dummy_crcs_; }
-  const PersistentStorage::Crcs& crcs() const override { return dummy_crcs_; }
+  PersistentStorage::Crcs& crcs() override {
+    return *reinterpret_cast<PersistentStorage::Crcs*>(
+        dummy_crcs_buffer_.get());
+  }
+  const PersistentStorage::Crcs& crcs() const override {
+    return *reinterpret_cast<const PersistentStorage::Crcs*>(
+        dummy_crcs_buffer_.get());
+  }
 
   std::unordered_map<std::string, std::map<T, std::vector<BasicHit>>> storage_;
-  PersistentStorage::Crcs dummy_crcs_;
+  std::unique_ptr<uint8_t[]> dummy_crcs_buffer_;
   DocumentId last_added_document_id_;
 };
 
