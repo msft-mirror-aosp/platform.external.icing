@@ -14,16 +14,20 @@
 
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
 
-#include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
-#include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/main/main-index.h"
 #include "icing/index/main/posting-list-hit-accessor.h"
-#include "icing/legacy/core/icing-string-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/util/logging.h"
@@ -42,6 +46,30 @@ std::string SectionIdMaskToString(SectionIdMask section_id_mask) {
     }
   }
   return mask;
+}
+
+void MergeNewHitIntoCachedDocHitInfos(
+    const Hit& hit, bool need_hit_term_frequency,
+    std::vector<DocHitInfoIteratorTermMain::DocHitInfoAndTermFrequencyArray>&
+        cached_doc_hit_infos_out) {
+  if (cached_doc_hit_infos_out.empty() ||
+      hit.document_id() !=
+          cached_doc_hit_infos_out.back().doc_hit_info.document_id()) {
+    std::optional<Hit::TermFrequencyArray> tf_arr;
+    if (need_hit_term_frequency) {
+      tf_arr = std::make_optional<Hit::TermFrequencyArray>();
+    }
+
+    cached_doc_hit_infos_out.push_back(
+        DocHitInfoIteratorTermMain::DocHitInfoAndTermFrequencyArray(
+            DocHitInfo(hit.document_id()), std::move(tf_arr)));
+  }
+
+  cached_doc_hit_infos_out.back().doc_hit_info.UpdateSection(hit.section_id());
+  if (need_hit_term_frequency) {
+    (*cached_doc_hit_infos_out.back().term_frequency_array)[hit.section_id()] =
+        hit.term_frequency();
+  }
 }
 
 }  // namespace
@@ -76,7 +104,8 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
-  doc_hit_info_ = cached_doc_hit_infos_.at(cached_doc_hit_infos_idx_);
+  doc_hit_info_ =
+      cached_doc_hit_infos_.at(cached_doc_hit_infos_idx_).doc_hit_info;
   hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
 }
@@ -90,16 +119,16 @@ DocHitInfoIteratorTermMain::TrimRightMostNode() && {
 }
 
 libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
-  DocHitInfo last_doc_hit_info;
+  DocHitInfoAndTermFrequencyArray last_doc_hit_info;
   if (!cached_doc_hit_infos_.empty()) {
-    last_doc_hit_info = cached_doc_hit_infos_.back();
+    last_doc_hit_info = std::move(cached_doc_hit_infos_.back());
   }
   cached_doc_hit_infos_idx_ = 0;
   cached_doc_hit_infos_.clear();
-  if (last_doc_hit_info.document_id() != kInvalidDocumentId) {
+  if (last_doc_hit_info.doc_hit_info.document_id() != kInvalidDocumentId) {
     // Carry over the last hit. It might need to be merged with the first hit of
     // of the next posting list in the chain.
-    cached_doc_hit_infos_.push_back(last_doc_hit_info);
+    cached_doc_hit_infos_.push_back(std::move(last_doc_hit_info));
   }
   if (posting_list_accessor_ == nullptr) {
     ICING_ASSIGN_OR_RETURN(posting_list_accessor_,
@@ -112,8 +141,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
     all_pages_consumed_ = true;
   }
   ++num_blocks_inspected_;
-  cached_doc_hit_infos_.reserve(hits.size() + 1);
-  cached_hit_term_frequency_.reserve(hits.size() + 1);
+  cached_doc_hit_infos_.reserve(cached_doc_hit_infos_.size() + hits.size());
   for (const Hit& hit : hits) {
     // Check sections.
     if (((UINT64_C(1) << hit.section_id()) & section_restrict_mask_) == 0) {
@@ -123,13 +151,9 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
     if (hit.is_prefix_hit()) {
       continue;
     }
-    if (cached_doc_hit_infos_.empty() ||
-        hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
-      cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
-      cached_hit_term_frequency_.push_back(Hit::TermFrequencyArray());
-    }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id());
-    cached_hit_term_frequency_.back()[hit.section_id()] = hit.term_frequency();
+
+    MergeNewHitIntoCachedDocHitInfos(hit, need_hit_term_frequency_,
+                                     cached_doc_hit_infos_);
   }
   return libtextclassifier3::Status::OK;
 }
@@ -141,16 +165,16 @@ std::string DocHitInfoIteratorTermMainExact::ToString() const {
 
 libtextclassifier3::Status
 DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
-  DocHitInfo last_doc_hit_info;
+  DocHitInfoAndTermFrequencyArray last_doc_hit_info;
   if (!cached_doc_hit_infos_.empty()) {
-    last_doc_hit_info = cached_doc_hit_infos_.back();
+    last_doc_hit_info = std::move(cached_doc_hit_infos_.back());
   }
   cached_doc_hit_infos_idx_ = 0;
   cached_doc_hit_infos_.clear();
-  if (last_doc_hit_info.document_id() != kInvalidDocumentId) {
+  if (last_doc_hit_info.doc_hit_info.document_id() != kInvalidDocumentId) {
     // Carry over the last hit. It might need to be merged with the first hit of
     // of the next posting list in the chain.
-    cached_doc_hit_infos_.push_back(last_doc_hit_info);
+    cached_doc_hit_infos_.push_back(std::move(last_doc_hit_info));
   }
 
   ++num_blocks_inspected_;
@@ -165,10 +189,7 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
   if (hits.empty()) {
     all_pages_consumed_ = true;
   }
-  cached_doc_hit_infos_.reserve(hits.size());
-  if (need_hit_term_frequency_) {
-    cached_hit_term_frequency_.reserve(hits.size());
-  }
+  cached_doc_hit_infos_.reserve(cached_doc_hit_infos_.size() + hits.size());
   for (const Hit& hit : hits) {
     // Check sections.
     if (((UINT64_C(1) << hit.section_id()) & section_restrict_mask_) == 0) {
@@ -178,18 +199,9 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
     if (!exact_ && !hit.is_in_prefix_section()) {
       continue;
     }
-    if (cached_doc_hit_infos_.empty() ||
-        hit.document_id() != cached_doc_hit_infos_.back().document_id()) {
-      cached_doc_hit_infos_.push_back(DocHitInfo(hit.document_id()));
-      if (need_hit_term_frequency_) {
-        cached_hit_term_frequency_.push_back(Hit::TermFrequencyArray());
-      }
-    }
-    cached_doc_hit_infos_.back().UpdateSection(hit.section_id());
-    if (need_hit_term_frequency_) {
-      cached_hit_term_frequency_.back()[hit.section_id()] =
-          hit.term_frequency();
-    }
+
+    MergeNewHitIntoCachedDocHitInfos(hit, need_hit_term_frequency_,
+                                     cached_doc_hit_infos_);
   }
   return libtextclassifier3::Status::OK;
 }
