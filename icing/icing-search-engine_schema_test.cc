@@ -3131,6 +3131,26 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
 }
 
+TEST_F(IcingSearchEngineSchemaTest, IcingShouldReturnErrorForExtraSections) {
+  // Create a schema with more sections than allowed.
+  SchemaTypeConfigBuilder schema_type_config_builder =
+      SchemaTypeConfigBuilder().SetType("type");
+  for (int i = 0; i <= kMaxSectionId + 1; ++i) {
+    schema_type_config_builder.AddProperty(
+        PropertyConfigBuilder()
+            .SetName("prop" + std::to_string(i))
+            .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+            .SetCardinality(CARDINALITY_OPTIONAL));
+  }
+  SchemaProto schema =
+      SchemaBuilder().AddType(schema_type_config_builder).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status().message(),
+              HasSubstr("Too many properties to be indexed"));
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing
