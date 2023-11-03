@@ -276,6 +276,15 @@ class SchemaStore {
   libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
   GetSchemaTypeConfig(std::string_view schema_type) const;
 
+  // Returns the schema type of the passed in SchemaTypeId
+  //
+  // Returns:
+  //   schema type on success
+  //   FAILED_PRECONDITION if schema hasn't been set yet
+  //   INVALID_ARGUMENT if schema type id is invalid
+  libtextclassifier3::StatusOr<const std::string*> GetSchemaType(
+      SchemaTypeId schema_type_id) const;
+
   // Returns the SchemaTypeId of the passed in schema type
   //
   // Returns:

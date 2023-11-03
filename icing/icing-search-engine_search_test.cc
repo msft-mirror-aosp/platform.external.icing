@@ -3565,6 +3565,547 @@ TEST_P(IcingSearchEngineSearchTest, SearchWithProjectionMultipleFieldPaths) {
               EqualsProto(projected_document_one));
 }
 
+TEST_P(IcingSearchEngineSearchTest, SearchWithPropertyFilters) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filters of sender.name and subject for the
+  // Email schema type.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* email_property_filters =
+      search_spec->add_type_property_filters();
+  email_property_filters->set_schema_type("Email");
+  email_property_filters->add_paths("sender.name");
+  email_property_filters->add_paths("subject");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that only the first document is returned. Although 'hello' is
+  // present in document_two, it shouldn't be in the result since 'hello' is not
+  // in the specified property filter.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_one));
+}
+
+TEST_P(IcingSearchEngineSearchTest, SearchWithPropertyFiltersOnMultipleSchema) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Add Person and Organization schema with a property 'name' in both.
+  SchemaProto schema = SchemaBuilder()
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Person")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("name")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("emailAddress")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL)))
+      .AddType(SchemaTypeConfigBuilder()
+                   .SetType("Organization")
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("name")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL))
+                   .AddProperty(PropertyConfigBuilder()
+                                    .SetName("address")
+                                    .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                       TOKENIZER_PLAIN)
+                                    .SetCardinality(CARDINALITY_OPTIONAL)))
+      .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(),
+              ProtoIsOk());
+
+  // 1. Add person document
+  DocumentProto person_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Person")
+          .AddStringProperty("name", "Meg Ryan")
+          .AddStringProperty("emailAddress", "hellogirl@aol.com")
+          .Build();
+  ASSERT_THAT(icing.Put(person_document).status(), ProtoIsOk());
+
+  // 1. Add organization document
+  DocumentProto organization_document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Organization")
+          .AddStringProperty("name", "Meg Corp")
+          .AddStringProperty("address", "Universal street")
+          .Build();
+  ASSERT_THAT(icing.Put(organization_document).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filters. Person schema has name in it's
+  // property filter but Organization schema doesn't.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("Meg");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* person_property_filters =
+      search_spec->add_type_property_filters();
+  person_property_filters->set_schema_type("Person");
+  person_property_filters->add_paths("name");
+  TypePropertyMask* organization_property_filters =
+      search_spec->add_type_property_filters();
+  organization_property_filters->set_schema_type("Organization");
+  organization_property_filters->add_paths("address");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that only the person document is returned. Although 'Meg' is
+  // present in organization document, it shouldn't be in the result since
+  // the name field is not specified in the Organization property filter.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(person_document));
+}
+
+TEST_P(IcingSearchEngineSearchTest, SearchWithWildcardPropertyFilters) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filters of sender.name and subject for the
+  // wildcard(*) schema type.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* wildcard_property_filters =
+      search_spec->add_type_property_filters();
+  wildcard_property_filters->set_schema_type("*");
+  wildcard_property_filters->add_paths("sender.name");
+  wildcard_property_filters->add_paths("subject");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that only the first document is returned since the second
+  // document doesn't contain the word 'hello' in either of fields specified in
+  // the property filter. This confirms that the property filters for the
+  // wildcard entry have been applied to the Email schema as well.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_one));
+}
+
+TEST_P(IcingSearchEngineSearchTest, SearchWithMixedPropertyFilters) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filters of sender.name and subject for the
+  // wildcard(*) schema type plus property filters of sender.name and body for
+  // the Email schema type.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* wildcard_property_filters =
+      search_spec->add_type_property_filters();
+  wildcard_property_filters->set_schema_type("*");
+  wildcard_property_filters->add_paths("sender.name");
+  wildcard_property_filters->add_paths("subject");
+  TypePropertyMask* email_property_filters =
+      search_spec->add_type_property_filters();
+  email_property_filters->set_schema_type("Email");
+  email_property_filters->add_paths("sender.name");
+  email_property_filters->add_paths("body");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that only the second document is returned since the first
+  // document doesn't contain the word 'hello' in either of fields sender.name
+  // or body. This confirms that the property filters specified for Email schema
+  // have been applied and the ones specified for wildcard entry have been
+  // ignored.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_two));
+}
+
+TEST_P(IcingSearchEngineSearchTest, SearchWithNonApplicablePropertyFilters) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filters of sender.name and subject for an
+  // unknown schema type.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* email_property_filters =
+      search_spec->add_type_property_filters();
+  email_property_filters->set_schema_type("unknown");
+  email_property_filters->add_paths("sender.name");
+  email_property_filters->add_paths("subject");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+
+  // 3. Verify that both the documents are returned since each of them have the
+  // word 'hello' in at least 1 property. The second document being returned
+  // confirms that the body field was searched and the specified property
+  // filters were not applied to the Email schema type.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_two));
+  EXPECT_THAT(results.results(1).document(),
+              EqualsProto(document_one));
+}
+
+TEST_P(IcingSearchEngineSearchTest, SearchWithEmptyPropertyFilter) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Message")
+          .AddStringProperty("body", "Hello World!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  // 2. Issue a query with empty property filter for Message schema.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* message_property_filters =
+      search_spec->add_type_property_filters();
+  message_property_filters->set_schema_type("Message");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+
+  // 3. Verify that no documents are returned. Although 'hello' is present in
+  // the indexed document, it shouldn't be returned since the Message property
+  // filter doesn't allow any properties to be searched.
+  ASSERT_THAT(results.results(), IsEmpty());
+}
+
+TEST_P(IcingSearchEngineSearchTest,
+       SearchWithPropertyFilterHavingInvalidProperty) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Message")
+          .AddStringProperty("body", "Hello World!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filter having invalid/unknown property for
+  // Message schema.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* message_property_filters =
+      search_spec->add_type_property_filters();
+  message_property_filters->set_schema_type("Message");
+  message_property_filters->add_paths("unknown");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+
+  // 3. Verify that no documents are returned. Although 'hello' is present in
+  // the indexed document, it shouldn't be returned since the Message property
+  // filter doesn't allow any valid properties to be searched. Any
+  // invalid/unknown properties specified in the property filters will be
+  // ignored while searching.
+  ASSERT_THAT(results.results(), IsEmpty());
+}
+
+TEST_P(IcingSearchEngineSearchTest, SearchWithPropertyFiltersWithNesting) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreatePersonAndEmailSchema()).status(),
+              ProtoIsOk());
+
+  // 1. Add two email documents
+  DocumentProto document_one =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender",
+              DocumentBuilder()
+                  .SetKey("namespace", "uri1")
+                  .SetSchema("Person")
+                  .AddStringProperty("name", "Meg Ryan")
+                  .AddStringProperty("emailAddress", "hellogirl@aol.com")
+                  .Build())
+          .AddStringProperty("subject", "Hello World!")
+          .AddStringProperty(
+              "body", "Oh what a beautiful morning! Oh what a beautiful day!")
+          .Build();
+  ASSERT_THAT(icing.Put(document_one).status(), ProtoIsOk());
+
+  DocumentProto document_two =
+      DocumentBuilder()
+          .SetKey("namespace", "uri2")
+          .SetCreationTimestampMs(1000)
+          .SetSchema("Email")
+          .AddDocumentProperty(
+              "sender", DocumentBuilder()
+                            .SetKey("namespace", "uri2")
+                            .SetSchema("Person")
+                            .AddStringProperty("name", "Tom Hanks")
+                            .AddStringProperty("emailAddress", "ny152@aol.com")
+                            .Build())
+          .AddStringProperty("subject", "Goodnight Moon!")
+          .AddStringProperty("body",
+                             "Count all the sheep and tell them 'Hello'.")
+          .Build();
+  ASSERT_THAT(icing.Put(document_two).status(), ProtoIsOk());
+
+  // 2. Issue a query with property filter of sender.emailAddress for the Email
+  // schema type.
+  auto search_spec = std::make_unique<SearchSpecProto>();
+  search_spec->set_term_match_type(TermMatchType::PREFIX);
+  search_spec->set_query("hello");
+  search_spec->set_search_type(GetParam());
+  TypePropertyMask* email_property_filters =
+      search_spec->add_type_property_filters();
+  email_property_filters->set_schema_type("Email");
+  email_property_filters->add_paths("sender.emailAddress");
+
+  auto result_spec = std::make_unique<ResultSpecProto>();
+
+  auto scoring_spec = std::make_unique<ScoringSpecProto>();
+  *scoring_spec = GetDefaultScoringSpec();
+  SearchResultProto results =
+      icing.Search(*search_spec, *scoring_spec, *result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+
+  // 3. Verify that only the first document is returned since the second
+  // document doesn't contain the word 'hello' in sender.emailAddress. The first
+  // document being returned confirms that the nested property
+  // sender.emailAddress was actually searched.
+  EXPECT_THAT(results.results(0).document(),
+              EqualsProto(document_one));
+}
+
 TEST_P(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(5);
