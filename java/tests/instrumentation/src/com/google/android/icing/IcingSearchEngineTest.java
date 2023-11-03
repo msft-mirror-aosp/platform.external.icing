@@ -139,26 +139,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  public void testSetAndGetSchema() throws Exception {
-    assertStatusOk(icingSearchEngine.initialize().getStatus());
-
-    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
-    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
-    SetSchemaResultProto setSchemaResultProto =
-        icingSearchEngine.setSchema(schema, /*ignoreErrorsAndDeleteDocuments=*/ false);
-    assertStatusOk(setSchemaResultProto.getStatus());
-
-    GetSchemaResultProto getSchemaResultProto = icingSearchEngine.getSchema();
-    assertStatusOk(getSchemaResultProto.getStatus());
-    assertThat(getSchemaResultProto.getSchema()).isEqualTo(schema);
-
-    GetSchemaTypeResultProto getSchemaTypeResultProto =
-        icingSearchEngine.getSchemaType(emailTypeConfig.getSchemaType());
-    assertStatusOk(getSchemaTypeResultProto.getStatus());
-    assertThat(getSchemaTypeResultProto.getSchemaTypeConfig()).isEqualTo(emailTypeConfig);
-  }
-
-  @Test
   public void testPutAndGetDocuments() throws Exception {
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 

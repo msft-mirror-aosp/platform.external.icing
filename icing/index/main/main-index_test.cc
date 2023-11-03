@@ -38,6 +38,7 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::NiceMock;
 using ::testing::Return;
@@ -90,7 +91,9 @@ class MainIndexTest : public testing::Test {
 
     std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
     LiteIndex::Options options(lite_index_file_name,
-                               /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                               /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                               /*hit_buffer_sort_at_indexing=*/true,
+                               /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));
 
@@ -361,7 +364,9 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   // - Doc4 {"four", "foul" is_in_prefix_section=true}
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                             /*hit_buffer_sort_at_indexing=*/true,
+                             /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -531,30 +536,35 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
                            std::vector<SectionId>{doc1_hit.section_id()})));
 }
 
-TEST_F(MainIndexTest, SearchChainedPostingLists) {
+TEST_F(MainIndexTest,
+       SearchChainedPostingListsShouldMergeSectionsAndTermFrequency) {
   // Index 2048 document with 3 hits in each document. When merged into the main
   // index, this will 1) lead to a chained posting list and 2) split at least
   // one document's hits across multiple posting lists.
+  const std::string term = "foot";
+
   ICING_ASSERT_OK_AND_ASSIGN(
       uint32_t tvi,
-      lite_index_->InsertTerm("foot", TermMatchType::EXACT_ONLY, kNamespace0));
+      lite_index_->InsertTerm(term, TermMatchType::EXACT_ONLY, kNamespace0));
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foot_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
 
   for (DocumentId document_id = 0; document_id < 2048; ++document_id) {
-    Hit doc_hit0(/*section_id=*/0, /*document_id=*/document_id,
-                 Hit::kDefaultTermFrequency,
-                 /*is_in_prefix_section=*/false);
+    Hit::TermFrequency term_frequency = static_cast<Hit::TermFrequency>(
+        document_id % Hit::kMaxTermFrequency + 1);
+    Hit doc_hit0(
+        /*section_id=*/0, /*document_id=*/document_id, term_frequency,
+        /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit0));
 
-    Hit doc_hit1(/*section_id=*/1, /*document_id=*/document_id,
-                 Hit::kDefaultTermFrequency,
-                 /*is_in_prefix_section=*/false);
+    Hit doc_hit1(
+        /*section_id=*/1, /*document_id=*/document_id, term_frequency,
+        /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit1));
 
-    Hit doc_hit2(/*section_id=*/2, /*document_id=*/document_id,
-                 Hit::kDefaultTermFrequency,
-                 /*is_in_prefix_section=*/false);
+    Hit doc_hit2(
+        /*section_id=*/2, /*document_id=*/document_id, term_frequency,
+        /*is_in_prefix_section=*/false);
     ICING_ASSERT_OK(lite_index_->AddHit(foot_term_id, doc_hit2));
   }
 
@@ -568,15 +578,35 @@ TEST_F(MainIndexTest, SearchChainedPostingLists) {
   // 3. Merge the lite index.
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
   // Get hits for all documents containing "foot" - which should be all of them.
-  std::vector<DocHitInfo> hits =
-      GetExactHits(main_index.get(), /*term_start_index=*/0,
-                   /*unnormalized_term_length=*/0, "foot");
 
-  EXPECT_THAT(hits, SizeIs(2048));
-  EXPECT_THAT(hits.front(),
-              EqualsDocHitInfo(2047, std::vector<SectionId>{0, 1, 2}));
-  EXPECT_THAT(hits.back(),
-              EqualsDocHitInfo(0, std::vector<SectionId>{0, 1, 2}));
+  auto iterator = std::make_unique<DocHitInfoIteratorTermMainExact>(
+      main_index.get(), term, /*term_start_index=*/0,
+      /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+      /*need_hit_term_frequency=*/true);
+
+  DocumentId expected_document_id = 2047;
+  while (iterator->Advance().ok()) {
+    EXPECT_THAT(iterator->doc_hit_info(),
+                EqualsDocHitInfo(expected_document_id,
+                                 std::vector<SectionId>{0, 1, 2}));
+
+    std::vector<TermMatchInfo> matched_terms_stats;
+    iterator->PopulateMatchedTermsStats(&matched_terms_stats);
+
+    Hit::TermFrequency expected_term_frequency =
+        static_cast<Hit::TermFrequency>(
+            expected_document_id % Hit::kMaxTermFrequency + 1);
+    ASSERT_THAT(matched_terms_stats, SizeIs(1));
+    EXPECT_THAT(matched_terms_stats[0].term, Eq(term));
+    EXPECT_THAT(matched_terms_stats[0].term_frequencies[0],
+                Eq(expected_term_frequency));
+    EXPECT_THAT(matched_terms_stats[0].term_frequencies[1],
+                Eq(expected_term_frequency));
+    EXPECT_THAT(matched_terms_stats[0].term_frequencies[2],
+                Eq(expected_term_frequency));
+    --expected_document_id;
+  }
+  EXPECT_THAT(expected_document_id, Eq(-1));
 }
 
 TEST_F(MainIndexTest, MergeIndexBackfilling) {
@@ -606,7 +636,9 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   // - Doc1 {"foot" is_in_prefix_section=false}
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024);
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                             /*hit_buffer_sort_at_indexing=*/true,
+                             /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(

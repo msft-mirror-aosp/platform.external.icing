@@ -280,8 +280,6 @@ libtextclassifier3::Status CalculateTransitiveNestedTypeRelations(
     // 4. "adjacent" has been fully expanded. Add all of its transitive
     // outgoing relations to this type's transitive outgoing relations.
     auto adjacent_expanded_itr = expanded_nested_types_map->find(adjacent_type);
-    expanded_relations.reserve(expanded_relations.size() +
-                               adjacent_expanded_itr->second.size());
     for (const auto& [transitive_reachable, _] :
          adjacent_expanded_itr->second) {
       // Insert a transitive reachable node `transitive_reachable` for `type` if
@@ -345,8 +343,6 @@ libtextclassifier3::Status CalculateAcyclicTransitiveRelations(
     // 3. "adjacent" has been fully expanded. Add all of its transitive outgoing
     // relations to this type's transitive outgoing relations.
     auto adjacent_expanded_itr = expanded_relation_map->find(adjacent);
-    expanded_relations.reserve(expanded_relations.size() +
-                               adjacent_expanded_itr->second.size());
     for (const auto& [transitive_reachable, _] :
          adjacent_expanded_itr->second) {
       // Insert a transitive reachable node `transitive_reachable` for `type`.
@@ -526,7 +522,6 @@ BuildTransitiveDependentGraph(const SchemaProto& schema,
     // Insert the parent_type into the dependent map if it is not present
     // already.
     merged_dependent_map.insert({parent_type, {}});
-    merged_dependent_map[parent_type].reserve(inheritance_relation.size());
     for (const auto& [child_type, _] : inheritance_relation) {
       // Insert the child_type into parent_type's dependent map if it's not
       // present already, in which case the value will be an empty vector.
