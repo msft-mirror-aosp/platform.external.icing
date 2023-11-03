@@ -57,8 +57,8 @@
 //    $ adb push blaze-bin/icing/query/query-processor_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/query-processor_benchmark --benchmark_filter=all
-//    --adb
+//    $ adb shell /data/local/tmp/query-processor_benchmark
+//    --benchmark_filter=all --adb
 
 // Flag to tell the benchmark that it'll be run on an Android device via adb,
 // the benchmark will set up data files accordingly.
@@ -81,7 +81,9 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
 std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
                                    const Filesystem& filesystem,
                                    const std::string& index_dir) {
-  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10);
+  Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
   return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
 }
 
@@ -90,6 +92,18 @@ std::unique_ptr<Normalizer> CreateNormalizer() {
 
              /*max_term_byte_size=*/std::numeric_limits<int>::max())
       .ValueOrDie();
+}
+
+libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
+    const Filesystem* filesystem, const std::string& base_dir,
+    const Clock* clock, const SchemaStore* schema_store) {
+  return DocumentStore::Create(
+      filesystem, base_dir, clock, schema_store,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/false,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*initialize_stats=*/nullptr);
 }
 
 void BM_QueryOneTerm(benchmark::State& state) {
@@ -103,6 +117,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -116,7 +131,9 @@ void BM_QueryOneTerm(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -130,11 +147,13 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -164,7 +183,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -226,6 +246,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -239,7 +260,9 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -253,11 +276,13 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -305,7 +330,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -367,6 +393,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -380,7 +407,9 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -394,11 +423,13 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -431,7 +462,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
@@ -493,6 +525,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   Filesystem filesystem;
   const std::string base_dir = GetTestTempDir() + "/query_processor_benchmark";
   const std::string index_dir = base_dir + "/index";
+  const std::string numeric_index_dir = base_dir + "/numeric_index";
   const std::string schema_dir = base_dir + "/schema";
   const std::string doc_store_dir = base_dir + "/store";
 
@@ -506,7 +539,9 @@ void BM_QueryHiragana(benchmark::State& state) {
   std::unique_ptr<Index> index =
       CreateIndex(icing_filesystem, filesystem, index_dir);
   // TODO(b/249829533): switch to use persistent numeric index.
-  auto numeric_index = std::make_unique<DummyNumericIndex<int64_t>>();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto numeric_index,
+      DummyNumericIndex<int64_t>::Create(filesystem, numeric_index_dir));
 
   language_segmenter_factory::SegmenterOptions options(ULOC_US);
   std::unique_ptr<LanguageSegmenter> language_segmenter =
@@ -520,11 +555,13 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem, schema_dir, &clock));
-  ICING_ASSERT_OK(schema_store->SetSchema(schema));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false,
+      /*allow_circular_schema_definitions=*/false));
 
   DocumentStore::CreateResult create_result =
-      DocumentStore::Create(&filesystem, doc_store_dir, &clock,
-                            schema_store.get())
+      CreateDocumentStore(&filesystem, doc_store_dir, &clock,
+                          schema_store.get())
           .ValueOrDie();
   std::unique_ptr<DocumentStore> document_store =
       std::move(create_result.document_store);
@@ -557,7 +594,8 @@ void BM_QueryHiragana(benchmark::State& state) {
     QueryResults results =
         query_processor
             ->ParseSearch(search_spec,
-                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE)
+                          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+                          clock.GetSystemTimeMilliseconds())
             .ValueOrDie();
     while (results.root_iterator->Advance().ok()) {
       results.root_iterator->doc_hit_info();
