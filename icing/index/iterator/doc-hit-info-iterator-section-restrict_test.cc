@@ -186,7 +186,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, EmptyOriginalIterator) {
 
   DocHitInfoIteratorSectionRestrict filtered_iterator(
       std::move(original_iterator_empty), document_store_.get(),
-      schema_store_.get(), /*target_sections=*/{},
+      schema_store_.get(), /*target_sections=*/std::set<std::string>(),
       fake_clock_.GetSystemTimeMilliseconds());
 
   EXPECT_THAT(GetDocumentIds(&filtered_iterator), IsEmpty());
@@ -391,7 +391,7 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest,
   // Create a hit that exists in a different section, so it shouldn't match any
   // section filters
   std::vector<DocHitInfo> doc_hit_infos = {
-      DocHitInfo(document_id, kSectionIdMaskNone << not_matching_section_id)};
+      DocHitInfo(document_id, UINT64_C(1) << not_matching_section_id)};
 
   std::unique_ptr<DocHitInfoIterator> original_iterator =
       std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
