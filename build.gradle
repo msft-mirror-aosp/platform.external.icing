@@ -14,65 +14,42 @@
  * limitations under the License.
  */
 
-
-import androidx.build.dependencies.DependenciesKt
-import static androidx.build.SupportConfig.*
-
-buildscript {
-    dependencies {
-        classpath('gradle.plugin.com.google.protobuf:protobuf-gradle-plugin:0.8.13')
-    }
-}
+import androidx.build.SdkHelperKt
 
 plugins {
-    id('com.android.library')
-    id('com.google.protobuf')
+    id("AndroidXPlugin")
+    id("java-library")
+    id("com.google.protobuf")
 }
 
-android {
-    buildToolsVersion BUILD_TOOLS_VERSION
-    compileSdkVersion COMPILE_SDK_VERSION
-    defaultConfig {
-        minSdkVersion DEFAULT_MIN_SDK_VERSION
-        targetSdkVersion TARGET_SDK_VERSION
-        testInstrumentationRunner INSTRUMENTATION_RUNNER
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
-    }
-    sourceSets {
-        main {
-            java.srcDir 'java/src/'
-            manifest.srcFile 'AndroidManifest.xml'
-            proto.srcDir 'proto/'
-        }
-        // TODO(b/161205849): Re-enable this test once icing nativeLib is no longer being built
-        //  inside appsearch:appsearch.
-        //androidTest.java.srcDir 'java/tests/instrumentation/'
+sourceSets {
+    main {
+        java.srcDir 'java/src/'
+        proto.srcDir 'proto/'
     }
 }
 
 dependencies {
-    api('androidx.annotation:annotation:1.1.0')
+    compileOnly("androidx.annotation:annotation:1.1.0")
+    compileOnly(SdkHelperKt.getSdkDependency(project))
+    implementation(libs.protobufLite)
+}
 
-    implementation('com.google.protobuf:protobuf-javalite:3.10.0')
-
-    androidTestImplementation(libs.testCore)
-    androidTestImplementation(libs.testRules)
-    androidTestImplementation(libs.truth)
+afterEvaluate {
+    lint {
+        lintOptions {
+            // protobuf generates unannotated methods
+            disable("UnknownNullness")
+        }
+    }
 }
 
 protobuf {
     protoc {
-        artifact = DependenciesKt.getDependencyAsString(libs.protobufCompiler)
+        artifact = libs.protobufCompiler.get()
     }
-
     generateProtoTasks {
         all().each { task ->
-            project.tasks.named("extractReleaseAnnotations").configure {
-                it.dependsOn(task)
-            }
             task.builtins {
                 java {
                     option 'lite'
@@ -82,26 +59,6 @@ protobuf {
     }
 }
 
-// Create export artifact for all variants (debug/release) for JarJaring
-android.libraryVariants.all { variant ->
-    def variantName = variant.name
-    def suffix = variantName.capitalize()
-    def exportJarTask = tasks.register("exportJar${suffix}", Jar) {
-        archiveBaseName.set("icing-${variantName}")
-
-        // The proto-lite dependency includes .proto files, which are not used by icing. When apps
-        // depend on appsearch as well as proto-lite directly, these files conflict since jarjar
-        // only renames the java classes. Remove them here since they are unused.
-        // Expand the jar and remove any .proto files.
-        from(zipTree(configurations.detachedConfiguration(
-                dependencies.create(libs.protobufLite.get())).getSingleFile())) {
-            exclude("**/*.proto")
-        }
-
-        from files(variant.javaCompileProvider.get().destinationDir)
-        dependsOn variant.javaCompileProvider.get()
-    }
-
-    def exportConfiguration = configurations.register("export${suffix}")
-    artifacts.add(exportConfiguration.name, exportJarTask.flatMap { it.archiveFile })
+androidx {
+    mavenVersion = LibraryVersions.APPSEARCH
 }
