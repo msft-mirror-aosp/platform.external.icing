@@ -14,10 +14,22 @@
 
 #include "icing/tokenization/tokenizer-factory.h"
 
+#include <memory>
+
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/proto/schema.pb.h"
+#include "icing/tokenization/language-segmenter.h"
 #include "icing/tokenization/plain-tokenizer.h"
 #include "icing/tokenization/raw-query-tokenizer.h"
+#include "icing/tokenization/rfc822-tokenizer.h"
+#include "icing/tokenization/tokenizer.h"
+
+#ifdef ENABLE_URL_TOKENIZER
+#include "icing/tokenization/url-tokenizer.h"
+#endif  // ENABLE_URL_TOKENIZER
+
+#include "icing/tokenization/verbatim-tokenizer.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -26,15 +38,25 @@ namespace lib {
 namespace tokenizer_factory {
 
 libtextclassifier3::StatusOr<std::unique_ptr<Tokenizer>>
-CreateIndexingTokenizer(IndexingConfig::TokenizerType::Code type,
+CreateIndexingTokenizer(StringIndexingConfig::TokenizerType::Code type,
                         const LanguageSegmenter* lang_segmenter) {
   ICING_RETURN_ERROR_IF_NULL(lang_segmenter);
 
   switch (type) {
-    case IndexingConfig::TokenizerType::PLAIN:
+    case StringIndexingConfig::TokenizerType::PLAIN:
       return std::make_unique<PlainTokenizer>(lang_segmenter);
-    case IndexingConfig::TokenizerType::NONE:
-      U_FALLTHROUGH;
+    case StringIndexingConfig::TokenizerType::VERBATIM:
+      return std::make_unique<VerbatimTokenizer>();
+    case StringIndexingConfig::TokenizerType::RFC822:
+      return std::make_unique<Rfc822Tokenizer>();
+// TODO (b/246964044): remove ifdef guard when url-tokenizer is ready for export
+// to Android.
+#ifdef ENABLE_URL_TOKENIZER
+    case StringIndexingConfig::TokenizerType::URL:
+      return std::make_unique<UrlTokenizer>();
+#endif  // ENABLE_URL_TOKENIZER
+    case StringIndexingConfig::TokenizerType::NONE:
+      [[fallthrough]];
     default:
       // This should never happen.
       return absl_ports::InvalidArgumentError(

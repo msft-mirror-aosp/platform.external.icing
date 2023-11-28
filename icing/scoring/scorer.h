@@ -16,11 +16,11 @@
 #define ICING_SCORING_SCORER_H_
 
 #include <memory>
+#include <unordered_map>
 
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/proto/scoring.pb.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -30,34 +30,30 @@ class Scorer {
  public:
   virtual ~Scorer() = default;
 
-  // Factory function to create a Scorer which does not take ownership of any
-  // input components (DocumentStore), and all pointers must refer to valid
-  // objects that outlive the created Scorer instance. The default score will be
-  // returned only when the scorer fails to find or calculate a score for the
-  // document.
-  //
-  // Returns:
-  //   A Scorer on success
-  //   FAILED_PRECONDITION on any null pointer input
-  //   INVALID_ARGUMENT if fails to create an instance
-  static libtextclassifier3::StatusOr<std::unique_ptr<Scorer>> Create(
-      ScoringSpecProto::RankingStrategy::Code rank_by, double default_score,
-      const DocumentStore* document_store);
-
   // Returns a non-negative score of a document. The score can be a
   // document-associated score which comes from the DocumentProto directly, an
-  // accumulated score, or even an inferred score. If it fails to find or
-  // calculate a score, the user-provided default score will be returned.
+  // accumulated score, a relevance score, or even an inferred score. If it
+  // fails to find or calculate a score, the user-provided default score will be
+  // returned.
   //
   // Some examples of possible scores:
   // 1. Document-associated scores: document score, creation timestamp score.
   // 2. Accumulated scores: usage count score.
   // 3. Inferred scores: a score calculated by a machine learning model.
+  // 4. Relevance score: computed as BM25F score.
   //
   // NOTE: This method is performance-sensitive as it's called for every
   // potential result document. We're trying to avoid returning StatusOr<double>
   // to save a little more time and memory.
-  virtual double GetScore(DocumentId document_id) = 0;
+  virtual double GetScore(const DocHitInfo& hit_info,
+                          const DocHitInfoIterator* query_it = nullptr) = 0;
+
+  // Currently only overriden by the RelevanceScoreScorer.
+  // NOTE: the query_term_iterators map must
+  // outlive the scorer, see bm25f-calculator for more details.
+  virtual void PrepareToScore(
+      std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
+          query_term_iterators) {}
 };
 
 }  // namespace lib

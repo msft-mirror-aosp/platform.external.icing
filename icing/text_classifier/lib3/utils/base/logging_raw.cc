@@ -15,7 +15,13 @@
 #include "icing/text_classifier/lib3/utils/base/logging_raw.h"
 
 #include <stdio.h>
+
 #include <string>
+
+#define TC3_RETURN_IF_NOT_ERROR_OR_FATAL        \
+  if (severity != ERROR && severity != FATAL) { \
+    return;                                     \
+  }
 
 // NOTE: this file contains two implementations: one for Android, one for all
 // other cases.  We always build exactly one implementation.
@@ -47,13 +53,10 @@ int GetAndroidLogLevel(LogSeverity severity) {
 
 void LowLevelLogging(LogSeverity severity, const std::string& tag,
                      const std::string& message) {
-  const int android_log_level = GetAndroidLogLevel(severity);
 #if !defined(TC3_DEBUG_LOGGING)
-  if (android_log_level != ANDROID_LOG_ERROR &&
-      android_log_level != ANDROID_LOG_FATAL) {
-    return;
-  }
+  TC3_RETURN_IF_NOT_ERROR_OR_FATAL
 #endif
+  const int android_log_level = GetAndroidLogLevel(severity);
   __android_log_write(android_log_level, tag.c_str(), message.c_str());
 }
 
@@ -86,6 +89,9 @@ const char *LogSeverityToString(LogSeverity severity) {
 
 void LowLevelLogging(LogSeverity severity, const std::string &tag,
                      const std::string &message) {
+#if !defined(TC3_DEBUG_LOGGING)
+  TC3_RETURN_IF_NOT_ERROR_OR_FATAL
+#endif
   fprintf(stderr, "[%s] %s : %s\n", LogSeverityToString(severity), tag.c_str(),
           message.c_str());
   fflush(stderr);

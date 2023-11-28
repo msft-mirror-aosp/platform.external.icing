@@ -13,11 +13,11 @@
 // limitations under the License.
 
 #include <cstdlib>
+#include <random>
 
 #include "testing/base/public/benchmark.h"
 #include "icing/scoring/ranker.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -27,7 +27,7 @@ namespace {
 //    $ blaze build -c opt --dynamic_mode=off --copt=-gmlt
 //    //icing/scoring:ranker_benchmark
 //
-//    $ blaze-bin/icing/scoring/ranker_benchmark --benchmarks=all
+//    $ blaze-bin/icing/scoring/ranker_benchmark --benchmark_filter=all
 //    --benchmark_memory_usage
 //
 // Run on an Android device:
@@ -38,24 +38,39 @@ namespace {
 //    $ adb push blaze-bin/icing/scoring/ranker_benchmark
 //    /data/local/tmp/
 //
-//    $ adb shell /data/local/tmp/ranker_benchmark --benchmarks=all
+//    $ adb shell /data/local/tmp/ranker_benchmark --benchmark_filter=all
 
 void BM_GetTopN(benchmark::State& state) {
   int num_to_score = state.range(0);
   int num_to_return = state.range(1);
 
+  std::mt19937_64 random_generator;
+  std::uniform_real_distribution<double> distribution(
+      1, std::numeric_limits<double>::max());
+
   std::vector<ScoredDocumentHit> scored_document_hits;
-  uint seed = Clock().GetSystemTimeMilliseconds();
+  scored_document_hits.reserve(num_to_score);
   for (int i = 0; i < num_to_score; i++) {
-    int score = rand_r(&seed);
     scored_document_hits.emplace_back(/*document_id=*/0,
-                                      /*hit_section_id_mask=*/0, score);
+                                      /*hit_section_id_mask=*/0,
+                                      /*score=*/distribution(random_generator));
   }
 
+  const ScoredDocumentHitComparator scored_document_hit_comparator(
+      /*is_descending=*/true);
+
   for (auto _ : state) {
+    // Pauses timer so that the cost of copying data is not included.
+    state.PauseTiming();
+    std::vector<ScoredDocumentHit> scored_document_hits_copy =
+        scored_document_hits;
+    state.ResumeTiming();
+
+    BuildHeapInPlace(&scored_document_hits_copy,
+                     scored_document_hit_comparator);
     auto result =
-        GetTopNFromScoredDocumentHits(scored_document_hits, num_to_return,
-                                      /*is_descending=*/true);
+        PopTopResultsFromHeap(&scored_document_hits_copy, num_to_return,
+                              scored_document_hit_comparator);
   }
 }
 BENCHMARK(BM_GetTopN)
@@ -89,6 +104,52 @@ BENCHMARK(BM_GetTopN)
     ->ArgPair(15000, 30)
     ->ArgPair(17000, 30)
     ->ArgPair(19000, 30);
+
+void BM_PopTopResultsFromHeap(benchmark::State& state) {
+  int num_to_score = state.range(0);
+  int num_to_return = state.range(1);
+
+  std::mt19937_64 random_generator;
+  std::uniform_real_distribution<double> distribution(
+      1, std::numeric_limits<double>::max());
+
+  std::vector<ScoredDocumentHit> scored_document_hits;
+  scored_document_hits.reserve(num_to_score);
+  for (int i = 0; i < num_to_score; i++) {
+    scored_document_hits.emplace_back(/*document_id=*/0,
+                                      /*hit_section_id_mask=*/0,
+                                      /*score=*/distribution(random_generator));
+  }
+
+  const ScoredDocumentHitComparator scored_document_hit_comparator(
+      /*is_descending=*/true);
+
+  for (auto _ : state) {
+    // Pauses timer so that the cost of copying data and building a heap are not
+    // included.
+    state.PauseTiming();
+    std::vector<ScoredDocumentHit> scored_document_hits_copy =
+        scored_document_hits;
+    BuildHeapInPlace(&scored_document_hits_copy,
+                     scored_document_hit_comparator);
+    state.ResumeTiming();
+
+    auto result =
+        PopTopResultsFromHeap(&scored_document_hits_copy, num_to_return,
+                              scored_document_hit_comparator);
+  }
+}
+BENCHMARK(BM_PopTopResultsFromHeap)
+    ->ArgPair(20000, 100)  // (num_to_score, num_to_return)
+    ->ArgPair(20000, 300)
+    ->ArgPair(20000, 500)
+    ->ArgPair(20000, 700)
+    ->ArgPair(20000, 900)
+    ->ArgPair(20000, 1100)
+    ->ArgPair(20000, 1300)
+    ->ArgPair(20000, 1500)
+    ->ArgPair(20000, 1700)
+    ->ArgPair(20000, 1900);
 }  // namespace
 
 }  // namespace lib

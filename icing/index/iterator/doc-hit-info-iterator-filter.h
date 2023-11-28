@@ -25,9 +25,8 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/schema/schema-store.h"
-#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
-#include "icing/util/clock.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -37,10 +36,6 @@ namespace lib {
 class DocHitInfoIteratorFilter : public DocHitInfoIterator {
  public:
   struct Options {
-    // Filter out/don't return DocHitInfos that are associated with nonexistent
-    // Documents.
-    bool filter_deleted = true;
-
     // List of namespaces that documents must have. An empty vector means that
     // all namespaces are valid, and no documents will be filtered out.
     //
@@ -61,15 +56,24 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   explicit DocHitInfoIteratorFilter(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Clock* clock, const Options& options);
+      const Options& options, int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
+
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
   int32_t GetNumBlocksInspected() const override;
 
   int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    delegate_->PopulateMatchedTermsStats(matched_terms_stats,
+                                         filtering_section_mask);
+  }
 
  private:
   std::unique_ptr<DocHitInfoIterator> delegate_;
@@ -78,7 +82,7 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   const Options options_;
   std::unordered_set<NamespaceId> target_namespace_ids_;
   std::unordered_set<SchemaTypeId> target_schema_type_ids_;
-  const int64_t current_time_milliseconds_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

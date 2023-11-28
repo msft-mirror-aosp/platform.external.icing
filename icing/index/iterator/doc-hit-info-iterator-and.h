@@ -40,11 +40,26 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
                                  std::unique_ptr<DocHitInfoIterator> long_it);
   libtextclassifier3::Status Advance() override;
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   int32_t GetNumBlocksInspected() const override;
 
   int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo> *matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    short_->PopulateMatchedTermsStats(matched_terms_stats,
+                                      filtering_section_mask);
+    long_->PopulateMatchedTermsStats(matched_terms_stats,
+                                     filtering_section_mask);
+  }
 
  private:
   std::unique_ptr<DocHitInfoIterator> short_;
@@ -61,11 +76,26 @@ class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
   int32_t GetNumBlocksInspected() const override;
 
   int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo> *matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+    if (doc_hit_info_.document_id() == kInvalidDocumentId) {
+      // Current hit isn't valid, return.
+      return;
+    }
+    for (size_t i = 0; i < iterators_.size(); ++i) {
+      iterators_.at(i)->PopulateMatchedTermsStats(matched_terms_stats,
+                                                  filtering_section_mask);
+    }
+  }
 
  private:
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators_;

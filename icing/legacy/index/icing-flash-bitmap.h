@@ -11,9 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-// Copyright 2012 Google Inc. All Rights Reserved.
-// Author: ulas@google.com (Ulas Kirazci)
 //
 // A disk-backed bitmap.
 //
@@ -40,8 +37,7 @@
 #ifndef ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 #define ICING_LEGACY_INDEX_ICING_FLASH_BITMAP_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -142,6 +138,7 @@ class IcingFlashBitmap {
   // Upgrade for version 18.
   bool UpgradeTo18();
 
+  // Legacy file system. Switch to use the new Filesystem class instead.
   const IcingFilesystem *const filesystem_;
   std::string filename_;
   OpenType open_type_;

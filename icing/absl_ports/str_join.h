@@ -17,6 +17,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "icing/absl_ports/str_cat.h"
 
@@ -92,6 +93,11 @@ std::string StrJoin(Iterator first, Iterator last, std::string_view sep,
   return result;
 }
 
+template <typename Iterator>
+std::string StrJoin(Iterator first, Iterator last, std::string_view sep) {
+  return absl_ports::StrJoin(first, last, sep, DefaultFormatter());
+}
+
 template <typename Container, typename Formatter>
 std::string StrJoin(const Container& container, std::string_view sep,
                     Formatter&& formatter) {
@@ -103,6 +109,9 @@ template <typename Container>
 std::string StrJoin(const Container& container, std::string_view sep) {
   return absl_ports::StrJoin(container, sep, DefaultFormatter());
 }
+
+std::vector<std::string_view> StrSplit(std::string_view text,
+                                       std::string_view sep);
 
 }  // namespace absl_ports
 }  // namespace lib
