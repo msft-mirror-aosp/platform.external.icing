@@ -44,6 +44,7 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -114,6 +115,8 @@ std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_document_store_namespace_id_fingerprint(true);
+  icing_options.set_use_new_qualified_id_join_index(true);
   return icing_options;
 }
 
@@ -343,6 +346,103 @@ TEST_F(IcingSearchEngineSchemaTest,
     EXPECT_THAT(icing.DeleteBySchemaType("Email").status(),
                 ProtoStatusIs(StatusProto::NOT_FOUND));
   }
+}
+
+TEST_F(IcingSearchEngineSchemaTest, SchemaPropertyNotMatch) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Create a schema with an Email type with String property
+  SchemaProto schema;
+  SchemaTypeConfigProto* type = schema.add_types();
+  type->set_schema_type("Email");
+  PropertyConfigProto* property = type->add_properties();
+  property->set_property_name("title");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // 2. Add a document with different property
+  DocumentProto doc = DocumentBuilder()
+                          .SetKey("emails", "email#1")
+                          .SetSchema("Email")
+                          .AddBooleanProperty("title", true)
+                          .Build();
+  EXPECT_THAT(icing.Put(std::move(doc)).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  doc = DocumentBuilder()
+            .SetKey("emails", "email#1")
+            .SetSchema("Email")
+            .AddDoubleProperty("title", 1)
+            .Build();
+  EXPECT_THAT(icing.Put(std::move(doc)).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  doc = DocumentBuilder()
+            .SetKey("emails", "email#1")
+            .SetSchema("Email")
+            .AddBytesProperty("title", "attachment bytes")
+            .Build();
+  EXPECT_THAT(icing.Put(std::move(doc)).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  doc = DocumentBuilder()
+            .SetKey("emails", "email#1")
+            .SetSchema("Email")
+            .AddInt64Property("title", 1)
+            .Build();
+  EXPECT_THAT(icing.Put(std::move(doc)).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  DocumentProto empty_document =
+      DocumentBuilder().SetKey("icing", "uri1").SetSchema("email").Build();
+  doc = DocumentBuilder()
+            .SetKey("emails", "email#1")
+            .SetSchema("Email")
+            .AddDocumentProperty("title", empty_document)
+            .Build();
+  EXPECT_THAT(icing.Put(std::move(doc)).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, SchemaPropertyNotMatchInNestedDoc) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Create a schema with an Email type with a DOCUMENT property
+  SchemaProto schema;
+  SchemaTypeConfigProto* type = schema.add_types();
+  type->set_schema_type("Email");
+  PropertyConfigProto* property = type->add_properties();
+  property->set_property_name("nestedDoc");
+  property->set_schema_type("NestedDoc");
+  property->set_data_type(PropertyConfigProto::DataType::DOCUMENT);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  // 2. Create a schema with a NestedDoc type with a String property
+  SchemaTypeConfigProto* nestedDoc = schema.add_types();
+  nestedDoc->set_schema_type("NestedDoc");
+  PropertyConfigProto* nestedDoc_property = nestedDoc->add_properties();
+  nestedDoc_property->set_property_name("nestedProperty");
+  nestedDoc_property->set_data_type(PropertyConfigProto::DataType::STRING);
+  nestedDoc_property->set_cardinality(
+      PropertyConfigProto::Cardinality::OPTIONAL);
+
+  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // 3. Create a nested document with different property
+  DocumentProto nested_doc = DocumentBuilder()
+                                 .SetKey("namespace", "nestedDoc#1")
+                                 .SetSchema("NestedDoc")
+                                 .AddBooleanProperty("nestedProperty", true)
+                                 .Build();
+
+  // 4. Add a Email with nested document.
+  DocumentProto doc = DocumentBuilder()
+                          .SetKey("namespace", "email#1")
+                          .SetSchema("Email")
+                          .AddDocumentProperty("nestedDoc", nested_doc)
+                          .Build();
+  EXPECT_THAT(icing.Put(std::move(doc)).status(),
+              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaUnsetVersionIsZero) {
@@ -3129,6 +3229,26 @@ TEST_F(IcingSearchEngineSchemaTest, IcingShouldWorkFor64Sections) {
                    ResultSpecProto::default_instance());
   EXPECT_THAT(actual_results,
               EqualsSearchResultIgnoreStatsAndScores(expected_no_documents));
+}
+
+TEST_F(IcingSearchEngineSchemaTest, IcingShouldReturnErrorForExtraSections) {
+  // Create a schema with more sections than allowed.
+  SchemaTypeConfigBuilder schema_type_config_builder =
+      SchemaTypeConfigBuilder().SetType("type");
+  for (int i = 0; i <= kMaxSectionId + 1; ++i) {
+    schema_type_config_builder.AddProperty(
+        PropertyConfigBuilder()
+            .SetName("prop" + std::to_string(i))
+            .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+            .SetCardinality(CARDINALITY_OPTIONAL));
+  }
+  SchemaProto schema =
+      SchemaBuilder().AddType(schema_type_config_builder).Build();
+
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status().message(),
+              HasSubstr("Too many properties to be indexed"));
 }
 
 }  // namespace
