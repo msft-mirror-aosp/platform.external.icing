@@ -15,6 +15,9 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
+#include "unicode/uconfig.h"  // IWYU pragma: keep
+// clang-format: do not reorder the above include.
+
 #include "unicode/uvernum.h"
 
 namespace icing {
