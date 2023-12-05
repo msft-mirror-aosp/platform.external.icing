@@ -104,65 +104,24 @@ libtextclassifier3::Status DocumentValidator::Validate(
     }
     const PropertyConfigProto& property_config = *property_iter->second;
 
-    // Validate the property data type and get the property value size according
-    // to data type.
+    // Get the property value size according to data type.
     int value_size = 0;
-    if (property.string_values_size() > 0) {
-      if (property_config.data_type() !=
-          PropertyConfigProto::DataType::STRING) {
-        return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-            "The data type of property name '", property.name(),
-            "' is not STRING for key: (", document.namespace_(), ", ",
-            document.uri(), ")."));
-      }
+    if (property_config.data_type() == PropertyConfigProto::DataType::STRING) {
       value_size = property.string_values_size();
-    }
-    if (property.int64_values_size() > 0) {
-      if (property_config.data_type() != PropertyConfigProto::DataType::INT64) {
-        return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-            "The data type of property name '", property.name(),
-            "' is not INT64 for key: (", document.namespace_(), ", ",
-            document.uri(), ")."));
-      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::INT64) {
       value_size = property.int64_values_size();
-    }
-    if (property.double_values_size() > 0) {
-      if (property_config.data_type() !=
-          PropertyConfigProto::DataType::DOUBLE) {
-        return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-            "The data type of property name '", property.name(),
-            "' is not DOUBLE for key: (", document.namespace_(), ", ",
-            document.uri(), ")."));
-      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::DOUBLE) {
       value_size = property.double_values_size();
-    }
-    if (property.boolean_values_size() > 0) {
-      if (property_config.data_type() !=
-          PropertyConfigProto::DataType::BOOLEAN) {
-        return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-            "The data type of property name '", property.name(),
-            "' is not BOOLEAN for key: (", document.namespace_(), ", ",
-            document.uri(), ")."));
-      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::BOOLEAN) {
       value_size = property.boolean_values_size();
-    }
-    if (property.bytes_values_size() > 0) {
-      if (property_config.data_type() != PropertyConfigProto::DataType::BYTES) {
-        return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-            "The data type of property name '", property.name(),
-            "' is not BYTES for key: (", document.namespace_(), ", ",
-            document.uri(), ")."));
-      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::BYTES) {
       value_size = property.bytes_values_size();
-    }
-    if (property.document_values_size() > 0) {
-      if (property_config.data_type() !=
-          PropertyConfigProto::DataType::DOCUMENT) {
-        return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-            "The data type of property name '", property.name(),
-            "' is not DOCUMENT for key: (", document.namespace_(), ", ",
-            document.uri(), ")."));
-      }
+    } else if (property_config.data_type() ==
+               PropertyConfigProto::DataType::DOCUMENT) {
       value_size = property.document_values_size();
     }
 
