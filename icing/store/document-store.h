@@ -43,6 +43,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
+#include "icing/store/namespace-fingerprint-identifier.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/usage-store.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -106,6 +107,11 @@ class DocumentStore {
     // unpersisted. This may be used to signal that any derived data off of the
     // document store may need to be regenerated.
     DataLoss data_loss;
+
+    // A boolean flag indicating if derived files of the document store have
+    // been regenerated or not. This is usually a signal for callers to detect
+    // if any id assignment has changed (e.g. NamespaceId).
+    bool derived_files_regenerated;
   };
 
   // Not copyable
@@ -269,6 +275,21 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
       std::string_view name_space, std::string_view uri) const;
+
+  // Helper method to find a DocumentId that is associated with the given
+  // NamespaceFingerprintIdentifier.
+  //
+  // NOTE: The DocumentId may refer to a invalid document (deleted
+  // or expired). Callers can call DoesDocumentExist(document_id) to ensure it
+  // refers to a valid Document.
+  //
+  // Returns:
+  //   A DocumentId on success
+  //   NOT_FOUND if the key doesn't exist
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<DocumentId> GetDocumentId(
+      const NamespaceFingerprintIdentifier& namespace_fingerprint_identifier)
+      const;
 
   // Returns the CorpusId associated with the given namespace and schema.
   //
@@ -439,10 +460,23 @@ class DocumentStore {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status Optimize();
 
+  struct OptimizeResult {
+    // A vector that maps old document id to new document id.
+    std::vector<DocumentId> document_id_old_to_new;
+
+    // A vector that maps old namespace id to new namespace id. Will be empty if
+    // should_rebuild_index is set to true.
+    std::vector<NamespaceId> namespace_id_old_to_new;
+
+    // A boolean flag that hints the caller (usually IcingSearchEngine) if it
+    // should rebuild index instead of adopting the id changes via the 2 vectors
+    // above. It will be set to true if finding any id inconsistency.
+    bool should_rebuild_index = false;
+  };
   // Copy data from current base directory into a new directory. Any outdated or
-  // deleted data won't be copied. During the process, document ids will be
-  // reassigned so any files / classes that are based on old document ids may be
-  // outdated.
+  // deleted data won't be copied. During the process, document/namespace ids
+  // will be reassigned so any files / classes that are based on old
+  // document/namespace ids may be outdated.
   //
   // stats will be set if non-null.
   //
@@ -451,12 +485,14 @@ class DocumentStore {
   // method based on device usage.
   //
   // Returns:
-  //   A vector that maps from old document id to new document id on success
+  //   OptimizeResult which contains a vector mapping from old document id to
+  //   new document id and another vector mapping from old namespace id to new
+  //   namespace id, on success
   //   INVALID_ARGUMENT if new_directory is same as current base directory
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeInto(
+  libtextclassifier3::StatusOr<OptimizeResult> OptimizeInto(
       const std::string& new_directory, const LanguageSegmenter* lang_segmenter,
-      OptimizeStatsProto* stats = nullptr);
+      OptimizeStatsProto* stats = nullptr) const;
 
   // Calculates status for a potential Optimize call. Includes how many docs
   // there are vs how many would be optimized away. And also includes an
@@ -580,7 +616,15 @@ class DocumentStore {
   // worry about this field.
   bool initialized_ = false;
 
-  libtextclassifier3::StatusOr<DataLoss> Initialize(
+  struct InitializeResult {
+    DataLoss data_loss;
+
+    // A boolean flag indicating if derived files of the document store have
+    // been regenerated or not. This is usually a signal for callers to detect
+    // if any id assignment has changed (e.g. NamespaceId).
+    bool derived_files_regenerated;
+  };
+  libtextclassifier3::StatusOr<InitializeResult> Initialize(
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats);
 
