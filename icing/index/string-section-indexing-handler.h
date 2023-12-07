@@ -19,18 +19,21 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/data-indexing-handler.h"
 #include "icing/index/index.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
 #include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
 
-class StringSectionIndexingHandler : public DataIndexingHandler {
+// This class is meant to be owned by TermIndexingHandler. Instead of using this
+// handler directly, callers should use TermIndexingHandler to index documents.
+//
+// This handler will not check or set last_added_document_id of the index, and
+// it will not merge or sort the lite index either.
+class StringSectionIndexingHandler {
  public:
   // Creates a StringSectionIndexingHandler instance which does not take
   // ownership of any input components. All pointers must refer to valid objects
@@ -41,9 +44,9 @@ class StringSectionIndexingHandler : public DataIndexingHandler {
   //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
   static libtextclassifier3::StatusOr<
       std::unique_ptr<StringSectionIndexingHandler>>
-  Create(const Clock* clock, const Normalizer* normalizer, Index* index);
+  Create(const Normalizer* normalizer, Index* index);
 
-  ~StringSectionIndexingHandler() override = default;
+  ~StringSectionIndexingHandler() = default;
 
   // Handles the string term indexing process: add hits into the lite index for
   // all contents in tokenized_document.tokenized_string_sections and merge lite
@@ -51,23 +54,18 @@ class StringSectionIndexingHandler : public DataIndexingHandler {
   //
   /// Returns:
   //   - OK on success
-  //   - INVALID_ARGUMENT_ERROR if document_id is less than or equal to the
-  //     document_id of a previously indexed document in non recovery mode.
   //   - RESOURCE_EXHAUSTED_ERROR if the index is full and can't add anymore
   //     content.
-  //   - DATA_LOSS_ERROR if an attempt to merge the index fails and both indices
-  //     are cleared as a result.
   //   - INTERNAL_ERROR if any other errors occur.
   //   - Any main/lite index errors.
-  libtextclassifier3::Status Handle(
-      const TokenizedDocument& tokenized_document, DocumentId document_id,
-      bool recovery_mode, PutDocumentStatsProto* put_document_stats) override;
+  libtextclassifier3::Status Handle(const TokenizedDocument& tokenized_document,
+                                    DocumentId document_id,
+                                    PutDocumentStatsProto* put_document_stats);
 
  private:
-  explicit StringSectionIndexingHandler(const Clock* clock,
-                                        const Normalizer* normalizer,
+  explicit StringSectionIndexingHandler(const Normalizer* normalizer,
                                         Index* index)
-      : DataIndexingHandler(clock), normalizer_(*normalizer), index_(*index) {}
+      : normalizer_(*normalizer), index_(*index) {}
 
   const Normalizer& normalizer_;  // Does not own.
   Index& index_;                  // Does not own.

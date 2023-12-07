@@ -2564,6 +2564,114 @@ TEST_P(SchemaUtilTest, DifferentSchemaTypeIsIncompatible) {
   EXPECT_THAT(actual.schema_types_deleted, testing::IsEmpty());
 }
 
+TEST_P(SchemaUtilTest, SameNumberOfRequiredFieldsCanBeIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property1")
+                               .SetDataType(TYPE_STRING)
+                               // Changing required to optional should be fine
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("Property2")
+                               .SetDataType(TYPE_STRING)
+                               // Adding a new required property is incompatible
+                               .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{});
+  EXPECT_THAT(delta.schema_types_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{});
+  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_index_incompatible,
+              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("Property2")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, /*new_schema_dependent_map=*/{});
+  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_join_incompatible,
+              testing::ElementsAre(kEmailType));
+}
+
 TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
   // Configure old schema
   SchemaProto schema_with_indexed_property =
@@ -3017,8 +3125,7 @@ TEST_P(SchemaUtilTest, DeletingIndexedDocumentPropertyIsIncompatible) {
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
-TEST_P(SchemaUtilTest,
-       DeletingNonIndexedDocumentPropertyIsIncompatible) {
+TEST_P(SchemaUtilTest, DeletingNonIndexedDocumentPropertyIsIncompatible) {
   SchemaTypeConfigProto nested_schema =
       SchemaTypeConfigBuilder()
           .SetType(kEmailType)
