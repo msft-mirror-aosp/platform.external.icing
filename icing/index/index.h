@@ -72,16 +72,20 @@ class Index {
   struct Options {
     explicit Options(const std::string& base_dir, uint32_t index_merge_size,
                      bool lite_index_sort_at_indexing,
-                     uint32_t lite_index_sort_size)
+                     uint32_t lite_index_sort_size,
+                     bool include_property_existence_metadata_hits = false)
         : base_dir(base_dir),
           index_merge_size(index_merge_size),
           lite_index_sort_at_indexing(lite_index_sort_at_indexing),
-          lite_index_sort_size(lite_index_sort_size) {}
+          lite_index_sort_size(lite_index_sort_size),
+          include_property_existence_metadata_hits(
+              include_property_existence_metadata_hits) {}
 
     std::string base_dir;
     int32_t index_merge_size;
     bool lite_index_sort_at_indexing;
     int32_t lite_index_sort_size;
+    bool include_property_existence_metadata_hits;
   };
 
   // Creates an instance of Index in the directory pointed by file_dir.
