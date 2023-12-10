@@ -65,10 +65,10 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(options.base_dir + "/idx/lite.",
-                            options.index_merge_size,
-                            options.lite_index_sort_at_indexing,
-                            options.lite_index_sort_size);
+  return LiteIndex::Options(
+      options.base_dir + "/idx/lite.", options.index_merge_size,
+      options.lite_index_sort_at_indexing, options.lite_index_sort_size,
+      options.include_property_existence_metadata_hits);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
