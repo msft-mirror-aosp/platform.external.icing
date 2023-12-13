@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 10
+// Next tag: 11
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -102,6 +102,16 @@ message SearchSpecProto {
   // Finer-grained locks are implemented around code paths that write changes to
   // Icing during Search.
   optional bool use_read_only_search = 9 [default = true];
+
+  // TODO(b/294266822): Handle multiple property filter lists for same schema
+  // type.
+  // How to specify a subset of properties to be searched. If no type property
+  // filter has been specified for a schema type (no TypePropertyMask for the
+  // given schema type), then *all* properties of that schema type will be
+  // searched. If an empty property filter is specified for a given schema type
+  // (TypePropertyMask for the given schema type has empty paths field), no
+  // properties of that schema type will be searched.
+  repeated TypePropertyMask type_property_filters = 10;
 }
 
 // Client-supplied specifications on what to include/how to format the search

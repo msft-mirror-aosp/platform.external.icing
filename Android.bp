@@ -54,6 +54,8 @@ cc_defaults {
 
         "-funsigned-char",
         "-fvisibility=hidden",
+
+        "-Bsymbolic",
     ],
     apex_available: ["com.android.appsearch"],
 }
