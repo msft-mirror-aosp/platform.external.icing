@@ -47,6 +47,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
+#include "icing/store/namespace-fingerprint-identifier.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -1050,7 +1051,7 @@ TEST_P(DocumentStoreTest, DeletedSchemaTypeFromSchemaStoreRecoversOk) {
               IsOkAndHolds(EqualsProto(message_document)));
 }
 
-TEST_P(DocumentStoreTest, OptimizeInto) {
+TEST_P(DocumentStoreTest, OptimizeIntoSingleNamespace) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
@@ -1103,24 +1104,33 @@ TEST_P(DocumentStoreTest, OptimizeInto) {
       optimized_dir + "/" + DocumentLogCreator::GetDocumentLogFilename();
 
   // Validates that the optimized document log has the same size if nothing is
-  // deleted
+  // deleted. Also namespace ids remain the same.
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
-              IsOkAndHolds(ElementsAre(0, 1, 2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result1,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result1.document_id_old_to_new, ElementsAre(0, 1, 2));
+  EXPECT_THAT(optimize_result1.namespace_id_old_to_new, ElementsAre(0));
+  EXPECT_THAT(optimize_result1.should_rebuild_index, IsFalse());
   int64_t optimized_size1 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_EQ(original_size, optimized_size1);
 
   // Validates that the optimized document log has a smaller size if something
-  // is deleted
+  // is deleted. Namespace ids remain the same.
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK(doc_store->Delete("namespace", "uri1",
                                     fake_clock_.GetSystemTimeMilliseconds()));
   // DocumentId 0 is removed.
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
-              IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, 1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result2,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result2.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, 0, 1));
+  EXPECT_THAT(optimize_result2.namespace_id_old_to_new, ElementsAre(0));
+  EXPECT_THAT(optimize_result2.should_rebuild_index, IsFalse());
   int64_t optimized_size2 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(original_size, Gt(optimized_size2));
@@ -1130,13 +1140,17 @@ TEST_P(DocumentStoreTest, OptimizeInto) {
   fake_clock_.SetSystemTimeMilliseconds(300);
 
   // Validates that the optimized document log has a smaller size if something
-  // expired
+  // expired. Namespace ids remain the same.
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   // DocumentId 0 is removed, and DocumentId 2 is expired.
-  EXPECT_THAT(
-      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
-      IsOkAndHolds(ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result3,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result3.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, 0, kInvalidDocumentId));
+  EXPECT_THAT(optimize_result3.namespace_id_old_to_new, ElementsAre(0));
+  EXPECT_THAT(optimize_result3.should_rebuild_index, IsFalse());
   int64_t optimized_size3 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(optimized_size2, Gt(optimized_size3));
@@ -1146,13 +1160,226 @@ TEST_P(DocumentStoreTest, OptimizeInto) {
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
   ICING_ASSERT_OK(doc_store->Delete("namespace", "uri2",
                                     fake_clock_.GetSystemTimeMilliseconds()));
-  // DocumentId 0 and 1 is removed, and DocumentId 2 is expired.
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
-              IsOkAndHolds(ElementsAre(kInvalidDocumentId, kInvalidDocumentId,
-                                       kInvalidDocumentId)));
+  // DocumentId 0 and 1 is removed, and DocumentId 2 is expired. Since no
+  // document with the namespace is added into new document store, the namespace
+  // id will be invalid.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result4,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(
+      optimize_result4.document_id_old_to_new,
+      ElementsAre(kInvalidDocumentId, kInvalidDocumentId, kInvalidDocumentId));
+  EXPECT_THAT(optimize_result4.namespace_id_old_to_new,
+              ElementsAre(kInvalidNamespaceId));
+  EXPECT_THAT(optimize_result4.should_rebuild_index, IsFalse());
   int64_t optimized_size4 =
       filesystem_.GetFileSize(optimized_document_log.c_str());
   EXPECT_THAT(optimized_size3, Gt(optimized_size4));
+}
+
+TEST_P(DocumentStoreTest, OptimizeIntoMultipleNamespaces) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("namespace1", "uri0")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
+                                .Build();
+
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("namespace1", "uri1")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
+                                .Build();
+
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace2", "uri2")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
+                                .Build();
+
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("namespace1", "uri3")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
+                                .Build();
+
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("namespace3", "uri4")
+                                .SetSchema("email")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(1000)
+                                .Build();
+
+  // Nothing should have expired yet.
+  fake_clock_.SetSystemTimeMilliseconds(100);
+
+  ICING_ASSERT_OK(doc_store->Put(document0));
+  ICING_ASSERT_OK(doc_store->Put(document1));
+  ICING_ASSERT_OK(doc_store->Put(document2));
+  ICING_ASSERT_OK(doc_store->Put(document3));
+  ICING_ASSERT_OK(doc_store->Put(document4));
+
+  std::string original_document_log = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
+
+  int64_t original_size =
+      filesystem_.GetFileSize(original_document_log.c_str());
+
+  std::string optimized_dir = document_store_dir_ + "_optimize";
+  std::string optimized_document_log =
+      optimized_dir + "/" + DocumentLogCreator::GetDocumentLogFilename();
+
+  // Validates that the optimized document log has the same size if nothing is
+  // deleted. Also namespace ids remain the same.
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result1,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result1.document_id_old_to_new,
+              ElementsAre(0, 1, 2, 3, 4));
+  EXPECT_THAT(optimize_result1.namespace_id_old_to_new, ElementsAre(0, 1, 2));
+  EXPECT_THAT(optimize_result1.should_rebuild_index, IsFalse());
+  int64_t optimized_size1 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_EQ(original_size, optimized_size1);
+
+  // Validates that the optimized document log has a smaller size if something
+  // is deleted.
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  // Delete DocumentId 0 with namespace1.
+  // - Before: ["namespace1#uri0", "namespace1#uri1", "namespace2#uri2",
+  //   "namespace1#uri3", "namespace3#uri4"]
+  // - After: [nil, "namespace1#uri1", "namespace2#uri2", "namespace1#uri3",
+  //   "namespace3#uri4"]
+  // In this case, new_doc_store will assign namespace ids in ["namespace1",
+  // "namespace2", "namespace3"] order. Since new_doc_store has the same order
+  // of namespace id assignment, namespace ids remain the same.
+  ICING_ASSERT_OK(doc_store->Delete("namespace1", "uri0",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result2,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result2.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, 0, 1, 2, 3));
+  EXPECT_THAT(optimize_result2.namespace_id_old_to_new, ElementsAre(0, 1, 2));
+  EXPECT_THAT(optimize_result2.should_rebuild_index, IsFalse());
+  int64_t optimized_size2 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(original_size, Gt(optimized_size2));
+
+  // Validates that the optimized document log has a smaller size if something
+  // is deleted.
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  // Delete DocumentId 1 with namespace1.
+  // - Before: [nil, "namespace1#uri1", "namespace2#uri2", "namespace1#uri3",
+  //   "namespace3#uri4"]
+  // - After: [nil, nil, "namespace2#uri2", "namespace1#uri3",
+  //   "namespace3#uri4"]
+  // In this case, new_doc_store will assign namespace ids in ["namespace2",
+  // "namespace1", "namespace3"] order, so namespace_id_old_to_new should
+  // reflect the change.
+  ICING_ASSERT_OK(doc_store->Delete("namespace1", "uri1",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result3,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result3.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0, 1, 2));
+  EXPECT_THAT(optimize_result3.namespace_id_old_to_new, ElementsAre(1, 0, 2));
+  EXPECT_THAT(optimize_result3.should_rebuild_index, IsFalse());
+  int64_t optimized_size3 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(optimized_size2, Gt(optimized_size3));
+
+  // Validates that the optimized document log has a smaller size if something
+  // is deleted.
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  // Delete DocumentId 3 with namespace1.
+  // - Before: [nil, nil, "namespace2#uri2", "namespace1#uri3",
+  //   "namespace3#uri4"]
+  // - After: [nil, nil, "namespace2#uri2", nil, "namespace3#uri4"]
+  // In this case, new_doc_store will assign namespace ids in ["namespace2",
+  // "namespace3"] order and "namespace1" will be never assigned, so
+  // namespace_id_old_to_new should reflect the change.
+  ICING_ASSERT_OK(doc_store->Delete("namespace1", "uri3",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result4,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result4.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0,
+                          kInvalidDocumentId, 1));
+  EXPECT_THAT(optimize_result4.namespace_id_old_to_new,
+              ElementsAre(kInvalidNamespaceId, 0, 1));
+  EXPECT_THAT(optimize_result4.should_rebuild_index, IsFalse());
+  int64_t optimized_size4 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(optimized_size3, Gt(optimized_size4));
+
+  // Validates that the optimized document log has a smaller size if something
+  // is deleted.
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  // Delete DocumentId 4 with namespace3.
+  // - Before: [nil, nil, "namespace2#uri2", nil, "namespace3#uri4"]
+  // - After: [nil, nil, "namespace2#uri2", nil, nil]
+  // In this case, new_doc_store will assign namespace ids in ["namespace2"]
+  // order and "namespace1", "namespace3" will be never assigned, so
+  // namespace_id_old_to_new should reflect the change.
+  ICING_ASSERT_OK(doc_store->Delete("namespace3", "uri4",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result5,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result5.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, kInvalidDocumentId, 0,
+                          kInvalidDocumentId, kInvalidDocumentId));
+  EXPECT_THAT(optimize_result5.namespace_id_old_to_new,
+              ElementsAre(kInvalidNamespaceId, 0, kInvalidNamespaceId));
+  EXPECT_THAT(optimize_result5.should_rebuild_index, IsFalse());
+  int64_t optimized_size5 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(optimized_size4, Gt(optimized_size5));
+
+  // Validates that the optimized document log has a smaller size if something
+  // is deleted.
+  ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
+  ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
+  // Delete DocumentId 2 with namespace2.
+  // - Before: [nil, nil, "namespace2#uri2", nil, nil]
+  // - After: [nil, nil, nil, nil, nil]
+  // In this case, all documents were deleted, so there will be no namespace ids
+  // either. namespace_id_old_to_new should reflect the change.
+  ICING_ASSERT_OK(doc_store->Delete("namespace2", "uri2",
+                                    fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result6,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(
+      optimize_result6.document_id_old_to_new,
+      ElementsAre(kInvalidDocumentId, kInvalidDocumentId, kInvalidDocumentId,
+                  kInvalidDocumentId, kInvalidDocumentId));
+  EXPECT_THAT(optimize_result6.namespace_id_old_to_new,
+              ElementsAre(kInvalidNamespaceId, kInvalidNamespaceId,
+                          kInvalidNamespaceId));
+  EXPECT_THAT(optimize_result6.should_rebuild_index, IsFalse());
+  int64_t optimized_size6 =
+      filesystem_.GetFileSize(optimized_document_log.c_str());
+  EXPECT_THAT(optimized_size5, Gt(optimized_size6));
 }
 
 TEST_P(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
@@ -1165,8 +1392,13 @@ TEST_P(DocumentStoreTest, OptimizeIntoForEmptyDocumentStore) {
   std::string optimized_dir = document_store_dir_ + "_optimize";
   ASSERT_TRUE(filesystem_.DeleteDirectoryRecursively(optimized_dir.c_str()));
   ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(optimized_dir.c_str()));
-  EXPECT_THAT(doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()),
-              IsOkAndHolds(IsEmpty()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult optimize_result,
+      doc_store->OptimizeInto(optimized_dir, lang_segmenter_.get()));
+  EXPECT_THAT(optimize_result.document_id_old_to_new, IsEmpty());
+  EXPECT_THAT(optimize_result.namespace_id_old_to_new, IsEmpty());
+  EXPECT_THAT(optimize_result.should_rebuild_index, IsFalse());
 }
 
 TEST_P(DocumentStoreTest, ShouldRecoverFromDataLoss) {
@@ -3427,6 +3659,7 @@ TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
+    EXPECT_THAT(create_result.derived_files_regenerated, IsFalse());
 
     ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
                                doc_store->Put(DocumentProto(test_document1_)));
@@ -3455,7 +3688,8 @@ TEST_P(DocumentStoreTest, DetectPartialDataLoss) {
                           schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
-  ASSERT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
+  EXPECT_THAT(create_result.data_loss, Eq(DataLoss::PARTIAL));
+  EXPECT_THAT(create_result.derived_files_regenerated, IsTrue());
 }
 
 TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
@@ -3471,6 +3705,7 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
     std::unique_ptr<DocumentStore> doc_store =
         std::move(create_result.document_store);
     EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
+    EXPECT_THAT(create_result.derived_files_regenerated, IsFalse());
 
     // There's some space at the beginning of the file (e.g. header, kmagic,
     // etc) that is necessary to initialize the FileBackedProtoLog. We can't
@@ -3520,7 +3755,8 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
                           schema_store_.get()));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
-  ASSERT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
+  EXPECT_THAT(create_result.data_loss, Eq(DataLoss::COMPLETE));
+  EXPECT_THAT(create_result.derived_files_regenerated, IsTrue());
 }
 
 TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
@@ -3573,8 +3809,12 @@ TEST_P(DocumentStoreTest, LoadScoreCacheAndInitializeSuccessfully) {
       std::move(create_result.document_store);
   // The document log is using the legacy v0 format so that a migration is
   // needed, which will also trigger regeneration.
-  EXPECT_EQ(initialize_stats.document_store_recovery_cause(),
-            InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT);
+  EXPECT_THAT(initialize_stats.document_store_recovery_cause(),
+              Eq(InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT));
+  // There should be no data loss, but we still need to regenerate derived files
+  // since we migrated document log from v0 to v1.
+  EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
+  EXPECT_THAT(create_result.derived_files_regenerated, IsTrue());
 }
 
 TEST_P(DocumentStoreTest, DocumentStoreStorageInfo) {
@@ -4227,8 +4467,10 @@ TEST_P(DocumentStoreTest, MigrateToPortableFileBackedProtoLog) {
                                 .Build();
 
   // Check that we didn't lose anything. A migration also doesn't technically
-  // count as a recovery.
+  // count as data loss, but we still have to regenerate derived files after
+  // migration.
   EXPECT_THAT(create_result.data_loss, Eq(DataLoss::NONE));
+  EXPECT_THAT(create_result.derived_files_regenerated, IsTrue());
   EXPECT_EQ(initialize_stats.document_store_recovery_cause(),
             InitializeStatsProto::LEGACY_DOCUMENT_LOG_FORMAT);
 
@@ -4579,6 +4821,46 @@ TEST_P(DocumentStoreTest, SameKeyMapperTypeShouldNotRegenerateDerivedFiles) {
           filesystem_.DirectoryExists(dynamic_trie_uri_mapper_dir.c_str()),
           IsTrue());
     }
+  }
+}
+
+TEST_P(DocumentStoreTest, GetDocumentIdByNamespaceFingerprintIdentifier) {
+  std::string dynamic_trie_uri_mapper_dir =
+      document_store_dir_ + "/key_mapper_dir";
+  std::string persistent_hash_map_uri_mapper_dir =
+      document_store_dir_ + "/uri_mapper";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      DocumentStore::Create(
+          &filesystem_, document_store_dir_, &fake_clock_, schema_store_.get(),
+          /*force_recovery_and_revalidate_documents=*/false,
+          GetParam().namespace_id_fingerprint, GetParam().pre_mapping_fbv,
+          GetParam().use_persistent_hash_map,
+          PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+          /*initialize_stats=*/nullptr));
+
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             doc_store->Put(test_document1_));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      NamespaceId namespace_id,
+      doc_store->GetNamespaceId(test_document1_.namespace_()));
+  NamespaceFingerprintIdentifier ns_fingerprint(
+      namespace_id,
+      /*target_str=*/test_document1_.uri());
+  if (GetParam().namespace_id_fingerprint) {
+    EXPECT_THAT(doc_store->GetDocumentId(ns_fingerprint),
+                IsOkAndHolds(document_id));
+
+    NamespaceFingerprintIdentifier non_existing_ns_fingerprint(
+        namespace_id + 1, /*target_str=*/test_document1_.uri());
+    EXPECT_THAT(doc_store->GetDocumentId(non_existing_ns_fingerprint),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  } else {
+    EXPECT_THAT(doc_store->GetDocumentId(ns_fingerprint),
+                StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   }
 }
 
