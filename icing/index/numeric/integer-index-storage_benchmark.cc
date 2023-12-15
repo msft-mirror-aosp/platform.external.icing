@@ -68,6 +68,8 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 
+static constexpr int32_t kNumDataThresholdForBucketSplit =
+    IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit;
 static constexpr bool kPreMappingFbv = true;
 
 static constexpr SectionId kDefaultSectionId = 12;
@@ -150,11 +152,13 @@ void BM_Index(benchmark::State& state) {
     state.PauseTiming();
     benchmark.filesystem.DeleteDirectoryRecursively(
         benchmark.working_path.c_str());
-    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
-                               IntegerIndexStorage::Create(
-                                   benchmark.filesystem, benchmark.working_path,
-                                   IntegerIndexStorage::Options(kPreMappingFbv),
-                                   &benchmark.posting_list_serializer));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndexStorage> storage,
+        IntegerIndexStorage::Create(
+            benchmark.filesystem, benchmark.working_path,
+            IntegerIndexStorage::Options(kNumDataThresholdForBucketSplit,
+                                         kPreMappingFbv),
+            &benchmark.posting_list_serializer));
     state.ResumeTiming();
 
     for (int i = 0; i < num_keys; ++i) {
@@ -210,11 +214,13 @@ void BM_BatchIndex(benchmark::State& state) {
     state.PauseTiming();
     benchmark.filesystem.DeleteDirectoryRecursively(
         benchmark.working_path.c_str());
-    ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<IntegerIndexStorage> storage,
-                               IntegerIndexStorage::Create(
-                                   benchmark.filesystem, benchmark.working_path,
-                                   IntegerIndexStorage::Options(kPreMappingFbv),
-                                   &benchmark.posting_list_serializer));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndexStorage> storage,
+        IntegerIndexStorage::Create(
+            benchmark.filesystem, benchmark.working_path,
+            IntegerIndexStorage::Options(kNumDataThresholdForBucketSplit,
+                                         kPreMappingFbv),
+            &benchmark.posting_list_serializer));
     std::vector<int64_t> keys_copy(keys);
     state.ResumeTiming();
 
@@ -263,9 +269,11 @@ void BM_ExactQuery(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(benchmark.filesystem, benchmark.working_path,
-                                  IntegerIndexStorage::Options(kPreMappingFbv),
-                                  &benchmark.posting_list_serializer));
+      IntegerIndexStorage::Create(
+          benchmark.filesystem, benchmark.working_path,
+          IntegerIndexStorage::Options(kNumDataThresholdForBucketSplit,
+                                       kPreMappingFbv),
+          &benchmark.posting_list_serializer));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumberGenerator<int64_t>> generator,
       CreateIntegerGenerator(distribution_type, kDefaultSeed, num_keys));
@@ -340,9 +348,11 @@ void BM_RangeQueryAll(benchmark::State& state) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<IntegerIndexStorage> storage,
-      IntegerIndexStorage::Create(benchmark.filesystem, benchmark.working_path,
-                                  IntegerIndexStorage::Options(kPreMappingFbv),
-                                  &benchmark.posting_list_serializer));
+      IntegerIndexStorage::Create(
+          benchmark.filesystem, benchmark.working_path,
+          IntegerIndexStorage::Options(kNumDataThresholdForBucketSplit,
+                                       kPreMappingFbv),
+          &benchmark.posting_list_serializer));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumberGenerator<int64_t>> generator,
       CreateIntegerGenerator(distribution_type, kDefaultSeed, num_keys));
