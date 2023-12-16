@@ -283,6 +283,228 @@ TEST_F(IndexTest, AdvancePastEndAfterMerge) {
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>()));
 }
 
+TEST_F(IndexTest, IteratorGetCallStats_mainIndexOnly) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Merge the index.
+  ICING_ASSERT_OK(index_->Merge());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+
+  // Before Advance().
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 1st Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 2nd Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 3rd Advance().
+  ASSERT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+}
+
+TEST_F(IndexTest, IteratorGetCallStats_liteIndexOnly) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+
+  // Before Advance().
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 1st Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/1,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 2nd Advance().
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 3rd Advance().
+  ASSERT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+}
+
+TEST_F(IndexTest, IteratorGetCallStats) {
+  Index::Editor edit = index_->Edit(
+      kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.BufferTerm("bar"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId1, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  // Merge the index. 2 hits for "foo" will be merged into the main index.
+  ICING_ASSERT_OK(index_->Merge());
+
+  // Insert 2 more hits for "foo". It will be in the lite index.
+  edit = index_->Edit(kDocumentId2, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  edit = index_->Edit(kDocumentId3, kSectionId2, TermMatchType::EXACT_ONLY,
+                      /*namespace_id=*/0);
+  EXPECT_THAT(edit.BufferTerm("foo"), IsOk());
+  EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index_->GetIterator("foo", /*term_start_index=*/0,
+                          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                          TermMatchType::EXACT_ONLY));
+
+  // Before Advance().
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+
+  // 1st Advance(). DocHitInfoIteratorOr will advance both left and right
+  // iterator (i.e. lite and main index iterator) once, compare document ids,
+  // and return the hit with larger document id. In this case, hit from lite
+  // index will be chosen and returned.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/1,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 2nd Advance(). Since lite index iterator has larger document id in the
+  // previous round, we advance lite index iterator in this round. We still
+  // choose and return hit from lite index.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 3rd Advance(). Since lite index iterator has larger document id in the
+  // previous round, we advance lite index iterator in this round. However,
+  // there is no hit from lite index anymore, so we choose and return hit from
+  // main index.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/1,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 4th Advance(). Advance main index.
+  ICING_ASSERT_OK(itr->Advance());
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+
+  // 5th Advance(). Reach the end.
+  ASSERT_THAT(itr->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
+  EXPECT_THAT(
+      itr->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/2,
+          /*num_leaf_advance_calls_main_index=*/2,
+          /*num_leaf_advance_calls_integer_index=*/0,
+          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+}
+
 TEST_F(IndexTest, SingleHitSingleTermIndex) {
   Index::Editor edit = index_->Edit(
       kDocumentId0, kSectionId2, TermMatchType::EXACT_ONLY, /*namespace_id=*/0);
