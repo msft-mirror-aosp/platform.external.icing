@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-type-joinable-index.h"
+#include "icing/join/qualified-id-join-index-impl-v1.h"
 
 #include <cstring>
 #include <memory>
@@ -29,9 +29,11 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/join/doc-join-info.h"
+#include "icing/join/qualified-id-join-index.h"
 #include "icing/store/document-id.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
+#include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/encode-util.h"
@@ -42,6 +44,11 @@ namespace icing {
 namespace lib {
 
 namespace {
+
+// Set 1M for max # of qualified id entries and 10 bytes for key-value bytes.
+// This will take at most 23 MiB disk space and mmap for persistent hash map.
+static constexpr int32_t kDocJoinInfoMapperMaxNumEntries = 1 << 20;
+static constexpr int32_t kDocJoinInfoMapperAverageKVByteSize = 10;
 
 static constexpr int32_t kDocJoinInfoMapperDynamicTrieMaxSize =
     128 * 1024 * 1024;  // 128 MiB
@@ -70,18 +77,19 @@ std::string GetQualifiedIdStoragePath(std::string_view working_path) {
 }  // namespace
 
 /* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdTypeJoinableIndex>>
-QualifiedIdTypeJoinableIndex::Create(const Filesystem& filesystem,
-                                     std::string working_path,
-                                     bool pre_mapping_fbv,
-                                     bool use_persistent_hash_map) {
+    std::unique_ptr<QualifiedIdJoinIndexImplV1>>
+QualifiedIdJoinIndexImplV1::Create(const Filesystem& filesystem,
+                                   std::string working_path,
+                                   bool pre_mapping_fbv,
+                                   bool use_persistent_hash_map) {
   if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str()) ||
       !filesystem.DirectoryExists(
           GetDocJoinInfoMapperPath(working_path).c_str()) ||
       !filesystem.FileExists(GetQualifiedIdStoragePath(working_path).c_str())) {
     // Discard working_path if any file/directory is missing, and reinitialize.
     if (filesystem.DirectoryExists(working_path.c_str())) {
-      ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
+      ICING_RETURN_IF_ERROR(
+          QualifiedIdJoinIndex::Discard(filesystem, working_path));
     }
     return InitializeNewFiles(filesystem, std::move(working_path),
                               pre_mapping_fbv, use_persistent_hash_map);
@@ -90,7 +98,7 @@ QualifiedIdTypeJoinableIndex::Create(const Filesystem& filesystem,
                                  pre_mapping_fbv, use_persistent_hash_map);
 }
 
-QualifiedIdTypeJoinableIndex::~QualifiedIdTypeJoinableIndex() {
+QualifiedIdJoinIndexImplV1::~QualifiedIdJoinIndexImplV1() {
   if (!PersistToDisk().ok()) {
     ICING_LOG(WARNING) << "Failed to persist qualified id type joinable index "
                           "to disk while destructing "
@@ -98,8 +106,10 @@ QualifiedIdTypeJoinableIndex::~QualifiedIdTypeJoinableIndex() {
   }
 }
 
-libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Put(
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Put(
     const DocJoinInfo& doc_join_info, std::string_view ref_qualified_id_str) {
+  SetDirty();
+
   if (!doc_join_info.is_valid()) {
     return absl_ports::InvalidArgumentError(
         "Cannot put data for an invalid DocJoinInfo");
@@ -123,8 +133,8 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Put(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<std::string_view>
-QualifiedIdTypeJoinableIndex::Get(const DocJoinInfo& doc_join_info) const {
+libtextclassifier3::StatusOr<std::string_view> QualifiedIdJoinIndexImplV1::Get(
+    const DocJoinInfo& doc_join_info) const {
   if (!doc_join_info.is_valid()) {
     return absl_ports::InvalidArgumentError(
         "Cannot get data for an invalid DocJoinInfo");
@@ -139,11 +149,13 @@ QualifiedIdTypeJoinableIndex::Get(const DocJoinInfo& doc_join_info) const {
   return std::string_view(data, strlen(data));
 }
 
-libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
+    const std::vector<NamespaceId>& namespace_id_old_to_new,
     DocumentId new_last_added_document_id) {
   std::string temp_working_path = working_path_ + "_temp";
-  ICING_RETURN_IF_ERROR(Discard(filesystem_, temp_working_path));
+  ICING_RETURN_IF_ERROR(
+      QualifiedIdJoinIndex::Discard(filesystem_, temp_working_path));
 
   DestructibleDirectory temp_working_path_ddir(&filesystem_,
                                                std::move(temp_working_path));
@@ -158,7 +170,7 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
     // index. Also PersistToDisk and destruct the instance after finishing, so
     // we can safely swap directories later.
     ICING_ASSIGN_OR_RETURN(
-        std::unique_ptr<QualifiedIdTypeJoinableIndex> new_index,
+        std::unique_ptr<QualifiedIdJoinIndexImplV1> new_index,
         Create(filesystem_, temp_working_path_ddir.dir(), pre_mapping_fbv_,
                use_persistent_hash_map_));
     ICING_RETURN_IF_ERROR(
@@ -190,7 +202,9 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
         doc_join_info_mapper_,
         PersistentHashMapKeyMapper<int32_t>::Create(
             filesystem_, GetDocJoinInfoMapperPath(working_path_),
-            pre_mapping_fbv_));
+            pre_mapping_fbv_,
+            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
+            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
   } else {
     ICING_ASSIGN_OR_RETURN(
         doc_join_info_mapper_,
@@ -210,7 +224,9 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Optimize(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Clear() {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Clear() {
+  SetDirty();
+
   doc_join_info_mapper_.reset();
   // Discard and reinitialize doc join info mapper.
   std::string doc_join_info_mapper_path =
@@ -221,8 +237,9 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Clear() {
     ICING_ASSIGN_OR_RETURN(
         doc_join_info_mapper_,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem_, std::move(doc_join_info_mapper_path),
-            pre_mapping_fbv_));
+            filesystem_, std::move(doc_join_info_mapper_path), pre_mapping_fbv_,
+            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
+            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
   } else {
     ICING_RETURN_IF_ERROR(DynamicTrieKeyMapper<int32_t>::Delete(
         filesystem_, doc_join_info_mapper_path));
@@ -244,11 +261,11 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::Clear() {
 }
 
 /* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdTypeJoinableIndex>>
-QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
-                                                 std::string&& working_path,
-                                                 bool pre_mapping_fbv,
-                                                 bool use_persistent_hash_map) {
+    std::unique_ptr<QualifiedIdJoinIndexImplV1>>
+QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
+                                               std::string&& working_path,
+                                               bool pre_mapping_fbv,
+                                               bool use_persistent_hash_map) {
   // Create working directory.
   if (!filesystem.CreateDirectoryRecursively(working_path.c_str())) {
     return absl_ports::InternalError(
@@ -262,8 +279,9 @@ QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
     ICING_ASSIGN_OR_RETURN(
         doc_join_info_mapper,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem, GetDocJoinInfoMapperPath(working_path),
-            pre_mapping_fbv));
+            filesystem, GetDocJoinInfoMapperPath(working_path), pre_mapping_fbv,
+            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
+            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
   } else {
     ICING_ASSIGN_OR_RETURN(
         doc_join_info_mapper,
@@ -282,8 +300,8 @@ QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
           /*pre_mapping_mmap_size=*/pre_mapping_fbv ? 1024 * 1024 : 0));
 
   // Create instance.
-  auto new_index = std::unique_ptr<QualifiedIdTypeJoinableIndex>(
-      new QualifiedIdTypeJoinableIndex(
+  auto new_index = std::unique_ptr<QualifiedIdJoinIndexImplV1>(
+      new QualifiedIdJoinIndexImplV1(
           filesystem, std::move(working_path),
           /*metadata_buffer=*/std::make_unique<uint8_t[]>(kMetadataFileSize),
           std::move(doc_join_info_mapper), std::move(qualified_id_storage),
@@ -299,8 +317,8 @@ QualifiedIdTypeJoinableIndex::InitializeNewFiles(const Filesystem& filesystem,
 }
 
 /* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdTypeJoinableIndex>>
-QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
+    std::unique_ptr<QualifiedIdJoinIndexImplV1>>
+QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
     const Filesystem& filesystem, std::string&& working_path,
     bool pre_mapping_fbv, bool use_persistent_hash_map) {
   // PRead metadata file.
@@ -328,8 +346,9 @@ QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
     ICING_ASSIGN_OR_RETURN(
         doc_join_info_mapper,
         PersistentHashMapKeyMapper<int32_t>::Create(
-            filesystem, GetDocJoinInfoMapperPath(working_path),
-            pre_mapping_fbv));
+            filesystem, GetDocJoinInfoMapperPath(working_path), pre_mapping_fbv,
+            /*max_num_entries=*/kDocJoinInfoMapperMaxNumEntries,
+            /*average_kv_byte_size=*/kDocJoinInfoMapperAverageKVByteSize));
   } else {
     ICING_ASSIGN_OR_RETURN(
         doc_join_info_mapper,
@@ -348,8 +367,8 @@ QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
           /*pre_mapping_mmap_size=*/pre_mapping_fbv ? 1024 * 1024 : 0));
 
   // Create instance.
-  auto type_joinable_index = std::unique_ptr<QualifiedIdTypeJoinableIndex>(
-      new QualifiedIdTypeJoinableIndex(
+  auto type_joinable_index = std::unique_ptr<QualifiedIdJoinIndexImplV1>(
+      new QualifiedIdJoinIndexImplV1(
           filesystem, std::move(working_path), std::move(metadata_buffer),
           std::move(doc_join_info_mapper), std::move(qualified_id_storage),
           pre_mapping_fbv, use_persistent_hash_map));
@@ -364,9 +383,9 @@ QualifiedIdTypeJoinableIndex::InitializeExistingFiles(
   return type_joinable_index;
 }
 
-libtextclassifier3::Status QualifiedIdTypeJoinableIndex::TransferIndex(
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::TransferIndex(
     const std::vector<DocumentId>& document_id_old_to_new,
-    QualifiedIdTypeJoinableIndex* new_index) const {
+    QualifiedIdJoinIndexImplV1* new_index) const {
   std::unique_ptr<KeyMapper<int32_t>::Iterator> iter =
       doc_join_info_mapper_->GetIterator();
   while (iter->Advance()) {
@@ -394,8 +413,12 @@ libtextclassifier3::Status QualifiedIdTypeJoinableIndex::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status
-QualifiedIdTypeJoinableIndex::PersistMetadataToDisk() {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk(
+    bool force) {
+  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   std::string metadata_file_path = GetMetadataFilePath(working_path_);
 
   ScopedFd sfd(filesystem_.OpenForWrite(metadata_file_path.c_str()));
@@ -415,20 +438,32 @@ QualifiedIdTypeJoinableIndex::PersistMetadataToDisk() {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status
-QualifiedIdTypeJoinableIndex::PersistStoragesToDisk() {
+libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk(
+    bool force) {
+  if (!force && !is_storage_dirty()) {
+    return libtextclassifier3::Status::OK;
+  }
+
   ICING_RETURN_IF_ERROR(doc_join_info_mapper_->PersistToDisk());
   ICING_RETURN_IF_ERROR(qualified_id_storage_->PersistToDisk());
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdTypeJoinableIndex::ComputeInfoChecksum() {
+QualifiedIdJoinIndexImplV1::ComputeInfoChecksum(bool force) {
+  if (!force && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+
   return info().ComputeChecksum();
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdTypeJoinableIndex::ComputeStoragesChecksum() {
+QualifiedIdJoinIndexImplV1::ComputeStoragesChecksum(bool force) {
+  if (!force && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
   ICING_ASSIGN_OR_RETURN(Crc32 doc_join_info_mapper_crc,
                          doc_join_info_mapper_->ComputeChecksum());
   ICING_ASSIGN_OR_RETURN(Crc32 qualified_id_storage_crc,

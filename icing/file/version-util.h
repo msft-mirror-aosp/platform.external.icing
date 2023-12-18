@@ -27,10 +27,18 @@ namespace lib {
 
 namespace version_util {
 
-// - Version 0: Android T. Can be identified only by flash index magic.
-// - Version 1: mainline release 2023-06.
-inline static constexpr int32_t kVersion = 1;
+// - Version 0: Android T base. Can be identified only by flash index magic.
+// - Version 1: Android U base and M-2023-08.
+// - Version 2: M-2023-09, M-2023-11, M-2024-01. Schema is compatible with v1.
+//   (There were no M-2023-10, M-2023-12).
+// - Version 3: M-2024-02. Schema is compatible with v1 and v2.
+//
+// LINT.IfChange(kVersion)
+inline static constexpr int32_t kVersion = 3;
+// LINT.ThenChange(//depot/google3/icing/schema/schema-store.cc:min_overlay_version_compatibility)
 inline static constexpr int32_t kVersionOne = 1;
+inline static constexpr int32_t kVersionTwo = 2;
+inline static constexpr int32_t kVersionThree = 3;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
 
@@ -88,6 +96,16 @@ libtextclassifier3::Status WriteVersion(const Filesystem& filesystem,
 // RETURNS: StateChange
 StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
                                   int32_t curr_version = kVersion);
+
+// Helper method to determine whether Icing should rebuild all derived files.
+// Sometimes it is not required to rebuild derived files when
+// roll-forward/upgrading. This function "encodes" upgrade paths and checks if
+// the roll-forward/upgrading requires derived files to be rebuilt or not.
+//
+// REQUIRES: curr_version > 0. We implement version checking in version 1, so
+//   the callers (except unit tests) will always use a version # greater than 0.
+bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
+                               int32_t curr_version = kVersion);
 
 }  // namespace version_util
 
