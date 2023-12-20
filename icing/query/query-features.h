@@ -36,8 +36,15 @@ constexpr Feature kNumericSearchFeature =
 constexpr Feature kVerbatimSearchFeature =
     "VERBATIM_SEARCH";  // Features#VERBATIM_SEARCH
 
-// TODO(b/208654892): Add this as an enabled feature in the query visitor when
-// it gets invoked.
+// This feature covers all additions (other than numeric search and verbatim
+// search) to the query language to bring it into better alignment with the list
+// filters spec.
+// This includes:
+//   - support for function calls
+//   - expanding support for negation and property restriction expressions
+//   - prefix operator '*'
+//   - 'NOT' operator
+//   - propertyDefined("url")
 constexpr Feature kListFilterQueryLanguageFeature =
     "LIST_FILTER_QUERY_LANGUAGE";  // Features#LIST_FILTER_QUERY_LANGUAGE
 
