@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -56,13 +57,17 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   explicit DocHitInfoIteratorFilter(
       std::unique_ptr<DocHitInfoIterator> delegate,
       const DocumentStore* document_store, const SchemaStore* schema_store,
-      const Options& options);
+      const Options& options, int64_t current_time_ms);
 
   libtextclassifier3::Status Advance() override;
 
-  int32_t GetNumBlocksInspected() const override;
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  int32_t GetNumLeafAdvanceCalls() const override;
+  void MapChildren(const ChildrenMapper& mapper) override {
+    delegate_ = mapper(std::move(delegate_));
+  }
+
+  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
 
   std::string ToString() const override;
 
@@ -80,6 +85,7 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
   const Options options_;
   std::unordered_set<NamespaceId> target_namespace_ids_;
   std::unordered_set<SchemaTypeId> target_schema_type_ids_;
+  int64_t current_time_ms_;
 };
 
 }  // namespace lib

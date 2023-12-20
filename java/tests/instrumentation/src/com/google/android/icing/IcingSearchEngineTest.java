@@ -17,6 +17,7 @@ package com.google.android.icing;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 
+import com.google.android.icing.IcingSearchEngine;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DebugInfoVerbosity;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
@@ -55,12 +56,11 @@ import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.StringIndexingConfig;
 import com.google.android.icing.proto.StringIndexingConfig.TokenizerType;
 import com.google.android.icing.proto.SuggestionResponse;
+import com.google.android.icing.proto.SuggestionScoringSpecProto;
 import com.google.android.icing.proto.SuggestionSpecProto;
-import com.google.android.icing.proto.SuggestionSpecProto.SuggestionScoringSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
-import com.google.android.icing.IcingSearchEngine;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -214,6 +214,14 @@ public final class IcingSearchEngineTest {
     assertStatusOk(searchResultProto.getStatus());
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     assertThat(searchResultProto.getResults(0).getDocument()).isEqualTo(emailDocument);
+
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
+        .isGreaterThan(0);
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
+    assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
   }
 
   @Test
@@ -255,6 +263,14 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(1);
     DocumentProto resultDocument = searchResultProto.getResults(0).getDocument();
     assertThat(resultDocument).isEqualTo(documents.remove(resultDocument.getUri()));
+
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaStartTimestampMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasNativeToJavaJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().hasJavaToNativeJniLatencyMs()).isTrue();
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaStartTimestampMs())
+        .isGreaterThan(0);
+    assertThat(searchResultProto.getQueryStats().getNativeToJavaJniLatencyMs()).isAtLeast(0);
+    assertThat(searchResultProto.getQueryStats().getJavaToNativeJniLatencyMs()).isAtLeast(0);
 
     // fetch rest pages
     for (int i = 1; i < 5; i++) {
