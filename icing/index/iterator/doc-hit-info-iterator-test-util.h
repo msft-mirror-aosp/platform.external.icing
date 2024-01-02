@@ -71,7 +71,7 @@ class DocHitInfoTermFrequencyPair {
 // will then proceed to return the doc_hit_infos in order as Advance's are
 // called. After all doc_hit_infos are returned, Advance will return a NotFound
 // error (also like normal DocHitInfoIterators).
-class DocHitInfoIteratorDummy : public DocHitInfoIterator {
+class DocHitInfoIteratorDummy : public DocHitInfoLeafIterator {
  public:
   DocHitInfoIteratorDummy() = default;
   explicit DocHitInfoIteratorDummy(
@@ -140,25 +140,14 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
     matched_terms_stats->push_back(term_stats);
   }
 
-  void set_hit_intersect_section_ids_mask(
-      SectionIdMask hit_intersect_section_ids_mask) {
-    hit_intersect_section_ids_mask_ = hit_intersect_section_ids_mask;
+  void set_hit_section_ids_mask(SectionIdMask hit_section_ids_mask) {
+    doc_hit_info_.set_hit_section_ids_mask(hit_section_ids_mask);
   }
 
-  int32_t GetNumBlocksInspected() const override {
-    return num_blocks_inspected_;
-  }
+  CallStats GetCallStats() const override { return call_stats_; }
 
-  void SetNumBlocksInspected(int32_t num_blocks_inspected) {
-    num_blocks_inspected_ = num_blocks_inspected;
-  }
-
-  int32_t GetNumLeafAdvanceCalls() const override {
-    return num_leaf_advance_calls_;
-  }
-
-  void SetNumLeafAdvanceCalls(int32_t num_leaf_advance_calls) {
-    num_leaf_advance_calls_ = num_leaf_advance_calls;
+  void SetCallStats(CallStats call_stats) {
+    call_stats_ = std::move(call_stats);
   }
 
   std::string ToString() const override {
@@ -176,8 +165,7 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
 
  private:
   int32_t index_ = -1;
-  int32_t num_blocks_inspected_ = 0;
-  int32_t num_leaf_advance_calls_ = 0;
+  CallStats call_stats_;
   std::vector<DocHitInfoTermFrequencyPair> doc_hit_infos_;
   std::string term_;
   int term_start_index_;
