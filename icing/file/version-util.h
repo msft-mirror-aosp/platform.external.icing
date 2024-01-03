@@ -27,17 +27,18 @@ namespace lib {
 
 namespace version_util {
 
-// - Version 0: Android T. Can be identified only by flash index magic.
-// - Version 1: Android U release 2023-06.
-// - Version 2: Android U 1st mainline release 2023-09. Schema is compatible
-//   with version 1.
-// TODO(b/288969109): bump kVersion to 2 before finalizing the 1st Android U
-// mainline release.
+// - Version 0: Android T base. Can be identified only by flash index magic.
+// - Version 1: Android U base and M-2023-08.
+// - Version 2: M-2023-09, M-2023-11, M-2024-01. Schema is compatible with v1.
+//   (There were no M-2023-10, M-2023-12).
+// - Version 3: M-2024-02. Schema is compatible with v1 and v2.
+//
 // LINT.IfChange(kVersion)
-inline static constexpr int32_t kVersion = 2;
+inline static constexpr int32_t kVersion = 3;
 // LINT.ThenChange(//depot/google3/icing/schema/schema-store.cc:min_overlay_version_compatibility)
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
+inline static constexpr int32_t kVersionThree = 3;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
 
