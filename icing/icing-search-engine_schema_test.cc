@@ -44,6 +44,7 @@
 #include "icing/proto/usage.pb.h"
 #include "icing/query/query-features.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/section.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/icu-data-file-helper.h"
@@ -114,6 +115,8 @@ std::string GetSchemaDir() { return GetTestBaseDir() + "/schema_dir"; }
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
+  icing_options.set_document_store_namespace_id_fingerprint(true);
+  icing_options.set_use_new_qualified_id_join_index(true);
   return icing_options;
 }
 
