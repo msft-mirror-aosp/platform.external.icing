@@ -1124,7 +1124,8 @@ TEST_F(PortableFileBackedProtoLogTest, EraseProtoShouldSetZero) {
 
   // document1_offset + sizeof(int) is the start byte of the proto where
   // sizeof(int) is the size of the proto metadata.
-  mmapped_file.Remap(document1_offset + sizeof(int), file_size - 1);
+  ICING_ASSERT_OK(
+      mmapped_file.Remap(document1_offset + sizeof(int), file_size - 1));
   for (size_t i = 0; i < mmapped_file.region_size(); ++i) {
     ASSERT_THAT(mmapped_file.region()[i], Eq(0));
   }
