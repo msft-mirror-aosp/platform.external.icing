@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/index/string-section-indexing-handler.h"
+#include "icing/index/term-indexing-handler.h"
 
 #include <cstdint>
 #include <limits>
@@ -24,8 +24,10 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
@@ -34,6 +36,7 @@
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/property-existence-indexing-handler.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
@@ -93,7 +96,7 @@ constexpr std::string_view kPropertySubject = "subject";
 
 constexpr SectionId kSectionIdNestedBody = 1;
 
-class StringSectionIndexingHandlerTest : public Test {
+class TermIndexingHandlerTest : public Test {
  protected:
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
@@ -205,6 +208,16 @@ class StringSectionIndexingHandlerTest : public Test {
   std::unique_ptr<DocumentStore> document_store_;
 };
 
+libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>>
+QueryExistence(Index* index, std::string_view property_path) {
+  return index->GetIterator(
+      absl_ports::StrCat(kPropertyExistenceTokenPrefix, property_path),
+      /*term_start_index=*/0,
+      /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+      TermMatchType::EXACT_ONLY,
+      /*need_hit_term_frequency=*/false);
+}
+
 std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
   std::vector<DocHitInfo> infos;
   while (iterator->Advance().ok()) {
@@ -227,7 +240,70 @@ std::vector<DocHitInfoTermFrequencyPair> GetHitsWithTermFrequency(
   return infos;
 }
 
-TEST_F(StringSectionIndexingHandlerTest,
+TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Index> index,
+      Index::Create(options, &filesystem_, &icing_filesystem_));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyTitle), "foo")
+          .AddStringProperty(std::string(kPropertyBody), "")
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
+                                std::move(document)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentId document_id,
+      document_store_->Put(tokenized_document.document()));
+
+  EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TermIndexingHandler> handler,
+      TermIndexingHandler::Create(
+          &fake_clock_, normalizer_.get(), index.get(),
+          /*build_property_existence_metadata_hits=*/true));
+  EXPECT_THAT(
+      handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
+                      /*put_document_stats=*/nullptr),
+      IsOk());
+
+  EXPECT_THAT(index->last_added_document_id(), Eq(document_id));
+
+  // Query 'foo'
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr,
+      index->GetIterator("foo", /*term_start_index=*/0,
+                         /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                         TermMatchType::EXACT_ONLY));
+  std::vector<DocHitInfoTermFrequencyPair> hits =
+      GetHitsWithTermFrequency(std::move(itr));
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map{
+      {kSectionIdTitle, 1}};
+  EXPECT_THAT(hits, ElementsAre(EqualsDocHitInfoWithTermFrequency(
+                        document_id, expected_map)));
+
+  // Query for "title" property existence.
+  ICING_ASSERT_OK_AND_ASSIGN(itr, QueryExistence(index.get(), kPropertyTitle));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(EqualsDocHitInfo(document_id, std::vector<SectionId>{0})));
+
+  // Query for "body" property existence.
+  ICING_ASSERT_OK_AND_ASSIGN(itr, QueryExistence(index.get(), kPropertyBody));
+  EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
+}
+
+TEST_F(TermIndexingHandlerTest,
        HandleIntoLiteIndex_sortInIndexingNotTriggered) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
                          /*lite_index_sort_at_indexing=*/true,
@@ -256,9 +332,10 @@ TEST_F(StringSectionIndexingHandlerTest,
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<StringSectionIndexingHandler> handler,
-      StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
-                                           index.get()));
+      std::unique_ptr<TermIndexingHandler> handler,
+      TermIndexingHandler::Create(
+          &fake_clock_, normalizer_.get(), index.get(),
+          /*build_property_existence_metadata_hits=*/true));
   EXPECT_THAT(
       handler->Handle(tokenized_document, document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
@@ -287,8 +364,7 @@ TEST_F(StringSectionIndexingHandlerTest,
   EXPECT_THAT(GetHits(std::move(itr)), IsEmpty());
 }
 
-TEST_F(StringSectionIndexingHandlerTest,
-       HandleIntoLiteIndex_sortInIndexingTriggered) {
+TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
   // Create the LiteIndex with a smaller sort threshold. At 64 bytes we sort the
   // HitBuffer after inserting 8 hits
   Index::Options options(index_dir_,
@@ -348,9 +424,10 @@ TEST_F(StringSectionIndexingHandlerTest,
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<StringSectionIndexingHandler> handler,
-      StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
-                                           index.get()));
+      std::unique_ptr<TermIndexingHandler> handler,
+      TermIndexingHandler::Create(
+          &fake_clock_, normalizer_.get(), index.get(),
+          /*build_property_existence_metadata_hits=*/true));
 
   // Handle doc0 and doc1. The LiteIndex should sort and merge after adding
   // these
@@ -429,8 +506,7 @@ TEST_F(StringSectionIndexingHandlerTest,
                                        "foo", expected_section_ids_tf_map0)));
 }
 
-TEST_F(StringSectionIndexingHandlerTest,
-       HandleIntoLiteIndex_enableSortInIndexing) {
+TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
   // Create the LiteIndex with a smaller sort threshold. At 64 bytes we sort the
   // HitBuffer after inserting 8 hits
   Index::Options options(index_dir_,
@@ -490,9 +566,10 @@ TEST_F(StringSectionIndexingHandlerTest,
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<StringSectionIndexingHandler> handler,
-      StringSectionIndexingHandler::Create(&fake_clock_, normalizer_.get(),
-                                           index.get()));
+      std::unique_ptr<TermIndexingHandler> handler,
+      TermIndexingHandler::Create(
+          &fake_clock_, normalizer_.get(), index.get(),
+          /*build_property_existence_metadata_hits=*/true));
 
   // Handle all docs
   EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
