@@ -50,6 +50,7 @@ constexpr UChar kTransformRulesUtf16[] =
     "Latin-ASCII; "                 // Map Latin characters to ASCII characters
     "Hiragana-Katakana; "           // Map hiragana to katakana
     "[:Latin:] NFD; "               // Decompose Latin letters
+    "[:Greek:] NFD; "               // Decompose Greek letters
     "[:Nonspacing Mark:] Remove; "  // Remove accent / diacritic marks
     "NFKC";                         // Decompose and compose everything
 
