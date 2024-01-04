@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -546,16 +547,21 @@ class IcingSearchEngine {
   // force_recovery_and_revalidate_documents.
   //
   // Returns:
-  //   OK on success
+  //   On success, a boolean flag indicating whether derived files of the
+  //     document store have been regenerated or not. If true, any other
+  //     components depending on them should also be rebuilt if true.
   //   FAILED_PRECONDITION if initialize_stats is null
   //   INTERNAL on I/O error
-  libtextclassifier3::Status InitializeDocumentStore(
+  libtextclassifier3::StatusOr<bool> InitializeDocumentStore(
       bool force_recovery_and_revalidate_documents,
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer
   // index, and qualified id join index instances.
+  //
+  // If document_store_derived_files_regenerated is true, then we have to
+  // rebuild qualified id join index since NamespaceIds were reassigned.
   //
   // Returns:
   //   OK on success
@@ -564,6 +570,7 @@ class IcingSearchEngine {
   //   NOT_FOUND if some Document's schema type is not in the SchemaStore
   //   INTERNAL on I/O error
   libtextclassifier3::Status InitializeIndex(
+      bool document_store_derived_files_regenerated,
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -603,24 +610,20 @@ class IcingSearchEngine {
     libtextclassifier3::Status status;
     SectionRestrictQueryTermsMap query_terms;
     std::vector<ScoredDocumentHit> scored_document_hits;
-    int64_t parse_query_latency_ms;
-    int64_t scoring_latency_ms;
 
     explicit QueryScoringResults(
         libtextclassifier3::Status status_in,
         SectionRestrictQueryTermsMap&& query_terms_in,
-        std::vector<ScoredDocumentHit>&& scored_document_hits_in,
-        int64_t parse_query_latency_ms_in, int64_t scoring_latency_ms_in)
+        std::vector<ScoredDocumentHit>&& scored_document_hits_in)
         : status(std::move(status_in)),
           query_terms(std::move(query_terms_in)),
-          scored_document_hits(std::move(scored_document_hits_in)),
-          parse_query_latency_ms(parse_query_latency_ms_in),
-          scoring_latency_ms(scoring_latency_ms_in) {}
+          scored_document_hits(std::move(scored_document_hits_in)) {}
   };
   QueryScoringResults ProcessQueryAndScore(
       const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
       const ResultSpecProto& result_spec,
-      const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms)
+      const JoinChildrenFetcher* join_children_fetcher, int64_t current_time_ms,
+      QueryStatsProto::SearchStats* search_stats)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Many of the internal components rely on other components' derived data.
@@ -664,17 +667,18 @@ class IcingSearchEngine {
   // would need call Initialize() to reinitialize everything into a valid state.
   //
   // Returns:
-  //   On success, a vector that maps from old document id to new document id. A
-  //   value of kInvalidDocumentId indicates that the old document id has been
-  //   deleted.
+  //   On success, OptimizeResult which contains a vector mapping from old
+  //   document id to new document id and another vector mapping from old
+  //   namespace id to new namespace id. A value of kInvalidDocumentId indicates
+  //   that the old document id has been deleted.
   //   ABORTED_ERROR if any error happens before the actual optimization, the
   //                 original document store should be still available
   //   DATA_LOSS_ERROR on errors that could potentially cause data loss,
   //                   document store is still available
   //   INTERNAL_ERROR on any IO errors or other errors that we can't recover
   //                  from
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> OptimizeDocumentStore(
-      OptimizeStatsProto* optimize_stats)
+  libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
+  OptimizeDocumentStore(OptimizeStatsProto* optimize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to restore missing document data in index_, integer_index_,
