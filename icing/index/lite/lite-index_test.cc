@@ -28,6 +28,7 @@
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/lite/lite-index-header.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -49,6 +50,7 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Pointee;
 using ::testing::SizeIs;
 
 class LiteIndexTest : public testing::Test {
@@ -113,17 +115,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit1));
 
+  // Check the total size and unsorted size of the hit buffer.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(4));
   // Check that unsorted hits does not exceed the sort threshold.
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
-
-  // Check that hits are unsorted. Persist the data and pread from
-  // LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  LiteIndex_HeaderImpl::HeaderData header_data;
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(4));
 
   // Query the LiteIndex
   std::vector<DocHitInfo> hits1;
@@ -148,13 +144,10 @@ TEST_F(LiteIndexTest,
   // checker.
   EXPECT_THAT(hits2, IsEmpty());
 
-  // Check that hits are sorted after querying LiteIndex. Persist the data and
-  // pread from LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(0));
+  // Check the total size and unsorted size of the hit buffer. Hits should be
+  // sorted after querying LiteIndex.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
 }
 
 TEST_F(LiteIndexTest,
@@ -203,17 +196,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit1));
 
+  // Check the total size and unsorted size of the hit buffer.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(4));
   // Check that unsorted hits does not exceed the sort threshold.
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
-
-  // Check that hits are unsorted. Persist the data and pread from
-  // LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  LiteIndex_HeaderImpl::HeaderData header_data;
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(4));
 
   // Query the LiteIndex
   std::vector<DocHitInfo> hits1;
@@ -238,15 +225,11 @@ TEST_F(LiteIndexTest,
   // checker.
   EXPECT_THAT(hits2, IsEmpty());
 
-  // Check that hits are still unsorted after querying LiteIndex because the
-  // HitBuffer unsorted size is still below the sort threshold, and we've
-  // enabled sort_at_indexing.
-  // Persist the data and performing a pread on LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(4));
+  // Check the total size and unsorted size of the hit buffer. Hits should be
+  // still unsorted after querying LiteIndex because the HitBuffer unsorted size
+  // is still below the sort threshold, and we've enabled sort_at_indexing.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(4));
 }
 
 TEST_F(
@@ -348,7 +331,10 @@ TEST_F(
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc2_hit3));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc3_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(baz_term_id, doc3_hit1));
-  // Verify that the HitBuffer has not been sorted.
+  // Check the total size and unsorted size of the hit buffer. The HitBuffer has
+  // not been sorted.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(14)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(14));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsTrue());
 
   // We now have the following in the hit buffer:
@@ -400,7 +386,10 @@ TEST_F(
   EXPECT_THAT(hits3[1].document_id(), Eq(0));
   EXPECT_THAT(hits3[1].hit_section_ids_mask(), Eq(0b1));
 
-  // Check that the HitBuffer is sorted after the query call.
+  // Check the total size and unsorted size of the hit buffer. The HitBuffer
+  // should be sorted after the query call.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(14)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
 }
 
@@ -511,13 +500,11 @@ TEST_F(
   // AddHit() itself, we need to invoke SortHits() manually.
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsTrue());
   lite_index->SortHits();
-  // Check that the HitBuffer is sorted.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  LiteIndex_HeaderImpl::HeaderData header_data;
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(0));
+  // Check the total size and unsorted size of the hit buffer. The HitBuffer
+  // should be sorted after calling SortHits().
+  EXPECT_THAT(lite_index, Pointee(SizeIs(8)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
+  EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
 
   // Add 12 more hits so that sort threshold is exceeded again.
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc2_hit0));
@@ -536,6 +523,8 @@ TEST_F(
   // Adding these hits exceeds the sort threshold. However when sort_at_indexing
   // is enabled, sorting is done in the string-section-indexing-handler rather
   // than AddHit() itself.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(20)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(12));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsTrue());
 
   // We now have the following in the hit buffer:
@@ -589,15 +578,13 @@ TEST_F(
   EXPECT_THAT(hits3[1].document_id(), Eq(0));
   EXPECT_THAT(hits3[1].hit_section_ids_mask(), Eq(0b1));
 
-  // Check that the HitBuffer is sorted after the query call. FetchHits should
-  // sort before performing binary search if the HitBuffer unsorted size exceeds
-  // the sort threshold. Regardless of the sort_at_indexing config.
+  // Check the total size and unsorted size of the hit buffer. FetchHits should
+  // sort before performing search if the HitBuffer unsorted size exceeds the
+  // sort threshold, regardless of the sort_at_indexing config (to avoid
+  // sequential search on an extremely long unsorted tails).
+  EXPECT_THAT(lite_index, Pointee(SizeIs(20)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(0));
 }
 
 TEST_F(LiteIndexTest, LiteIndexIterator) {
@@ -734,6 +721,53 @@ TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   iter->PopulateMatchedTermsStats(&matched_terms_stats);
   EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
                                        term, expected_section_ids_tf_map0)));
+}
+
+TEST_F(LiteIndexTest, LiteIndexHitBufferSize) {
+  // Set up LiteIndex and TermIdCodec
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
+  LiteIndex::Options options(lite_index_file_name,
+                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+                             /*hit_buffer_sort_at_indexing=*/true,
+                             /*hit_buffer_sort_threshold_bytes=*/64);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  const std::string term = "foo";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index->InsertTerm(term, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  Hit hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
+           /*is_in_prefix_section=*/false);
+  Hit hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
+           /*is_in_prefix_section=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, hit1));
+
+  // Check the total size and byte size of the hit buffer.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(2)));
+  EXPECT_THAT(lite_index->GetHitBufferByteSize(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  // Check the unsorted size and byte size of the hit buffer.
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(2));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedByteSize(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+
+  // Sort the hit buffer and check again.
+  lite_index->SortHits();
+  EXPECT_THAT(lite_index, Pointee(SizeIs(2)));
+  EXPECT_THAT(lite_index->GetHitBufferByteSize(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedByteSize(), Eq(0));
 }
 
 }  // namespace

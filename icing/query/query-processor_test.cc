@@ -33,6 +33,7 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/platform.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
@@ -61,6 +62,7 @@ namespace lib {
 namespace {
 
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
@@ -138,7 +140,8 @@ class QueryProcessorTest
         query_processor_,
         QueryProcessor::Create(index_.get(), numeric_index_.get(),
                                language_segmenter_.get(), normalizer_.get(),
-                               document_store_.get(), schema_store_.get()));
+                               document_store_.get(), schema_store_.get(),
+                               &fake_clock_));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
@@ -188,35 +191,41 @@ class QueryProcessorTest
 };
 
 TEST_P(QueryProcessorTest, CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(
-      QueryProcessor::Create(/*index=*/nullptr, numeric_index_.get(),
-                             language_segmenter_.get(), normalizer_.get(),
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), /*numeric_index_=*/nullptr,
-                             language_segmenter_.get(), normalizer_.get(),
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(/*index=*/nullptr, numeric_index_.get(),
+                                     language_segmenter_.get(),
+                                     normalizer_.get(), document_store_.get(),
+                                     schema_store_.get(), &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(index_.get(), /*numeric_index_=*/nullptr,
+                                     language_segmenter_.get(),
+                                     normalizer_.get(), document_store_.get(),
+                                     schema_store_.get(), &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                                     /*language_segmenter=*/nullptr,
+                                     normalizer_.get(), document_store_.get(),
+                                     schema_store_.get(), &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(
+                  index_.get(), numeric_index_.get(), language_segmenter_.get(),
+                  /*normalizer=*/nullptr, document_store_.get(),
+                  schema_store_.get(), &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
-                             /*language_segmenter=*/nullptr, normalizer_.get(),
-                             document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(
-          index_.get(), numeric_index_.get(), language_segmenter_.get(),
-          /*normalizer=*/nullptr, document_store_.get(), schema_store_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(
-      QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              language_segmenter_.get(), normalizer_.get(),
-                             /*document_store=*/nullptr, schema_store_.get()),
+                             /*document_store=*/nullptr, schema_store_.get(),
+                             &fake_clock_),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(QueryProcessor::Create(index_.get(), numeric_index_.get(),
                                      language_segmenter_.get(),
                                      normalizer_.get(), document_store_.get(),
-                                     /*schema_store=*/nullptr),
+                                     /*schema_store=*/nullptr, &fake_clock_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QueryProcessor::Create(index_.get(), numeric_index_.get(),
+                                     language_segmenter_.get(),
+                                     normalizer_.get(), document_store_.get(),
+                                     schema_store_.get(), /*clock=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -2948,7 +2957,8 @@ TEST_P(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {
       std::unique_ptr<QueryProcessor> local_query_processor,
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              language_segmenter_.get(), normalizer_.get(),
-                             document_store_.get(), schema_store_.get()));
+                             document_store_.get(), schema_store_.get(),
+                             &fake_clock_));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -3010,7 +3020,8 @@ TEST_P(QueryProcessorTest, DocumentPastTtlFilteredOut) {
       std::unique_ptr<QueryProcessor> local_query_processor,
       QueryProcessor::Create(index_.get(), numeric_index_.get(),
                              language_segmenter_.get(), normalizer_.get(),
-                             document_store_.get(), schema_store_.get()));
+                             document_store_.get(), schema_store_.get(),
+                             &fake_clock_));
 
   SearchSpecProto search_spec;
   search_spec.set_query("hello");
@@ -3318,6 +3329,65 @@ TEST_P(QueryProcessorTest, GroupingInSectionRestriction) {
                                    std::vector<SectionId>{prop1_section_id}),
                   EqualsDocHitInfo(document_id0,
                                    std::vector<SectionId>{prop1_section_id})));
+}
+
+TEST_P(QueryProcessorTest, ParseAdvancedQueryShouldSetSearchStats) {
+  if (GetParam() !=
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    GTEST_SKIP();
+  }
+
+  // Create the schema and document store
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder().SetType("email"))
+                           .Build();
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false,
+                  /*allow_circular_schema_definitions=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // namespaces populated.
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id,
+                             document_store_->Put(DocumentBuilder()
+                                                      .SetKey("namespace1", "1")
+                                                      .SetSchema("email")
+                                                      .Build()));
+
+  // Populate the index
+  SectionId section_id = 0;
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  EXPECT_THAT(
+      AddTokenToIndex(document_id, section_id, term_match_type, "hello"),
+      IsOk());
+  EXPECT_THAT(
+      AddTokenToIndex(document_id, section_id, term_match_type, "world"),
+      IsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("hello world");
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_search_type(GetParam());
+
+  static constexpr int64_t kSearchStatsLatencyMs = 10;
+  fake_clock_.SetTimerElapsedMilliseconds(kSearchStatsLatencyMs);
+
+  QueryStatsProto::SearchStats search_stats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          fake_clock_.GetSystemTimeMilliseconds(), &search_stats));
+
+  ASSERT_THAT(results.root_iterator->Advance(), IsOk());
+  EXPECT_THAT(search_stats.query_processor_lexer_extract_token_latency_ms(),
+              Eq(kSearchStatsLatencyMs));
+  EXPECT_THAT(search_stats.query_processor_parser_consume_query_latency_ms(),
+              Eq(kSearchStatsLatencyMs));
+  EXPECT_THAT(search_stats.query_processor_query_visitor_latency_ms(),
+              Eq(kSearchStatsLatencyMs));
 }
 
 INSTANTIATE_TEST_SUITE_P(

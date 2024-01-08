@@ -71,13 +71,6 @@ public class IcingSearchEngineImpl implements Closeable {
     closed = true;
   }
 
-  @SuppressWarnings({"deprecation", "removal"}) // b/316643605
-  @Override
-  protected void finalize() throws Throwable {
-    close();
-    super.finalize();
-  }
-
   @Nullable
   public byte[] initialize() {
     throwIfClosed();
