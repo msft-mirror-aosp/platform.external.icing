@@ -168,8 +168,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     header_mmap_.Remap(hit_buffer_fd_.get(), kHeaderFileOffset, header_size());
     header_ = std::make_unique<LiteIndex_HeaderImpl>(
         reinterpret_cast<LiteIndex_HeaderImpl::HeaderData*>(
-            header_mmap_.address()),
-        options_.include_property_existence_metadata_hits);
+            header_mmap_.address()));
     header_->Reset();
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
@@ -184,8 +183,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
     header_mmap_.Remap(hit_buffer_fd_.get(), kHeaderFileOffset, header_size());
     header_ = std::make_unique<LiteIndex_HeaderImpl>(
         reinterpret_cast<LiteIndex_HeaderImpl::HeaderData*>(
-            header_mmap_.address()),
-        options_.include_property_existence_metadata_hits);
+            header_mmap_.address()));
 
     if (!hit_buffer_.Init(hit_buffer_fd_.get(), header_padded_size, true,
                           sizeof(TermIdHitPair::Value), header_->cur_size(),
@@ -499,7 +497,7 @@ int LiteIndex::FetchHits(
   // When disabled, the entire HitBuffer should be sorted already and only
   // binary search is needed.
   if (options_.hit_buffer_sort_at_indexing) {
-    uint32_t unsorted_length = header_->cur_size() - header_->searchable_end();
+    uint32_t unsorted_length = GetHitBufferUnsortedSizeImpl();
     for (uint32_t i = 1; i <= unsorted_length; ++i) {
       TermIdHitPair term_id_hit_pair = array[header_->cur_size() - i];
       if (term_id_hit_pair.term_id() == term_id) {
@@ -607,13 +605,13 @@ IndexStorageInfoProto LiteIndex::GetStorageInfo(
 
 void LiteIndex::SortHitsImpl() {
   // Make searchable by sorting by hit buffer.
-  uint32_t sort_len = header_->cur_size() - header_->searchable_end();
-  if (sort_len <= 0) {
+  uint32_t need_sort_len = GetHitBufferUnsortedSizeImpl();
+  if (need_sort_len <= 0) {
     return;
   }
   IcingTimer timer;
 
-  auto* array_start =
+  TermIdHitPair::Value* array_start =
       hit_buffer_.GetMutableMem<TermIdHitPair::Value>(0, header_->cur_size());
   TermIdHitPair::Value* sort_start = array_start + header_->searchable_end();
   std::sort(sort_start, array_start + header_->cur_size());
@@ -625,7 +623,7 @@ void LiteIndex::SortHitsImpl() {
     std::inplace_merge(array_start, array_start + header_->searchable_end(),
                        array_start + header_->cur_size());
   }
-  ICING_VLOG(2) << "Lite index sort and merge " << sort_len << " into "
+  ICING_VLOG(2) << "Lite index sort and merge " << need_sort_len << " into "
                 << header_->searchable_end() << " in " << timer.Elapsed() * 1000
                 << "ms";
 

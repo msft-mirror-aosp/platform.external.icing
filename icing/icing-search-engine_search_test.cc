@@ -4496,6 +4496,11 @@ TEST_P(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  // document4, document5's hits will remain in the lite index (# of hits: 4).
+  exp_stats.set_lite_index_hit_buffer_byte_size(4 *
+                                                sizeof(TermIdHitPair::Value));
+  exp_stats.set_lite_index_hit_buffer_unsorted_byte_size(
+      4 * sizeof(TermIdHitPair::Value));
 
   QueryStatsProto::SearchStats* exp_parent_search_stats =
       exp_stats.mutable_parent_search_stats();
@@ -4511,6 +4516,14 @@ TEST_P(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_parent_search_stats->set_num_fetched_hits_lite_index(2);
   exp_parent_search_stats->set_num_fetched_hits_main_index(3);
   exp_parent_search_stats->set_num_fetched_hits_integer_index(0);
+  if (GetParam() ==
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    exp_parent_search_stats->set_query_processor_lexer_extract_token_latency_ms(
+        5);
+    exp_parent_search_stats
+        ->set_query_processor_parser_consume_query_latency_ms(5);
+    exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  }
 
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
@@ -4769,6 +4782,11 @@ TEST_P(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_stats.set_num_joined_results_returned_current_page(3);
   exp_stats.set_join_latency_ms(5);
   exp_stats.set_is_join_query(true);
+  // person3, email4's hits will remain in the lite index (# of hits: 5).
+  exp_stats.set_lite_index_hit_buffer_byte_size(5 *
+                                                sizeof(TermIdHitPair::Value));
+  exp_stats.set_lite_index_hit_buffer_unsorted_byte_size(
+      5 * sizeof(TermIdHitPair::Value));
 
   QueryStatsProto::SearchStats* exp_parent_search_stats =
       exp_stats.mutable_parent_search_stats();
@@ -4784,6 +4802,14 @@ TEST_P(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_parent_search_stats->set_num_fetched_hits_lite_index(1);
   exp_parent_search_stats->set_num_fetched_hits_main_index(2);
   exp_parent_search_stats->set_num_fetched_hits_integer_index(0);
+  if (GetParam() ==
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    exp_parent_search_stats->set_query_processor_lexer_extract_token_latency_ms(
+        5);
+    exp_parent_search_stats
+        ->set_query_processor_parser_consume_query_latency_ms(5);
+    exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  }
 
   QueryStatsProto::SearchStats* exp_child_search_stats =
       exp_stats.mutable_child_search_stats();
@@ -4799,6 +4825,14 @@ TEST_P(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_child_search_stats->set_num_fetched_hits_lite_index(1);
   exp_child_search_stats->set_num_fetched_hits_main_index(3);
   exp_child_search_stats->set_num_fetched_hits_integer_index(0);
+  if (GetParam() ==
+      SearchSpecProto::SearchType::EXPERIMENTAL_ICING_ADVANCED_QUERY) {
+    exp_child_search_stats->set_query_processor_lexer_extract_token_latency_ms(
+        5);
+    exp_child_search_stats->set_query_processor_parser_consume_query_latency_ms(
+        5);
+    exp_child_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  }
 
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
@@ -6638,6 +6672,8 @@ TEST_F(IcingSearchEngineSearchTest, NumericFilterQueryStatsProtoTest) {
   exp_stats.set_document_retrieval_latency_ms(5);
   exp_stats.set_lock_acquisition_latency_ms(5);
   exp_stats.set_num_joined_results_returned_current_page(0);
+  exp_stats.set_lite_index_hit_buffer_byte_size(0);
+  exp_stats.set_lite_index_hit_buffer_unsorted_byte_size(0);
 
   QueryStatsProto::SearchStats* exp_parent_search_stats =
       exp_stats.mutable_parent_search_stats();
@@ -6656,6 +6692,11 @@ TEST_F(IcingSearchEngineSearchTest, NumericFilterQueryStatsProtoTest) {
   // Since we will inspect 1 bucket from "price" in integer index and it
   // contains 3 hits, we will fetch 3 hits (but filter out one of them).
   exp_parent_search_stats->set_num_fetched_hits_integer_index(3);
+  exp_parent_search_stats->set_query_processor_lexer_extract_token_latency_ms(
+      5);
+  exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
+      5);
+  exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
 
   EXPECT_THAT(results.query_stats(), EqualsProto(exp_stats));
 }
