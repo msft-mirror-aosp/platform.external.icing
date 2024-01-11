@@ -14,7 +14,6 @@
 
 #include "icing/performance-configuration.h"
 
-#include "icing/result/result-state.h"
 #include "icing/scoring/scored-document-hit.h"
 
 namespace icing {
@@ -39,20 +38,17 @@ namespace {
 // rendering 2 frames.
 //
 // With the information above, we then try to choose default values for
-// query_length and num_to_score so that the overall time can comfortably fit
-// in with our goal.
+// query_length so that the overall time can comfortably fit in with our goal
+// (note that num_to_score will be decided by the client, which is specified in
+// ResultSpecProto).
 // 1. Set query_length to 23000 so that any query can be executed by
 //    QueryProcessor within 15 ms on a Pixel 3 XL according to results of
 //    //icing/query:query-processor_benchmark.
-// 2. Set num_to_score to 30000 so that results can be scored and ranked within
-//    3 ms on a Pixel 3 XL according to results of
-//    //icing/scoring:score-and-rank_benchmark.
 //
 // In the worse-case scenario, we still have [33 ms - 15 ms - 3 ms] = 15 ms left
 // for all the other things like proto parsing, document fetching, and even
 // Android Binder calls if Icing search engine runs in a separate process.
 constexpr int kMaxQueryLength = 23000;
-constexpr int kDefaultNumToScore = 30000;
 
 // New Android devices nowadays all allow more than 16 MB memory per app. Using
 // that as a guideline and being more conservative, we set 4 MB as the safe
@@ -68,8 +64,7 @@ constexpr int kMaxNumTotalHits = kSafeMemoryUsage / sizeof(ScoredDocumentHit);
 }  // namespace
 
 PerformanceConfiguration::PerformanceConfiguration()
-    : PerformanceConfiguration(kMaxQueryLength, kDefaultNumToScore,
-                               kMaxNumTotalHits) {}
+    : PerformanceConfiguration(kMaxQueryLength, kMaxNumTotalHits) {}
 
 }  // namespace lib
 }  // namespace icing

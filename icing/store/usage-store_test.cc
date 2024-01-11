@@ -44,7 +44,7 @@ class UsageStoreTest : public testing::Test {
 };
 
 UsageReport CreateUsageReport(std::string name_space, std::string uri,
-                              int64 timestamp_ms,
+                              int64_t timestamp_ms,
                               UsageReport::UsageType usage_type) {
   UsageReport usage_report;
   usage_report.set_document_namespace(name_space);
@@ -154,7 +154,8 @@ TEST_F(UsageStoreTest, AddUsageReportShouldUpdateLastUsedTimestamp) {
                              UsageStore::Create(&filesystem_, test_dir_));
 
   // Report a usage with timestamp 5.
-  usage_store->AddUsageReport(usage_report_time5, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_time5, /*document_id=*/1));
   UsageStore::UsageScores expected_scores = CreateUsageScores(
       /*type1_timestamp=*/5, /*type2_timestamp=*/0, /*type3_timestamp=*/0,
       /*type1_count=*/1, /*type2_count=*/0, /*type3_count=*/0);
@@ -162,13 +163,15 @@ TEST_F(UsageStoreTest, AddUsageReportShouldUpdateLastUsedTimestamp) {
               IsOkAndHolds(expected_scores));
 
   // Report a usage with timestamp 1. The timestamp won't be updated.
-  usage_store->AddUsageReport(usage_report_time1, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_time1, /*document_id=*/1));
   ++expected_scores.usage_type1_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
 
   // Report a usage with timestamp 10. The timestamp should be updated.
-  usage_store->AddUsageReport(usage_report_time10, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_time10, /*document_id=*/1));
   expected_scores.usage_type1_last_used_timestamp_s = 10;
   ++expected_scores.usage_type1_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
@@ -188,7 +191,8 @@ TEST_F(UsageStoreTest, AddUsageReportShouldUpdateCounts) {
                              UsageStore::Create(&filesystem_, test_dir_));
 
   // Report a usage with type 1.
-  usage_store->AddUsageReport(usage_report_type1, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_type1, /*document_id=*/1));
   UsageStore::UsageScores expected_scores = CreateUsageScores(
       /*type1_timestamp=*/0, /*type2_timestamp=*/0, /*type3_timestamp=*/0,
       /*type1_count=*/1, /*type2_count=*/0, /*type3_count=*/0);
@@ -196,29 +200,34 @@ TEST_F(UsageStoreTest, AddUsageReportShouldUpdateCounts) {
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
   // Report another usage with type 1.
-  usage_store->AddUsageReport(usage_report_type1, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_type1, /*document_id=*/1));
   ++expected_scores.usage_type1_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
 
   // Report a usage with type 2.
-  usage_store->AddUsageReport(usage_report_type2, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_type2, /*document_id=*/1));
   ++expected_scores.usage_type2_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
   // Report another usage with type 2.
-  usage_store->AddUsageReport(usage_report_type2, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_type2, /*document_id=*/1));
   ++expected_scores.usage_type2_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
 
   // Report a usage with type 3.
-  usage_store->AddUsageReport(usage_report_type3, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_type3, /*document_id=*/1));
   ++expected_scores.usage_type3_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
   // Report another usage with type 3.
-  usage_store->AddUsageReport(usage_report_type3, /*document_id=*/1);
+  ICING_ASSERT_OK(
+      usage_store->AddUsageReport(usage_report_type3, /*document_id=*/1));
   ++expected_scores.usage_type3_count;
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
               IsOkAndHolds(expected_scores));
@@ -450,14 +459,14 @@ TEST_F(UsageStoreTest, Reset) {
 TEST_F(UsageStoreTest, TimestampInSecondsShouldNotOverflow) {
   // Create a report with the max value of timestamps.
   UsageReport usage_report = CreateUsageReport(
-      "namespace", "uri", /*timestamp_ms=*/std::numeric_limits<int64>::max(),
+      "namespace", "uri", /*timestamp_ms=*/std::numeric_limits<int64_t>::max(),
       UsageReport::USAGE_TYPE1);
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<UsageStore> usage_store,
                              UsageStore::Create(&filesystem_, test_dir_));
 
   // The stored timestamp in seconds should be the max value of uint32.
-  usage_store->AddUsageReport(usage_report, /*document_id=*/1);
+  ICING_ASSERT_OK(usage_store->AddUsageReport(usage_report, /*document_id=*/1));
   UsageStore::UsageScores expected_scores = CreateUsageScores(
       /*type1_timestamp=*/std::numeric_limits<uint32_t>::max(),
       /*type2_timestamp=*/0, /*type3_timestamp=*/0,
@@ -483,7 +492,7 @@ TEST_F(UsageStoreTest, CountsShouldNotOverflow) {
   // Report another usage with type 1.
   UsageReport usage_report = CreateUsageReport(
       "namespace", "uri", /*timestamp_ms=*/0, UsageReport::USAGE_TYPE1);
-  usage_store->AddUsageReport(usage_report, /*document_id=*/1);
+  ICING_ASSERT_OK(usage_store->AddUsageReport(usage_report, /*document_id=*/1));
 
   // usage_type1_count should not change because it's already the max value.
   EXPECT_THAT(usage_store->GetUsageScores(/*document_id=*/1),
@@ -571,7 +580,7 @@ TEST_F(UsageStoreTest, GetElementsFileSize) {
 
   UsageReport usage_report = CreateUsageReport(
       "namespace", "uri", /*timestamp_ms=*/1000, UsageReport::USAGE_TYPE1);
-  usage_store->AddUsageReport(usage_report, /*document_id=*/1);
+  ICING_ASSERT_OK(usage_store->AddUsageReport(usage_report, /*document_id=*/1));
 
   EXPECT_THAT(usage_store->GetElementsFileSize(),
               IsOkAndHolds(Gt(empty_file_size)));
@@ -602,12 +611,13 @@ TEST_F(UsageStoreTest, GetDiskUsageNonEmpty) {
   UsageReport usage_report = CreateUsageReport(
       "namespace", "uri", /*timestamp_ms=*/1000, UsageReport::USAGE_TYPE1);
   for (int i = 0; i < 200; ++i) {
-    usage_store->AddUsageReport(usage_report, /*document_id=*/i);
+    ICING_ASSERT_OK(
+        usage_store->AddUsageReport(usage_report, /*document_id=*/i));
   }
 
   // We need to persist since iOS won't see the new disk allocations until after
   // everything gets written.
-  usage_store->PersistToDisk();
+  ICING_ASSERT_OK(usage_store->PersistToDisk());
 
   EXPECT_THAT(usage_store->GetDiskUsage(), IsOkAndHolds(Gt(empty_disk_usage)));
 }
