@@ -117,9 +117,10 @@ class SuggestionProcessorTest : public Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         suggestion_processor_,
-        SuggestionProcessor::Create(
-            index_.get(), numeric_index_.get(), language_segmenter_.get(),
-            normalizer_.get(), document_store_.get(), schema_store_.get()));
+        SuggestionProcessor::Create(index_.get(), numeric_index_.get(),
+                                    language_segmenter_.get(),
+                                    normalizer_.get(), document_store_.get(),
+                                    schema_store_.get(), &fake_clock_));
   }
 
   libtextclassifier3::Status AddTokenToIndex(
