@@ -308,6 +308,24 @@ class LiteIndex {
   IndexStorageInfoProto GetStorageInfo(IndexStorageInfoProto storage_info) const
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Returns the size of unsorted part of hit_buffer_.
+  uint32_t GetHitBufferByteSize() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return size_impl() * sizeof(TermIdHitPair::Value);
+  }
+
+  // Returns the size of unsorted part of hit_buffer_.
+  uint32_t GetHitBufferUnsortedSize() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return GetHitBufferUnsortedSizeImpl();
+  }
+
+  // Returns the byte size of unsorted part of hit_buffer_.
+  uint64_t GetHitBufferUnsortedByteSize() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+    return GetHitBufferUnsortedSizeImpl() * sizeof(TermIdHitPair::Value);
+  }
+
   // Reduces internal file sizes by reclaiming space of deleted documents.
   //
   // This method also sets the last_added_docid of the index to
@@ -377,13 +395,13 @@ class LiteIndex {
   bool NeedSortAtQuerying() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     return HasUnsortedHitsExceedingSortThresholdImpl() ||
            (!options_.hit_buffer_sort_at_indexing &&
-            header_->cur_size() - header_->searchable_end() > 0);
+            GetHitBufferUnsortedSizeImpl() > 0);
   }
 
   // Non-locking implementation for HasUnsortedHitsExceedingSortThresholdImpl().
   bool HasUnsortedHitsExceedingSortThresholdImpl() const
       ICING_SHARED_LOCKS_REQUIRED(mutex_) {
-    return header_->cur_size() - header_->searchable_end() >=
+    return GetHitBufferUnsortedSizeImpl() >=
            (options_.hit_buffer_sort_threshold_bytes /
             sizeof(TermIdHitPair::Value));
   }
@@ -407,6 +425,12 @@ class LiteIndex {
       int& total_score_out, std::vector<DocHitInfo>* hits_out,
       std::vector<Hit::TermFrequencyArray>* term_frequency_out) const
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
+
+  // Returns the size of unsorted part of hit_buffer_.
+  uint32_t GetHitBufferUnsortedSizeImpl() const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+    return header_->cur_size() - header_->searchable_end();
+  }
 
   // File descriptor that points to where the header and hit buffer are written
   // to.

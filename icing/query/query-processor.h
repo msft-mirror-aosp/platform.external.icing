@@ -20,16 +20,15 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/proto/logging.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/query/query-results.h"
-#include "icing/query/query-terms.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/clock.h"
 
 namespace icing {
 namespace lib {
@@ -49,7 +48,8 @@ class QueryProcessor {
   static libtextclassifier3::StatusOr<std::unique_ptr<QueryProcessor>> Create(
       Index* index, const NumericIndex<int64_t>* numeric_index,
       const LanguageSegmenter* language_segmenter, const Normalizer* normalizer,
-      const DocumentStore* document_store, const SchemaStore* schema_store);
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const Clock* clock);
 
   // Parse the search configurations (including the query, any additional
   // filters, etc.) in the SearchSpecProto into one DocHitInfoIterator.
@@ -68,7 +68,8 @@ class QueryProcessor {
   libtextclassifier3::StatusOr<QueryResults> ParseSearch(
       const SearchSpecProto& search_spec,
       ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-      int64_t current_time_ms);
+      int64_t current_time_ms,
+      QueryStatsProto::SearchStats* search_stats = nullptr);
 
  private:
   explicit QueryProcessor(Index* index,
@@ -76,7 +77,7 @@ class QueryProcessor {
                           const LanguageSegmenter* language_segmenter,
                           const Normalizer* normalizer,
                           const DocumentStore* document_store,
-                          const SchemaStore* schema_store);
+                          const SchemaStore* schema_store, const Clock* clock);
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree in our new Advanced Query Language.
@@ -88,7 +89,8 @@ class QueryProcessor {
   libtextclassifier3::StatusOr<QueryResults> ParseAdvancedQuery(
       const SearchSpecProto& search_spec,
       ScoringSpecProto::RankingStrategy::Code ranking_strategy,
-      int64_t current_time_ms) const;
+      int64_t current_time_ms,
+      QueryStatsProto::SearchStats* search_stats) const;
 
   // Parse the query into a one DocHitInfoIterator that represents the root of a
   // query tree.
@@ -106,12 +108,13 @@ class QueryProcessor {
 
   // Not const because we could modify/sort the hit buffer in the lite index at
   // query time.
-  Index& index_;
-  const NumericIndex<int64_t>& numeric_index_;
-  const LanguageSegmenter& language_segmenter_;
-  const Normalizer& normalizer_;
-  const DocumentStore& document_store_;
-  const SchemaStore& schema_store_;
+  Index& index_;                                 // Does not own.
+  const NumericIndex<int64_t>& numeric_index_;   // Does not own.
+  const LanguageSegmenter& language_segmenter_;  // Does not own.
+  const Normalizer& normalizer_;                 // Does not own.
+  const DocumentStore& document_store_;          // Does not own.
+  const SchemaStore& schema_store_;              // Does not own.
+  const Clock& clock_;                           // Does not own.
 };
 
 }  // namespace lib
