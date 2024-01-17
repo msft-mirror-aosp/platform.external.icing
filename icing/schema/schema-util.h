@@ -113,17 +113,17 @@ class SchemaUtil {
     std::unordered_map<std::string_view, const PropertyConfigProto*>
         property_config_map;
 
-    // Properties that have an indexing config
-    std::unordered_set<std::string_view> indexed_properties;
+    // Total number of properties that have an indexing config
+    int32_t num_indexed_properties = 0;
 
-    // Properties that were REQUIRED
-    std::unordered_set<std::string_view> required_properties;
+    // Total number of properties that were REQUIRED
+    int32_t num_required_properties = 0;
 
-    // Properties that have joinable config
-    std::unordered_set<std::string_view> joinable_properties;
+    // Total number of properties that have joinable config
+    int32_t num_joinable_properties = 0;
 
-    // Properties that have DataType::DOCUMENT
-    std::unordered_set<std::string_view> nested_document_properties;
+    // Total number of properties that have DataType::DOCUMENT
+    int32_t num_nested_document_properties = 0;
   };
 
   // This function validates:

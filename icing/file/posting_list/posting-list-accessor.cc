@@ -16,10 +16,7 @@
 
 #include <cstdint>
 #include <memory>
-#include <utility>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
@@ -43,15 +40,13 @@ libtextclassifier3::Status PostingListAccessor::FlushPreexistingPostingList() {
     // and free this posting list.
     //
     // Move will always succeed since in_memory_posting_list_ is max_pl_bytes.
-    ICING_RETURN_IF_ERROR(GetSerializer()->MoveFrom(
-        /*dst=*/&in_memory_posting_list_,
-        /*src=*/&preexisting_posting_list_->posting_list));
+    GetSerializer()->MoveFrom(/*dst=*/&in_memory_posting_list_,
+                              /*src=*/&preexisting_posting_list_->posting_list);
 
     // Now that all the contents of this posting list have been copied, there's
     // no more use for it. Make it available to be used for another posting
     // list.
-    ICING_RETURN_IF_ERROR(
-        storage_->FreePostingList(std::move(*preexisting_posting_list_)));
+    storage_->FreePostingList(std::move(*preexisting_posting_list_));
   }
   preexisting_posting_list_.reset();
   return libtextclassifier3::Status::OK;

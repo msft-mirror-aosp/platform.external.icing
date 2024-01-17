@@ -292,7 +292,7 @@ TEST_F(IndexBlockTest, IndexBlockReallocatingPostingLists) {
 
   // Now free the first posting list. Then, reallocate it and fill it with a
   // different set of hits.
-  ICING_ASSERT_OK(block.FreePostingList(alloc_info_1.posting_list_index));
+  block.FreePostingList(alloc_info_1.posting_list_index);
   EXPECT_THAT(block.HasFreePostingLists(), IsOkAndHolds(IsTrue()));
 
   std::vector<Hit> hits_in_posting_list3{

@@ -716,7 +716,7 @@ libtextclassifier3::Status PersistentHashMap::RehashIfNecessary(
   // # of vector elements may be greater than the actual # of entries.
   // Therefore, we have to truncate entry_storage_ to the correct size.
   if (entry_idx < entry_storage_->num_elements()) {
-    ICING_RETURN_IF_ERROR(entry_storage_->TruncateTo(entry_idx));
+    entry_storage_->TruncateTo(entry_idx);
   }
 
   info().num_deleted_entries = 0;

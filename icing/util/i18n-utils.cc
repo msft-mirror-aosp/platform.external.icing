@@ -38,7 +38,7 @@ namespace {
 // (https://www.fileformat.info/info/unicode/category/index.htm). The set of
 // characters that are regarded as punctuation is not the same for std::ispunct
 // and u_ispunct.
-constexpr std::string_view kAsciiIcuPunctuation = "!\"#%&'*,./:;?@\\_-([{}])";
+const std::string ascii_icu_punctuation = "!\"#%&'*,./:;?@\\_-([{}])";
 
 }  // namespace
 
@@ -129,7 +129,7 @@ bool IsPunctuationAt(std::string_view input, int position, int* char_len_out) {
     if (char_len_out != nullptr) {
       *char_len_out = 1;
     }
-    return kAsciiIcuPunctuation.find(input[position]) != std::string_view::npos;
+    return ascii_icu_punctuation.find(input[position]) != std::string::npos;
   }
   UChar32 c = GetUChar32At(input.data(), input.length(), position);
   if (char_len_out != nullptr) {

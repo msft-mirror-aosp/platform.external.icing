@@ -249,8 +249,7 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Now, free the first posting list. This should add it to the free list
-    ICING_ASSERT_OK(
-        flash_index_storage.FreePostingList(std::move(posting_list_holder1)));
+    flash_index_storage.FreePostingList(std::move(posting_list_holder1));
 
     // 4. Request another posting list. This should NOT grow the index because
     // the first posting list is free.
@@ -350,8 +349,7 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
                 IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
 
     // 3. Now, free the first posting list. This should add it to the free list
-    ICING_ASSERT_OK(
-        flash_index_storage.FreePostingList(std::move(posting_list_holder1)));
+    flash_index_storage.FreePostingList(std::move(posting_list_holder1));
 
     // 4. Request another posting list. This should NOT grow the index because
     // the first posting list is free.
@@ -454,8 +452,7 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
 
       // 3. Now, free the first posting list. This should add it to the free
       // list
-      ICING_ASSERT_OK(
-          flash_index_storage.FreePostingList(std::move(posting_list_holder1)));
+      flash_index_storage.FreePostingList(std::move(posting_list_holder1));
     }
 
     EXPECT_THAT(flash_index_storage.GetDiskUsage(),

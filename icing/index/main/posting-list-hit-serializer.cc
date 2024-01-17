@@ -300,8 +300,7 @@ libtextclassifier3::Status PostingListHitSerializer::PrependHitToNotFull(
     // Therefore, offset must be less than kSpecialHitSize + 5. Since posting
     // list size must be divisible by sizeof(Hit) (5), it is guaranteed that
     // offset < size_in_bytes, so it is safe to ignore the return value here.
-    ICING_RETURN_IF_ERROR(
-        ConsumeTermFrequencyIfPresent(posting_list_used, &cur, &offset));
+    ConsumeTermFrequencyIfPresent(posting_list_used, &cur, &offset);
     // Safe to ignore the return value of PadToEnd because offset must be less
     // than posting_list_used->size_in_bytes(). Otherwise, this function
     // already would have returned FAILED_PRECONDITION.
@@ -420,7 +419,7 @@ libtextclassifier3::Status PostingListHitSerializer::PopFrontHits(
     // previous hits in the posting list and because there's no way that the
     // posting list could run out of room because it previously stored this hit
     // AND another hit.
-    ICING_RETURN_IF_ERROR(PrependHit(posting_list_used, out[1]));
+    PrependHit(posting_list_used, out[1]);
   } else if (num_hits > 0) {
     return GetHitsInternal(posting_list_used, /*limit=*/num_hits, /*pop=*/true,
                            nullptr);

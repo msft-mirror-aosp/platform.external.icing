@@ -349,7 +349,7 @@ TEST_F(RawQueryTokenizerTest, PropertyRestriction) {
   // connector pre-ICU 72. For ICU 72 and above, it's no longer considered a
   // connector.
   // TODO(b/254874614): Handle colon word breaks in ICU 72+
-  if (GetIcuTokenizationVersion() >= 72) {
+  if (IsIcu72PlusTokenization()) {
       EXPECT_THAT(raw_query_tokenizer->TokenizeAll("property:foo:bar"),
                   IsOkAndHolds(ElementsAre(
                       EqualsToken(Token::Type::QUERY_PROPERTY, "property"),

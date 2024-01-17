@@ -236,7 +236,7 @@ IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
         std::unique_ptr<DocHitInfoIterator> delegate,
         wildcard_index_storage_->GetIterator(key_lower, key_upper));
     std::set<std::string> property_paths = {std::move(property_path_str)};
-    return DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
+    return std::make_unique<DocHitInfoIteratorSectionRestrict>(
         std::move(delegate), &document_store, &schema_store,
         std::move(property_paths), current_time_ms);
   }

@@ -75,11 +75,7 @@ FlashIndexStorage::ReadHeaderMagic(const Filesystem* filesystem,
 
 FlashIndexStorage::~FlashIndexStorage() {
   if (header_block_ != nullptr) {
-    libtextclassifier3::Status status = FlushInMemoryFreeList();
-    if (!status.ok()) {
-      ICING_LOG(ERROR) << "Cannot flush in memory free list: "
-                       << status.error_message();
-    }
+    FlushInMemoryFreeList();
     PersistToDisk();
   }
 }
@@ -492,7 +488,7 @@ libtextclassifier3::Status FlashIndexStorage::FreePostingList(
   ICING_ASSIGN_OR_RETURN(IndexBlock block,
                          GetIndexBlock(holder.id.block_index()));
   if (block.posting_list_bytes() == max_posting_list_bytes()) {
-    ICING_RETURN_IF_ERROR(block.SetNextBlockIndex(kInvalidBlockIndex));
+    block.SetNextBlockIndex(kInvalidBlockIndex);
   }
 
   uint32_t posting_list_bytes = block.posting_list_bytes();

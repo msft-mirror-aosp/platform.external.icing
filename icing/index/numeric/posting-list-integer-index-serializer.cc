@@ -222,8 +222,7 @@ libtextclassifier3::Status PostingListIntegerIndexSerializer::PrependData(
   }
 }
 
-libtextclassifier3::StatusOr<uint32_t>
-PostingListIntegerIndexSerializer::PrependDataArray(
+uint32_t PostingListIntegerIndexSerializer::PrependDataArray(
     PostingListUsed* posting_list_used, const IntegerIndexData* array,
     uint32_t num_data, bool keep_prepended) const {
   if (!IsPostingListValid(posting_list_used)) {
@@ -241,7 +240,7 @@ PostingListIntegerIndexSerializer::PrependDataArray(
     // before. PopFrontData guarantees that it will remove all 'i' data so long
     // as there are at least 'i' data in the posting list, which we know there
     // are.
-    ICING_RETURN_IF_ERROR(PopFrontData(posting_list_used, /*num_data=*/i));
+    PopFrontData(posting_list_used, /*num_data=*/i);
     return 0;
   }
   return i;
@@ -336,7 +335,7 @@ libtextclassifier3::Status PostingListIntegerIndexSerializer::PopFrontData(
     // - out[1] is a valid data less than all previous data in the posting list.
     // - There's no way that the posting list could run out of room because it
     //   previously stored these 2 data.
-    ICING_RETURN_IF_ERROR(PrependData(posting_list_used, out[1]));
+    PrependData(posting_list_used, out[1]);
   } else if (num_data > 0) {
     return GetDataInternal(posting_list_used, /*limit=*/num_data, /*pop=*/true,
                            /*out=*/nullptr);

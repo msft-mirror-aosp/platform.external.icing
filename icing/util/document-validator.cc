@@ -172,7 +172,7 @@ libtextclassifier3::Status DocumentValidator::Validate(
     }
   }
   if (num_required_properties_actual <
-      parsed_property_configs.required_properties.size()) {
+      parsed_property_configs.num_required_properties) {
     return absl_ports::InvalidArgumentError(
         absl_ports::StrCat("One or more required fields missing for key: (",
                            document.namespace_(), ", ", document.uri(), ")."));

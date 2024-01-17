@@ -1117,8 +1117,6 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
   IcingSearchEngineOptions options;
   options.set_base_dir(test_dir);
   options.set_index_merge_size(kIcingFullIndexSize);
-  options.set_document_store_namespace_id_fingerprint(true);
-  options.set_use_new_qualified_id_join_index(true);
   std::unique_ptr<IcingSearchEngine> icing =
       std::make_unique<IcingSearchEngine>(options);
 
@@ -1142,7 +1140,7 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
   }
 
   // Create Email documents (child)
-  static constexpr int kNumEmailDocuments = 1000;
+  static constexpr int kNumEmailDocuments = 10000;
   std::uniform_int_distribution<> distrib(0, kNumPersonDocuments - 1);
   std::default_random_engine e(/*seed=*/12345);
   for (int i = 0; i < kNumEmailDocuments; ++i) {
@@ -1202,8 +1200,17 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
         std::reduce(results.results().begin(), results.results().end(), 0,
                     child_count_reduce_func);
 
-    ASSERT_THAT(total_parent_count, Eq(kNumPerPage));
-    ASSERT_THAT(total_child_count, ::testing::Ge(0));
+    // Get all pages.
+    while (results.next_page_token() != kInvalidNextPageToken) {
+      results = icing->GetNextPage(results.next_page_token());
+      total_parent_count += results.results_size();
+      total_child_count +=
+          std::reduce(results.results().begin(), results.results().end(), 0,
+                      child_count_reduce_func);
+    }
+
+    ASSERT_THAT(total_parent_count, Eq(kNumPersonDocuments));
+    ASSERT_THAT(total_child_count, Eq(kNumEmailDocuments));
   }
 }
 BENCHMARK(BM_JoinQueryQualifiedId);

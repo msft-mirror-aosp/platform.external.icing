@@ -33,7 +33,7 @@
 namespace icing {
 namespace lib {
 
-class DocHitInfoIteratorTermMain : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
  public:
   struct DocHitInfoAndTermFrequencyArray {
     DocHitInfo doc_hit_info;
@@ -70,14 +70,10 @@ class DocHitInfoIteratorTermMain : public DocHitInfoLeafIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  CallStats GetCallStats() const override {
-    return CallStats(
-        /*num_leaf_advance_calls_lite_index_in=*/0,
-        /*num_leaf_advance_calls_main_index_in=*/num_advance_calls_,
-        /*num_leaf_advance_calls_integer_index_in=*/0,
-        /*num_leaf_advance_calls_no_index_in=*/0,
-        /*num_blocks_inspected_in=*/num_blocks_inspected_);
+  int32_t GetNumBlocksInspected() const override {
+    return num_blocks_inspected_;
   }
+  int32_t GetNumLeafAdvanceCalls() const override { return num_advance_calls_; }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo>* matched_terms_stats,

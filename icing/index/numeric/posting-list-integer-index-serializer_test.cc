@@ -241,7 +241,7 @@ TEST(PostingListIntegerIndexSerializerTest,
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_in.size()));
+      Eq(data_in.size()));
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() * sizeof(IntegerIndexData)));
@@ -258,7 +258,7 @@ TEST(PostingListIntegerIndexSerializerTest,
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_in.size()));
+      Eq(data_in.size()));
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() * sizeof(IntegerIndexData)));
@@ -276,7 +276,7 @@ TEST(PostingListIntegerIndexSerializerTest,
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(0));
+      Eq(0));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() * sizeof(IntegerIndexData)));
   EXPECT_THAT(
@@ -288,7 +288,7 @@ TEST(PostingListIntegerIndexSerializerTest,
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_in.size()));
+      Eq(data_in.size()));
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() * sizeof(IntegerIndexData)));
@@ -319,7 +319,7 @@ TEST(PostingListIntegerIndexSerializerTest, PrependDataArrayKeepPrepended) {
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/true),
-      IsOkAndHolds(data_in.size()));
+      Eq(data_in.size()));
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
               Eq(data_pushed.size() * sizeof(IntegerIndexData)));
@@ -341,7 +341,7 @@ TEST(PostingListIntegerIndexSerializerTest, PrependDataArrayKeepPrepended) {
   EXPECT_THAT(
       serializer.PrependDataArray(&pl_used, data_in.data(), data_in.size(),
                                   /*keep_prepended=*/true),
-      IsOkAndHolds(3));
+      Eq(3));
   data_in.resize(3);
   std::move(data_in.begin(), data_in.end(), std::back_inserter(data_pushed));
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used),
@@ -365,7 +365,7 @@ TEST(PostingListIntegerIndexSerializerTest, MoveFrom) {
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used1, data_arr1.data(), data_arr1.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_arr1.size()));
+      Eq(data_arr1.size()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListUsed pl_used2,
@@ -378,7 +378,7 @@ TEST(PostingListIntegerIndexSerializerTest, MoveFrom) {
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used2, data_arr2.data(), data_arr2.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_arr2.size()));
+      Eq(data_arr2.size()));
 
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1),
               IsOk());
@@ -402,7 +402,7 @@ TEST(PostingListIntegerIndexSerializerTest,
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used, data_arr.data(), data_arr.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_arr.size()));
+      Eq(data_arr.size()));
 
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used, /*src=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
@@ -433,7 +433,7 @@ TEST(PostingListIntegerIndexSerializerTest, MoveToPostingListTooSmall) {
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used1, data_arr1.data(), data_arr1.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_arr1.size()));
+      Eq(data_arr1.size()));
 
   int size2 = serializer.GetMinPostingListSize();
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -444,7 +444,7 @@ TEST(PostingListIntegerIndexSerializerTest, MoveToPostingListTooSmall) {
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used2, data_arr2.data(), data_arr2.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_arr2.size()));
+      Eq(data_arr2.size()));
 
   EXPECT_THAT(serializer.MoveFrom(/*dst=*/&pl_used2, /*src=*/&pl_used1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -471,7 +471,7 @@ TEST(PostingListIntegerIndexSerializerTest, PopFrontData) {
   ASSERT_THAT(
       serializer.PrependDataArray(&pl_used, data_arr.data(), data_arr.size(),
                                   /*keep_prepended=*/false),
-      IsOkAndHolds(data_arr.size()));
+      Eq(data_arr.size()));
   ASSERT_THAT(
       serializer.GetData(&pl_used),
       IsOkAndHolds(ElementsAreArray(data_arr.rbegin(), data_arr.rend())));

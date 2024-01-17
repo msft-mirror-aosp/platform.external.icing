@@ -15,15 +15,11 @@
 #ifndef ICING_JOIN_QUALIFIED_ID_JOIN_INDEXING_HANDLER_H_
 #define ICING_JOIN_QUALIFIED_ID_JOIN_INDEXING_HANDLER_H_
 
-#include <memory>
-
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
 #include "icing/util/clock.h"
 #include "icing/util/tokenized-document.h"
 
@@ -41,8 +37,7 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
   //   - FAILED_PRECONDITION_ERROR if any of the input pointer is null
   static libtextclassifier3::StatusOr<
       std::unique_ptr<QualifiedIdJoinIndexingHandler>>
-  Create(const Clock* clock, const DocumentStore* doc_store,
-         QualifiedIdJoinIndex* qualified_id_join_index);
+  Create(const Clock* clock, QualifiedIdJoinIndex* qualified_id_join_index);
 
   ~QualifiedIdJoinIndexingHandler() override = default;
 
@@ -62,13 +57,10 @@ class QualifiedIdJoinIndexingHandler : public DataIndexingHandler {
 
  private:
   explicit QualifiedIdJoinIndexingHandler(
-      const Clock* clock, const DocumentStore* doc_store,
-      QualifiedIdJoinIndex* qualified_id_join_index)
+      const Clock* clock, QualifiedIdJoinIndex* qualified_id_join_index)
       : DataIndexingHandler(clock),
-        doc_store_(*doc_store),
         qualified_id_join_index_(*qualified_id_join_index) {}
 
-  const DocumentStore& doc_store_;                 // Does not own.
   QualifiedIdJoinIndex& qualified_id_join_index_;  // Does not own.
 };
 

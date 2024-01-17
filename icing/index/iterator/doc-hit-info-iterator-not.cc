@@ -15,15 +15,13 @@
 #include "icing/index/iterator/doc-hit-info-iterator-not.h"
 
 #include <cstdint>
-#include <memory>
-#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -69,8 +67,14 @@ DocHitInfoIteratorNot::TrimRightMostNode() && {
       "Cannot generate suggestion if the last term is NOT operator.");
 }
 
-void DocHitInfoIteratorNot::MapChildren(const ChildrenMapper& mapper) {
-  to_be_excluded_ = mapper(std::move(to_be_excluded_));
+int32_t DocHitInfoIteratorNot::GetNumBlocksInspected() const {
+  return to_be_excluded_->GetNumBlocksInspected() +
+         all_document_id_iterator_.GetNumBlocksInspected();
+}
+
+int32_t DocHitInfoIteratorNot::GetNumLeafAdvanceCalls() const {
+  return to_be_excluded_->GetNumLeafAdvanceCalls() +
+         all_document_id_iterator_.GetNumLeafAdvanceCalls();
 }
 
 std::string DocHitInfoIteratorNot::ToString() const {

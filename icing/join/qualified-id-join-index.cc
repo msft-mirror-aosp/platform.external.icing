@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/join/qualified-id-join-index-impl-v1.h"
+#include "icing/join/qualified-id-join-index.h"
 
 #include <cstring>
 #include <memory>
@@ -29,11 +29,9 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/join/doc-join-info.h"
-#include "icing/join/qualified-id-join-index.h"
 #include "icing/store/document-id.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
-#include "icing/store/namespace-id.h"
 #include "icing/store/persistent-hash-map-key-mapper.h"
 #include "icing/util/crc32.h"
 #include "icing/util/encode-util.h"
@@ -76,20 +74,17 @@ std::string GetQualifiedIdStoragePath(std::string_view working_path) {
 
 }  // namespace
 
-/* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdJoinIndexImplV1>>
-QualifiedIdJoinIndexImplV1::Create(const Filesystem& filesystem,
-                                   std::string working_path,
-                                   bool pre_mapping_fbv,
-                                   bool use_persistent_hash_map) {
+/* static */ libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
+QualifiedIdJoinIndex::Create(const Filesystem& filesystem,
+                             std::string working_path, bool pre_mapping_fbv,
+                             bool use_persistent_hash_map) {
   if (!filesystem.FileExists(GetMetadataFilePath(working_path).c_str()) ||
       !filesystem.DirectoryExists(
           GetDocJoinInfoMapperPath(working_path).c_str()) ||
       !filesystem.FileExists(GetQualifiedIdStoragePath(working_path).c_str())) {
     // Discard working_path if any file/directory is missing, and reinitialize.
     if (filesystem.DirectoryExists(working_path.c_str())) {
-      ICING_RETURN_IF_ERROR(
-          QualifiedIdJoinIndex::Discard(filesystem, working_path));
+      ICING_RETURN_IF_ERROR(Discard(filesystem, working_path));
     }
     return InitializeNewFiles(filesystem, std::move(working_path),
                               pre_mapping_fbv, use_persistent_hash_map);
@@ -98,7 +93,7 @@ QualifiedIdJoinIndexImplV1::Create(const Filesystem& filesystem,
                                  pre_mapping_fbv, use_persistent_hash_map);
 }
 
-QualifiedIdJoinIndexImplV1::~QualifiedIdJoinIndexImplV1() {
+QualifiedIdJoinIndex::~QualifiedIdJoinIndex() {
   if (!PersistToDisk().ok()) {
     ICING_LOG(WARNING) << "Failed to persist qualified id type joinable index "
                           "to disk while destructing "
@@ -106,7 +101,7 @@ QualifiedIdJoinIndexImplV1::~QualifiedIdJoinIndexImplV1() {
   }
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Put(
+libtextclassifier3::Status QualifiedIdJoinIndex::Put(
     const DocJoinInfo& doc_join_info, std::string_view ref_qualified_id_str) {
   SetDirty();
 
@@ -133,7 +128,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Put(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<std::string_view> QualifiedIdJoinIndexImplV1::Get(
+libtextclassifier3::StatusOr<std::string_view> QualifiedIdJoinIndex::Get(
     const DocJoinInfo& doc_join_info) const {
   if (!doc_join_info.is_valid()) {
     return absl_ports::InvalidArgumentError(
@@ -149,13 +144,11 @@ libtextclassifier3::StatusOr<std::string_view> QualifiedIdJoinIndexImplV1::Get(
   return std::string_view(data, strlen(data));
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
+libtextclassifier3::Status QualifiedIdJoinIndex::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
-    const std::vector<NamespaceId>& namespace_id_old_to_new,
     DocumentId new_last_added_document_id) {
   std::string temp_working_path = working_path_ + "_temp";
-  ICING_RETURN_IF_ERROR(
-      QualifiedIdJoinIndex::Discard(filesystem_, temp_working_path));
+  ICING_RETURN_IF_ERROR(Discard(filesystem_, temp_working_path));
 
   DestructibleDirectory temp_working_path_ddir(&filesystem_,
                                                std::move(temp_working_path));
@@ -169,10 +162,9 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
     // Transfer all data from the current to new qualified id type joinable
     // index. Also PersistToDisk and destruct the instance after finishing, so
     // we can safely swap directories later.
-    ICING_ASSIGN_OR_RETURN(
-        std::unique_ptr<QualifiedIdJoinIndexImplV1> new_index,
-        Create(filesystem_, temp_working_path_ddir.dir(), pre_mapping_fbv_,
-               use_persistent_hash_map_));
+    ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndex> new_index,
+                           Create(filesystem_, temp_working_path_ddir.dir(),
+                                  pre_mapping_fbv_, use_persistent_hash_map_));
     ICING_RETURN_IF_ERROR(
         TransferIndex(document_id_old_to_new, new_index.get()));
     new_index->set_last_added_document_id(new_last_added_document_id);
@@ -224,7 +216,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Optimize(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Clear() {
+libtextclassifier3::Status QualifiedIdJoinIndex::Clear() {
   SetDirty();
 
   doc_join_info_mapper_.reset();
@@ -260,12 +252,11 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::Clear() {
   return libtextclassifier3::Status::OK;
 }
 
-/* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdJoinIndexImplV1>>
-QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
-                                               std::string&& working_path,
-                                               bool pre_mapping_fbv,
-                                               bool use_persistent_hash_map) {
+/* static */ libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
+QualifiedIdJoinIndex::InitializeNewFiles(const Filesystem& filesystem,
+                                         std::string&& working_path,
+                                         bool pre_mapping_fbv,
+                                         bool use_persistent_hash_map) {
   // Create working directory.
   if (!filesystem.CreateDirectoryRecursively(working_path.c_str())) {
     return absl_ports::InternalError(
@@ -300,8 +291,8 @@ QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
           /*pre_mapping_mmap_size=*/pre_mapping_fbv ? 1024 * 1024 : 0));
 
   // Create instance.
-  auto new_index = std::unique_ptr<QualifiedIdJoinIndexImplV1>(
-      new QualifiedIdJoinIndexImplV1(
+  auto new_index =
+      std::unique_ptr<QualifiedIdJoinIndex>(new QualifiedIdJoinIndex(
           filesystem, std::move(working_path),
           /*metadata_buffer=*/std::make_unique<uint8_t[]>(kMetadataFileSize),
           std::move(doc_join_info_mapper), std::move(qualified_id_storage),
@@ -316,11 +307,11 @@ QualifiedIdJoinIndexImplV1::InitializeNewFiles(const Filesystem& filesystem,
   return new_index;
 }
 
-/* static */ libtextclassifier3::StatusOr<
-    std::unique_ptr<QualifiedIdJoinIndexImplV1>>
-QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
-    const Filesystem& filesystem, std::string&& working_path,
-    bool pre_mapping_fbv, bool use_persistent_hash_map) {
+/* static */ libtextclassifier3::StatusOr<std::unique_ptr<QualifiedIdJoinIndex>>
+QualifiedIdJoinIndex::InitializeExistingFiles(const Filesystem& filesystem,
+                                              std::string&& working_path,
+                                              bool pre_mapping_fbv,
+                                              bool use_persistent_hash_map) {
   // PRead metadata file.
   auto metadata_buffer = std::make_unique<uint8_t[]>(kMetadataFileSize);
   if (!filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
@@ -367,8 +358,8 @@ QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
           /*pre_mapping_mmap_size=*/pre_mapping_fbv ? 1024 * 1024 : 0));
 
   // Create instance.
-  auto type_joinable_index = std::unique_ptr<QualifiedIdJoinIndexImplV1>(
-      new QualifiedIdJoinIndexImplV1(
+  auto type_joinable_index =
+      std::unique_ptr<QualifiedIdJoinIndex>(new QualifiedIdJoinIndex(
           filesystem, std::move(working_path), std::move(metadata_buffer),
           std::move(doc_join_info_mapper), std::move(qualified_id_storage),
           pre_mapping_fbv, use_persistent_hash_map));
@@ -383,9 +374,9 @@ QualifiedIdJoinIndexImplV1::InitializeExistingFiles(
   return type_joinable_index;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::TransferIndex(
+libtextclassifier3::Status QualifiedIdJoinIndex::TransferIndex(
     const std::vector<DocumentId>& document_id_old_to_new,
-    QualifiedIdJoinIndexImplV1* new_index) const {
+    QualifiedIdJoinIndex* new_index) const {
   std::unique_ptr<KeyMapper<int32_t>::Iterator> iter =
       doc_join_info_mapper_->GetIterator();
   while (iter->Advance()) {
@@ -413,7 +404,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk(
+libtextclassifier3::Status QualifiedIdJoinIndex::PersistMetadataToDisk(
     bool force) {
   if (!force && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
@@ -438,7 +429,7 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistMetadataToDisk(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk(
+libtextclassifier3::Status QualifiedIdJoinIndex::PersistStoragesToDisk(
     bool force) {
   if (!force && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
@@ -449,8 +440,8 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV1::PersistStoragesToDisk(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV1::ComputeInfoChecksum(bool force) {
+libtextclassifier3::StatusOr<Crc32> QualifiedIdJoinIndex::ComputeInfoChecksum(
+    bool force) {
   if (!force && !is_info_dirty()) {
     return Crc32(crcs().component_crcs.info_crc);
   }
@@ -459,7 +450,7 @@ QualifiedIdJoinIndexImplV1::ComputeInfoChecksum(bool force) {
 }
 
 libtextclassifier3::StatusOr<Crc32>
-QualifiedIdJoinIndexImplV1::ComputeStoragesChecksum(bool force) {
+QualifiedIdJoinIndex::ComputeStoragesChecksum(bool force) {
   if (!force && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }

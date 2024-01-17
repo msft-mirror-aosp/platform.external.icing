@@ -16,21 +16,18 @@
 #define ICING_MONKEY_TEST_IN_MEMORY_ICING_SEARCH_ENGINE_H_
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/monkey_test/monkey-test-util.h"
+#include "icing/monkey_test/monkey-test-generators.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
-#include "icing/proto/term.pb.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -46,13 +43,14 @@ class InMemoryIcingSearchEngine {
     std::optional<DocumentProto> document;
   };
 
-  InMemoryIcingSearchEngine(MonkeyTestRandomEngine *random) : random_(random) {}
+  InMemoryIcingSearchEngine(MonkeyTestRandomEngine *random,
+                            SchemaProto &&schema)
+      : random_(random),
+        schema_(std::make_unique<SchemaProto>(std::move(schema))) {}
 
   uint32_t GetNumAliveDocuments() const { return existing_doc_ids_.size(); }
 
   const SchemaProto *GetSchema() const { return schema_.get(); }
-
-  void SetSchema(SchemaProto &&schema);
 
   // Randomly pick a document from the in-memory Icing for monkey testing.
   //
@@ -114,8 +112,7 @@ class InMemoryIcingSearchEngine {
   // Currently, only the "query" and "term_match_type" fields are recognized by
   // the in-memory Icing, and only single term queries with possible section
   // restrictions are supported.
-  libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
-      const SearchSpecProto &search_spec) const;
+  std::vector<DocumentProto> Search(const SearchSpecProto &search_spec) const;
 
  private:
   // Does not own.
@@ -129,11 +126,6 @@ class InMemoryIcingSearchEngine {
       namespace_uri_docid_map;
 
   std::unique_ptr<SchemaProto> schema_;
-  // A map that maps from (schema_type, property_name) to the corresponding
-  // PropertyConfigProto.
-  std::unordered_map<
-      std::string, std::unordered_map<std::string, const PropertyConfigProto &>>
-      property_config_map_;
 
   // Finds and returns the internal document id for the document identified by
   // the given key (namespace, uri)
@@ -146,19 +138,8 @@ class InMemoryIcingSearchEngine {
 
   // A helper method for DeleteByQuery and Search to get matched internal doc
   // ids.
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> InternalSearch(
+  std::vector<DocumentId> InternalSearch(
       const SearchSpecProto &search_spec) const;
-
-  libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
-      const std::string &schema_type, const std::string &property_name) const;
-
-  libtextclassifier3::StatusOr<TermMatchType::Code> GetTermMatchType(
-      const std::string &schema_type,
-      const MonkeyTokenizedSection &section) const;
-
-  libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
-      const MonkeyTokenizedDocument &document, const std::string &query,
-      TermMatchType::Code term_match_type) const;
 };
 
 }  // namespace lib

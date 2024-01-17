@@ -17,12 +17,8 @@
 
 #include <array>
 #include <cstdint>
-#include <functional>
-#include <memory>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -56,7 +52,8 @@ struct TermMatchInfo {
 
 // Iterator over DocHitInfos (collapsed Hits) in REVERSE document_id order.
 //
-// NOTE: You must call Advance() before calling hit_info().
+// NOTE: You must call Advance() before calling hit_info() or
+// hit_intersect_section_ids_mask().
 //
 // Example:
 // DocHitInfoIterator itr = GetIterator(...);
@@ -65,112 +62,6 @@ struct TermMatchInfo {
 // }
 class DocHitInfoIterator {
  public:
-  using ChildrenMapper = std::function<std::unique_ptr<DocHitInfoIterator>(
-      std::unique_ptr<DocHitInfoIterator>)>;
-
-  // CallStats is a wrapper class of all stats to collect among all levels of
-  // the DocHitInfoIterator tree. Mostly the internal nodes will aggregate the
-  // number of all leaf nodes, while the leaf nodes will return the actual
-  // numbers.
-  struct CallStats {
-    // The number of times Advance() was called on the leaf node for term lite
-    // index.
-    // - Leaf nodes:
-    //   - DocHitInfoIteratorTermLite should maintain and set it correctly.
-    //   - Others should set it 0.
-    // - Internal nodes: should aggregate values from all children.
-    int32_t num_leaf_advance_calls_lite_index;
-
-    // The number of times Advance() was called on the leaf node for term main
-    // index.
-    // - Leaf nodes:
-    //   - DocHitInfoIteratorTermMain should maintain and set it correctly.
-    //   - Others should set it 0.
-    // - Internal nodes: should aggregate values from all children.
-    int32_t num_leaf_advance_calls_main_index;
-
-    // The number of times Advance() was called on the leaf node for integer
-    // index.
-    // - Leaf nodes:
-    //   - DocHitInfoIteratorNumeric should maintain and set it correctly.
-    //   - Others should set it 0.
-    // - Internal nodes: should aggregate values from all children.
-    int32_t num_leaf_advance_calls_integer_index;
-
-    // The number of times Advance() was called on the leaf node without reading
-    // any hits from index. Usually it is a special field for
-    // DocHitInfoIteratorAllDocumentId.
-    // - Leaf nodes:
-    //   - DocHitInfoIteratorAllDocumentId should maintain and set it correctly.
-    //   - Others should set it 0.
-    // - Internal nodes: should aggregate values from all children.
-    int32_t num_leaf_advance_calls_no_index;
-
-    // The number of flash index blocks that have been read as a result of
-    // operations on this object.
-    // - Leaf nodes: should maintain and set it correctly for all child classes
-    //   involving flash index block access.
-    // - Internal nodes: should aggregate values from all children.
-    int32_t num_blocks_inspected;
-
-    explicit CallStats()
-        : CallStats(/*num_leaf_advance_calls_lite_index_in=*/0,
-                    /*num_leaf_advance_calls_main_index_in=*/0,
-                    /*num_leaf_advance_calls_integer_index_in=*/0,
-                    /*num_leaf_advance_calls_no_index_in=*/0,
-                    /*num_blocks_inspected_in=*/0) {}
-
-    explicit CallStats(int32_t num_leaf_advance_calls_lite_index_in,
-                       int32_t num_leaf_advance_calls_main_index_in,
-                       int32_t num_leaf_advance_calls_integer_index_in,
-                       int32_t num_leaf_advance_calls_no_index_in,
-                       int32_t num_blocks_inspected_in)
-        : num_leaf_advance_calls_lite_index(
-              num_leaf_advance_calls_lite_index_in),
-          num_leaf_advance_calls_main_index(
-              num_leaf_advance_calls_main_index_in),
-          num_leaf_advance_calls_integer_index(
-              num_leaf_advance_calls_integer_index_in),
-          num_leaf_advance_calls_no_index(num_leaf_advance_calls_no_index_in),
-          num_blocks_inspected(num_blocks_inspected_in) {}
-
-    int32_t num_leaf_advance_calls() const {
-      return num_leaf_advance_calls_lite_index +
-             num_leaf_advance_calls_main_index +
-             num_leaf_advance_calls_integer_index +
-             num_leaf_advance_calls_no_index;
-    }
-
-    bool operator==(const CallStats& other) const {
-      return num_leaf_advance_calls_lite_index ==
-                 other.num_leaf_advance_calls_lite_index &&
-             num_leaf_advance_calls_main_index ==
-                 other.num_leaf_advance_calls_main_index &&
-             num_leaf_advance_calls_integer_index ==
-                 other.num_leaf_advance_calls_integer_index &&
-             num_leaf_advance_calls_no_index ==
-                 other.num_leaf_advance_calls_no_index &&
-             num_blocks_inspected == other.num_blocks_inspected;
-    }
-
-    CallStats operator+(const CallStats& other) const {
-      return CallStats(num_leaf_advance_calls_lite_index +
-                           other.num_leaf_advance_calls_lite_index,
-                       num_leaf_advance_calls_main_index +
-                           other.num_leaf_advance_calls_main_index,
-                       num_leaf_advance_calls_integer_index +
-                           other.num_leaf_advance_calls_integer_index,
-                       num_leaf_advance_calls_no_index +
-                           other.num_leaf_advance_calls_no_index,
-                       num_blocks_inspected + other.num_blocks_inspected);
-    }
-
-    CallStats& operator+=(const CallStats& other) {
-      *this = *this + other;
-      return *this;
-    }
-  };
-
   struct TrimmedNode {
     // the query results which we should only search for suggestion in these
     // documents.
@@ -209,11 +100,6 @@ class DocHitInfoIterator {
   //   INVALID_ARGUMENT if the right-most node is not suppose to be trimmed.
   virtual libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && = 0;
 
-  // Map all direct children of this iterator according to the passed mapper.
-  virtual void MapChildren(const ChildrenMapper& mapper) = 0;
-
-  virtual bool is_leaf() { return false; }
-
   virtual ~DocHitInfoIterator() = default;
 
   // Returns:
@@ -228,8 +114,20 @@ class DocHitInfoIterator {
   // construction or if Advance returned an error.
   const DocHitInfo& doc_hit_info() const { return doc_hit_info_; }
 
-  // Returns CallStats of the DocHitInfoIterator tree.
-  virtual CallStats GetCallStats() const = 0;
+  // SectionIdMask representing which sections (if any) have matched *ALL* query
+  // terms for the current document_id.
+  SectionIdMask hit_intersect_section_ids_mask() const {
+    return hit_intersect_section_ids_mask_;
+  }
+
+  // Gets the number of flash index blocks that have been read as a
+  // result of operations on this object.
+  virtual int32_t GetNumBlocksInspected() const = 0;
+
+  // HitIterators may be constructed into trees. Internal nodes will return the
+  // sum of the number of Advance() calls to all leaf nodes. Leaf nodes will
+  // return the number of times Advance() was called on it.
+  virtual int32_t GetNumLeafAdvanceCalls() const = 0;
 
   // A string representing the iterator.
   virtual std::string ToString() const = 0;
@@ -247,6 +145,7 @@ class DocHitInfoIterator {
 
  protected:
   DocHitInfo doc_hit_info_;
+  SectionIdMask hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
 
   // Helper function to advance the given iterator to at most the given
   // document_id.
@@ -261,20 +160,11 @@ class DocHitInfoIterator {
     // Didn't find anything for the other iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
-};
-
-// A leaf node is a term node or a chain of section restriction node applied on
-// a term node.
-class DocHitInfoLeafIterator : public DocHitInfoIterator {
- public:
-  bool is_leaf() override { return true; }
-
-  // Calling MapChildren on leaf node does not make sense, and will do nothing.
-  void MapChildren(const ChildrenMapper& mapper) override {}
-};
+};  // namespace DocHitInfoIterator
 
 }  // namespace lib
 }  // namespace icing

@@ -14,13 +14,9 @@
 
 #include "icing/index/lite/lite-index-options.h"
 
-#include <algorithm>
-#include <cstddef>
 #include <cstdint>
-#include <string>
 
 #include "icing/index/lite/term-id-hit-pair.h"
-#include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {
 namespace lib {
@@ -69,16 +65,14 @@ IcingDynamicTrie::Options CalculateTrieOptions(uint32_t hit_buffer_size) {
 
 }  // namespace
 
-LiteIndexOptions::LiteIndexOptions(
-    const std::string& filename_base, uint32_t hit_buffer_want_merge_bytes,
-    bool hit_buffer_sort_at_indexing, uint32_t hit_buffer_sort_threshold_bytes,
-    bool include_property_existence_metadata_hits)
+LiteIndexOptions::LiteIndexOptions(const std::string& filename_base,
+                                   uint32_t hit_buffer_want_merge_bytes,
+                                   bool hit_buffer_sort_at_indexing,
+                                   uint32_t hit_buffer_sort_threshold_bytes)
     : filename_base(filename_base),
       hit_buffer_want_merge_bytes(hit_buffer_want_merge_bytes),
       hit_buffer_sort_at_indexing(hit_buffer_sort_at_indexing),
-      hit_buffer_sort_threshold_bytes(hit_buffer_sort_threshold_bytes),
-      include_property_existence_metadata_hits(
-          include_property_existence_metadata_hits) {
+      hit_buffer_sort_threshold_bytes(hit_buffer_sort_threshold_bytes) {
   hit_buffer_size = CalculateHitBufferSize(hit_buffer_want_merge_bytes);
   lexicon_options = CalculateTrieOptions(hit_buffer_size);
   display_mappings_options = CalculateTrieOptions(hit_buffer_size);

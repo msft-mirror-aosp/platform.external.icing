@@ -178,7 +178,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
       CreateQueryTokenizer(tokenizer_factory::QueryTokenizerType::RAW_QUERY,
                            lang_segmenter_.get()));
 
-  if (GetIcuTokenizationVersion() >= 72) {
+  if (IsIcu72PlusTokenization()) {
     // In ICU 72+ and above, ':' are no longer considered word connectors. The
     // query tokenizer should still consider them to be property restricts.
     constexpr std::string_view kText = "foo:bar";

@@ -15,19 +15,14 @@
 #ifndef ICING_SCORING_SCORING_PROCESSOR_H_
 #define ICING_SCORING_SCORING_PROCESSOR_H_
 
-#include <cstdint>
 #include <memory>
-#include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/join/join-children-fetcher.h"
-#include "icing/proto/logging.pb.h"
 #include "icing/proto/scoring.pb.h"
-#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scorer.h"
 #include "icing/store/document-store.h"
@@ -62,8 +57,7 @@ class ScoringProcessor {
       std::unique_ptr<DocHitInfoIterator> doc_hit_info_iterator,
       int num_to_score,
       std::unordered_map<std::string, std::unique_ptr<DocHitInfoIterator>>*
-          query_term_iterators = nullptr,
-      QueryStatsProto::SearchStats* search_stats = nullptr);
+          query_term_iterators = nullptr);
 
  private:
   explicit ScoringProcessor(std::unique_ptr<Scorer> scorer)

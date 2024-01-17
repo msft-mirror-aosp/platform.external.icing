@@ -23,7 +23,6 @@
 #include "icing/file/posting_list/posting-list-common.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/index/hit/hit.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -73,9 +72,8 @@ class PostingListHitSerializer : public PostingListSerializer {
   // keep_prepended is true, whatever could be prepended is kept, otherwise the
   // posting list is left in its original state.
   template <class T, Hit (*GetHit)(const T&)>
-  libtextclassifier3::StatusOr<uint32_t> PrependHitArray(
-      PostingListUsed* posting_list_used, const T* array, uint32_t num_hits,
-      bool keep_prepended) const;
+  uint32_t PrependHitArray(PostingListUsed* posting_list_used, const T* array,
+                           uint32_t num_hits, bool keep_prepended) const;
 
   // Retrieves the hits stored in the posting list.
   //
@@ -314,10 +312,9 @@ class PostingListHitSerializer : public PostingListSerializer {
 
 // Inlined functions. Implementation details below. Avert eyes!
 template <class T, Hit (*GetHit)(const T&)>
-libtextclassifier3::StatusOr<uint32_t>
-PostingListHitSerializer::PrependHitArray(PostingListUsed* posting_list_used,
-                                          const T* array, uint32_t num_hits,
-                                          bool keep_prepended) const {
+uint32_t PostingListHitSerializer::PrependHitArray(
+    PostingListUsed* posting_list_used, const T* array, uint32_t num_hits,
+    bool keep_prepended) const {
   if (!IsPostingListValid(posting_list_used)) {
     return 0;
   }
@@ -334,7 +331,7 @@ PostingListHitSerializer::PrependHitArray(PostingListUsed* posting_list_used,
     // before. PopFrontHits guarantees that it will remove all 'i' hits so long
     // as there are at least 'i' hits in the posting list, which we know there
     // are.
-    ICING_RETURN_IF_ERROR(PopFrontHits(posting_list_used, /*num_hits=*/i));
+    PopFrontHits(posting_list_used, /*num_hits=*/i);
   }
   return i;
 }

@@ -29,7 +29,6 @@
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
@@ -69,39 +68,6 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
       section_mask);
   return actual.document_id() == document_id &&
          actual.hit_section_ids_mask() == section_mask;
-}
-
-// Used to match a DocHitInfoIterator::CallStats
-MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
-           num_leaf_advance_calls_main_index,
-           num_leaf_advance_calls_integer_index,
-           num_leaf_advance_calls_no_index, num_blocks_inspected, "") {
-  const DocHitInfoIterator::CallStats& actual = arg;
-  *result_listener << IcingStringUtil::StringPrintf(
-      "(actual is {num_leaf_advance_calls_lite_index=%d, "
-      "num_leaf_advance_calls_main_index=%d, "
-      "num_leaf_advance_calls_integer_index=%d, "
-      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}, but "
-      "expected was {num_leaf_advance_calls_lite_index=%d, "
-      "num_leaf_advance_calls_main_index=%d, "
-      "num_leaf_advance_calls_integer_index=%d, "
-      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}.)",
-      actual.num_leaf_advance_calls_lite_index,
-      actual.num_leaf_advance_calls_main_index,
-      actual.num_leaf_advance_calls_integer_index,
-      actual.num_leaf_advance_calls_no_index, actual.num_blocks_inspected,
-      num_leaf_advance_calls_lite_index, num_leaf_advance_calls_main_index,
-      num_leaf_advance_calls_integer_index, num_leaf_advance_calls_no_index,
-      num_blocks_inspected);
-  return actual.num_leaf_advance_calls_lite_index ==
-             num_leaf_advance_calls_lite_index &&
-         actual.num_leaf_advance_calls_main_index ==
-             num_leaf_advance_calls_main_index &&
-         actual.num_leaf_advance_calls_integer_index ==
-             num_leaf_advance_calls_integer_index &&
-         actual.num_leaf_advance_calls_no_index ==
-             num_leaf_advance_calls_no_index &&
-         actual.num_blocks_inspected == num_blocks_inspected;
 }
 
 struct ExtractTermFrequenciesResult {

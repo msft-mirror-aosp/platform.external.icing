@@ -63,7 +63,7 @@ message GetOptimizeInfoResultProto {
   optional int64 time_since_last_optimize_ms = 4;
 }
 
-// Next tag: 13
+// Next tag: 11
 message OptimizeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -102,10 +102,4 @@ message OptimizeStatsProto {
     FULL_INDEX_REBUILD = 1;
   }
   optional IndexRestorationMode index_restoration_mode = 10;
-
-  // Number of namespaces before the optimization.
-  optional int32 num_original_namespaces = 11;
-
-  // Number of namespaces deleted.
-  optional int32 num_deleted_namespaces = 12;
 }

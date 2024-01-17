@@ -16,36 +16,63 @@
 #define ICING_MONKEY_TEST_ICING_MONKEY_TEST_RUNNER_H_
 
 #include <cstdint>
-#include <memory>
+#include <random>
 
 #include "icing/file/destructible-directory.h"
-#include "icing/file/filesystem.h"
 #include "icing/icing-search-engine.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 #include "icing/monkey_test/monkey-test-generators.h"
-#include "icing/monkey_test/monkey-test-util.h"
-#include "icing/proto/schema.pb.h"
 
 namespace icing {
 namespace lib {
 
+class IcingMonkeyTestRunner;
+
+struct IcingMonkeyTestRunnerConfiguration {
+  explicit IcingMonkeyTestRunnerConfiguration(uint32_t seed, int num_types,
+                                              int num_namespaces, int num_uris,
+                                              int index_merge_size)
+      : seed(seed),
+        num_types(num_types),
+        num_namespaces(num_namespaces),
+        num_uris(num_uris),
+        index_merge_size(index_merge_size) {}
+
+  uint32_t seed;
+  int num_types;
+  int num_namespaces;
+  int num_uris;
+  int index_merge_size;
+
+  // The possible number of properties that may appear in generated schema
+  // types.
+  std::vector<int> possible_num_properties;
+
+  // The possible number of tokens that may appear in generated documents, with
+  // a noise factor from 0.5 to 1 applied.
+  std::vector<int> possible_num_tokens_;
+
+  // An array of pairs of monkey test APIs with frequencies.
+  // If f_sum is the sum of all the frequencies, an operation with frequency f
+  // means for every f_sum iterations, the operation is expected to run f times.
+  std::vector<std::pair<std::function<void(IcingMonkeyTestRunner*)>, uint32_t>>
+      monkey_api_schedules;
+};
+
 class IcingMonkeyTestRunner {
  public:
-  IcingMonkeyTestRunner(IcingMonkeyTestRunnerConfiguration config);
+  IcingMonkeyTestRunner(const IcingMonkeyTestRunnerConfiguration& config);
   IcingMonkeyTestRunner(const IcingMonkeyTestRunner&) = delete;
   IcingMonkeyTestRunner& operator=(const IcingMonkeyTestRunner&) = delete;
 
-  SetSchemaResultProto SetSchema(SchemaProto&& schema);
-
   // This function must and should only be called before running the monkey
   // test.
-  void Initialize();
+  void CreateIcingSearchEngineWithSchema();
 
   // Run the monkey test with num operations.
   void Run(uint32_t num);
 
   // APIs supported in icing search engine.
-  void DoUpdateSchema();
   void DoGet();
   void DoGetAllNamespaces();
   void DoPut();
@@ -67,7 +94,6 @@ class IcingMonkeyTestRunner {
   std::unique_ptr<InMemoryIcingSearchEngine> in_memory_icing_;
   std::unique_ptr<IcingSearchEngine> icing_;
 
-  std::unique_ptr<MonkeySchemaGenerator> schema_generator_;
   std::unique_ptr<MonkeyDocumentGenerator> document_generator_;
 
   void CreateIcingSearchEngine();

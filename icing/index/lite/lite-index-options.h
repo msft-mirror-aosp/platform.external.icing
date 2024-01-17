@@ -15,9 +15,6 @@
 #ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 #define ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 
-#include <cstdint>
-#include <string>
-
 #include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {
@@ -32,8 +29,7 @@ struct LiteIndexOptions {
   LiteIndexOptions(const std::string& filename_base,
                    uint32_t hit_buffer_want_merge_bytes,
                    bool hit_buffer_sort_at_indexing,
-                   uint32_t hit_buffer_sort_threshold_bytes,
-                   bool include_property_existence_metadata_hits = false);
+                   uint32_t hit_buffer_sort_threshold_bytes);
 
   IcingDynamicTrie::Options lexicon_options;
   IcingDynamicTrie::Options display_mappings_options;
@@ -43,7 +39,6 @@ struct LiteIndexOptions {
   uint32_t hit_buffer_size = 0;
   bool hit_buffer_sort_at_indexing = false;
   uint32_t hit_buffer_sort_threshold_bytes = 0;
-  bool include_property_existence_metadata_hits = false;
 };
 
 }  // namespace lib

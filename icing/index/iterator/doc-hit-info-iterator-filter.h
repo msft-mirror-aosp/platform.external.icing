@@ -20,7 +20,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -63,11 +62,9 @@ class DocHitInfoIteratorFilter : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  void MapChildren(const ChildrenMapper& mapper) override {
-    delegate_ = mapper(std::move(delegate_));
-  }
+  int32_t GetNumBlocksInspected() const override;
 
-  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
+  int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
 

@@ -15,7 +15,6 @@
 #ifndef ICING_INDEX_NUMERIC_NUMERIC_INDEX_H_
 #define ICING_INDEX_NUMERIC_NUMERIC_INDEX_H_
 
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -100,10 +99,6 @@ class NumericIndex : public PersistentStorage {
     virtual libtextclassifier3::Status Advance() = 0;
 
     virtual DocHitInfo GetDocHitInfo() const = 0;
-
-    virtual int32_t GetNumAdvanceCalls() const = 0;
-
-    virtual int32_t GetNumBlocksInspected() const = 0;
 
    protected:
     T key_lower_;

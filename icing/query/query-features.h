@@ -48,13 +48,9 @@ constexpr Feature kVerbatimSearchFeature =
 constexpr Feature kListFilterQueryLanguageFeature =
     "LIST_FILTER_QUERY_LANGUAGE";  // Features#LIST_FILTER_QUERY_LANGUAGE
 
-// This feature relates to the use of the "hasProperty(property_path)" function.
-constexpr Feature kHasPropertyFunctionFeature =
-    "HAS_PROPERTY_FUNCTION";  // Features#HAS_PROPERTY_FUNCTION
-
 inline std::unordered_set<Feature> GetQueryFeaturesSet() {
   return {kNumericSearchFeature, kVerbatimSearchFeature,
-          kListFilterQueryLanguageFeature, kHasPropertyFunctionFeature};
+          kListFilterQueryLanguageFeature};
 }
 
 }  // namespace lib

@@ -15,10 +15,7 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
-#include "unicode/uconfig.h"  // IWYU pragma: keep
-// clang-format: do not reorder the above include.
-
-#include "unicode/uvernum.h"
+#include "unicode/uversion.h"
 
 namespace icing {
 namespace lib {
@@ -43,8 +40,13 @@ inline bool IsIcuTokenization() {
   return !IsReverseJniTokenization() && !IsCfStringTokenization();
 }
 
-inline int GetIcuTokenizationVersion() {
-  return IsIcuTokenization() ? U_ICU_VERSION_MAJOR_NUM : 0;
+inline bool IsIcu72PlusTokenization() {
+  if (!IsIcuTokenization()) {
+    return false;
+  }
+  UVersionInfo version_array;
+  u_getVersion(version_array);
+  return version_array[0] >= 72;
 }
 
 // Whether we're running on android_x86

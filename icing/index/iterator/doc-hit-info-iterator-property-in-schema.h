@@ -19,7 +19,6 @@
 #include <memory>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -46,11 +45,9 @@ class DocHitInfoIteratorPropertyInSchema : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  void MapChildren(const ChildrenMapper& mapper) override {
-    delegate_ = mapper(std::move(delegate_));
-  }
+  int32_t GetNumBlocksInspected() const override;
 
-  CallStats GetCallStats() const override { return delegate_->GetCallStats(); }
+  int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
 

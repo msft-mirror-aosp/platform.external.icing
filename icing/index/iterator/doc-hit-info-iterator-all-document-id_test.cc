@@ -41,8 +41,9 @@ TEST(DocHitInfoIteratorAllDocumentIdTest, Initialize) {
 
     // We'll always start with an invalid document_id, need to Advance before we
     // get anything out of this.
-    EXPECT_THAT(all_it.doc_hit_info(),
-                EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>{}));
+    EXPECT_THAT(all_it.doc_hit_info().document_id(), Eq(kInvalidDocumentId));
+    EXPECT_THAT(all_it.hit_intersect_section_ids_mask(),
+                Eq(kSectionIdMaskNone));
   }
 
   {
@@ -53,25 +54,26 @@ TEST(DocHitInfoIteratorAllDocumentIdTest, Initialize) {
   }
 }
 
-TEST(DocHitInfoIteratorAllDocumentIdTest, GetCallStats) {
+TEST(DocHitInfoIteratorAllDocumentIdTest, GetNumBlocksInspected) {
   DocHitInfoIteratorAllDocumentId all_it(100);
-  EXPECT_THAT(
-      all_it.GetCallStats(),
-      EqualsDocHitInfoIteratorCallStats(
-          /*num_leaf_advance_calls_lite_index=*/0,
-          /*num_leaf_advance_calls_main_index=*/0,
-          /*num_leaf_advance_calls_integer_index=*/0,
-          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+  EXPECT_THAT(all_it.GetNumBlocksInspected(), Eq(0));
+
+  // Number of iterations is chosen arbitrarily. Just meant to demonstrate that
+  // no matter how many Advance calls are made, GetNumBlocksInspected should
+  // always return 0.
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_THAT(all_it.Advance(), IsOk());
+    EXPECT_THAT(all_it.GetNumBlocksInspected(), Eq(0));
+  }
+}
+
+TEST(DocHitInfoIteratorAllDocumentIdTest, GetNumLeafAdvanceCalls) {
+  DocHitInfoIteratorAllDocumentId all_it(100);
+  EXPECT_THAT(all_it.GetNumLeafAdvanceCalls(), Eq(0));
 
   for (int i = 1; i <= 5; ++i) {
     EXPECT_THAT(all_it.Advance(), IsOk());
-    EXPECT_THAT(
-        all_it.GetCallStats(),
-        EqualsDocHitInfoIteratorCallStats(
-            /*num_leaf_advance_calls_lite_index=*/0,
-            /*num_leaf_advance_calls_main_index=*/0,
-            /*num_leaf_advance_calls_integer_index=*/0,
-            /*num_leaf_advance_calls_no_index=*/i, /*num_blocks_inspected=*/0));
+    EXPECT_THAT(all_it.GetNumLeafAdvanceCalls(), Eq(i));
   }
 }
 
@@ -85,8 +87,12 @@ TEST(DocHitInfoIteratorAllDocumentIdTest, Advance) {
     // Test one advance
     DocHitInfoIteratorAllDocumentId all_it(5);
     EXPECT_THAT(all_it.Advance(), IsOk());
-    EXPECT_THAT(all_it.doc_hit_info(),
-                EqualsDocHitInfo(5, std::vector<SectionId>{}));
+    EXPECT_THAT(all_it.doc_hit_info().document_id(), Eq(5));
+
+    // Advancing shouldn't affect the intersect section ids mask, since there's
+    // no intersecting going on
+    EXPECT_THAT(all_it.hit_intersect_section_ids_mask(),
+                Eq(kSectionIdMaskNone));
   }
 
   {

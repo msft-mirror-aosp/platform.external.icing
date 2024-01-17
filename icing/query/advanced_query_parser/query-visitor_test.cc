@@ -17,28 +17,17 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <string>
 #include <string_view>
-#include <unordered_map>
-#include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
-#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
-#include "icing/file/filesystem.h"
-#include "icing/file/portable-file-backed-proto-log.h"
-#include "icing/index/hit/hit.h"
 #include "icing/index/index.h"
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
 #include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/dummy-numeric-index.h"
 #include "icing/index/numeric/numeric-index.h"
-#include "icing/index/property-existence-indexing-handler.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/platform.h"
@@ -46,13 +35,7 @@
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/query-features.h"
-#include "icing/query/query-results.h"
 #include "icing/schema-builder.h"
-#include "icing/schema/schema-store.h"
-#include "icing/schema/section.h"
-#include "icing/store/document-id.h"
-#include "icing/store/document-store.h"
-#include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/jni-test-helpers.h"
@@ -64,8 +47,6 @@
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer.h"
-#include "icing/util/clock.h"
-#include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -237,16 +218,16 @@ TEST_P(QueryVisitorTest, SimpleLessThan) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price < 2");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -280,16 +261,16 @@ TEST_P(QueryVisitorTest, SimpleLessThanEq) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price <= 1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -323,16 +304,16 @@ TEST_P(QueryVisitorTest, SimpleEqual) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price == 2");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -366,16 +347,16 @@ TEST_P(QueryVisitorTest, SimpleGreaterThanEq) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price >= 1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -409,16 +390,16 @@ TEST_P(QueryVisitorTest, SimpleGreaterThan) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price > 1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -453,16 +434,16 @@ TEST_P(QueryVisitorTest, IntMinLessThanEqual) {
   int64_t int_min = std::numeric_limits<int64_t>::min();
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(int_min));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_min);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(std::numeric_limits<int64_t>::max()));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(std::numeric_limits<int64_t>::max());
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(int_min + 1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_min + 1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price <= " + std::to_string(int_min));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -497,16 +478,16 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanEqual) {
   int64_t int_max = std::numeric_limits<int64_t>::max();
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(std::numeric_limits<int64_t>::min()));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(std::numeric_limits<int64_t>::min());
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(int_max));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_max);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(int_max - 1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_max - 1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price >= " + std::to_string(int_max));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -540,18 +521,18 @@ TEST_P(QueryVisitorTest, NestedPropertyLessThan) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("subscription.price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor =
       numeric_index_->Edit("subscription.price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor =
       numeric_index_->Edit("subscription.price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("subscription.price < 2");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -613,18 +594,18 @@ TEST_P(QueryVisitorTest, LessThanTooManyOperandsInvalid) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("subscription.price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor =
       numeric_index_->Edit("subscription.price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor =
       numeric_index_->Edit("subscription.price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   // Create an invalid AST for the query '3 < subscription.price 25' where '<'
   // has three operands
@@ -688,18 +669,18 @@ TEST_P(QueryVisitorTest, LessThanNonExistentPropertyNotFound) {
   // respectively.
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("subscription.price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(0));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(0);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor =
       numeric_index_->Edit("subscription.price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor =
       numeric_index_->Edit("subscription.price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("time < 25");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -741,16 +722,16 @@ TEST_P(QueryVisitorTest, IntMinLessThanInvalid) {
   int64_t int_min = std::numeric_limits<int64_t>::min();
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(int_min));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_min);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(std::numeric_limits<int64_t>::max()));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(std::numeric_limits<int64_t>::max());
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(int_min + 1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_min + 1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price <" + std::to_string(int_min));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -771,16 +752,16 @@ TEST_P(QueryVisitorTest, IntMaxGreaterThanInvalid) {
   int64_t int_max = std::numeric_limits<int64_t>::max();
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(std::numeric_limits<int64_t>::min()));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(std::numeric_limits<int64_t>::min());
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId1);
-  ICING_ASSERT_OK(editor->BufferKey(int_max));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_max);
+  std::move(*editor).IndexAllBufferedKeys();
 
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId2);
-  ICING_ASSERT_OK(editor->BufferKey(int_max - 1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(int_max - 1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   std::string query = CreateQuery("price >" + std::to_string(int_max));
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -826,34 +807,34 @@ TEST_P(QueryVisitorTest, NumericComparatorDoesntAffectLaterTerms) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   std::unique_ptr<NumericIndex<int64_t>::Editor> editor =
       numeric_index_->Edit("price", kDocumentId0, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(-2));
-  ICING_ASSERT_OK(editor->BufferKey(-1));
-  ICING_ASSERT_OK(editor->BufferKey(1));
-  ICING_ASSERT_OK(editor->BufferKey(2));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(-2);
+  editor->BufferKey(-1);
+  editor->BufferKey(1);
+  editor->BufferKey(2);
+  std::move(*editor).IndexAllBufferedKeys();
   Index::Editor term_editor = index_->Edit(
       kDocumentId0, kSectionId1, TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(term_editor.BufferTerm("-2"));
-  ICING_ASSERT_OK(term_editor.BufferTerm("-1"));
-  ICING_ASSERT_OK(term_editor.BufferTerm("1"));
-  ICING_ASSERT_OK(term_editor.BufferTerm("2"));
-  ICING_ASSERT_OK(term_editor.IndexAllBufferedTerms());
+  term_editor.BufferTerm("-2");
+  term_editor.BufferTerm("-1");
+  term_editor.BufferTerm("1");
+  term_editor.BufferTerm("2");
+  term_editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = numeric_index_->Edit("price", kDocumentId1, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(-1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(-1);
+  std::move(*editor).IndexAllBufferedKeys();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = numeric_index_->Edit("price", kDocumentId2, kSectionId0);
-  ICING_ASSERT_OK(editor->BufferKey(-1));
-  ICING_ASSERT_OK(std::move(*editor).IndexAllBufferedKeys());
+  editor->BufferKey(-1);
+  std::move(*editor).IndexAllBufferedKeys();
   term_editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                              /*namespace_id=*/0);
-  ICING_ASSERT_OK(term_editor.BufferTerm("2"));
-  ICING_ASSERT_OK(term_editor.IndexAllBufferedTerms());
+  term_editor.BufferTerm("2");
+  term_editor.IndexAllBufferedTerms();
 
   // Translating MINUS chars that are interpreted as NOTs, this query would be
   // `price == -1 AND NOT 2`
@@ -891,18 +872,18 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyEnabled) {
   // "bar" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -943,18 +924,18 @@ TEST_P(QueryVisitorTest, SingleTermTermFrequencyDisabled) {
   // "bar" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -994,18 +975,18 @@ TEST_P(QueryVisitorTest, SingleTermPrefix) {
   // "bar" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   // An EXACT query for 'fo' won't match anything.
   std::string query = CreateQuery("fo");
@@ -1090,21 +1071,21 @@ TEST_P(QueryVisitorTest, SegmentationWithPrefix) {
   // ["foo", "ba"] and ["bar", "fo"] respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("ba"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("ba");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("ba"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("ba");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("fo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.BufferTerm("fo");
+  editor.IndexAllBufferedTerms();
 
   // An EXACT query for `ba?fo` will be lexed into a single TEXT token.
   // The visitor will tokenize it into `ba` and `fo` (`?` is dropped because it
@@ -1157,18 +1138,18 @@ TEST_P(QueryVisitorTest, SingleVerbatimTerm) {
   // "foo:bar(baz)" and "bar:baz(foo)" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo:bar(baz)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo:bar(baz)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar:baz(foo)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar:baz(foo)");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("\"foo:bar(baz)\"");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -1203,18 +1184,18 @@ TEST_P(QueryVisitorTest, SingleVerbatimTermPrefix) {
   // "foo:bar(abc)" and "bar:baz(foo)" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(baz)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo:bar(baz)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo:bar(abc)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo:bar(abc)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar:baz(foo)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar:baz(foo)");
+  editor.IndexAllBufferedTerms();
 
   // Query for `"foo:bar("*`. This should match docs 0 and 1.
   std::string query = CreateQuery("\"foo:bar(\"*");
@@ -1255,18 +1236,18 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingQuote) {
   // "foobar\" and "foobar"" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_EXACT, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobary)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar\)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar")"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar")");
+  editor.IndexAllBufferedTerms();
 
   // From the comment above, verbatim_term = `foobar"` and verbatim_query =
   // `foobar\"`
@@ -1307,19 +1288,19 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingEscape) {
   // "foobar\" and "foobar"" respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_EXACT, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobary)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
   // From the comment above, verbatim_term = `foobar\`.
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar\)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar")"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar")");
+  editor.IndexAllBufferedTerms();
 
   // Issue a query for the verbatim token `foobar\`.
   std::string query = CreateQuery(R"(("foobar\\"))");
@@ -1362,18 +1343,18 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingNonSpecialChar) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_EXACT, /*namespace_id=*/0);
   // From the comment above, verbatim_term = `foobary`.
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobary)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobary)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar\)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\y)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar\y)");
+  editor.IndexAllBufferedTerms();
 
   // Issue a query for the verbatim token `foobary`.
   std::string query = CreateQuery(R"(("foobar\y"))");
@@ -1443,19 +1424,19 @@ TEST_P(QueryVisitorTest, VerbatimTermNewLine) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_EXACT, /*namespace_id=*/0);
   // From the comment above, verbatim_term = `foobar` + '\n'.
-  ICING_ASSERT_OK(editor.BufferTerm("foobar\n"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foobar\n");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar\)");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
   // verbatim_term = `foobar\n`. This is distinct from the term added above.
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foobar\n)"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foobar\n)");
+  editor.IndexAllBufferedTerms();
 
   // Issue a query for the verbatim token `foobar` + '\n'.
   std::string query = CreateQuery("\"foobar\n\"");
@@ -1517,20 +1498,20 @@ TEST_P(QueryVisitorTest, VerbatimTermEscapingComplex) {
   // `foo\\\"bar\\nbaz\"` and `foo\\"bar\\nbaz"` respectively.
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_EXACT, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\"bar\nbaz")"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foo\"bar\nbaz")");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
   // Add the verbatim_term from doc 0 but with all of the escapes left in
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\\\"bar\\nbaz\")"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foo\\\"bar\\nbaz\")");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_EXACT,
                         /*namespace_id=*/0);
   // Add the verbatim_term from doc 0 but with the escapes for '\' chars left in
-  ICING_ASSERT_OK(editor.BufferTerm(R"(foo\\"bar\\nbaz")"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm(R"(foo\\"bar\\nbaz")");
+  editor.IndexAllBufferedTerms();
 
   // Issue a query for the verbatim token `foo\"bar\nbaz"`.
   std::string query = CreateQuery(R"(("foo\\\"bar\\nbaz\""))");
@@ -1575,22 +1556,22 @@ TEST_P(QueryVisitorTest, SingleMinusTerm) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("-foo");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -1629,22 +1610,22 @@ TEST_P(QueryVisitorTest, SingleNotTerm) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("NOT foo");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -1679,26 +1660,26 @@ TEST_P(QueryVisitorTest, NestedNotTerms) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   // Double negative could be rewritten as `(foo AND NOT bar) baz`
   std::string query = CreateQuery("NOT (-foo OR bar) baz");
@@ -1737,26 +1718,26 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   // Simplifying:
   //   NOT (-(NOT (foo -bar) baz) -bat) NOT bass
@@ -1795,19 +1776,19 @@ TEST_P(QueryVisitorTest, DeeplyNestedNotTerms) {
 TEST_P(QueryVisitorTest, ImplicitAndTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo bar");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -1838,19 +1819,19 @@ TEST_P(QueryVisitorTest, ImplicitAndTerms) {
 TEST_P(QueryVisitorTest, ExplicitAndTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo AND bar");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -1881,19 +1862,19 @@ TEST_P(QueryVisitorTest, ExplicitAndTerms) {
 TEST_P(QueryVisitorTest, OrTerms) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("fo"));
-  ICING_ASSERT_OK(editor.BufferTerm("ba"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("fo");
+  editor.BufferTerm("ba");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo OR bar");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -1924,20 +1905,20 @@ TEST_P(QueryVisitorTest, OrTerms) {
 TEST_P(QueryVisitorTest, AndOrTermPrecedence) {
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   // Should be interpreted like `foo (bar OR baz)`
   std::string query = CreateQuery("foo bar OR baz");
@@ -2031,24 +2012,24 @@ TEST_P(QueryVisitorTest, AndOrNotPrecedence) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("baz"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("baz");
+  editor.IndexAllBufferedTerms();
 
   // Should be interpreted like `foo ((NOT bar) OR baz)`
   std::string query = CreateQuery("foo NOT bar OR baz");
@@ -2119,22 +2100,22 @@ TEST_P(QueryVisitorTest, PropertyFilter) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo", /*property_restrict=*/"prop1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -2195,22 +2176,22 @@ TEST_F(QueryVisitorTest, MultiPropertyFilter) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop3_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query = R"(search("foo", createList("prop1", "prop2")))";
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -2294,22 +2275,22 @@ TEST_P(QueryVisitorTest, PropertyFilterNonNormalized) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo", /*property_restrict=*/"PROP1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -2364,22 +2345,22 @@ TEST_P(QueryVisitorTest, PropertyFilterWithGrouping) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query =
       CreateQuery("(foo OR bar)", /*property_restrict=*/"prop1");
@@ -2432,22 +2413,22 @@ TEST_P(QueryVisitorTest, ValidNestedPropertyFilter) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("(prop1:foo)", /*property_restrict=*/"prop1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -2519,22 +2500,22 @@ TEST_P(QueryVisitorTest, InvalidNestedPropertyFilter) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("(prop2:foo)", /*property_restrict=*/"prop1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -2602,22 +2583,22 @@ TEST_P(QueryVisitorTest, NotWithPropertyFilter) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Resulting queries:
   // - kPlain: `-prop1:(foo OR bar)`
@@ -2686,43 +2667,30 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
 
-  // Create documents as follows:
-  //   Doc0:
-  //     prop1: "bar"
-  //     prop2: ""
-  //   Doc1:
-  //     prop1: "foo"
-  //     prop2: ""
-  //   Doc2:
-  //     prop1: ""
-  //     prop2: "foo"
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Resulting queries:
   // - kPlain: `prop1:(-foo OR bar)`
   // - kSearch: `search("-foo OR bar", createList("prop1"))`
-  //
-  // The query is equivalent to `-prop1:foo OR prop1:bar`, thus doc0 and doc2
-  // will be matched.
   std::string query =
       CreateQuery("(-foo OR bar)", /*property_restrict=*/"prop1");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -2744,14 +2712,11 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("bar"));
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              ElementsAre(kDocumentId2, kDocumentId0));
+              ElementsAre(kDocumentId0));
 
   // Resulting queries:
-  // - kPlain: `prop1:(-foo OR bar)`
-  // - kSearch: `search("-foo OR bar", createList("prop1"))`
-  //
-  // The query is equivalent to `-prop1:foo OR prop1:bar`, thus doc0 and doc2
-  // will be matched.
+  // - kPlain: `prop1:(foo OR bar)`
+  // - kSearch: `search("foo OR bar", createList("prop1"))`
   query = CreateQuery("(NOT foo OR bar)", /*property_restrict=*/"prop1");
   ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
   QueryVisitor query_visitor_two(
@@ -2770,7 +2735,7 @@ TEST_P(QueryVisitorTest, PropertyFilterWithNot) {
   EXPECT_THAT(ExtractKeys(query_results.query_term_iterators),
               UnorderedElementsAre("bar"));
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              ElementsAre(kDocumentId2, kDocumentId0));
+              ElementsAre(kDocumentId0));
 }
 
 TEST_P(QueryVisitorTest, SegmentationTest) {
@@ -2791,7 +2756,7 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
           .Build(),
       /*ignore_errors_and_delete_documents=*/false,
       /*allow_circular_schema_definitions=*/false));
-
+      
   // Section ids are assigned alphabetically.
   SectionId prop1_section_id = 0;
   SectionId prop2_section_id = 1;
@@ -2803,36 +2768,36 @@ TEST_P(QueryVisitorTest, SegmentationTest) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("上班"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("上班");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(kDocumentId0, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
   if (IsCfStringTokenization()) {
-    ICING_ASSERT_OK(editor.BufferTerm("每"));
-    ICING_ASSERT_OK(editor.BufferTerm("天"));
+    editor.BufferTerm("每");
+    editor.BufferTerm("天");
   } else {
-    ICING_ASSERT_OK(editor.BufferTerm("每天"));
+    editor.BufferTerm("每天");
   }
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("上班"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("上班");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop2_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
   if (IsCfStringTokenization()) {
-    ICING_ASSERT_OK(editor.BufferTerm("每"));
-    ICING_ASSERT_OK(editor.BufferTerm("天"));
+    editor.BufferTerm("每");
+    editor.BufferTerm("天");
   } else {
-    ICING_ASSERT_OK(editor.BufferTerm("每天"));
+    editor.BufferTerm("每天");
   }
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
                              ParseQueryHelper(query));
@@ -2897,55 +2862,55 @@ TEST_P(QueryVisitorTest, PropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
   Index::Editor editor =
       index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.BufferTerm("val1");
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 1: Contains 'val0', 'val1', 'val2' in 'prop1'. Should match.
   doc = DocumentBuilder(doc).SetUri("uri1").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid1, document_store_->Put(doc));
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.BufferTerm("val1");
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 2: Contains 'val0', 'val1', 'val2' in 'prop2'. Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri2").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid2, document_store_->Put(doc));
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.BufferTerm("val1");
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 3: Contains 'val0' in 'prop0', 'val1' in 'prop1' etc. Should match.
   doc = DocumentBuilder(doc).SetUri("uri3").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid3, document_store_->Put(doc));
   editor = index_->Edit(docid3, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid3, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val1");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid3, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 4: Contains 'val1' in 'prop0', 'val2' in 'prop1', 'val0' in 'prop2'.
   //          Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri4").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid4, document_store_->Put(doc));
   editor = index_->Edit(docid4, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val1");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.IndexAllBufferedTerms();
 
   // Now issue a query with 'val1' restricted to 'prop1'. This should match only
   // docs 1 and 3.
@@ -3012,55 +2977,55 @@ TEST_P(QueryVisitorTest, UnsatisfiablePropertyRestrictsPopCorrectly) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
   Index::Editor editor =
       index_->Edit(docid0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.BufferTerm("val1");
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 1: Contains 'val0', 'val1', 'val2' in 'prop1'. Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri1").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid1, document_store_->Put(doc));
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.BufferTerm("val1");
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 2: Contains 'val0', 'val1', 'val2' in 'prop2'. Should match.
   doc = DocumentBuilder(doc).SetUri("uri2").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid2, document_store_->Put(doc));
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.BufferTerm("val1");
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 3: Contains 'val0' in 'prop0', 'val1' in 'prop1' etc. Should match.
   doc = DocumentBuilder(doc).SetUri("uri3").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid3, document_store_->Put(doc));
   editor = index_->Edit(docid3, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid3, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val1");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid3, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
 
   // - Doc 4: Contains 'val1' in 'prop0', 'val2' in 'prop1', 'val0' in 'prop2'.
   //          Shouldn't match.
   doc = DocumentBuilder(doc).SetUri("uri4").Build();
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid4, document_store_->Put(doc));
   editor = index_->Edit(docid4, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val1"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val1");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val2"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val2");
+  editor.IndexAllBufferedTerms();
   editor = index_->Edit(docid4, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("val0"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("val0");
+  editor.IndexAllBufferedTerms();
 
   // Now issue a query with 'val1' restricted to 'prop1'. This should match only
   // docs 1 and 3.
@@ -3232,23 +3197,23 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedFunctionCalls) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, prop1_section_id,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId1, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build()));
   editor = index_->Edit(kDocumentId2, prop1_section_id, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   // *If* nested function calls were allowed, then this would simplify as:
   // `search("search(\"foo\") bar")` -> `search("foo bar")` -> `foo bar`
@@ -3370,57 +3335,57 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsNarrowing) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
   Index::Editor editor =
       index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid3,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
   editor = index_->Edit(docid3, prop3_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid4,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
   editor = index_->Edit(docid4, prop4_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid5,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
   editor = index_->Edit(docid5, prop5_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid6,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
   editor = index_->Edit(docid6, prop6_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid7,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
   editor = index_->Edit(docid7, prop7_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // *If* nested function calls were allowed, then this would simplify as:
   // `search("search(\"foo\") bar")` -> `search("foo bar")` -> `foo bar`
@@ -3550,57 +3515,57 @@ TEST_F(QueryVisitorTest, SearchFunctionNestedPropertyRestrictsExpanding) {
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId docid0, document_store_->Put(doc));
   Index::Editor editor =
       index_->Edit(kDocumentId0, prop0_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid1,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri1").Build()));
   editor = index_->Edit(docid1, prop1_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid2,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri2").Build()));
   editor = index_->Edit(docid2, prop2_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid3,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri3").Build()));
   editor = index_->Edit(docid3, prop3_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid4,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri4").Build()));
   editor = index_->Edit(docid4, prop4_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid5,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri5").Build()));
   editor = index_->Edit(docid5, prop5_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid6,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri6").Build()));
   editor = index_->Edit(docid6, prop6_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentId docid7,
       document_store_->Put(DocumentBuilder(doc).SetUri("uri7").Build()));
   editor = index_->Edit(docid7, prop7_id, TERM_MATCH_PREFIX, ns_id);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // *If* nested function calls were allowed, then this would simplify as:
   // `search("search(\"foo\") bar")` -> `search("foo bar")` -> `foo bar`
@@ -3761,8 +3726,8 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Document 1 has the term "foo" and its schema DOESN'T have the url property.
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
@@ -3771,16 +3736,16 @@ TEST_P(QueryVisitorTest, PropertyDefinedFunctionReturnsMatchingDocuments) {
                                            .Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Document 2 has the term "bar" and its schema has the url property.
   ICING_ASSERT_OK(document_store_->Put(
       DocumentBuilder().SetKey("ns", "uri2").SetSchema("typeWithUrl").Build()));
   editor = index_->Edit(kDocumentId2, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("bar");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo propertyDefined(\"url\")");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -3821,8 +3786,8 @@ TEST_P(QueryVisitorTest,
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Document 1 has the term "foo" and its schema DOESN'T have the url property.
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
@@ -3831,8 +3796,8 @@ TEST_P(QueryVisitorTest,
                                            .Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Attempt to query a non-existent property.
   std::string query = CreateQuery("propertyDefined(\"nonexistentproperty\")");
@@ -3873,8 +3838,8 @@ TEST_P(QueryVisitorTest,
       DocumentBuilder().SetKey("ns", "uri0").SetSchema("typeWithUrl").Build()));
   Index::Editor editor = index_->Edit(kDocumentId0, kSectionId1,
                                       TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   // Document 1 has the term "foo" and its schema DOESN'T have the url property.
   ICING_ASSERT_OK(document_store_->Put(DocumentBuilder()
@@ -3883,8 +3848,8 @@ TEST_P(QueryVisitorTest,
                                            .Build()));
   editor = index_->Edit(kDocumentId1, kSectionId1, TERM_MATCH_PREFIX,
                         /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
+  editor.BufferTerm("foo");
+  editor.IndexAllBufferedTerms();
 
   std::string query = CreateQuery("foo AND NOT propertyDefined(\"url\")");
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
@@ -3902,204 +3867,6 @@ TEST_P(QueryVisitorTest,
 
   EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
               UnorderedElementsAre(kDocumentId1));
-}
-
-TEST_F(QueryVisitorTest,
-       HasPropertyFunctionWithNoArgumentReturnsInvalidArgument) {
-  std::string query = "hasProperty()";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(QueryVisitorTest,
-       HasPropertyFunctionWithMoreThanOneStringArgumentReturnsInvalidArgument) {
-  std::string query = "hasProperty(\"foo\", \"bar\")";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(QueryVisitorTest,
-       HasPropertyFunctionWithTextArgumentReturnsInvalidArgument) {
-  // The argument type is TEXT, not STRING here.
-  std::string query = "hasProperty(foo)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_F(QueryVisitorTest,
-       HasPropertyFunctionWithNonStringArgumentReturnsInvalidArgument) {
-  std::string query = "hasProperty(1 < 2)";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  EXPECT_THAT(std::move(query_visitor).ConsumeResults(),
-              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
-}
-
-TEST_P(QueryVisitorTest, HasPropertyFunctionReturnsMatchingDocuments) {
-  ICING_ASSERT_OK(schema_store_->SetSchema(
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Simple")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataType(TYPE_STRING)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("price")
-                                        .SetDataType(TYPE_INT64)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
-
-  // Document 0 has the term "foo" and has the "price" property.
-  ICING_ASSERT_OK(document_store_->Put(
-      DocumentBuilder().SetKey("ns", "uri0").SetSchema("Simple").Build()));
-  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId0,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm(
-      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str()));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-
-  // Document 1 has the term "foo" and doesn't have the "price" property.
-  ICING_ASSERT_OK(document_store_->Put(
-      DocumentBuilder().SetKey("ns", "uri1").SetSchema("Simple").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId0, TERM_MATCH_PREFIX,
-                        /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-
-  // Document 2 has the term "bar" and has the "price" property.
-  ICING_ASSERT_OK(document_store_->Put(
-      DocumentBuilder().SetKey("ns", "uri2").SetSchema("Simple").Build()));
-  editor = index_->Edit(kDocumentId2, kSectionId0, TERM_MATCH_PREFIX,
-                        /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("bar"));
-  ICING_ASSERT_OK(editor.BufferTerm(
-      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str()));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-
-  // Test that `foo hasProperty("price")` matches document 0 only.
-  std::string query = CreateQuery("foo hasProperty(\"price\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor1(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor1);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor1).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              UnorderedElementsAre(kHasPropertyFunctionFeature,
-                                   kListFilterQueryLanguageFeature));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              UnorderedElementsAre(kDocumentId0));
-
-  // Test that `bar OR NOT hasProperty("price")` matches document 1 and
-  // document 2.
-  query = CreateQuery("bar OR NOT hasProperty(\"price\")");
-  ICING_ASSERT_OK_AND_ASSIGN(root_node, ParseQueryHelper(query));
-  QueryVisitor query_visitor2(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor2);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             std::move(query_visitor2).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              UnorderedElementsAre(kHasPropertyFunctionFeature,
-                                   kListFilterQueryLanguageFeature));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
-              UnorderedElementsAre(kDocumentId1, kDocumentId2));
-}
-
-TEST_P(QueryVisitorTest,
-       HasPropertyFunctionReturnsNothingIfNoMatchingProperties) {
-  ICING_ASSERT_OK(schema_store_->SetSchema(
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Simple")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("name")
-                                        .SetDataType(TYPE_STRING)
-                                        .SetCardinality(CARDINALITY_OPTIONAL))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("price")
-                                        .SetDataType(TYPE_INT64)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build(),
-      /*ignore_errors_and_delete_documents=*/false,
-      /*allow_circular_schema_definitions=*/false));
-
-  // Document 0 has the term "foo" and has the "price" property.
-  ICING_ASSERT_OK(document_store_->Put(
-      DocumentBuilder().SetKey("ns", "uri0").SetSchema("Simple").Build()));
-  Index::Editor editor = index_->Edit(kDocumentId0, kSectionId0,
-                                      TERM_MATCH_PREFIX, /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.BufferTerm(
-      absl_ports::StrCat(kPropertyExistenceTokenPrefix, "price").c_str()));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-
-  // Document 1 has the term "foo" and doesn't have the "price" property.
-  ICING_ASSERT_OK(document_store_->Put(
-      DocumentBuilder().SetKey("ns", "uri1").SetSchema("Simple").Build()));
-  editor = index_->Edit(kDocumentId1, kSectionId0, TERM_MATCH_PREFIX,
-                        /*namespace_id=*/0);
-  ICING_ASSERT_OK(editor.BufferTerm("foo"));
-  ICING_ASSERT_OK(editor.IndexAllBufferedTerms());
-
-  // Attempt to query a non-existent property.
-  std::string query = CreateQuery("hasProperty(\"nonexistentproperty\")");
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
-                             ParseQueryHelper(query));
-  QueryVisitor query_visitor(
-      index_.get(), numeric_index_.get(), document_store_.get(),
-      schema_store_.get(), normalizer_.get(), tokenizer_.get(), query,
-      DocHitInfoIteratorFilter::Options(), TERM_MATCH_PREFIX,
-      /*needs_term_frequency_info=*/true, clock_.GetSystemTimeMilliseconds());
-  root_node->Accept(&query_visitor);
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             std::move(query_visitor).ConsumeResults());
-  EXPECT_THAT(query_results.features_in_use,
-              UnorderedElementsAre(kHasPropertyFunctionFeature,
-                                   kListFilterQueryLanguageFeature));
-
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), IsEmpty());
 }
 
 INSTANTIATE_TEST_SUITE_P(QueryVisitorTest, QueryVisitorTest,

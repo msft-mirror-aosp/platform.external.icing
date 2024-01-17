@@ -189,18 +189,6 @@ bool CardinalityLessThanEq(PropertyConfigProto::Cardinality::Code C1,
   return false;
 }
 
-// Check if set1 is a subset of set2.
-template <typename T>
-bool IsSubset(const std::unordered_set<T>& set1,
-              const std::unordered_set<T>& set2) {
-  for (const auto& item : set1) {
-    if (set2.find(item) == set2.end()) {
-      return false;
-    }
-  }
-  return true;
-}
-
 }  // namespace
 
 libtextclassifier3::Status CalculateTransitiveNestedTypeRelations(
@@ -941,32 +929,31 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
   // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
   for (const PropertyConfigProto& property_config : type_config.properties()) {
-    std::string_view property_name = property_config.property_name();
-    parsed_property_configs.property_config_map.emplace(property_name,
-                                                        &property_config);
+    parsed_property_configs.property_config_map.emplace(
+        property_config.property_name(), &property_config);
     if (property_config.cardinality() ==
         PropertyConfigProto::Cardinality::REQUIRED) {
-      parsed_property_configs.required_properties.insert(property_name);
+      ++parsed_property_configs.num_required_properties;
     }
 
     // A non-default term_match_type indicates that this property is meant to be
     // indexed.
     if (IsIndexedProperty(property_config)) {
-      parsed_property_configs.indexed_properties.insert(property_name);
+      ++parsed_property_configs.num_indexed_properties;
     }
 
     // A non-default value_type indicates that this property is meant to be
     // joinable.
     if (property_config.joinable_config().value_type() !=
         JoinableConfig::ValueType::NONE) {
-      parsed_property_configs.joinable_properties.insert(property_name);
+      ++parsed_property_configs.num_joinable_properties;
     }
 
     // Also keep track of how many nested document properties there are. Adding
     // new nested document properties will result in join-index rebuild.
     if (property_config.data_type() ==
         PropertyConfigProto::DataType::DOCUMENT) {
-      parsed_property_configs.nested_document_properties.insert(property_name);
+      ++parsed_property_configs.num_nested_document_properties;
     }
   }
 
@@ -1003,10 +990,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // We only need to check the old, existing properties to see if they're
     // compatible since we'll have old data that may be invalidated or need to
     // be reindexed.
-    std::unordered_set<std::string_view> old_required_properties;
-    std::unordered_set<std::string_view> old_indexed_properties;
-    std::unordered_set<std::string_view> old_joinable_properties;
-    std::unordered_set<std::string_view> old_nested_document_properties;
+    int32_t old_required_properties = 0;
+    int32_t old_indexed_properties = 0;
+    int32_t old_joinable_properties = 0;
+    int32_t old_nested_document_properties = 0;
 
     // If there is a different number of properties, then there must have been a
     // change.
@@ -1017,24 +1004,23 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     bool is_index_incompatible = false;
     bool is_join_incompatible = false;
     for (const auto& old_property_config : old_type_config.properties()) {
-      std::string_view property_name = old_property_config.property_name();
       if (old_property_config.cardinality() ==
           PropertyConfigProto::Cardinality::REQUIRED) {
-        old_required_properties.insert(property_name);
+        ++old_required_properties;
       }
 
       // A non-default term_match_type indicates that this property is meant to
       // be indexed.
       bool is_indexed_property = IsIndexedProperty(old_property_config);
       if (is_indexed_property) {
-        old_indexed_properties.insert(property_name);
+        ++old_indexed_properties;
       }
 
       bool is_joinable_property =
           old_property_config.joinable_config().value_type() !=
           JoinableConfig::ValueType::NONE;
       if (is_joinable_property) {
-        old_joinable_properties.insert(property_name);
+        ++old_joinable_properties;
       }
 
       // A nested-document property is a property of DataType::DOCUMENT.
@@ -1042,7 +1028,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
           old_property_config.data_type() ==
           PropertyConfigProto::DataType::DOCUMENT;
       if (is_nested_document_property) {
-        old_nested_document_properties.insert(property_name);
+        ++old_nested_document_properties;
       }
 
       auto new_property_name_and_config =
@@ -1102,8 +1088,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // guaranteed from our previous checks that all the old properties are also
     // present in the new property config, so we can do a simple int comparison
     // here to detect new required properties.
-    if (!IsSubset(new_parsed_property_configs.required_properties,
-                  old_required_properties)) {
+    if (new_parsed_property_configs.num_required_properties >
+        old_required_properties) {
       ICING_VLOG(1) << absl_ports::StrCat(
           "New schema '", old_type_config.schema_type(),
           "' has REQUIRED properties that are not "
@@ -1115,8 +1101,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // indexed nested document properties), then the section ids may change.
     // Since the section ids are stored in the index, we'll need to
     // reindex everything.
-    if (!IsSubset(new_parsed_property_configs.indexed_properties,
-                  old_indexed_properties)) {
+    if (new_parsed_property_configs.num_indexed_properties >
+        old_indexed_properties) {
       ICING_VLOG(1) << "Set of indexed properties in schema type '"
                     << old_type_config.schema_type()
                     << "' has changed, required reindexing.";
@@ -1130,10 +1116,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // join index. This is because we index all nested joinable properties, so
     // adding a nested document property will most probably result in having
     // more joinable properties.
-    if (!IsSubset(new_parsed_property_configs.joinable_properties,
-                  old_joinable_properties) ||
-        !IsSubset(new_parsed_property_configs.nested_document_properties,
-                  old_nested_document_properties)) {
+    if (new_parsed_property_configs.num_joinable_properties >
+            old_joinable_properties ||
+        new_parsed_property_configs.num_nested_document_properties >
+            old_nested_document_properties) {
       ICING_VLOG(1) << "Set of joinable properties in schema type '"
                     << old_type_config.schema_type()
                     << "' has changed, required reconstructing joinable cache.";

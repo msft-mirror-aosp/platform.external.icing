@@ -59,14 +59,14 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
 
   // Make used.
   Hit hit0(/*section_id=*/0, 0, /*term_frequency=*/56);
-  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
+  serializer.PrependHit(&pl_used, hit0);
   // Size = sizeof(uncompressed hit0)
   int expected_size = sizeof(Hit);
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Le(expected_size));
   EXPECT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(ElementsAre(hit0)));
 
   Hit hit1(/*section_id=*/0, 1, Hit::kDefaultTermFrequency);
-  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit1));
+  serializer.PrependHit(&pl_used, hit1);
   // Size = sizeof(uncompressed hit1)
   //        + sizeof(hit0-hit1) + sizeof(hit0::term_frequency)
   expected_size += 2 + sizeof(Hit::TermFrequency);
@@ -75,7 +75,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
               IsOkAndHolds(ElementsAre(hit1, hit0)));
 
   Hit hit2(/*section_id=*/0, 2, /*term_frequency=*/56);
-  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit2));
+  serializer.PrependHit(&pl_used, hit2);
   // Size = sizeof(uncompressed hit2)
   //        + sizeof(hit1-hit2)
   //        + sizeof(hit0-hit1) + sizeof(hit0::term_frequency)
@@ -85,7 +85,7 @@ TEST(PostingListHitSerializerTest, PostingListUsedPrependHitNotFull) {
               IsOkAndHolds(ElementsAre(hit2, hit1, hit0)));
 
   Hit hit3(/*section_id=*/0, 3, Hit::kDefaultTermFrequency);
-  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit3));
+  serializer.PrependHit(&pl_used, hit3);
   // Size = sizeof(uncompressed hit3)
   //        + sizeof(hit2-hit3) + sizeof(hit2::term_frequency)
   //        + sizeof(hit1-hit2)
@@ -232,19 +232,17 @@ TEST(PostingListHitSerializerTest,
 
   // Add five hits. The PL is in the empty state and an empty min size PL can
   // only fit two hits. So PrependHitArray should fail.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_can_prepend,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), false)));
+  uint32_t num_can_prepend =
+      serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+          &pl_used, &hits_in[0], hits_in.size(), false);
   EXPECT_THAT(num_can_prepend, Eq(2));
 
   int can_fit_hits = num_can_prepend;
   // The PL has room for 2 hits. We should be able to add them without any
   // problem, transitioning the PL from EMPTY -> ALMOST_FULL -> FULL
   const HitElt *hits_in_ptr = hits_in.data() + (hits_in.size() - 2);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_can_prepend, (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-                           &pl_used, hits_in_ptr, can_fit_hits, false)));
+  num_can_prepend = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, hits_in_ptr, can_fit_hits, false);
   EXPECT_THAT(num_can_prepend, Eq(can_fit_hits));
   EXPECT_THAT(size, Eq(serializer.GetBytesUsed(&pl_used)));
   std::deque<Hit> hits_pushed;
@@ -291,10 +289,8 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
 
   // Add five hits. The PL is in the empty state and should be able to fit all
   // five hits without issue, transitioning the PL from EMPTY -> NOT_FULL.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hits_in[0], hits_in.size(), false)));
+  uint32_t num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, &hits_in[0], hits_in.size(), false);
   EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
   EXPECT_THAT(byte_size, Eq(serializer.GetBytesUsed(&pl_used)));
   std::deque<Hit> hits_pushed;
@@ -338,9 +334,8 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
 
   // Add these 6 hits. The PL is currently in the NOT_FULL state and should
   // remain in the NOT_FULL state.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit, (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-                         &pl_used, &hits_in[0], hits_in.size(), false)));
+  num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, &hits_in[0], hits_in.size(), false);
   EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
   EXPECT_THAT(byte_size, Eq(serializer.GetBytesUsed(&pl_used)));
   // All hits from hits_in were added.
@@ -373,9 +368,8 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
   // Add this 1 hit. The PL is currently in the NOT_FULL state and should
   // transition to the ALMOST_FULL state - even though there is still some
   // unused space.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit, (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-                         &pl_used, &hits_in[0], hits_in.size(), false)));
+  num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, &hits_in[0], hits_in.size(), false);
   EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
   EXPECT_THAT(byte_size, Eq(serializer.GetBytesUsed(&pl_used)));
   // All hits from hits_in were added.
@@ -414,9 +408,8 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayPostingList) {
   // second hit should tranisition to the FULL state because the delta between
   // Hit #13 and Hit #14 (2 bytes) is larger than the remaining unused area
   // (1 byte).
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit, (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-                         &pl_used, &hits_in[0], hits_in.size(), false)));
+  num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, &hits_in[0], hits_in.size(), false);
   EXPECT_THAT(num_could_fit, Eq(hits_in.size()));
   EXPECT_THAT(size, Eq(serializer.GetBytesUsed(&pl_used)));
   // All hits from hits_in were added.
@@ -449,11 +442,8 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
 
   // PrependHitArray should fail because hit_elts_in_too_many is far too large
   // for the minimum size pl.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_could_fit,
-      (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-          &pl_used, &hit_elts_in_too_many[0], hit_elts_in_too_many.size(),
-          false)));
+  uint32_t num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, &hit_elts_in_too_many[0], hit_elts_in_too_many.size(), false);
   ASSERT_THAT(num_could_fit, Lt(hit_elts_in_too_many.size()));
   ASSERT_THAT(serializer.GetBytesUsed(&pl_used), Eq(0));
   ASSERT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(IsEmpty()));
@@ -463,10 +453,8 @@ TEST(PostingListHitSerializerTest, PostingListPrependHitArrayTooManyHits) {
       PostingListUsed::CreateFromUnitializedRegion(&serializer, kHitsSize));
   // PrependHitArray should fail because hit_elts_in_too_many is one hit too
   // large for this pl.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      num_could_fit, (serializer.PrependHitArray<HitElt, HitElt::get_hit>(
-                         &pl_used, &hit_elts_in_too_many[0],
-                         hit_elts_in_too_many.size(), false)));
+  num_could_fit = serializer.PrependHitArray<HitElt, HitElt::get_hit>(
+      &pl_used, &hit_elts_in_too_many[0], hit_elts_in_too_many.size(), false);
   ASSERT_THAT(num_could_fit, Lt(hit_elts_in_too_many.size()));
   ASSERT_THAT(serializer.GetBytesUsed(&pl_used), Eq(0));
   ASSERT_THAT(serializer.GetHits(&pl_used), IsOkAndHolds(IsEmpty()));
@@ -488,7 +476,7 @@ TEST(PostingListHitSerializerTest,
   ICING_ASSERT_OK(serializer.PrependHit(&pl, Hit(Hit::kInvalidValue >> 2, 0)));
   // Status should jump to full directly.
   ASSERT_THAT(serializer.GetBytesUsed(&pl), Eq(pl_size));
-  ICING_ASSERT_OK(serializer.PopFrontHits(&pl, 1));
+  serializer.PopFrontHits(&pl, 1);
   // Status should return to not full as before.
   ASSERT_THAT(serializer.GetBytesUsed(&pl), Eq(bytes_used));
 }

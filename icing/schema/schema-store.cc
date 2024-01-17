@@ -448,7 +448,7 @@ libtextclassifier3::Status SchemaStore::InitializeDerivedFiles() {
         "Combined checksum of SchemaStore was inconsistent");
   }
 
-  ICING_RETURN_IF_ERROR(BuildInMemoryCache());
+  BuildInMemoryCache();
   return libtextclassifier3::Status::OK;
 }
 
@@ -463,7 +463,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
     ICING_RETURN_IF_ERROR(schema_type_mapper_->Put(
         type_config.schema_type(), schema_type_mapper_->num_keys()));
   }
-  ICING_RETURN_IF_ERROR(BuildInMemoryCache());
+  BuildInMemoryCache();
 
   if (create_overlay_if_necessary) {
     ICING_ASSIGN_OR_RETURN(
@@ -486,7 +486,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
       ICING_RETURN_IF_ERROR(schema_file_->Write(std::move(base_schema_ptr)));
 
       // LINT.IfChange(min_overlay_version_compatibility)
-      // Although the current version is 3, the schema is compatible with
+      // Although the current version is 2, the schema is compatible with
       // version 1, so min_overlay_version_compatibility should be 1.
       int32_t min_overlay_version_compatibility = version_util::kVersionOne;
       // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
@@ -494,7 +494,7 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
           /*overlay_created=*/true, min_overlay_version_compatibility);
       // Rebuild in memory data - references to the old schema will be invalid
       // now.
-      ICING_RETURN_IF_ERROR(BuildInMemoryCache());
+      BuildInMemoryCache();
     }
   }
 

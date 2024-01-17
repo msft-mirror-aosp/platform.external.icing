@@ -20,7 +20,6 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
-#include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/store/document-id.h"
 #include "icing/util/status-macros.h"
 
@@ -114,6 +113,7 @@ libtextclassifier3::Status DocHitInfoIteratorOr::Advance() {
       right_document_id_ == kInvalidDocumentId) {
     // Reached the end, set these to invalid values and return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -132,14 +132,24 @@ libtextclassifier3::Status DocHitInfoIteratorOr::Advance() {
   current_ = chosen;
 
   doc_hit_info_ = chosen->doc_hit_info();
+  hit_intersect_section_ids_mask_ = chosen->hit_intersect_section_ids_mask();
 
   // If equal, combine.
   if (left_document_id_ == right_document_id_) {
     doc_hit_info_.MergeSectionsFrom(
         right_->doc_hit_info().hit_section_ids_mask());
+    hit_intersect_section_ids_mask_ &= right_->hit_intersect_section_ids_mask();
   }
 
   return libtextclassifier3::Status::OK;
+}
+
+int32_t DocHitInfoIteratorOr::GetNumBlocksInspected() const {
+  return left_->GetNumBlocksInspected() + right_->GetNumBlocksInspected();
+}
+
+int32_t DocHitInfoIteratorOr::GetNumLeafAdvanceCalls() const {
+  return left_->GetNumLeafAdvanceCalls() + right_->GetNumLeafAdvanceCalls();
 }
 
 std::string DocHitInfoIteratorOr::ToString() const {
@@ -182,6 +192,7 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
     // 0 is the smallest (last) DocumentId, can't advance further. Reset to
     // invalid values and return directly
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
@@ -211,31 +222,45 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
     // None of the iterators had a next document_id, reset to invalid values and
     // return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
 
   // Found the next hit DocumentId, now calculate the section info.
+  hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
   for (const auto& iterator : iterators_) {
     if (iterator->doc_hit_info().document_id() == next_document_id) {
       current_iterators_.push_back(iterator.get());
       if (doc_hit_info_.document_id() == kInvalidDocumentId) {
         doc_hit_info_ = iterator->doc_hit_info();
+        hit_intersect_section_ids_mask_ =
+            iterator->hit_intersect_section_ids_mask();
       } else {
         doc_hit_info_.MergeSectionsFrom(
             iterator->doc_hit_info().hit_section_ids_mask());
+        hit_intersect_section_ids_mask_ &=
+            iterator->hit_intersect_section_ids_mask();
       }
     }
   }
   return libtextclassifier3::Status::OK;
 }
 
-DocHitInfoIterator::CallStats DocHitInfoIteratorOrNary::GetCallStats() const {
-  CallStats call_stats;
+int32_t DocHitInfoIteratorOrNary::GetNumBlocksInspected() const {
+  int32_t blockCount = 0;
   for (const auto& iter : iterators_) {
-    call_stats += iter->GetCallStats();
+    blockCount += iter->GetNumBlocksInspected();
   }
-  return call_stats;
+  return blockCount;
+}
+
+int32_t DocHitInfoIteratorOrNary::GetNumLeafAdvanceCalls() const {
+  int32_t leafCount = 0;
+  for (const auto& iter : iterators_) {
+    leafCount += iter->GetNumLeafAdvanceCalls();
+  }
+  return leafCount;
 }
 
 std::string DocHitInfoIteratorOrNary::ToString() const {

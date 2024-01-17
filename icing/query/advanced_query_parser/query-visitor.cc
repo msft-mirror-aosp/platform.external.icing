@@ -33,11 +33,9 @@
 #include "icing/index/iterator/doc-hit-info-iterator-none.h"
 #include "icing/index/iterator/doc-hit-info-iterator-not.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
-#include "icing/index/iterator/doc-hit-info-iterator-property-in-document.h"
 #include "icing/index/iterator/doc-hit-info-iterator-property-in-schema.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
-#include "icing/index/property-existence-indexing-handler.h"
 #include "icing/query/advanced_query_parser/lexer.h"
 #include "icing/query/advanced_query_parser/param.h"
 #include "icing/query/advanced_query_parser/parser.h"
@@ -224,23 +222,13 @@ void QueryVisitor::RegisterFunctions() {
   auto property_defined = [this](std::vector<PendingValue>&& args) {
     return this->PropertyDefinedFunction(std::move(args));
   };
+
   Function property_defined_function =
       Function::Create(DataType::kDocumentIterator, "propertyDefined",
                        {Param(DataType::kString)}, std::move(property_defined))
           .ValueOrDie();
   registered_functions_.insert(
       {property_defined_function.name(), std::move(property_defined_function)});
-
-  // DocHitInfoIterator hasProperty(std::string);
-  auto has_property = [this](std::vector<PendingValue>&& args) {
-    return this->HasPropertyFunction(std::move(args));
-  };
-  Function has_property_function =
-      Function::Create(DataType::kDocumentIterator, "hasProperty",
-                       {Param(DataType::kString)}, std::move(has_property))
-          .ValueOrDie();
-  registered_functions_.insert(
-      {has_property_function.name(), std::move(has_property_function)});
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
@@ -291,7 +279,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
   // Update members based on results of processing the query.
   if (args.size() == 2 &&
       pending_property_restricts_.has_active_property_restricts()) {
-    iterator = DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
+    iterator = std::make_unique<DocHitInfoIteratorSectionRestrict>(
         std::move(iterator), &document_store_, &schema_store_,
         pending_property_restricts_.active_property_restricts(),
         current_time_ms_);
@@ -332,31 +320,6 @@ QueryVisitor::PropertyDefinedFunction(std::vector<PendingValue>&& args) {
   features_.insert(kListFilterQueryLanguageFeature);
 
   return PendingValue(std::move(property_in_schema_iterator));
-}
-
-libtextclassifier3::StatusOr<PendingValue> QueryVisitor::HasPropertyFunction(
-    std::vector<PendingValue>&& args) {
-  // The first arg is guaranteed to be a STRING at this point. It should be safe
-  // to call ValueOrDie.
-  const std::string& property_path = args.at(0).string_val().ValueOrDie()->term;
-
-  // Perform an exact search for the property existence metadata token.
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> meta_hit_iterator,
-      index_.GetIterator(
-          absl_ports::StrCat(kPropertyExistenceTokenPrefix, property_path),
-          /*term_start_index=*/0,
-          /*unnormalized_term_length=*/0, kSectionIdMaskAll,
-          TermMatchType::EXACT_ONLY,
-          /*need_hit_term_frequency=*/false));
-
-  std::unique_ptr<DocHitInfoIterator> property_in_document_iterator =
-      std::make_unique<DocHitInfoIteratorPropertyInDocument>(
-          std::move(meta_hit_iterator));
-
-  features_.insert(kHasPropertyFunctionFeature);
-
-  return PendingValue(std::move(property_in_document_iterator));
 }
 
 libtextclassifier3::StatusOr<int64_t> QueryVisitor::PopPendingIntValue() {
@@ -684,7 +647,7 @@ libtextclassifier3::Status QueryVisitor::ProcessHasOperator(
 
   std::set<std::string> property_restricts = {std::move(text_value.term)};
   pending_values_.push(
-      PendingValue(DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
+      PendingValue(std::make_unique<DocHitInfoIteratorSectionRestrict>(
           std::move(delegate), &document_store_, &schema_store_,
           std::move(property_restricts), current_time_ms_)));
   return libtextclassifier3::Status::OK;

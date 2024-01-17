@@ -247,21 +247,11 @@ class QueryVisitor : public AbstractSyntaxTreeVisitor {
   libtextclassifier3::StatusOr<PendingValue> SearchFunction(
       std::vector<PendingValue>&& args);
 
-  // Implementation of the propertyDefined(property_path) custom function.
+  // Implementation of the propertyDefined(member) custom function.
   // Returns:
-  //   - a Pending Value holding a DocHitIterator that returns hits for all
-  //     documents whose schema types have defined the property specified by
-  //     property_path.
+  //   - a Pending Value holding a DocHitIterator to be implemented.
   //   - any errors returned by Lexer::ExtractTokens
   libtextclassifier3::StatusOr<PendingValue> PropertyDefinedFunction(
-      std::vector<PendingValue>&& args);
-
-  // Implementation of the hasProperty(property_path) custom function.
-  // Returns:
-  //   - a Pending Value holding a DocHitIterator that returns hits for all
-  //     documents that have the property specified by property_path.
-  //   - any errors returned by Lexer::ExtractTokens
-  libtextclassifier3::StatusOr<PendingValue> HasPropertyFunction(
       std::vector<PendingValue>&& args);
 
   // Handles a NaryOperatorNode where the operator is HAS (':') and pushes an

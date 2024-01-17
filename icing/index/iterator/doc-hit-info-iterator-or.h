@@ -16,9 +16,7 @@
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_OR_H_
 
 #include <cstdint>
-#include <memory>
 #include <string>
-#include <utility>
 
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 
@@ -40,16 +38,11 @@ class DocHitInfoIteratorOr : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
-  CallStats GetCallStats() const override {
-    return left_->GetCallStats() + right_->GetCallStats();
-  }
+  int32_t GetNumBlocksInspected() const override;
+
+  int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
-
-  void MapChildren(const ChildrenMapper &mapper) override {
-    left_ = mapper(std::move(left_));
-    right_ = mapper(std::move(right_));
-  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo> *matched_terms_stats,
@@ -90,15 +83,11 @@ class DocHitInfoIteratorOrNary : public DocHitInfoIterator {
 
   libtextclassifier3::Status Advance() override;
 
-  CallStats GetCallStats() const override;
+  int32_t GetNumBlocksInspected() const override;
+
+  int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
-
-  void MapChildren(const ChildrenMapper &mapper) override {
-    for (int i = 0; i < iterators_.size(); ++i) {
-      iterators_[i] = mapper(std::move(iterators_[i]));
-    }
-  }
 
   void PopulateMatchedTermsStats(
       std::vector<TermMatchInfo> *matched_terms_stats,

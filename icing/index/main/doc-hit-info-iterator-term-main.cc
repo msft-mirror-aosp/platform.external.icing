@@ -100,12 +100,13 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
+    hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
     return absl_ports::ResourceExhaustedError(
         "No more DocHitInfos in iterator");
   }
-  ++num_advance_calls_;
   doc_hit_info_ =
       cached_doc_hit_infos_.at(cached_doc_hit_infos_idx_).doc_hit_info;
+  hit_intersect_section_ids_mask_ = doc_hit_info_.hit_section_ids_mask();
   return libtextclassifier3::Status::OK;
 }
 
@@ -138,9 +139,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
                          posting_list_accessor_->GetNextHitsBatch());
   if (hits.empty()) {
     all_pages_consumed_ = true;
-    return libtextclassifier3::Status::OK;
   }
-
   ++num_blocks_inspected_;
   cached_doc_hit_infos_.reserve(cached_doc_hit_infos_.size() + hits.size());
   for (const Hit& hit : hits) {
@@ -178,6 +177,7 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
     cached_doc_hit_infos_.push_back(std::move(last_doc_hit_info));
   }
 
+  ++num_blocks_inspected_;
   if (posting_list_accessor_ == nullptr) {
     ICING_ASSIGN_OR_RETURN(MainIndex::GetPrefixAccessorResult result,
                            main_index_->GetAccessorForPrefixTerm(term_));
@@ -188,10 +188,7 @@ DocHitInfoIteratorTermMainPrefix::RetrieveMoreHits() {
                          posting_list_accessor_->GetNextHitsBatch());
   if (hits.empty()) {
     all_pages_consumed_ = true;
-    return libtextclassifier3::Status::OK;
   }
-
-  ++num_blocks_inspected_;
   cached_doc_hit_infos_.reserve(cached_doc_hit_infos_.size() + hits.size());
   for (const Hit& hit : hits) {
     // Check sections.

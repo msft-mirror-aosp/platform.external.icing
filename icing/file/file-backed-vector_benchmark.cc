@@ -68,7 +68,7 @@ void BM_Set(benchmark::State& state) {
           MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
 
   // Extend to num_elts
-  ICING_ASSERT_OK(fbv->Set(num_elts - 1, 0));
+  fbv->Set(num_elts - 1, 0);
 
   std::uniform_int_distribution<> distrib(0, num_elts - 1);
   for (auto _ : state) {

@@ -18,7 +18,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -43,19 +42,14 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  CallStats GetCallStats() const override {
-    return short_->GetCallStats() + long_->GetCallStats();
-  }
+  int32_t GetNumBlocksInspected() const override;
+
+  int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
 
-  void MapChildren(const ChildrenMapper& mapper) override {
-    short_ = mapper(std::move(short_));
-    long_ = mapper(std::move(long_));
-  }
-
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats,
+      std::vector<TermMatchInfo> *matched_terms_stats,
       SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
     if (doc_hit_info_.document_id() == kInvalidDocumentId) {
       // Current hit isn't valid, return.
@@ -84,18 +78,14 @@ class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
 
-  CallStats GetCallStats() const override;
+  int32_t GetNumBlocksInspected() const override;
+
+  int32_t GetNumLeafAdvanceCalls() const override;
 
   std::string ToString() const override;
 
-  void MapChildren(const ChildrenMapper& mapper) override {
-    for (int i = 0; i < iterators_.size(); ++i) {
-      iterators_[i] = mapper(std::move(iterators_[i]));
-    }
-  }
-
   void PopulateMatchedTermsStats(
-      std::vector<TermMatchInfo>* matched_terms_stats,
+      std::vector<TermMatchInfo> *matched_terms_stats,
       SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
     if (doc_hit_info_.document_id() == kInvalidDocumentId) {
       // Current hit isn't valid, return.

@@ -79,9 +79,9 @@ class PostingListIntegerIndexSerializer : public PostingListSerializer {
   // RETURNS:
   //   The number of data that have been prepended to the posting list. If
   //   keep_prepended is false and reverted, then it returns 0.
-  libtextclassifier3::StatusOr<uint32_t> PrependDataArray(
-      PostingListUsed* posting_list_used, const IntegerIndexData* array,
-      uint32_t num_data, bool keep_prepended) const;
+  uint32_t PrependDataArray(PostingListUsed* posting_list_used,
+                            const IntegerIndexData* array, uint32_t num_data,
+                            bool keep_prepended) const;
 
   // Retrieves all data stored in the posting list.
   //

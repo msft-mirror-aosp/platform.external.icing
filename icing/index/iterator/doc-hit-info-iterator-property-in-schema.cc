@@ -45,6 +45,7 @@ DocHitInfoIteratorPropertyInSchema::DocHitInfoIteratorPropertyInSchema(
 
 libtextclassifier3::Status DocHitInfoIteratorPropertyInSchema::Advance() {
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
+  hit_intersect_section_ids_mask_ = kSectionIdMaskNone;
 
   // Maps from SchemaTypeId to a bool indicating whether or not the type has
   // the requested property.
@@ -76,6 +77,9 @@ libtextclassifier3::Status DocHitInfoIteratorPropertyInSchema::Advance() {
 
     if (valid_match) {
       doc_hit_info_ = delegate_->doc_hit_info();
+      hit_intersect_section_ids_mask_ =
+          delegate_->hit_intersect_section_ids_mask();
+      doc_hit_info_.set_hit_section_ids_mask(hit_intersect_section_ids_mask_);
       return libtextclassifier3::Status::OK;
     }
 
@@ -92,6 +96,14 @@ DocHitInfoIteratorPropertyInSchema::TrimRightMostNode() && {
   // Don't generate suggestion if the last operator is this custom function.
   return absl_ports::InvalidArgumentError(
       "Cannot generate suggestion if the last term is hasPropertyDefined().");
+}
+
+int32_t DocHitInfoIteratorPropertyInSchema::GetNumBlocksInspected() const {
+  return delegate_->GetNumBlocksInspected();
+}
+
+int32_t DocHitInfoIteratorPropertyInSchema::GetNumLeafAdvanceCalls() const {
+  return delegate_->GetNumLeafAdvanceCalls();
 }
 
 std::string DocHitInfoIteratorPropertyInSchema::ToString() const {

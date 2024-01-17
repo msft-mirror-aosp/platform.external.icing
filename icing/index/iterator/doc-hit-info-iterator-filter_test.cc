@@ -1001,22 +1001,28 @@ TEST_F(DocHitInfoIteratorFilterTest, SectionIdMasksArePopulatedCorrectly) {
                           EqualsDocHitInfo(document_id3, section_ids3)));
 }
 
-TEST_F(DocHitInfoIteratorFilterTest, GetCallStats) {
-  DocHitInfoIterator::CallStats original_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/2,
-      /*num_leaf_advance_calls_main_index_in=*/5,
-      /*num_leaf_advance_calls_integer_index_in=*/3,
-      /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+TEST_F(DocHitInfoIteratorFilterTest, GetNumBlocksInspected) {
   auto original_iterator = std::make_unique<DocHitInfoIteratorDummy>();
-  original_iterator->SetCallStats(original_call_stats);
+  original_iterator->SetNumBlocksInspected(5);
 
   DocHitInfoIteratorFilter::Options options;
   DocHitInfoIteratorFilter filtered_iterator(
       std::move(original_iterator), document_store_.get(), schema_store_.get(),
       options, fake_clock_.GetSystemTimeMilliseconds());
 
-  EXPECT_THAT(filtered_iterator.GetCallStats(), Eq(original_call_stats));
+  EXPECT_THAT(filtered_iterator.GetNumBlocksInspected(), Eq(5));
+}
+
+TEST_F(DocHitInfoIteratorFilterTest, GetNumLeafAdvanceCalls) {
+  auto original_iterator = std::make_unique<DocHitInfoIteratorDummy>();
+  original_iterator->SetNumLeafAdvanceCalls(6);
+
+  DocHitInfoIteratorFilter::Options options;
+  DocHitInfoIteratorFilter filtered_iterator(
+      std::move(original_iterator), document_store_.get(), schema_store_.get(),
+      options, fake_clock_.GetSystemTimeMilliseconds());
+
+  EXPECT_THAT(filtered_iterator.GetNumLeafAdvanceCalls(), Eq(6));
 }
 
 TEST_F(DocHitInfoIteratorFilterTest, TrimFilterIterator) {

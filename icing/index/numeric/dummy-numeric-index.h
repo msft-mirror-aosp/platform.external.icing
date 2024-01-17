@@ -15,7 +15,6 @@
 #ifndef ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
 #define ICING_INDEX_NUMERIC_DUMMY_NUMERIC_INDEX_H_
 
-#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -167,8 +166,7 @@ class DummyNumericIndex : public NumericIndex<T> {
     explicit Iterator(T key_lower, T key_upper,
                       std::vector<BucketInfo>&& bucket_info_vec)
         : NumericIndex<T>::Iterator(key_lower, key_upper),
-          pq_(std::less<BucketInfo>(), std::move(bucket_info_vec)),
-          num_advance_calls_(0) {}
+          pq_(std::less<BucketInfo>(), std::move(bucket_info_vec)) {}
 
     ~Iterator() override = default;
 
@@ -176,15 +174,9 @@ class DummyNumericIndex : public NumericIndex<T> {
 
     DocHitInfo GetDocHitInfo() const override { return doc_hit_info_; }
 
-    int32_t GetNumAdvanceCalls() const override { return num_advance_calls_; }
-
-    int32_t GetNumBlocksInspected() const override { return 0; }
-
    private:
     std::priority_queue<BucketInfo> pq_;
     DocHitInfo doc_hit_info_;
-
-    int32_t num_advance_calls_;
   };
 
   explicit DummyNumericIndex(const Filesystem& filesystem,
@@ -270,7 +262,6 @@ libtextclassifier3::Status DummyNumericIndex<T>::Iterator::Advance() {
   // Merge sections with same document_id into a single DocHitInfo
   while (!pq_.empty() &&
          pq_.top().GetCurrentBasicHit().document_id() == document_id) {
-    ++num_advance_calls_;
     doc_hit_info_.UpdateSection(pq_.top().GetCurrentBasicHit().section_id());
 
     BucketInfo info = pq_.top();

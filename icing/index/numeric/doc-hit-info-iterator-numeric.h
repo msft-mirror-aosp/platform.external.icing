@@ -29,7 +29,7 @@ namespace icing {
 namespace lib {
 
 template <typename T>
-class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
  public:
   explicit DocHitInfoIteratorNumeric(
       std::unique_ptr<typename NumericIndex<T>::Iterator> numeric_index_iter)
@@ -53,19 +53,9 @@ class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
         "Cannot generate suggestion if the last term is numeric operator.");
   }
 
-  CallStats GetCallStats() const override {
-    if (numeric_index_iter_ == nullptr) {
-      return CallStats();
-    }
+  int32_t GetNumBlocksInspected() const override { return 0; }
 
-    return CallStats(/*num_leaf_advance_calls_lite_index_in=*/0,
-                     /*num_leaf_advance_calls_main_index_in=*/0,
-                     /*num_leaf_advance_calls_integer_index_in=*/
-                     numeric_index_iter_->GetNumAdvanceCalls(),
-                     /*num_leaf_advance_calls_no_index_in=*/0,
-                     /*num_blocks_inspected_in=*/
-                     numeric_index_iter_->GetNumBlocksInspected());
-  }
+  int32_t GetNumLeafAdvanceCalls() const override { return 0; }
 
   std::string ToString() const override { return "test"; }
 

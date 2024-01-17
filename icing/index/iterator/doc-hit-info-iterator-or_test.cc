@@ -73,33 +73,38 @@ TEST(DocHitInfoIteratorOrTest, Initialize) {
                                std::make_unique<DocHitInfoIteratorDummy>());
 
   // We start out with invalid values
-  EXPECT_THAT(or_iter.doc_hit_info(),
-              EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>{}));
+  EXPECT_THAT(or_iter.doc_hit_info(), Eq(DocHitInfo(kInvalidDocumentId)));
+  EXPECT_THAT(or_iter.hit_intersect_section_ids_mask(), Eq(kSectionIdMaskNone));
 }
 
-TEST(DocHitInfoIteratorOrTest, GetCallStats) {
-  DocHitInfoIterator::CallStats first_iter_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/2,
-      /*num_leaf_advance_calls_main_index_in=*/5,
-      /*num_leaf_advance_calls_integer_index_in=*/3,
-      /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+TEST(DocHitInfoIteratorOrTest, GetNumBlocksInspected) {
+  int first_iter_blocks = 4;  // arbitrary value
   auto first_iter = std::make_unique<DocHitInfoIteratorDummy>();
-  first_iter->SetCallStats(first_iter_call_stats);
+  first_iter->SetNumBlocksInspected(first_iter_blocks);
 
-  DocHitInfoIterator::CallStats second_iter_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/6,
-      /*num_leaf_advance_calls_main_index_in=*/2,
-      /*num_leaf_advance_calls_integer_index_in=*/10,
-      /*num_leaf_advance_calls_no_index_in=*/3,
-      /*num_blocks_inspected_in=*/7);  // arbitrary value
+  int second_iter_blocks = 7;  // arbitrary value
   auto second_iter = std::make_unique<DocHitInfoIteratorDummy>();
-  second_iter->SetCallStats(second_iter_call_stats);
+  second_iter->SetNumBlocksInspected(second_iter_blocks);
 
   DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
 
-  EXPECT_THAT(or_iter.GetCallStats(),
-              Eq(first_iter_call_stats + second_iter_call_stats));
+  EXPECT_THAT(or_iter.GetNumBlocksInspected(),
+              Eq(first_iter_blocks + second_iter_blocks));
+}
+
+TEST(DocHitInfoIteratorOrTest, GetNumLeafAdvanceCalls) {
+  int first_iter_leaves = 4;  // arbitrary value
+  auto first_iter = std::make_unique<DocHitInfoIteratorDummy>();
+  first_iter->SetNumLeafAdvanceCalls(first_iter_leaves);
+
+  int second_iter_leaves = 7;  // arbitrary value
+  auto second_iter = std::make_unique<DocHitInfoIteratorDummy>();
+  second_iter->SetNumLeafAdvanceCalls(second_iter_leaves);
+
+  DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
+
+  EXPECT_THAT(or_iter.GetNumLeafAdvanceCalls(),
+              Eq(first_iter_leaves + second_iter_leaves));
 }
 
 TEST(DocHitInfoIteratorOrTest, Advance) {
@@ -150,22 +155,24 @@ TEST(DocHitInfoIteratorOrTest, SectionIdMask) {
   // Created to test correct section_id_mask behavior.
   SectionIdMask section_id_mask1 = 0b01010101;  // hits in sections 0, 2, 4, 6
   SectionIdMask section_id_mask2 = 0b00000110;  // hits in sections 1, 2
+  SectionIdMask mask_anded_result = 0b00000100;
   SectionIdMask mask_ored_result = 0b01010111;
 
   std::vector<DocHitInfo> first_vector = {DocHitInfo(4, section_id_mask1)};
   std::vector<DocHitInfo> second_vector = {DocHitInfo(4, section_id_mask2)};
 
   auto first_iter = std::make_unique<DocHitInfoIteratorDummy>(first_vector);
-  first_iter->set_hit_section_ids_mask(section_id_mask1);
+  first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
 
   auto second_iter = std::make_unique<DocHitInfoIteratorDummy>(second_vector);
-  second_iter->set_hit_section_ids_mask(section_id_mask2);
+  second_iter->set_hit_intersect_section_ids_mask(section_id_mask2);
 
   DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
 
   ICING_EXPECT_OK(or_iter.Advance());
   EXPECT_THAT(or_iter.doc_hit_info().hit_section_ids_mask(),
               Eq(mask_ored_result));
+  EXPECT_THAT(or_iter.hit_intersect_section_ids_mask(), Eq(mask_anded_result));
 }
 
 TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
@@ -193,11 +200,11 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
 
     auto first_iter =
         std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
-    first_iter->set_hit_section_ids_mask(section_id_mask1);
+    first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
 
     auto second_iter =
         std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hello");
-    second_iter->set_hit_section_ids_mask(section_id_mask2);
+    second_iter->set_hit_intersect_section_ids_mask(section_id_mask2);
 
     DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
     std::vector<TermMatchInfo> matched_terms_stats;
@@ -231,11 +238,11 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
 
     auto first_iter =
         std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
-    first_iter->set_hit_section_ids_mask(section_id_mask1);
+    first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
 
     auto second_iter =
         std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hi");
-    second_iter->set_hit_section_ids_mask(section_id_mask1);
+    second_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
 
     DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
     std::vector<TermMatchInfo> matched_terms_stats;
@@ -274,11 +281,11 @@ TEST(DocHitInfoIteratorOrTest, PopulateMatchedTermsStats) {
 
     auto first_iter =
         std::make_unique<DocHitInfoIteratorDummy>(first_vector, "hi");
-    first_iter->set_hit_section_ids_mask(section_id_mask1);
+    first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
 
     auto second_iter =
         std::make_unique<DocHitInfoIteratorDummy>(second_vector, "hello");
-    second_iter->set_hit_section_ids_mask(section_id_mask2);
+    second_iter->set_hit_intersect_section_ids_mask(section_id_mask2);
 
     DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
     std::vector<TermMatchInfo> matched_terms_stats;
@@ -355,8 +362,8 @@ TEST(DocHitInfoIteratorOrNaryTest, Initialize) {
   DocHitInfoIteratorOrNary or_iter(std::move(iterators));
 
   // We start out with invalid values
-  EXPECT_THAT(or_iter.doc_hit_info(),
-              EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>{}));
+  EXPECT_THAT(or_iter.doc_hit_info(), Eq(DocHitInfo(kInvalidDocumentId)));
+  EXPECT_THAT(or_iter.hit_intersect_section_ids_mask(), Eq(kSectionIdMaskNone));
 }
 
 TEST(DocHitInfoIteratorOrNaryTest, InitializeEmpty) {
@@ -369,42 +376,22 @@ TEST(DocHitInfoIteratorOrNaryTest, InitializeEmpty) {
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST(DocHitInfoIteratorOrNaryTest, GetCallStats) {
-  DocHitInfoIterator::CallStats first_iter_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/2,
-      /*num_leaf_advance_calls_main_index_in=*/5,
-      /*num_leaf_advance_calls_integer_index_in=*/3,
-      /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+TEST(DocHitInfoIteratorOrNaryTest, GetNumBlocksInspected) {
+  int first_iter_blocks = 4;  // arbitrary value
   auto first_iter = std::make_unique<DocHitInfoIteratorDummy>();
-  first_iter->SetCallStats(first_iter_call_stats);
+  first_iter->SetNumBlocksInspected(first_iter_blocks);
 
-  DocHitInfoIterator::CallStats second_iter_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/6,
-      /*num_leaf_advance_calls_main_index_in=*/2,
-      /*num_leaf_advance_calls_integer_index_in=*/10,
-      /*num_leaf_advance_calls_no_index_in=*/3,
-      /*num_blocks_inspected_in=*/7);  // arbitrary value
+  int second_iter_blocks = 7;  // arbitrary value
   auto second_iter = std::make_unique<DocHitInfoIteratorDummy>();
-  second_iter->SetCallStats(second_iter_call_stats);
+  second_iter->SetNumBlocksInspected(second_iter_blocks);
 
-  DocHitInfoIterator::CallStats third_iter_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/1000,
-      /*num_leaf_advance_calls_main_index_in=*/2000,
-      /*num_leaf_advance_calls_integer_index_in=*/3000,
-      /*num_leaf_advance_calls_no_index_in=*/0,
-      /*num_blocks_inspected_in=*/200);  // arbitrary value
+  int third_iter_blocks = 13;  // arbitrary value
   auto third_iter = std::make_unique<DocHitInfoIteratorDummy>();
-  third_iter->SetCallStats(third_iter_call_stats);
+  third_iter->SetNumBlocksInspected(third_iter_blocks);
 
-  DocHitInfoIterator::CallStats fourth_iter_call_stats(
-      /*num_leaf_advance_calls_lite_index_in=*/200,
-      /*num_leaf_advance_calls_main_index_in=*/400,
-      /*num_leaf_advance_calls_integer_index_in=*/100,
-      /*num_leaf_advance_calls_no_index_in=*/20,
-      /*num_blocks_inspected_in=*/50);  // arbitrary value
+  int fourth_iter_blocks = 1;  // arbitrary value
   auto fourth_iter = std::make_unique<DocHitInfoIteratorDummy>();
-  fourth_iter->SetCallStats(fourth_iter_call_stats);
+  fourth_iter->SetNumBlocksInspected(fourth_iter_blocks);
 
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   iterators.push_back(std::move(first_iter));
@@ -413,9 +400,38 @@ TEST(DocHitInfoIteratorOrNaryTest, GetCallStats) {
   iterators.push_back(std::move(fourth_iter));
   DocHitInfoIteratorOrNary or_iter(std::move(iterators));
 
-  EXPECT_THAT(or_iter.GetCallStats(),
-              Eq(first_iter_call_stats + second_iter_call_stats +
-                 third_iter_call_stats + fourth_iter_call_stats));
+  EXPECT_THAT(or_iter.GetNumBlocksInspected(),
+              Eq(first_iter_blocks + second_iter_blocks + third_iter_blocks +
+                 fourth_iter_blocks));
+}
+
+TEST(DocHitInfoIteratorOrNaryTest, GetNumLeafAdvanceCalls) {
+  int first_iter_leaves = 4;  // arbitrary value
+  auto first_iter = std::make_unique<DocHitInfoIteratorDummy>();
+  first_iter->SetNumLeafAdvanceCalls(first_iter_leaves);
+
+  int second_iter_leaves = 7;  // arbitrary value
+  auto second_iter = std::make_unique<DocHitInfoIteratorDummy>();
+  second_iter->SetNumLeafAdvanceCalls(second_iter_leaves);
+
+  int third_iter_leaves = 13;  // arbitrary value
+  auto third_iter = std::make_unique<DocHitInfoIteratorDummy>();
+  third_iter->SetNumLeafAdvanceCalls(third_iter_leaves);
+
+  int fourth_iter_leaves = 13;  // arbitrary value
+  auto fourth_iter = std::make_unique<DocHitInfoIteratorDummy>();
+  fourth_iter->SetNumLeafAdvanceCalls(fourth_iter_leaves);
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::move(first_iter));
+  iterators.push_back(std::move(second_iter));
+  iterators.push_back(std::move(third_iter));
+  iterators.push_back(std::move(fourth_iter));
+  DocHitInfoIteratorOrNary or_iter(std::move(iterators));
+
+  EXPECT_THAT(or_iter.GetNumLeafAdvanceCalls(),
+              Eq(first_iter_leaves + second_iter_leaves + third_iter_leaves +
+                 fourth_iter_leaves));
 }
 
 TEST(DocHitInfoIteratorOrNaryTest, Advance) {
@@ -444,6 +460,7 @@ TEST(DocHitInfoIteratorOrNaryTest, SectionIdMask) {
   SectionIdMask section_id_mask2 = 0b00000110;  // hits in sections 1, 2
   SectionIdMask section_id_mask3 = 0b00001100;  // hits in sections 2, 3
   SectionIdMask section_id_mask4 = 0b00100100;  // hits in sections 2, 5
+  SectionIdMask mask_anded_result = 0b00000100;
   SectionIdMask mask_ored_result = 0b01101111;
 
   std::vector<DocHitInfo> first_vector = {DocHitInfo(4, section_id_mask1)};
@@ -452,16 +469,16 @@ TEST(DocHitInfoIteratorOrNaryTest, SectionIdMask) {
   std::vector<DocHitInfo> fourth_vector = {DocHitInfo(4, section_id_mask4)};
 
   auto first_iter = std::make_unique<DocHitInfoIteratorDummy>(first_vector);
-  first_iter->set_hit_section_ids_mask(section_id_mask1);
+  first_iter->set_hit_intersect_section_ids_mask(section_id_mask1);
 
   auto second_iter = std::make_unique<DocHitInfoIteratorDummy>(second_vector);
-  second_iter->set_hit_section_ids_mask(section_id_mask2);
+  second_iter->set_hit_intersect_section_ids_mask(section_id_mask2);
 
   auto third_iter = std::make_unique<DocHitInfoIteratorDummy>(third_vector);
-  third_iter->set_hit_section_ids_mask(section_id_mask3);
+  third_iter->set_hit_intersect_section_ids_mask(section_id_mask3);
 
   auto fourth_iter = std::make_unique<DocHitInfoIteratorDummy>(fourth_vector);
-  fourth_iter->set_hit_section_ids_mask(section_id_mask4);
+  fourth_iter->set_hit_intersect_section_ids_mask(section_id_mask4);
 
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   iterators.push_back(std::move(first_iter));
@@ -474,6 +491,7 @@ TEST(DocHitInfoIteratorOrNaryTest, SectionIdMask) {
   ICING_EXPECT_OK(or_iter.Advance());
   EXPECT_THAT(or_iter.doc_hit_info().hit_section_ids_mask(),
               Eq(mask_ored_result));
+  EXPECT_THAT(or_iter.hit_intersect_section_ids_mask(), Eq(mask_anded_result));
 }
 
 TEST(DocHitInfoIteratorOrNaryTest, PopulateMatchedTermsStats) {
